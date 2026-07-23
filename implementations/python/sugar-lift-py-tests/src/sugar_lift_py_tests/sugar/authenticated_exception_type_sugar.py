@@ -11,6 +11,7 @@ class AuthenticatedExceptionTypeSugar(Sugar):
     identity: object
     mro: tuple | None = None
     site: object = dataclass_field(compare=False, default=None)
+    class_value: object | None = dataclass_field(compare=False, default=None)
 
     @classmethod
     def witnesses(cls):
@@ -32,6 +33,8 @@ class AuthenticatedExceptionTypeSugar(Sugar):
 
         return self.value.desugar(ctx).and_then(
             lambda value: Complete(
-                AuthenticatedExceptionTypeValue(value, self.identity, self.mro)
+                AuthenticatedExceptionTypeValue(
+                    value, self.identity, self.mro, self.class_value
+                )
             )
         )

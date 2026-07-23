@@ -155,6 +155,7 @@ class SourceUnit:
     typed_module: object = field(init=False, default=None)
     # Field-data memo for materialize (see construction_cache.py).
     construction_cache: object = field(init=False, default=None)
+    exception_class_values: object = field(init=False, default=None)
     module_direct_bindings: object = field(init=False, default=None)
     function_nodes: Tuple[object, ...] = field(init=False, default=())
     # Memo for exception_type_identity: full-module walk was ~12ms/call on
@@ -177,6 +178,7 @@ class SourceUnit:
         )
         object.__setattr__(self, "typed_module", None)
         object.__setattr__(self, "construction_cache", None)
+        object.__setattr__(self, "exception_class_values", {})
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
         object.__setattr__(self, "_exception_type_identity_cache", {})
@@ -313,12 +315,8 @@ class SourceUnit:
             ):
                 containing.append(candidate)
         if containing:
-            owner = max(
-                containing, key=lambda item: item.line_col_span().start_line
-            )
-            table = self.function_symtable(
-                owner.name, owner.line_col_span().start_line
-            )
+            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(call.func.id)
             except KeyError:
@@ -414,8 +412,7 @@ class SourceUnit:
             }
         if statement.kind in ("Import", "ImportFrom"):
             return {
-                alias.asname or alias.name.split(".", 1)[0]
-                for alias in statement.names
+                alias.asname or alias.name.split(".", 1)[0] for alias in statement.names
             }
         return set()
 
@@ -575,6 +572,63 @@ class SourceUnit:
             return True
 
         return tuple(result) if append_definition(definitions[0]) else None
+
+    def exception_class_value(self, node: "Name"):
+        """Project one source-authenticated exception identity into one class graph."""
+        from sugar_lift_py_tests.floor import BlockValue
+        from sugar_lift_py_tests.floor.local_exception_class_value import (
+            LocalExceptionClassValue,
+        )
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_NAMES,
+            builtin_name_temporal,
+        )
+
+        identity = self.exception_type_identity(node)
+        mro = self.exception_type_mro(node)
+        if identity is None or mro is None:
+            raise SugarNotWritten(
+                owner="SourceUnit.exception_class_value",
+                observed="exception class lacks a closed authenticated base graph",
+                requested="source-authenticated ClassValue ancestry",
+                fix="keep computed, cyclic, or opaque exception ancestry loud",
+            )
+        cache = self.exception_class_values
+        cached = cache.get(identity)
+        if cached is not None:
+            return cached
+
+        for builtin_name in BUILTIN_EXCEPTION_NAMES:
+            builtin_identity = ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const(builtin_name)],
+            )
+            if identity == builtin_identity:
+                value = builtin_name_temporal().value_for(builtin_name)
+                cache[identity] = value
+                return value
+
+        module = self._require_typed_module("SourceUnit.exception_class_value")
+        definitions = [
+            statement
+            for statement in module.body
+            if statement.kind == "ClassDef" and statement.name == node.id
+        ]
+        if len(definitions) != 1:
+            raise SugarNotWritten(
+                owner="SourceUnit.exception_class_value",
+                observed="authenticated identity has no unique source class",
+                requested="one lexical exception class definition",
+                fix="keep ambiguous exception ancestry loud",
+            )
+        definition = definitions[0]
+        bases = tuple(self.exception_class_value(base) for base in definition.bases)
+        value = LocalExceptionClassValue(
+            name=definition.name, bases=bases, record=BlockValue(())
+        )
+        cache[identity] = value
+        return value
 
     def is_builtin_exception_group(self, node: "Name") -> bool:
         """Authenticate exception-group constructors by runtime identity."""
@@ -771,8 +825,7 @@ class Node(Typed):
             vocabulary_missing(
                 owner="nodes.Node.span",
                 observed=(
-                    f"{self.kind} with neither a backend position nor any "
-                    "spanned child"
+                    f"{self.kind} with neither a backend position nor any spanned child"
                 ),
                 requested="every node has a source extent",
                 fix="give the adapter an anchor rule for this kind; never invent a span",
@@ -1830,9 +1883,7 @@ class FunctionDef(Statement):
                 for nested in statement.body:
                     append_statement(nested)
                 steps.append(
-                    FinallyStepV1(
-                        tuple(item.sugar() for item in statement.finalbody)
-                    )
+                    FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
             else:
                 steps.append(OpaqueStepV1(statement.kind))
@@ -2000,9 +2051,7 @@ class FunctionDef(Statement):
 
         lc = stmt.line_col_span()
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
-        with reduction_span(
-            sugar=f"Body.{stmt.kind}", role="construction", site=site
-        ):
+        with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
             return stmt.sugar()
 
     def _construct_sugar(self):
@@ -2090,9 +2139,7 @@ class FunctionDef(Statement):
                         role="construction",
                         site=where,
                     ):
-                        substitution_trace = trace_builder.freeze(
-                            testimony_reporter
-                        )
+                        substitution_trace = trace_builder.freeze(testimony_reporter)
                 else:
                     # Every statement still has an immutable runtime snapshot.
                     # Only a loop consumer demands the sealed state projection;
@@ -4499,10 +4546,15 @@ class Raise(Statement):
                     exception_type_coordinate=leaf_identity,
                     exception_type_mro=leaf_mro,
                 )
-            else:
-                value = AuthenticatedExceptionTypeSugar(
-                    value, leaf_identity, leaf_mro, node.fragment
-                )
+            value = AuthenticatedExceptionTypeSugar(
+                value,
+                leaf_identity,
+                leaf_mro,
+                node.fragment,
+                class_value=self.unit.exception_class_value(
+                    node.func if isinstance(node, Call) else node
+                ),
+            )
             return RaiseSugar(value, None, leaf_name, node.fragment)
 
         def grouped_sugar(call):
@@ -4906,6 +4958,7 @@ class TryStar(Statement):
                         identity,
                         self.unit.exception_type_mro(handler.type_),
                         handler.type_.fragment,
+                        class_value=self.unit.exception_class_value(handler.type_),
                     ),
                     tuple(stmt.sugar() for stmt in handler.body),
                     handler._effect_slot_id(),
@@ -6194,8 +6247,7 @@ class Call(Expression):
                     site=self.fragment,
                     keywords=keyword_sugars,
                     contract_resolution_gap=(
-                        f"{source_call_resolution.kind}:"
-                        f"{source_call_resolution.detail}"
+                        f"{source_call_resolution.kind}:{source_call_resolution.detail}"
                     ),
                 )
             if not isinstance(source_call_resolution, SourceCallPreconstructionRefV1):
@@ -6279,6 +6331,7 @@ class Call(Expression):
             from sugar_lift_py_tests.call_contract_resolution import (
                 CallContractResolutionGapV1,
             )
+
             call_refs = getattr(context, "call_contract_refs", None)
             if call_refs is not None:
                 from sugar_lift_py_tests.call_contract_resolution import (
@@ -6622,7 +6675,11 @@ class ObjectPlaceStateV1(Expression):
     def with_attribute_store(self, name, value, occurrence):
         from .object_identity import AttributeFieldCoordinateV1
 
-        return self._with_store(AttributeFieldCoordinateV1.mint(self.object_coordinate, name), value, occurrence)
+        return self._with_store(
+            AttributeFieldCoordinateV1.mint(self.object_coordinate, name),
+            value,
+            occurrence,
+        )
 
     def _with_store(self, selector, value, occurrence, *, constructed=None):
         self.validate_identity()
@@ -6630,9 +6687,7 @@ class ObjectPlaceStateV1(Expression):
         if constructed is None:
             return None
         floor_value, testimony = constructed
-        projected = ConstructedValueProjectionV1.create(
-            value, floor_value, testimony
-        )
+        projected = ConstructedValueProjectionV1.create(value, floor_value, testimony)
         from .object_identity import AttributeFieldVersionV1
 
         prior = self.version(selector)
@@ -6640,7 +6695,9 @@ class ObjectPlaceStateV1(Expression):
             owner=self.object_coordinate,
             field=selector,
             store_occurrence=occurrence,
-            construction_generation=self.object_coordinate.construction_generation + len(self.version_cids) + 1,
+            construction_generation=self.object_coordinate.construction_generation
+            + len(self.version_cids)
+            + 1,
             stored_value_testimony_cid=testimony.cid,
             prior_version_cid=prior,
         )
@@ -6857,15 +6914,12 @@ class Attribute(Expression):
             isinstance(receiver, IfExp)
             and isinstance(receiver.body, ObjectPlaceStateV1)
             and isinstance(receiver.orelse, ObjectPlaceStateV1)
-            and receiver.body.object_identity_cid
-            == receiver.orelse.object_identity_cid
+            and receiver.body.object_identity_cid == receiver.orelse.object_identity_cid
         ):
             when_true = receiver.body.attribute_field(self.attr)
             when_false = receiver.orelse.attribute_field(self.attr)
             if when_true is not None and when_false is not None:
-                return rewrite(
-                    receiver, body=when_true, orelse=when_false
-                )
+                return rewrite(receiver, body=when_true, orelse=when_false)
         if isinstance(receiver, ObjectPlaceStateV1):
             projected = receiver.attribute_field(self.attr)
             if projected is not None:

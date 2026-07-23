@@ -47,7 +47,7 @@ class ClassValue(FloorValue):
             return SymbolicValue(self.to_term(owner=str(site))).test_python_subtype(
                 supertype, site
             )
-        if type(supertype) is not ClassValue:
+        if not isinstance(supertype, ClassValue):
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
             construction_panic_gap(
@@ -68,7 +68,7 @@ class ClassValue(FloorValue):
                 continue
             seen.add(key)
             for base in candidate.bases:
-                if type(base) is not ClassValue:
+                if not isinstance(base, ClassValue):
                     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
                     construction_panic_gap(
