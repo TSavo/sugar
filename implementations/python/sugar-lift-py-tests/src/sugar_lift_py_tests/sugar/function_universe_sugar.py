@@ -53,6 +53,12 @@ def reduce_block_to_exitset(
     for index, head in enumerate(statements):
 
         def reduce_next(state: _ReducedBlock) -> ExitSet[_ReducedBlock]:
+            if not state.can_fall_through:
+                # A terminal Completed face (return, including return from
+                # finally) owns the exit.  It is completed rather than halted,
+                # but its source tail is unreachable and must not be reduced
+                # into a contradictory second post-state.
+                return ExitSet.completed(state)
             outcome = head.desugar(ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
