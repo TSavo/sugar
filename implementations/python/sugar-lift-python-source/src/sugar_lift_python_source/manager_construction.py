@@ -132,10 +132,16 @@ def construct_manager_behavior(
             tuple(item.value for item in actuals),
             tuple((name, item.value) for name, item in keyword_actuals),
         )
+        declaration_body = frame.body
         frame = frame.bind_node_actuals(
             tuple(item.node for item in actuals),
             tuple((name, item.node) for name, item in keyword_actuals),
         )
+        # The declaration frame's body carries BindingCoordinateRefSugar at
+        # each formal read.  Runtime nodes authenticate the BindingEntryV1;
+        # they must not replace those coordinate reads with consumer syntax,
+        # because the exact constructed FloorValue is curried below.
+        frame = replace(frame, body=declaration_body)
         supplied = {
             id(item.node): item.testimony
             for item in (*actuals, *(item for _, item in keyword_actuals))
@@ -163,6 +169,7 @@ def construct_manager_behavior(
         ),
         body=frame.body,
         source_call_frame_cid=frame.frame_cid,
+        formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
     )
     result = call.force_floor(
         None, owner="construct_manager_behavior", project_callsite=False
@@ -303,11 +310,18 @@ def _resolve_source_visible_frame_uncached(
         )
 
     definition_names = {item.name for item in definitions}
+    from sugar_lift_py_tests.floor import BuiltinSemanticCallable
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+
+    builtin_floor = builtin_name_temporal()
     if isinstance(target, FunctionDef):
         opaque = tuple(
             call.func.id
             for call in _local_named_calls(target)
             if call.func.id not in definition_names
+            and not isinstance(
+                builtin_floor.value_if_bound(call.func.id), BuiltinSemanticCallable
+            )
         )
         if opaque:
             return ManagerConstructionGapV1(
@@ -341,6 +355,10 @@ def _resolve_source_visible_frame_uncached(
                 call.func.id
                 for call in local_calls
                 if call.func.id not in definition_names
+                and not isinstance(
+                    builtin_floor.value_if_bound(call.func.id),
+                    BuiltinSemanticCallable,
+                )
             )
             if opaque:
                 return ManagerConstructionGapV1(

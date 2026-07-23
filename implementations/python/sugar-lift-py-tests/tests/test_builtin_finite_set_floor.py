@@ -44,3 +44,18 @@ def test_opaque_member_stays_loud():
 
     with pytest.raises(ConstructionPanic):
         _numbers(1).contains(FunctionCallable("opaque"), "site")
+
+
+def test_authenticated_set_constructor_closes_finite_dict_keys():
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.floor import DictValue, StringValue, TermValue
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+
+    receiver = builtin_name_temporal().value_for("set")
+    source = DictValue(((StringValue("kept"), TermValue(1)),))
+
+    result = receiver.callable_application_with(
+        CallableApplication((source,), (), "site"), None
+    )
+
+    assert tuple(item.value for item in result.value.elements) == ("kept",)

@@ -94,6 +94,38 @@ def _resolved(root: Path, source: str, *, exported: str = "make_guard"):
     )
 
 
+def _resolved_type_actual(root: Path, source: str, *, exported: str = "make_guard"):
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(root, source, exported=exported)
+    )
+    consumer = f"import arbitrary\narbitrary.{exported}(ValueError)\n"
+    path = root / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(root, path, consumer, source_cid)
+    resolved = resolve_import_binding(receipts[0], graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    source_file = SourceFile((consumer, str(path), source_cid))
+    call = next(item for item in source_file.nodes() if isinstance(item, Call))
+    from sugar_source_tree.nodes import Name
+
+    node = next(item for item in call.args if isinstance(item, Name))
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+
+    actual = builtin_name_temporal().value_for("ValueError")
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    testimony = ConstructedValueTestimonyV1.mint(
+        node.fragment, _term_content_cid(actual.to_term(owner="test"))
+    )
+    return (
+        graph,
+        resolved,
+        ConstructedCallActualV1(node, actual, testimony),
+        call.fragment,
+    )
+
+
 def test_renamed_factory_constructs_returned_receiver_state_through_one_door(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,
@@ -500,6 +532,8 @@ def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
         "def make_guard(expected):\n"
         "    return OpaqueBoundary(expected)\n",
     )
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     behavior = construct_manager_behavior(
         resolved, graph=graph, actuals=(actual,), call_site=call_site
     )
@@ -507,10 +541,42 @@ def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
     protocol = construct_manager_protocol(behavior, exit_face_id="boundary-face")
     assert isinstance(protocol, ConstructedManagerProtocolV1)
 
-    summary = derive_manager_summary(protocol)
+    with pytest.raises(ConstructionPanic, match="Python type operand"):
+        derive_manager_summary(protocol)
 
-    assert isinstance(summary, DerivedManagerSummaryGapV1)
-    assert summary.kind in {"enter-may-halt", "opaque-exit-truthiness"}
+
+def test_renamed_issubclass_boundary_derives_through_authenticated_floor(tmp_path):
+    graph, resolved, actual, call_site = _resolved_type_actual(
+        tmp_path,
+        "class RenamedBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return issubclass(effect_type, self.expected)\n"
+        "def make_guard(expected):\n"
+        "    return RenamedBoundary(expected)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="subtype-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol, behavior=behavior)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        FormalArgumentProjectionV1,
+        SuppressesModeV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(summary.semantics.mode, SuppressesModeV1)
+    assert summary.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
 
 
 def test_renamed_source_visible_exit_derives_expects_raise_boundary(tmp_path):

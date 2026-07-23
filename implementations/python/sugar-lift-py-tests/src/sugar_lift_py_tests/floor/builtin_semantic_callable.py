@@ -34,6 +34,8 @@ class BuiltinSemanticCallable(FloorValue):
 
     def callable_application_with(self, operation, ctx):
         del ctx
+        if self.operation == "python.set.construct":
+            return self._construct_set(operation)
         if self.operation != "python.issubclass":
             return super().callable_application_with(operation, None)
         if len(operation.arguments) != 2 or operation.keyword_names:
@@ -48,6 +50,21 @@ class BuiltinSemanticCallable(FloorValue):
             )
         subtype, supertype = operation.arguments
         return subtype.test_python_subtype(supertype, operation.site)
+
+    def _construct_set(self, operation):
+        from sugar_lift_py_tests.floor import DictValue, ListValue, SetValue, TupleValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        if operation.keyword_names or len(operation.arguments) > 1:
+            return super().callable_application_with(operation, None)
+        if not operation.arguments:
+            return Complete(SetValue(()))
+        source = operation.arguments[0]
+        if isinstance(source, DictValue):
+            return Complete(SetValue(tuple(key for key, _ in source.entries)))
+        if isinstance(source, (ListValue, SetValue, TupleValue)):
+            return Complete(SetValue(tuple(source.elements)))
+        return super().callable_application_with(operation, None)
 
     def witness_for(self, operands, result) -> ClosedSemanticOperationWitness:
         return ClosedSemanticOperationWitness.mint(

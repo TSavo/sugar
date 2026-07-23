@@ -226,6 +226,7 @@ def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):
             "eq",
             "py.eq",
             "identity",
+            "python.subtype",
         }:
             continue
         if not any(_term_contains_ctor(arg, coordinate_name) for arg in current.args):

@@ -20,7 +20,8 @@ _CLOSED_OPERATIONS = frozenset(
         "python.set.contains",
         "python.set.union",
         "python.set.intersection",
-        "python.set.difference",
+    "python.set.difference",
+    "python.set.construct",
     }
 )
 
