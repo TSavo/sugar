@@ -328,7 +328,20 @@ class SourceUnit:
         bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
         if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
             return None
-        return bindings[0]
+        definition = bindings[0]
+        # Constructing the allocation definition requires constructing its
+        # methods. A call occurrence inside that same definition therefore
+        # cannot use the definition as already-constructed testimony without a
+        # cycle; it remains an opaque occurrence until recursive allocation has
+        # its own construction rule.
+        definition_span = definition.line_col_span()
+        if (
+            (definition_span.start_line, definition_span.start_col)
+            <= (span.start_line, span.start_col)
+            <= (definition_span.end_line, definition_span.end_col)
+        ):
+            return None
+        return definition
 
     @staticmethod
     def source_class_has_authenticated_default_attribute_behavior(
@@ -827,6 +840,12 @@ class Node(Typed):
 
     def post_binding_scope(self, scope: BindingMap) -> BindingMap:
         """Apply statement-owned invalidations to the one temporal map."""
+        if not any(
+            isinstance(entry, BindingEntryV1)
+            and isinstance(entry.state, ObjectPlaceStateV1)
+            for entry in scope.values()
+        ):
+            return scope
         exposed = {
             state.object_identity_cid
             for call in self.walk()

@@ -377,6 +377,18 @@ def test_non_admitted_class_call_keeps_ordinary_call_construction(tmp_path):
     _outcome_or_panic(path, "boundary")
 
 
+def test_recursive_allocation_occurrence_stays_opaque_without_recursing(tmp_path):
+    path = tmp_path / "recursive_allocation.py"
+    path.write_text(
+        "class Vessel:\n"
+        "    def clone(self):\n"
+        "        item = Vessel()\n"
+        "        return item\n"
+    )
+
+    _outcome_or_panic(path, "clone")
+
+
 def test_custom_setitem_receiver_stays_loud(tmp_path):
     path = tmp_path / "setitem.py"
     path.write_text(
