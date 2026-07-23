@@ -28,6 +28,8 @@ from sugar_lift_py_tests.ir import encode_jcs, term_to_value
 from .canonical import cid_of_json
 from .dependency_artifact import DependencyArtifactGraph, ResolvedPythonObjectV1
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
 
@@ -56,14 +58,6 @@ class ConstructedCallActualV1:
             raise ManagerConstructionAuthenticationError(
                 "constructed keyword actual requires a nonempty keyword"
             )
-
-
-@dataclass(frozen=True)
-class FormalParameterCoordinateV1:
-    definition_cid: str
-    parameter_index: int
-    formal_name: str
-    passing: str
 
 
 @dataclass(frozen=True)
@@ -444,8 +438,31 @@ def _bind(definition, positional, keywords, skip_first=False):
                         default_nodes[parameter.name], definition.source_cid
                     ),
                 )
-        coordinate = FormalParameterCoordinateV1(
-            definition.cid, index, parameter.name, parameter.kind.name
+        declaration_node = next(
+            argument
+            for argument in (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *((node.args.vararg,) if node.args.vararg else ()),
+                *node.args.kwonlyargs,
+                *((node.args.kwarg,) if node.args.kwarg else ()),
+            )
+            if argument.arg == parameter.name
+        )
+        coordinate = FormalParameterCoordinateV1.mint(
+            owner_source_identity_cid=definition.source_cid,
+            owner_definition_locus=_node_occurrence(node, definition.source_cid),
+            declaration_locus=_node_occurrence(declaration_node, definition.source_cid),
+            ordinal=index,
+            parameter_kind={
+                inspect.Parameter.POSITIONAL_ONLY: "positional-only",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD: "positional-or-keyword",
+                inspect.Parameter.VAR_POSITIONAL: "variadic-positional",
+                inspect.Parameter.KEYWORD_ONLY: "keyword-only",
+                inspect.Parameter.VAR_KEYWORD: "variadic-keyword",
+            }[parameter.kind],
+            declared_name=parameter.name,
+            sort=PrimitiveSort("Value"),
         )
         binding = FormalActualBindingV1(
             coordinate, parameter.name, value, provenance, occurrences
@@ -549,7 +566,7 @@ def _object_value(value):
 
 def _binding_value(binding):
     return {
-        "formal": binding.coordinate.__dict__,
+        "formal": binding.coordinate.to_value(),
         "actual": _floor_value(binding.actual),
         "provenance": binding.provenance,
         "actualOccurrences": [item.wire() for item in binding.actual_occurrences],

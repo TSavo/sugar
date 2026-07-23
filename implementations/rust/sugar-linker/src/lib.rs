@@ -55,6 +55,8 @@ use sugar_proof_envelope::{
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
+pub mod caller_parameter;
+
 /// The typed locus of a call site, per `ir-formal-grammar.md` (`Locus`).
 ///
 /// Replaces the free-form `serde_json::Value` that the call-site slot used to

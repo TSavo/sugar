@@ -928,6 +928,10 @@ class ContractDecl:
     out_binding: str = "out"
     evidence: Optional[EvidenceTerm] = None
     source_warrants: List[dict[str, Any]] = field(default_factory=list)
+    owner_source_identity_cid: Optional[str] = None
+    owner_definition_locus: Optional[dict[str, Any]] = None
+    formal_declarations: List[dict[str, Any]] = field(default_factory=list)
+    declared_parameter_demand_cids: List[str] = field(default_factory=list)
 
 
 # To-Value (canonicalizer Value tree) --------------------------------------
@@ -1583,6 +1587,36 @@ def contract_decl_to_value(d: ContractDecl) -> Value:
                 "sourceWarrants",
                 varr([_json_like_to_value(warrant) for warrant in d.source_warrants]),
             )
+        )
+    ownership = (
+        d.owner_source_identity_cid,
+        d.owner_definition_locus,
+        d.formal_declarations,
+        d.declared_parameter_demand_cids,
+    )
+    if any(item is not None and item != [] for item in ownership):
+        if (
+            d.owner_source_identity_cid is None
+            or d.owner_definition_locus is None
+            or not d.formal_declarations
+        ):
+            raise ValueError("formal ownership testimony must be complete")
+        pairs.extend(
+            [
+                ("ownerSourceIdentityCid", vstr(d.owner_source_identity_cid)),
+                (
+                    "ownerDefinitionLocus",
+                    _json_like_to_value(d.owner_definition_locus),
+                ),
+                (
+                    "formalDeclarations",
+                    _json_like_to_value(d.formal_declarations),
+                ),
+                (
+                    "declaredDemandCids",
+                    _json_like_to_value(d.declared_parameter_demand_cids),
+                ),
+            ]
         )
     return vobj(pairs)
 
