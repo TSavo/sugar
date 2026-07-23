@@ -113,6 +113,7 @@ def builtin_name_temporal():
     from sugar_lift_py_tests.floor import (
         BlockValue,
         BuiltinExceptionClassValue,
+        BuiltinSemanticCallable,
         ClassValue,
         SymbolicValue,
     )
@@ -139,5 +140,11 @@ def builtin_name_temporal():
             name,
             BuiltinExceptionClassValue(name=name, bases=(), record=BlockValue(())),
         )
+    temporal = temporal.bind_value(
+        "issubclass", BuiltinSemanticCallable(operation="python.issubclass")
+    )
+    temporal = temporal.bind_value(
+        "set", BuiltinSemanticCallable(operation="python.set.construct")
+    )
     _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal

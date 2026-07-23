@@ -48,29 +48,156 @@ class SetValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
-    def subtract(self, other, site):
-        if type(other) is SetValue:
+    def contains(self, item, site):
+        decisions = tuple(_closed_member_equal(item, element) for element in self.elements)
+        if any(decision is True for decision in decisions):
+            return _bool_result(True, site)
+        if all(decision is False for decision in decisions):
+            return _bool_result(False, site)
+        if any(decision is None for decision in decisions):
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+            from sugar_lift_py_tests.ir import atomic
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(
-                SetValue(
-                    tuple(
-                        element
-                        for element in self.elements
-                        if element not in other.elements
-                    )
+                PredicateValue(
+                    atomic(
+                        "python.set.contains",
+                        [
+                            item.to_term(owner="python.set.contains member"),
+                            self.to_term(owner="python.set.contains set"),
+                        ],
+                    ),
+                    site,
+                    operand_callsites=(*item.callsites(), *self.callsites()),
                 )
             )
+        return _unsupported_member(item, site)
+
+    def subtract(self, other, site):
+        if type(other) is SetValue:
+            from sugar_lift_py_tests.outcome import Complete
+            result = _finite_difference(self.elements, other.elements)
+            if result is not None:
+                return Complete(SetValue(result))
+            return _symbolic_set_operation("python.set.difference", self, other, site)
         return super().subtract(other, site)
 
     def bitwise_or(self, other, site):
         if type(other) is SetValue:
-            del site
+            from sugar_lift_py_tests.outcome import Complete
+            result = _finite_union(self.elements, other.elements)
+            if result is not None:
+                return Complete(SetValue(result))
+            return _symbolic_set_operation("python.set.union", self, other, site)
+        return super().bitwise_or(other, site)
+
+    def bitwise_and(self, other, site):
+        if type(other) is SetValue:
             from sugar_lift_py_tests.outcome import Complete
 
-            elements = list(self.elements)
-            elements.extend(
-                element for element in other.elements if element not in elements
+            result = _finite_intersection(self.elements, other.elements)
+            if result is not None:
+                return Complete(SetValue(result))
+            return _symbolic_set_operation("python.set.intersection", self, other, site)
+        return super().bitwise_and(other, site)
+
+
+def _closed_member_equal(left, right):
+    from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if type(left) is SymbolicValue or type(right) is SymbolicValue:
+        return None
+    if type(left) is TermValue and type(right) is TermValue:
+        return left.value == right.value
+    if type(left) is StringValue and type(right) is StringValue:
+        return left.value == right.value
+    if type(left) is BytesValue and type(right) is BytesValue:
+        return left.value == right.value
+    if type(left) is NoneValue or type(right) is NoneValue:
+        return type(left) is type(right)
+    bool_types = (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
+    if type(left) in bool_types and type(right) in bool_types:
+        return type(left) is type(right)
+    supported = (TermValue, StringValue, BytesValue, NoneValue, *bool_types)
+    if type(left) in supported and type(right) in supported:
+        return False
+    return NotImplemented
+
+
+def _finite_union(left, right):
+    result = list(left)
+    for candidate in right:
+        decisions = tuple(_closed_member_equal(candidate, item) for item in result)
+        if any(decision is True for decision in decisions):
+            continue
+        if any(decision in (None, NotImplemented) for decision in decisions):
+            return None
+        result.append(candidate)
+    return tuple(result)
+
+
+def _finite_intersection(left, right):
+    result = []
+    for candidate in left:
+        decisions = tuple(_closed_member_equal(candidate, item) for item in right)
+        if any(decision is True for decision in decisions):
+            result.append(candidate)
+        elif any(decision in (None, NotImplemented) for decision in decisions):
+            return None
+    return tuple(result)
+
+
+def _finite_difference(left, right):
+    result = []
+    for candidate in left:
+        decisions = tuple(_closed_member_equal(candidate, item) for item in right)
+        if any(decision is True for decision in decisions):
+            continue
+        if any(decision in (None, NotImplemented) for decision in decisions):
+            return None
+        result.append(candidate)
+    return tuple(result)
+
+
+def _symbolic_set_operation(name, left, right, site):
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    return Complete(
+        SymbolicValue(
+            ctor(
+                name,
+                [left.to_term(owner=str(site)), right.to_term(owner=str(site))],
             )
-            return Complete(SetValue(tuple(elements)))
-        return super().bitwise_or(other, site)
+        )
+    )
+
+
+def _bool_result(value, site):
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    return Complete(
+        TrueBoolLiteralSugar(site=site) if value else FalseBoolLiteralSugar(site=site)
+    )
+
+
+def _unsupported_member(item, site):
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="SetValue.contains",
+        blame=str(site),
+        observed=type(item).__name__,
+        requested="constructed finite member or typed symbolic membership operand",
+        fix="construct member equality on the Python floor or keep it loud",
+    )

@@ -1957,6 +1957,10 @@ class ClassDef(Statement):
             span.end_line,
             span.end_col,
         )
+        formal_scope = {
+            param.name: self._make_constructor_coordinate_ref(param, coordinate)
+            for param, coordinate in zip(params, coordinates, strict=True)
+        }
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
             definition_site=site,
@@ -1977,13 +1981,22 @@ class ClassDef(Statement):
                 param.default.fragment.seal().cid if param.default is not None else None
                 for param in params
             ),
-            body=ClassConstructorBodySugar(
-                definition=self.sugar(),
-                initializer_body=None,
-                receiver_coordinate_cid=None,
-                site=self.fragment,
-            ),
+            body=self._source_visible_body(formal_scope),
             owner=self,
+        )
+
+    def _make_constructor_coordinate_ref(self, param: "Param", coordinate) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "BindingCoordinateRef",
+                param.span,
+                (("coordinate", Leaf(coordinate)),),
+            ),
+            self.reporter,
         )
 
     def _source_visible_body(self, scope):

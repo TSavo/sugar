@@ -140,6 +140,25 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def test_python_subtype(self, supertype, site):
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "python.subtype",
+                    [
+                        self.to_term(owner="python.issubclass subtype"),
+                        supertype.to_term(owner="python.issubclass supertype"),
+                    ],
+                ),
+                site,
+                operand_callsites=(*self.callsites(), *supertype.callsites()),
+            )
+        )
+
     def to_term(self, *, owner: str):
         del owner
         return self.term
