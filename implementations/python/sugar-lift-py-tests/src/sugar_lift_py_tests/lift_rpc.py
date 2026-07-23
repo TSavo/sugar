@@ -385,7 +385,7 @@ def _cache_cardinalities() -> tuple[int, int]:
     source_entries = 0
     source_module = sys.modules.get("sugar_lift_python_source.source_tables")
     if source_module is not None:
-        for name in ("source_splitlines", "source_lines", "_parsed", "parsed_parents"):
+        for name in ("source_splitlines", "source_lines", "_parsed"):
             cached = getattr(source_module, name, None)
             if cached is not None and hasattr(cached, "cache_info"):
                 source_entries += cached.cache_info().currsize

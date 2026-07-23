@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import importlib.machinery
 import os
+import sys
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,17 @@ from .ast_template import (
 from .bind_lifter import _body_source_locator
 from .canonical import blake3_512_of, template_cid_of_json
 from .source_tables import parsed_tree, source_segment, source_splitlines
+
+
+def _source_file_cls():
+    """Lazy SourceFile import — tree imports this module for path_source."""
+    _tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+    if _tree_src.is_dir() and str(_tree_src) not in sys.path:
+        sys.path.insert(0, str(_tree_src))
+    from sugar_source_tree.backend import BackendCouldNotParse
+    from sugar_source_tree.tree import SourceFile
+
+    return SourceFile, BackendCouldNotParse
 
 
 class SourceUnavailable(Exception):
@@ -60,7 +72,8 @@ def installed_module_source(
 
     The returned identity is ``(source, filename, content CID)``.  Callers may
     derive views from it, but must not independently discover/read/parse the
-    module.  Content-keyed ``parsed_tree`` then owns the one parsed AST.
+    module.  ``SourceFile`` is the parse gate; residual dual-path consumers
+    may still re-parse for template recompute until those paths are drained.
 
     Successful answers partition by authenticated source CID and source seat.
     Discovery re-reads installed bytes so content drift and late appearance
@@ -106,10 +119,13 @@ def installed_module_source(
         return cached
 
     # Parse before publishing a successful oracle answer. Syntax failures are
-    # not cached as completed source.
+    # not cached as completed source. SourceFile is the sole parse door —
+    # adapters own foreign grammar; this layer only admits successfully typed
+    # modules into the oracle cache.
+    SourceFile, BackendCouldNotParse = _source_file_cls()
     try:
-        parsed_tree(source, origin)
-    except SyntaxError:
+        SourceFile((source, origin, source_cid))
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
         return None
 
     result = (source, origin, source_cid)

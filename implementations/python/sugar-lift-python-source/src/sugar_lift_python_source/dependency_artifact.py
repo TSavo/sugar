@@ -12,12 +12,24 @@ from dataclasses import dataclass, field
 from email.parser import BytesParser
 import importlib.metadata
 from pathlib import Path, PurePosixPath
+import sys
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 from .canonical import blake3_512_of, cid_of_json
 from .source_oracle import SourceUnavailable, dependency_artifact_file
 from .source_tables import parsed_tree
+
+
+def _source_file_cls():
+    """Lazy SourceFile — avoid circular import with source_oracle/tree."""
+    _tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+    if _tree_src.is_dir() and str(_tree_src) not in sys.path:
+        sys.path.insert(0, str(_tree_src))
+    from sugar_source_tree.backend import BackendCouldNotParse
+    from sugar_source_tree.tree import SourceFile
+
+    return SourceFile, BackendCouldNotParse
 
 
 class DependencyArtifactAuthenticationError(Exception):
@@ -443,10 +455,13 @@ class DependencyArtifactGraph:
             module_name = _module_name(relative)
             if module_name is None:
                 continue
+            SourceFile, BackendCouldNotParse = _source_file_cls()
             try:
                 source = content.decode("utf-8")
-                parsed_tree(source, str(path))
-            except (UnicodeError, SyntaxError) as exc:
+                # Parse gate through SourceFile (typed tree). Export resolution
+                # still uses residual parsed_tree until that scan is typed.
+                SourceFile((source, str(path), content_cid))
+            except (UnicodeError, SyntaxError, BackendCouldNotParse, ValueError) as exc:
                 raise DependencyArtifactAuthenticationError(
                     f"recorded Python module {module_name} is not parseable UTF-8 source"
                 ) from exc

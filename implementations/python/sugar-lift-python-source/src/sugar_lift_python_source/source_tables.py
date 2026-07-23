@@ -23,18 +23,13 @@ from __future__ import annotations
 
 import ast
 import functools
-import symtable
 
 __all__ = [
     "SOURCE_TABLE_CAPACITY",
-    "locate_parsed_node",
-    "parsed_locus_index",
-    "parsed_parents",
     "parsed_tree",
     "source_lines",
     "source_segment",
     "source_splitlines",
-    "source_symtable",
 ]
 
 # Align with install-source index capacity (install_source_dig): hot working
@@ -96,78 +91,11 @@ def parsed_tree(source: str, filename: str = "<unknown>") -> ast.Module:
 
     Raises SyntaxError exactly as `ast.parse` does (the raise recurs on every
     call for the same source; failures are not cached).
+
+    Dual-path residual: production construction should enter through
+    ``SourceFile`` / typed Nodes. Remaining callers (bind_lifter / source_oracle
+    template recompute / dependency_artifact export scan) still pin this table
+    until those paths are drained. Parent maps, locus indexes, and symtable
+    caches that had no production callers were deleted rather than rewritten.
     """
     return _parsed(source, filename)
-
-
-@functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
-def parsed_parents(source: str) -> "tuple[ast.Module, dict[ast.AST, ast.AST]] | None":
-    """The parsed tree plus its child->parent map, or None on a syntax error.
-
-    One parse and one walk per source; every ancestor query over the same
-    module shares the same table.
-    """
-    try:
-        tree = parsed_tree(source)
-    except SyntaxError:
-        return None
-    parents = {
-        child: parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
-    }
-    return tree, parents
-
-
-@functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
-def parsed_locus_index(
-    source: str,
-) -> "dict[tuple[type, int, int], ast.AST] | None":
-    """Map ``(type(node), lineno, col_offset)`` → node for one source.
-
-    Call-site recognizers re-resolve a SourceFragment's locus against the
-    content-keyed parse. A full ``ast.walk`` per site is O(module × sites) and
-    dominated factory.select wall on large modules (BuiltinCalleeUniverseSugar
-    / visible_declarations). One index walk per source is the replacement.
-    """
-    try:
-        tree = parsed_tree(source)
-    except SyntaxError:
-        return None
-    index: dict[tuple[type, int, int], ast.AST] = {}
-    for node in ast.walk(tree):
-        lineno = getattr(node, "lineno", None)
-        col = getattr(node, "col_offset", None)
-        if lineno is None or col is None:
-            continue
-        index[(type(node), int(lineno), int(col))] = node
-    return index
-
-
-def locate_parsed_node(
-    source: str,
-    node_type: type,
-    line: int,
-    col: int,
-) -> ast.AST | None:
-    """O(1) locus lookup against the content-keyed index (None if missing)."""
-    index = parsed_locus_index(source)
-    if index is None:
-        return None
-    return index.get((node_type, int(line), int(col)))
-
-
-@functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
-def source_symtable(source: str) -> "symtable.SymbolTable | None":
-    """Content-keyed ``symtable.symtable`` for one module source.
-
-    ``lexical_function_bindings`` re-enters symbol-table construction for every
-    Call site during factory.select. A full re-parse per site is O(module ×
-    sites) and dominated residual wall after parsed_locus_index drained the
-    AST-walk half of the same path. One table per source is the replacement;
-    failures are not cached (SyntaxError returns None each call).
-    """
-    try:
-        return symtable.symtable(source, "<unknown>", "exec")
-    except SyntaxError:
-        return None
