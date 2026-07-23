@@ -45,6 +45,9 @@ from .operators import (
     ComparisonOperator,
     UnaryOperator,
 )
+
+
+_FUNCTION_CONSTRUCTION_NODE_LIMIT = 1024
 from .panic import (
     backend_defect,
     RuntimeSelectedContextManager,
@@ -1687,6 +1690,18 @@ class FunctionDef(Statement):
         it. A body statement whose sugar is not written yet raises
         SugarNotWritten from its own `.sugar()`, which propagates out here.
         """
+        for count, _node in enumerate(self.walk(), start=1):
+            if count > _FUNCTION_CONSTRUCTION_NODE_LIMIT:
+                raise SugarNotWritten(
+                    owner="FunctionDef._construct_sugar",
+                    observed=(
+                        "authenticated function exceeds the structural "
+                        f"expansion bound of {_FUNCTION_CONSTRUCTION_NODE_LIMIT} nodes"
+                    ),
+                    requested="a bounded substituted function construction",
+                    fix="split the definition or keep its construction typed-loud",
+                )
+
         from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             FunctionUniverseSugar,
