@@ -100,6 +100,11 @@ class CallSiteValue(FloorValue):
     # Issued by a registered Call Sugar from an authenticated import target.
     # The target spelling alone never grants native behavior.
     native_shape: object | None = None
+    # Semantic ContractDecl CID installed by the linker authority. This is
+    # never an attestation/member CID and is absent for ordinary unresolved
+    # call sites.
+    target_contract_cid: str | None = dataclass_field(default=None, compare=False)
+    authenticated_target_symbol: str | None = dataclass_field(default=None, compare=False)
 
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
@@ -788,8 +793,10 @@ class CallSiteValue(FloorValue):
         edge = {
             "kind": "call-edge",
             "sourceContract": source_contract,
-            "targetSymbol": f"call:{self.target_name}",
+            "targetSymbol": self.authenticated_target_symbol or f"call:{self.target_name}",
         }
+        if self.target_contract_cid is not None:
+            edge["targetContractCid"] = self.target_contract_cid
         if self.site is not None:
             edge["callSiteLocus"] = {
                 "file": self.site.filename,

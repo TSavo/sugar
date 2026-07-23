@@ -95,6 +95,7 @@ pub struct LiftPluginKit {
     resident_max_requests: usize,
     terminal_error: std::sync::Arc<Mutex<Option<LiftPluginKitError>>>,
     contract_ref_generation: std::sync::Arc<Mutex<Option<(String, String)>>>,
+    call_contract_ref_generation: std::sync::Arc<Mutex<Option<(String, String)>>>,
 }
 
 struct ResidentSlot(Mutex<Option<ResidentLifter>>);
@@ -188,6 +189,7 @@ impl LiftPluginKit {
             resident_max_requests,
             terminal_error: std::sync::Arc::new(Mutex::new(None)),
             contract_ref_generation: std::sync::Arc::new(Mutex::new(None)),
+            call_contract_ref_generation: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 
@@ -279,6 +281,29 @@ impl LiftPluginKit {
             .lock()
             .map_err(|_| {
                 LiftPluginKitError::Failed("contract-ref generation lock poisoned".into())
+            })?
+            .clone())
+    }
+
+    pub(crate) fn install_call_contract_ref_generation(
+        &self,
+        catalog_cid: String,
+        table_cid: String,
+    ) -> Result<(), LiftPluginKitError> {
+        *self.call_contract_ref_generation.lock().map_err(|_| {
+            LiftPluginKitError::Failed("call-contract-ref generation lock poisoned".into())
+        })? = Some((catalog_cid, table_cid));
+        Ok(())
+    }
+
+    pub(crate) fn call_contract_ref_generation(
+        &self,
+    ) -> Result<Option<(String, String)>, LiftPluginKitError> {
+        Ok(self
+            .call_contract_ref_generation
+            .lock()
+            .map_err(|_| {
+                LiftPluginKitError::Failed("call-contract-ref generation lock poisoned".into())
             })?
             .clone())
     }

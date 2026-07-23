@@ -285,6 +285,520 @@ pub struct SourceFragmentCoordinateV1 {
     pub end_col: usize,
 }
 
+// Authenticated imported-call preconstruction resolution (#6086)
+// -------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallContractDemandV1 {
+    pub demand_cid: Cid,
+    pub use_site: SourceFragmentCoordinateV1,
+    pub import_binding_cid: Cid,
+    pub target_symbol: Symbol,
+    pub import_signature: ImportSignatureV1,
+}
+
+impl CallContractDemandV1 {
+    pub fn new(
+        use_site: SourceFragmentCoordinateV1,
+        import_binding_cid: Cid,
+        target_symbol: Symbol,
+        formals: Vec<String>,
+        sorts: Vec<Sort>,
+    ) -> Self {
+        let import_signature = ImportSignatureV1 { formals, sorts };
+        let preimage = serde_json::json!({
+            "useSite": use_site,
+            "importBindingCid": import_binding_cid,
+            "targetSymbol": target_symbol,
+            "importSignature": import_signature_to_json(&import_signature),
+            "expectedKind": "function-contract",
+        });
+        Self {
+            demand_cid: Cid::from(jcs_cid(&preimage)),
+            use_site,
+            import_binding_cid,
+            target_symbol,
+            import_signature,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AuthenticatedCallContract {
+    member_cid: Cid,
+    contract_cid: Cid,
+    bridge_source_symbol: Symbol,
+    import_signature: ImportSignatureV1,
+    return_term: Option<Json>,
+    source_warrant_cids: Vec<Cid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticatedCallContractCatalog {
+    catalog_cid: Cid,
+    contracts: Vec<AuthenticatedCallContract>,
+}
+
+impl AuthenticatedCallContractCatalog {
+    pub fn freeze(members: Vec<(Cid, Json)>) -> Result<Self, String> {
+        let mut contracts = Vec::new();
+        let mut member_cids = Vec::new();
+        for (member_cid, envelope) in members {
+            let typed = MementoCid::try_parse(member_cid.as_str().to_string())
+                .map_err(|bad| format!("invalid catalog member CID: {bad}"))?;
+            AnchoredMember::new(typed.clone(), envelope.clone())?;
+            let member = StoredMember::from_envelope(typed, &envelope)
+                .map_err(|error| format!("invalid catalog member: {error}"))?;
+            member_cids.push(member_cid.clone());
+            if let Some(contract) = authenticated_call_contract(member_cid, &member, None)? {
+                contracts.push(contract);
+            }
+        }
+        member_cids.sort();
+        let catalog_cid = Cid::from(jcs_cid(&serde_json::json!({"memberCids": member_cids})));
+        Ok(Self {
+            catalog_cid,
+            contracts,
+        })
+    }
+
+    pub fn catalog_cid(&self) -> &Cid {
+        &self.catalog_cid
+    }
+
+    pub fn freeze_from_pool(pool: &MementoPool) -> Result<Self, String> {
+        for cid in pool.mementos.keys() {
+            let attributed = pool.member_speaker(cid).is_some();
+            let enrolled = pool
+                .bundle_members
+                .values()
+                .any(|members| members.contains(cid));
+            if !attributed || !enrolled {
+                return Err(format!(
+                    "unauthenticated-member: {cid} lacks verified pool intake testimony"
+                ));
+            }
+        }
+        let mut contracts = Vec::new();
+        let mut member_cids = Vec::new();
+        let resolved_bodies = pool
+            .contract_members_with_bodies()
+            .map(|(cid, body)| (cid.clone(), body))
+            .collect::<BTreeMap<_, _>>();
+        for (cid, member) in &pool.mementos {
+            let member_cid = Cid::from(cid.as_str());
+            member_cids.push(member_cid.clone());
+            if let Some(contract) =
+                authenticated_call_contract(member_cid, member, resolved_bodies.get(cid))?
+            {
+                contracts.push(contract);
+            }
+        }
+        member_cids.sort();
+        let catalog_cid = Cid::from(jcs_cid(&serde_json::json!({"memberCids": member_cids})));
+        Ok(Self {
+            catalog_cid,
+            contracts,
+        })
+    }
+}
+
+fn authenticated_call_contract(
+    member_cid: Cid,
+    member: &StoredMember,
+    resolved_body: Option<&Json>,
+) -> Result<Option<AuthenticatedCallContract>, String> {
+    if member.kind() != MemberKind::Contract {
+        return Ok(None);
+    }
+    let Some(symbol) = member.field("bridgeSourceSymbol").and_then(Json::as_str) else {
+        return Ok(None);
+    };
+    let contract_cid = member
+        .field("cid")
+        .and_then(Json::as_str)
+        .ok_or_else(|| format!("contract member {member_cid} lacks semantic cid"))?;
+    let formals = member
+        .field("formals")
+        .and_then(Json::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| "contract formal is not a string".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let sorts = member
+        .field("formalSorts")
+        .and_then(Json::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .cloned()
+                .map(|value| {
+                    serde_json::from_value::<Sort>(value)
+                        .map_err(|error| format!("malformed contract formal sort: {error}"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if formals.len() != sorts.len() {
+        return Err(format!(
+            "contract member {member_cid} has signature arity mismatch"
+        ));
+    }
+    let post = resolved_body
+        .and_then(|body| body.get("post"))
+        .or_else(|| member.field("post"));
+    let return_term = post.and_then(exact_return_term).filter(|term| {
+        let mut free = BTreeSet::new();
+        collect_term_vars(term, &mut free);
+        free.iter().all(|name| formals.contains(name))
+    });
+    Ok(Some(AuthenticatedCallContract {
+        member_cid,
+        contract_cid: Cid::from(contract_cid),
+        bridge_source_symbol: symbol.into(),
+        import_signature: ImportSignatureV1 { formals, sorts },
+        return_term,
+        source_warrant_cids: Vec::new(),
+    }))
+}
+
+fn exact_return_term(post: &Json) -> Option<Json> {
+    let object = post.as_object()?;
+    if object.get("kind")?.as_str()? != "atomic" || object.get("name")?.as_str()? != "=" {
+        return None;
+    }
+    let args = object.get("args")?.as_array()?;
+    if args.len() != 2
+        || args[0].get("kind")?.as_str()? != "var"
+        || args[0].get("name")?.as_str()? != "out"
+    {
+        return None;
+    }
+    Some(args[1].clone())
+}
+
+fn collect_term_vars(term: &Json, free: &mut BTreeSet<String>) {
+    let Some(object) = term.as_object() else {
+        return;
+    };
+    match object.get("kind").and_then(Json::as_str) {
+        Some("var") => {
+            if let Some(name) = object.get("name").and_then(Json::as_str) {
+                free.insert(name.to_string());
+            }
+        }
+        Some("ctor") => {
+            if let Some(args) = object.get("args").and_then(Json::as_array) {
+                for arg in args {
+                    collect_term_vars(arg, free);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CallContractResolutionGapKindV1 {
+    TargetNotInCorpus,
+    NoAuthenticatedContract,
+    AmbiguousTarget,
+    ImportSignatureMismatch,
+    WrongContractKind,
+    StaleOrMalformedContractRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallContractResolutionGapV1 {
+    pub demand_cid: Cid,
+    pub use_site: SourceFragmentCoordinateV1,
+    pub import_binding_cid: Cid,
+    pub target_symbol: Symbol,
+    pub kind: CallContractResolutionGapKindV1,
+    pub candidate_member_cids: Vec<Cid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCallContractRefV1 {
+    resolution_cid: Cid,
+    demand_cid: Cid,
+    use_site: SourceFragmentCoordinateV1,
+    import_binding_cid: Cid,
+    catalog_cid: Cid,
+    member_cid: Cid,
+    contract_cid: Cid,
+    bridge_source_symbol: Symbol,
+    import_signature: ImportSignatureV1,
+    return_term: Option<Json>,
+    source_warrant_cids: Vec<Cid>,
+}
+
+impl ResolvedCallContractRefV1 {
+    pub fn member_cid(&self) -> &Cid {
+        &self.member_cid
+    }
+    pub fn contract_cid(&self) -> &Cid {
+        &self.contract_cid
+    }
+    pub fn catalog_cid(&self) -> &Cid {
+        &self.catalog_cid
+    }
+    pub fn return_term(&self) -> Option<&Json> {
+        self.return_term.as_ref()
+    }
+    pub fn import_binding_cid(&self) -> &Cid {
+        &self.import_binding_cid
+    }
+
+    pub fn to_call_edge(
+        &self,
+        source_contract_cid: Cid,
+        call_site_locus: Option<CallSiteLocus>,
+    ) -> LinkerCallEdge {
+        LinkerCallEdge {
+            source_contract_cid,
+            target_contract_cid: Some(self.contract_cid.clone()),
+            target_symbol: self.bridge_source_symbol.clone(),
+            call_site_locus,
+            import_signature: Some(ImportSignature {
+                symbol: self.bridge_source_symbol.clone(),
+                signature: Signature {
+                    formals: self.import_signature.formals.clone(),
+                    sorts: self.import_signature.sorts.clone(),
+                    euf_coordinate: None,
+                },
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallContractResolutionV1 {
+    Resolved(ResolvedCallContractRefV1),
+    Unresolved(CallContractResolutionGapV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCallContractRefsV1 {
+    catalog_cid: Cid,
+    table_cid: Cid,
+    by_use_site: BTreeMap<SourceFragmentCoordinateV1, CallContractResolutionV1>,
+}
+
+impl ResolvedCallContractRefsV1 {
+    pub fn new(
+        catalog: &AuthenticatedCallContractCatalog,
+        demands: &[CallContractDemandV1],
+    ) -> Self {
+        let by_use_site = demands
+            .iter()
+            .map(|demand| {
+                (
+                    demand.use_site.clone(),
+                    resolve_call_contract_demand(demand, catalog),
+                )
+            })
+            .collect();
+        let mut table = Self {
+            catalog_cid: catalog.catalog_cid.clone(),
+            table_cid: Cid::from(""),
+            by_use_site,
+        };
+        table.table_cid = Cid::from(jcs_cid(&table.identity_value()));
+        table
+    }
+
+    pub fn table_cid(&self) -> &Cid {
+        &self.table_cid
+    }
+
+    pub fn final_check(
+        &self,
+        catalog: &AuthenticatedCallContractCatalog,
+    ) -> Result<(), CallContractResolutionGapKindV1> {
+        if self.catalog_cid != catalog.catalog_cid {
+            return Err(CallContractResolutionGapKindV1::StaleOrMalformedContractRef);
+        }
+        for resolution in self.by_use_site.values() {
+            if let CallContractResolutionV1::Resolved(reference) = resolution {
+                final_check_call_contract_ref(reference, catalog)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn to_wire_value(&self) -> Json {
+        let mut value = self.identity_value();
+        value
+            .as_object_mut()
+            .expect("table object")
+            .insert("tableCid".into(), Json::String(self.table_cid.to_string()));
+        value
+    }
+
+    fn identity_value(&self) -> Json {
+        let rows = self
+            .by_use_site
+            .iter()
+            .map(|(use_site, resolution)| {
+                serde_json::json!({
+                    "useSite": use_site,
+                    "resolution": call_resolution_to_json(resolution),
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "kind": "resolved-call-contract-refs",
+            "schemaVersion": "1",
+            "catalogCid": self.catalog_cid,
+            "byUseSite": rows,
+        })
+    }
+}
+
+fn call_resolution_to_json(resolution: &CallContractResolutionV1) -> Json {
+    match resolution {
+        CallContractResolutionV1::Resolved(reference) => serde_json::json!({
+            "kind": "resolved",
+            "reference": {
+                "kind": "resolved-call-contract-ref",
+                "schemaVersion": "1",
+                "resolutionCid": reference.resolution_cid,
+                "demandCid": reference.demand_cid,
+                "useSite": reference.use_site,
+                "importBindingCid": reference.import_binding_cid,
+                "catalogCid": reference.catalog_cid,
+                "memberCid": reference.member_cid,
+                "contractCid": reference.contract_cid,
+                "bridgeSourceSymbol": reference.bridge_source_symbol,
+                "importSignature": import_signature_to_json(&reference.import_signature),
+                "returnTerm": reference.return_term,
+                "sourceWarrantCids": reference.source_warrant_cids,
+            },
+        }),
+        CallContractResolutionV1::Unresolved(gap) => serde_json::json!({
+            "kind": "unresolved",
+            "gap": {
+                "demandCid": gap.demand_cid,
+                "useSite": gap.use_site,
+                "importBindingCid": gap.import_binding_cid,
+                "targetSymbol": gap.target_symbol,
+                "kind": gap.kind,
+                "candidateMemberCids": gap.candidate_member_cids,
+            },
+        }),
+    }
+}
+
+pub fn resolve_call_contract_demand(
+    demand: &CallContractDemandV1,
+    catalog: &AuthenticatedCallContractCatalog,
+) -> CallContractResolutionV1 {
+    let mut candidates = catalog
+        .contracts
+        .iter()
+        .filter(|candidate| candidate.bridge_source_symbol == demand.target_symbol)
+        .collect::<Vec<_>>();
+    let gap = |kind, mut cids: Vec<Cid>| {
+        cids.sort();
+        CallContractResolutionV1::Unresolved(CallContractResolutionGapV1 {
+            demand_cid: demand.demand_cid.clone(),
+            use_site: demand.use_site.clone(),
+            import_binding_cid: demand.import_binding_cid.clone(),
+            target_symbol: demand.target_symbol.clone(),
+            kind,
+            candidate_member_cids: cids,
+        })
+    };
+    if candidates.is_empty() {
+        return gap(CallContractResolutionGapKindV1::TargetNotInCorpus, vec![]);
+    }
+    if candidates.len() > 1 {
+        return gap(
+            CallContractResolutionGapKindV1::AmbiguousTarget,
+            candidates
+                .iter()
+                .map(|candidate| candidate.member_cid.clone())
+                .collect(),
+        );
+    }
+    let candidate = candidates.pop().expect("one candidate");
+    let signature_matches = demand.import_signature.sorts.len()
+        == candidate.import_signature.sorts.len()
+        && (demand.import_signature.formals.is_empty()
+            || candidate.import_signature.formals == demand.import_signature.formals)
+        && candidate.import_signature.sorts == demand.import_signature.sorts;
+    if !signature_matches {
+        return gap(
+            CallContractResolutionGapKindV1::ImportSignatureMismatch,
+            vec![candidate.member_cid.clone()],
+        );
+    }
+    let preimage = serde_json::json!({
+        "schemaVersion": "1",
+        "demandCid": demand.demand_cid,
+        "useSite": demand.use_site,
+        "importBindingCid": demand.import_binding_cid,
+        "catalogCid": catalog.catalog_cid,
+        "memberCid": candidate.member_cid,
+        "contractCid": candidate.contract_cid,
+        "bridgeSourceSymbol": candidate.bridge_source_symbol,
+        "importSignature": import_signature_to_json(&candidate.import_signature),
+        "returnTerm": candidate.return_term,
+        "sourceWarrantCids": candidate.source_warrant_cids,
+    });
+    CallContractResolutionV1::Resolved(ResolvedCallContractRefV1 {
+        resolution_cid: Cid::from(jcs_cid(&preimage)),
+        demand_cid: demand.demand_cid.clone(),
+        use_site: demand.use_site.clone(),
+        import_binding_cid: demand.import_binding_cid.clone(),
+        catalog_cid: catalog.catalog_cid.clone(),
+        member_cid: candidate.member_cid.clone(),
+        contract_cid: candidate.contract_cid.clone(),
+        bridge_source_symbol: candidate.bridge_source_symbol.clone(),
+        import_signature: candidate.import_signature.clone(),
+        return_term: candidate.return_term.clone(),
+        source_warrant_cids: candidate.source_warrant_cids.clone(),
+    })
+}
+
+pub fn final_check_call_contract_ref(
+    reference: &ResolvedCallContractRefV1,
+    catalog: &AuthenticatedCallContractCatalog,
+) -> Result<(), CallContractResolutionGapKindV1> {
+    if reference.catalog_cid != catalog.catalog_cid {
+        return Err(CallContractResolutionGapKindV1::StaleOrMalformedContractRef);
+    }
+    let demand = CallContractDemandV1 {
+        demand_cid: reference.demand_cid.clone(),
+        use_site: reference.use_site.clone(),
+        import_binding_cid: reference.import_binding_cid.clone(),
+        target_symbol: reference.bridge_source_symbol.clone(),
+        import_signature: reference.import_signature.clone(),
+    };
+    match resolve_call_contract_demand(&demand, catalog) {
+        CallContractResolutionV1::Resolved(now)
+            if now.resolution_cid == reference.resolution_cid
+                && now.contract_cid == reference.contract_cid
+                && now.member_cid == reference.member_cid =>
+        {
+            Ok(())
+        }
+        _ => Err(CallContractResolutionGapKindV1::StaleOrMalformedContractRef),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextManagerContractDemandV1 {
     pub demand_cid: Cid,
