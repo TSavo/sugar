@@ -15,6 +15,7 @@ from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .builtin_exception_class_value import BuiltinExceptionClassValue
 from .call_site_value import CallSiteValue
+from .class_definition_value import ClassDefinitionValue, ConstructedClassMethodV1
 from .curried_loop_scope import CurriedLoopBody, CurriedLoopScope
 from .class_value import ClassValue
 from .comprehension_value import ComprehensionValue

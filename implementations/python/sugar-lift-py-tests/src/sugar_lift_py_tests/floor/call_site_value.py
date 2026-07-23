@@ -108,6 +108,7 @@ class CallSiteValue(FloorValue):
     authenticated_target_symbol: str | None = dataclass_field(
         default=None, compare=False
     )
+    source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
 
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
@@ -1140,6 +1141,12 @@ def _reduce_callsite_body(
     *,
     blame: str,
 ):
+    from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+        SourceVisibleFunctionBodySugar,
+    )
+
+    if isinstance(body, SourceVisibleFunctionBodySugar):
+        return body.desugar(ctx)
     if isinstance(body, SugarBody):
         return body.reduce(ctx)
     if isinstance(body, FunctionBodyUniverse):

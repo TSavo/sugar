@@ -1084,6 +1084,50 @@ class FunctionDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
+    def source_visible_call_frame(self):
+        """Construct this callable body through the ordinary node/Sugar door.
+
+        Parameterized frames require the shared BindingCoordinateV1 owner.  The
+        coordinate-free zero-parameter arm can already carry its exact body;
+        it is built from the same substituted statement nodes as `_construct_sugar`.
+        """
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.source_call_frame import (
+            AwaitingBindingCoordinateCallFrameV1,
+            SourceVisibleCallFrameV1,
+        )
+
+        span = self.line_col_span()
+        site = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+        parameters = tuple(param.name for param in self.params)
+        if parameters:
+            return AwaitingBindingCoordinateCallFrameV1(
+                self.unit.source_cid, site, parameters
+            )
+        from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+            SourceVisibleFunctionBodySugar,
+        )
+
+        substituted = self.substitute({})
+        body = SourceVisibleFunctionBodySugar(
+            tuple(statement.sugar() for statement in substituted.body), self.fragment
+        )
+        return SourceVisibleCallFrameV1(
+            source_identity_cid=self.unit.source_cid,
+            definition_site=site,
+            definition_fragment_cid=self.fragment.seal().cid,
+            parameters=(),
+            body=body,
+        )
+
     def substitute(self, scope):
         """The first MASKING node: a function opens a scope. Its parameters
         (and any PEP 695 type parameters) bind their names, and ONLY THE BODY
@@ -1245,6 +1289,44 @@ class ClassDef(Statement):
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
+
+    def _construct_sugar(self):
+        """Construct source-visible class structure through child method Sugars.
+
+        Instantiation/receiver fields remain a typed coordinate gap in the
+        resulting floor value.  No class body is interpreted beside this door.
+        """
+        methods = tuple(item for item in self.body if isinstance(item, FunctionDef))
+        unsupported = tuple(
+            item for item in self.body if not isinstance(item, (FunctionDef, Pass))
+        )
+        if unsupported:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="ClassDef._construct_sugar",
+                observed=f"unsupported class member {unsupported[0].kind}",
+                requested="a total source-visible class member construction arm",
+                fix="add the member's ordinary node Sugar arm or keep the class loud",
+            )
+        from sugar_lift_py_tests.floor import ConstructedClassMethodV1
+        from sugar_lift_py_tests.sugar.class_definition_sugar import (
+            ClassDefinitionSugar,
+        )
+
+        constructed = tuple(
+            ConstructedClassMethodV1(
+                method.name, method.fragment.seal().cid, method.sugar()
+            )
+            for method in methods
+        )
+        return ClassDefinitionSugar(
+            class_name=self.name,
+            source_identity_cid=self.unit.source_cid,
+            definition_fragment_cid=self.fragment.seal().cid,
+            methods=constructed,
+            site=self.fragment,
+        )
 
 
 class Return(Statement):
@@ -4092,6 +4174,23 @@ class Call(Expression):
                 elif resolution is not None:
                     contract_ref = resolution
 
+            source_call_frame = None
+            frames = getattr(context, "source_call_frames", None)
+            if frames is not None:
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    SourceFragmentCoordinateV1,
+                )
+
+                span = self.line_col_span()
+                coordinate = SourceFragmentCoordinateV1(
+                    self.unit.source_cid,
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                )
+                source_call_frame = frames.get(coordinate)
+
             return CallSiteSugar(
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
@@ -4099,6 +4198,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
+                source_call_frame=source_call_frame,
             )
         if isinstance(self.func, Attribute):
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
