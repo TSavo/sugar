@@ -1,10 +1,10 @@
-"""Permanent floor: construction-path side doors stay measured and red.
+"""Permanent floor: construction-path side doors stay measured at stable zero.
 
 Green only when meaning is tree + prebound authenticated contract refs only.
 This suite proves the instrument discriminates planted twins, stays quiet on
-clean trees / adapters, holds sole-path packages at R=0, and keeps the live
-default scan red while dual-body residual remains under sugar-lift-python-
-source. It does not allowlist dual-body doors.
+clean trees / adapters, and holds every live production root at R=0. Any planted
+side door still makes the same scanner and CLI report red; zero is measured,
+never inferred from a missing run.
 """
 
 from __future__ import annotations
@@ -214,8 +214,8 @@ def test_sole_path_packages_are_green() -> None:
     assert sole_foreign == []
 
 
-def test_live_repository_is_red_while_dual_body_residual_remains() -> None:
-    """Default roots stay RED while dual-body sugar-lift-python-source has debt."""
+def test_live_repository_is_green_at_stable_zero() -> None:
+    """Default roots stay green only while every measured axis is empty."""
     roots = _SCANNER.default_production_roots()
     offenders = _SCANNER.scan_roots(roots)
     r = _SCANNER.r_construction_side_doors(offenders)
@@ -223,63 +223,56 @@ def test_live_repository_is_red_while_dual_body_residual_remains() -> None:
     axes = _SCANNER.r_by_axis(offenders)
 
     assert err == 0, _SCANNER.format_report(offenders)
-    assert r > 0, (
-        "expected dual-body residual under sugar-lift-python-source; default "
-        "scan must stay red until that construction body is retired or routed "
-        "through the sole path"
-    )
-    assert axes["foreign-ast-import"] > 0, (
-        "R_foreign_ast_import must stay red while dual-body packages above "
-        "adapters still import stdlib ast"
-    )
-    foreign_paths = {
-        row.path
-        for row in offenders
-        if row.kind == "foreign-ast-import"
-    }
-    # Dual construction body still on the production path — do not allowlist.
-    assert any("sugar_lift_python_source" in p for p in foreign_paths)
-    # Sole-path drained modules are not residual debt.
-    assert not any("import_binding" in p for p in foreign_paths)
-    assert not any("contract_expression" in p for p in foreign_paths)
-
-    debt = [row for row in offenders if row.kind in _SCANNER._SIDE_DOOR_KINDS]
-    assert debt
-    assert all(row.axis and row.kind for row in debt)
-    assert all("sugar_lift_python_source" in row.path for row in debt)
-    assert (
-        axes["foreign-ast-import"] > 0
-        or axes["ast-semantic-above-adapter"] > 0
-        or axes["membrane-admission"] > 0
-        or axes["dual-old-lifter"] > 0
-    )
+    assert r == 0, _SCANNER.format_report(offenders)
+    assert offenders == []
+    assert all(value == 0 for value in axes.values())
 
     code = _SCANNER.main([])
-    assert code == 1
+    assert code == 0
 
 
-def test_main_json_reports_r_and_offenders(capsys) -> None:
+def test_main_json_reports_green_zero_and_empty_offenders(capsys) -> None:
     code = _SCANNER.main([])
-    assert code == 1
+    assert code == 0
     captured = capsys.readouterr()
     # Last non-empty line is the JSON summary.
     lines = [line for line in captured.out.splitlines() if line.strip()]
     summary = json.loads(lines[-1])
     assert summary["instrument"] == "R_construction_side_doors"
+    assert summary["ok"] is True
+    assert summary["R_construction_side_doors"] == 0
+    assert summary["R_sole_path_construction_side_doors"] == 0
+    assert summary["R_foreign_ast_import"] == 0
+    assert summary["R_ast_semantic_above_adapter"] == 0
+    assert summary["R_membrane_admission"] == 0
+    assert summary["R_dual_old_lifter"] == 0
+    assert summary["auditor_errors"] == 0
+    assert summary["offenders"] == []
+
+
+def test_main_json_turns_red_for_planted_side_door(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    pkg = tmp_path / "sugar_lift_py_tests"
+    pkg.mkdir()
+    (pkg / "import_binding.py").write_text(
+        "import ast\n\ndef parse_again(source):\n    return ast.parse(source)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        _SCANNER, "default_production_roots", lambda _repo=None: (pkg,)
+    )
+
+    code = _SCANNER.main([])
+    assert code == 1
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    summary = json.loads(lines[-1])
     assert summary["ok"] is False
     assert summary["R_construction_side_doors"] > 0
-    assert summary["R_sole_path_construction_side_doors"] == 0
     assert summary["R_foreign_ast_import"] > 0
-    assert isinstance(summary["offenders"], list)
     assert summary["offenders"]
-    assert "kind" in summary["offenders"][0]
-    assert "axis" in summary["offenders"][0]
     assert any(
         row["axis"] == "foreign-ast-import" for row in summary["offenders"]
-    )
-    assert all(
-        "sugar_lift_python_source" in row["path"]
-        for row in summary["offenders"]
     )
 
 
