@@ -79,6 +79,54 @@ def test_kit_construction_panic_is_typed_gap_not_failure(
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
 
 
+def test_preconstruction_panic_is_typed_gap_not_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    import _production_source_file as production_source_file
+
+    def _typed_gap(*_args, **_kwargs):
+        raise ConstructionPanic(
+            ConstructionGap(
+                owner="renamed-preconstruction-door",
+                blame="arbitrary.py:1:0",
+                observed="constructed value without a floor",
+                requested="typed construction",
+                fix="implement the missing floor",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
+        )
+
+    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    path = _write(tmp_path, "def a():\n    return 1\n")
+
+    assert _CHILD.run_production_lift_child(path, "arbitrary.py") == 0
+    assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
+
+
+def test_preconstruction_unwritten_is_typed_gap_not_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+    import _production_source_file as production_source_file
+
+    def _typed_gap(*_args, **_kwargs):
+        raise SugarNotWritten(
+            owner="RenamedNode.sugar",
+            observed="renamed node has no construction",
+            requested="a constructed sugar object",
+            fix="write its construction",
+        )
+
+    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    path = _write(tmp_path, "def a():\n    return 1\n")
+
+    assert _CHILD.run_production_lift_child(path, "arbitrary.py") == 0
+    assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
+
+
 def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) -> None:
     # If construction raises a non-typed-gap exception, the child must let
     # it propagate (so the parent's subprocess exits nonzero = bare exception).
