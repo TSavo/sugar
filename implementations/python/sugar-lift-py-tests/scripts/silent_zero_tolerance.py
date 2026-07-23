@@ -385,8 +385,8 @@ def main() -> int:
                 "nonNativeRed": summary.non_native_red,
                 "timeouts": summary.timeouts,
             },
-            measured=not incomplete,
-            unmeasurable_reasons=incomplete,
+            measured=len(summary.rows) == len(files),
+            unmeasurable_reasons=(),
         )
         write_json(args.json, payload)
     print(

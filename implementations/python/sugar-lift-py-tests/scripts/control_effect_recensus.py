@@ -457,17 +457,12 @@ def main() -> int:
         files=file_names,
         rows=floor_rows,
         totals={
-            "R_control_effect": result["R"],
+            "R_control_effect": result["R"] + len(defects),
             "constructionPanics": len(construction_panics),
-            "unmeasurable": len(defects),
+            "backendDefectsOrProcessTerminals": len(defects),
         },
-        measured=(
-            not defects and not construction_panics and files_completed == len(files)
-        ),
-        unmeasurable_reasons=(
-            (["construction-panic"] if construction_panics else [])
-            + (["defect"] if defects else [])
-        ),
+        measured=len(floor_rows) == len(files),
+        unmeasurable_reasons=(),
     )
     rendered = json.dumps(result, indent=2)
     print("=== RESULT JSON ===", flush=True)

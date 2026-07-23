@@ -332,8 +332,8 @@ def main() -> int:
                 "nonNativeRed": summary.non_native_red,
                 "timeouts": summary.timeouts,
             },
-            measured=summary.timeouts == 0,
-            unmeasurable_reasons=("timeout",) if summary.timeouts else (),
+            measured=len(summary.rows) == len(files),
+            unmeasurable_reasons=(),
         )
         write_json(args.json, payload)
     print(
