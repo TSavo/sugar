@@ -5,26 +5,28 @@ loud residuals stay loud. Mirror of test_with_contract.py for the native-syntax
 twin."""
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from with_authority_fixture import source_file_with_preconstruction
 
 
 def _val(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        f.write("import pytest\nimport contextlib\nimport tm\n" + src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value
+    return next(source_file_with_preconstruction(Path(path)).functions()).sugar().desugar().value
 
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        f.write("import pytest\nimport contextlib\nimport tm\n" + src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(source_file_with_preconstruction(Path(path)).functions())
 
 
 def _incompletes(v):

@@ -101,6 +101,16 @@ class ResolvedContractRefsV1:
 @dataclass(frozen=True)
 class TreeConstructionContextV1:
     contract_refs: ResolvedContractRefsV1
+    with_manager_authorities: Any = None
+
+    def __post_init__(self) -> None:
+        if self.with_manager_authorities is None:
+            from .with_manager_authority import WithManagerAuthoritiesV1
+            object.__setattr__(
+                self,
+                "with_manager_authorities",
+                WithManagerAuthoritiesV1.assemble(self.contract_refs, ()),
+            )
 
 
 _GAP_KINDS = frozenset({

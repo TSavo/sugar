@@ -56,7 +56,8 @@ use std::path::Path;
 
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_linker::{
-    link, AuthenticatedContextManagerCatalog, ContextManagerContractDemandV1, LinkerError,
+    decode_context_manager_edge, final_check_context_manager_edges, link,
+    AuthenticatedContextManagerCatalog, ContextManagerContractDemandV1, LinkerError,
     LinkerErrorKind, LinkerInputs, ResolvedContractRefsV1, SourceFragmentCoordinateV1, Symbol,
 };
 use sugar_proof_envelope::ImportSignatureV1;
@@ -469,7 +470,10 @@ pub fn fold_kit_to_pool(
             .map(context_manager_demand_from_wire)
             .collect::<Result<Vec<_>, _>>()?;
         let table = ResolvedContractRefsV1::new(&catalog, &demands);
-        kit.bind_contract_refs(&table.to_wire_value())
+        let legacy_membrane_refs = kit
+            .legacy_membrane_tokens(workspace_root)
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+        kit.bind_contract_refs(&table.to_wire_value(), &legacy_membrane_refs)
             .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
         active_cm_preconstruction = Some((catalog, table));
     }
@@ -490,6 +494,15 @@ pub fn fold_kit_to_pool(
     // after construction. Future CM edges use the same ref-owned equality
     // check; this pass never reselects a candidate from the enlarged pool.
     if let Some((catalog, table)) = &active_cm_preconstruction {
+        let edges = kit
+            .context_manager_edges(workspace_root)
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?
+            .iter()
+            .map(decode_context_manager_edge)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+        final_check_context_manager_edges(&edges, table, catalog)
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
         table
             .final_check(catalog)
             .map_err(|error| ProveFromKitError::Preconstruction(error.into()))?;

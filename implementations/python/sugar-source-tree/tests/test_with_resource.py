@@ -9,22 +9,21 @@ constructed enter/exit or explicit red.
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import (
-    RuntimeSelectedContextManager,
-    SugarNotWritten,
-)
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from with_authority_fixture import source_file_with_preconstruction
 
 
 def _fn(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        f.write("import pytest\nimport contextlib\n" + src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(source_file_with_preconstruction(Path(path)).functions())
 
 
 def _val(src: str):
@@ -33,19 +32,16 @@ def _val(src: str):
 
 def test_resource_open_is_runtime_selected_named_residual():
     """`with open(f): ...` is loud, distinctly named — not dissolved."""
-    with pytest.raises(RuntimeSelectedContextManager) as ei:
+    with pytest.raises(SugarNotWritten) as ei:
         _fn("def A(f):\n    with open(f):\n        pass\n    return f\n").sugar()
     panic = ei.value
     assert isinstance(panic, SugarNotWritten)
-    assert type(panic) is RuntimeSelectedContextManager
-    assert "unauthenticated context manager — exit suppression runtime-selected" in (
-        panic.observed
-    )
-    assert panic.owner == "With.sugar"
+    assert type(panic).__name__ == "ContextManagerResolutionConstructionGap"
+    assert panic.kind == "runtime-selected"
 
 
 def test_resource_open_is_not_silent_dissolve():
-    with pytest.raises(RuntimeSelectedContextManager):
+    with pytest.raises(SugarNotWritten):
         sugar = _fn(
             "def A(f):\n    with open(f):\n        x = 1\n    return f\n"
         ).sugar()
@@ -53,9 +49,9 @@ def test_resource_open_is_not_silent_dissolve():
 
 
 def test_resource_named_residual_distinct_from_bare_sugar_not_written():
-    with pytest.raises(RuntimeSelectedContextManager) as ei:
+    with pytest.raises(SugarNotWritten) as ei:
         _fn("def A(z):\n    with open(z):\n        pass\n    return z\n").sugar()
-    assert type(ei.value) is not SugarNotWritten
+    assert type(ei.value).__name__ == "ContextManagerResolutionConstructionGap"
     assert issubclass(type(ei.value), SugarNotWritten)
 
 

@@ -4,7 +4,8 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_linker::{
-    final_check_context_manager_edge, final_check_context_manager_ref,
+    decode_context_manager_edge, final_check_context_manager_edge,
+    final_check_context_manager_edges, final_check_context_manager_ref,
     resolve_context_manager_demand, AuthenticatedContextManagerCatalog, Cid,
     ContextManagerContractDemandV1, ContextManagerEdgeV1, ContextManagerResolutionGapKindV1,
     ContextManagerResolutionV1, ResolvedContractRefsV1, SourceFragmentCoordinateV1,
@@ -245,6 +246,86 @@ fn exact_symbol_with_different_signature_stays_a_typed_gap() {
     assert_eq!(
         gap.kind,
         ContextManagerResolutionGapKindV1::SignatureMismatch
+    );
+}
+
+#[test]
+fn strict_context_manager_edge_round_trips_and_final_checks_every_pin() {
+    let member = minted("context-manager:fixture.never_closing", 15);
+    let catalog = AuthenticatedContextManagerCatalog::freeze(vec![member]).unwrap();
+    let table =
+        ResolvedContractRefsV1::new(&catalog, &[demand("context-manager:fixture.never_closing")]);
+    let Some(ContextManagerResolutionV1::Resolved(reference)) = table.get(&use_site()) else {
+        panic!("resolved")
+    };
+    let edge = ContextManagerEdgeV1::from_resolved(reference);
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .to_path_buf();
+    let mut child = Command::new("python3")
+        .env("PYTHONPATH", repo.join("implementations/python/sugar-lift-py-tests/src"))
+        .arg("-c")
+        .arg("import json,sys; from sugar_lift_py_tests.context_manager_resolution import decode_resolved_contract_refs, ContextManagerContractRefV1; from sugar_lift_py_tests.kit_rpc.context_manager_edge_dto import ContextManagerEdgeDtoV1; t=decode_resolved_contract_refs(json.load(sys.stdin)); r=t.require(next(iter(t.by_use_site))); assert isinstance(r, ContextManagerContractRefV1); json.dump(ContextManagerEdgeDtoV1.from_resolved(r, r.use_site).to_rpc(), sys.stdout)")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().unwrap();
+    serde_json::to_writer(child.stdin.as_mut().unwrap(), &table.to_wire_value()).unwrap();
+    child.stdin.as_mut().unwrap().flush().unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let wire: Json = serde_json::from_slice(&output.stdout).unwrap();
+    let decoded = decode_context_manager_edge(&wire).expect("strict edge decode");
+    assert_eq!(decoded, edge);
+    final_check_context_manager_edges(&[decoded], &table, &catalog)
+        .expect("same frozen table and catalog");
+}
+
+#[test]
+fn malformed_cross_schema_and_unresolved_context_manager_edges_are_loud() {
+    let member = minted("context-manager:fixture.never_closing", 16);
+    let catalog = AuthenticatedContextManagerCatalog::freeze(vec![member]).unwrap();
+    let table =
+        ResolvedContractRefsV1::new(&catalog, &[demand("context-manager:fixture.never_closing")]);
+    let Some(ContextManagerResolutionV1::Resolved(reference)) = table.get(&use_site()) else {
+        panic!("resolved")
+    };
+    let wire = ContextManagerEdgeV1::from_resolved(reference).to_wire_value();
+    for field in ["edgeCid", "targetContractCid", "payloadCid"] {
+        let mut changed = wire.clone();
+        changed[field] = Json::String(cid('f').to_string());
+        assert!(
+            decode_context_manager_edge(&changed).is_err(),
+            "field={field}"
+        );
+    }
+    let mut stringly = wire.clone();
+    stringly["semantics"]["exit"]["disposition"] = Json::String("never-suppresses".into());
+    assert!(decode_context_manager_edge(&stringly).is_err());
+    assert!(decode_context_manager_edge(&serde_json::json!({
+        "kind": "call-edge", "schemaVersion": "1"
+    }))
+    .is_err());
+    assert!(serde_json::from_value::<sugar_linker::LinkerCallEdge>(wire).is_err());
+
+    let unresolved_table = ResolvedContractRefsV1::new(
+        &AuthenticatedContextManagerCatalog::freeze(vec![]).unwrap(),
+        &[demand("context-manager:fixture.never_closing")],
+    );
+    assert_eq!(
+        final_check_context_manager_edges(
+            &[ContextManagerEdgeV1::from_resolved(reference)],
+            &unresolved_table,
+            &catalog,
+        )
+        .unwrap_err()
+        .to_string(),
+        "unresolved-context-manager-edge"
     );
 }
 use std::io::Write;

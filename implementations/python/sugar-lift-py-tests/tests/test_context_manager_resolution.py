@@ -55,14 +55,16 @@ def test_table_is_frozen_and_missing_enrolled_coordinate_is_backend_defect():
 def test_bind_rpc_freezes_one_generation_and_acknowledges_exact_table_cid(monkeypatch):
     sent = []
     monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
+    monkeypatch.setattr(lift_rpc, "_BOUND_WITH_MANAGER_AUTHORITIES", None)
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
     wire = unresolved_table()
     assert lift_rpc._dispatch_request({
         "jsonrpc": "2.0", "id": 7,
         "method": lift_rpc.BIND_CONTRACT_REFS_RPC_METHOD,
-        "params": wire,
+        "params": {"contractRefs": wire, "legacyMembraneRefs": []},
     })
-    assert sent == [{"jsonrpc": "2.0", "id": 7, "result": {"tableCid": wire["tableCid"]}}]
+    assert sent[0]["result"]["tableCid"] == wire["tableCid"]
+    assert sent[0]["result"]["withManagerAuthoritiesCid"].startswith("blake3-512:")
     assert isinstance(lift_rpc._BOUND_CONTRACT_REFS.by_use_site, MappingProxyType)
 
     other = unresolved_table()
@@ -73,7 +75,7 @@ def test_bind_rpc_freezes_one_generation_and_acknowledges_exact_table_cid(monkey
         lift_rpc._dispatch_request({
             "jsonrpc": "2.0", "id": 8,
             "method": lift_rpc.BIND_CONTRACT_REFS_RPC_METHOD,
-            "params": other,
+            "params": {"contractRefs": other, "legacyMembraneRefs": []},
         })
 
 
@@ -136,6 +138,7 @@ def test_published_typed_declaration_is_served_only_by_declaration_pass(monkeypa
     sent = []
     monkeypatch.setattr(lift_rpc, "_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS", ())
     monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
+    monkeypatch.setattr(lift_rpc, "_BOUND_WITH_MANAGER_AUTHORITIES", None)
     monkeypatch.setattr(lift_rpc, "_ENUMERATION_ACTIVE", False)
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
     lift_rpc.publish_context_manager_declaration(declaration)

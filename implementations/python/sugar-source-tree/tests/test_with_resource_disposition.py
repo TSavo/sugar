@@ -3,38 +3,34 @@
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import RuntimeSelectedContextManager
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from with_authority_fixture import source_file_with_preconstruction
 
 
 def _fn(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        f.write("import pytest\nimport contextlib\n" + src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(source_file_with_preconstruction(Path(path)).functions())
 
 
-def test_errstate_routes_to_with_resource_sugar():
-    sugar = _fn(
-        "import numpy as np\n"
-        "def A(z):\n"
-        "    with np.errstate(all='ignore'):\n"
-        "        z = z\n"
-        "    return z\n"
-    ).sugar()
-    # FunctionUniverseSugar body contains WithResourceSugar
-    from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-
-    kinds = [type(s).__name__ for s in sugar.statements]
-    assert any(isinstance(s, WithResourceSugar) for s in sugar.statements), kinds
-    with_s = next(s for s in sugar.statements if isinstance(s, WithResourceSugar))
-    from sugar_lift_py_tests.context_manager_contract import NeverSuppresses
-
-    assert isinstance(with_s.disposition, NeverSuppresses)
+def test_errstate_without_published_cm_contract_stays_loud():
+    with pytest.raises(SugarNotWritten) as caught:
+        _fn(
+            "import numpy as np\n"
+            "def A(z):\n"
+            "    with np.errstate(all='ignore'):\n"
+            "        z = z\n"
+            "    return z\n"
+        ).sugar()
+    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert caught.value.kind == "runtime-selected"
 
 
 @pytest.mark.xfail(
@@ -61,7 +57,7 @@ def test_option_context_routes_to_with_resource_sugar():
 
 
 def test_open_still_runtime_selected():
-    with pytest.raises(RuntimeSelectedContextManager):
+    with pytest.raises(SugarNotWritten):
         _fn("def A(f):\n    with open(f):\n        pass\n    return f\n").sugar()
 
 

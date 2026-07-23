@@ -9,6 +9,7 @@ import inspect
 
 from sugar_lift_py_tests.context_manager_contract import (
     NeverSuppresses,
+    NeverSuppressesDispositionV1,
     RuntimeSelected,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -21,6 +22,8 @@ from sugar_lift_py_tests.floor.manager_coordinate import (
     ManagerCoordinate,
 )
 from sugar_lift_py_tests.floor.inv_value import InvValue
+from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+from sugar_lift_py_tests.ir import atomic, make_var, not_
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
 from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
@@ -199,6 +202,47 @@ def test_never_suppresses_restores_body_halt():
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert any(r.effect.exception_name == "ValueError" for r in reds)
+
+
+def test_typed_never_suppresses_preserves_conditional_raise_and_normal_face():
+    guard = atomic("with_body_guard", [make_var("state")])
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:4:8")
+
+    class _ConditionalRaise(Sugar):
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=guard,
+                    entries=(Incomplete(effect).guarded(guard),),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(guard),
+                )
+            )
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    exit_runs = []
+    out = _resource(
+        body=(_ConditionalRaise(),),
+        disposition=NeverSuppressesDispositionV1(),
+        exit_probe=exit_runs,
+    ).desugar()
+    contributions = out.value.contribution()
+    raises = [
+        entry
+        for entry in contributions
+        if isinstance(entry, Incomplete) and entry.effect == effect
+    ]
+    assert len(raises) == 1
+    assert raises[0].branch_conditions == (guard,)
+    assert out.value.can_fall_through
+    assert exit_runs == [1]
+    assert all(entry is not None for entry in contributions)
 
 
 def test_proven_contract_consumes_matching_body_halt():

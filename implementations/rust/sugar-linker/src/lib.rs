@@ -753,21 +753,234 @@ pub fn final_check_context_manager_ref(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextManagerEdgeV1 {
+    edge_cid: Cid,
+    use_site: SourceFragmentCoordinateV1,
+    bridge_source_symbol: Symbol,
+    import_signature: ImportSignatureV1,
     target_contract_cid: Cid,
+    payload_cid: Cid,
     demand_cid: Cid,
     resolution_cid: Cid,
     catalog_cid: Cid,
+    source_warrant_cids: Vec<Cid>,
+    semantics: ContextManagerSemanticsV1,
 }
 
 impl ContextManagerEdgeV1 {
     pub fn from_resolved(reference: &ContextManagerContractRefV1) -> Self {
-        Self {
+        let mut edge = Self {
+            edge_cid: Cid::from(""),
+            use_site: reference.use_site.clone(),
+            bridge_source_symbol: reference.bridge_source_symbol.clone(),
+            import_signature: reference.import_signature.clone(),
             target_contract_cid: reference.member_cid.clone(),
+            payload_cid: reference.payload_cid.clone(),
             demand_cid: reference.demand_cid.clone(),
             resolution_cid: reference.resolution_cid.clone(),
             catalog_cid: reference.catalog_cid.clone(),
+            source_warrant_cids: reference.source_warrant_cids.clone(),
+            semantics: reference.semantics.clone(),
+        };
+        edge.source_warrant_cids.sort();
+        edge.edge_cid = Cid::from(jcs_cid(&edge.preimage()));
+        edge
+    }
+
+    fn preimage(&self) -> Json {
+        serde_json::json!({
+            "kind": "context-manager-edge", "schemaVersion": "1",
+            "useSite": self.use_site,
+            "managerIdentity": {
+                "bridgeSourceSymbol": self.bridge_source_symbol,
+                "importSignature": import_signature_to_json(&self.import_signature),
+            },
+            "targetContractCid": self.target_contract_cid,
+            "payloadCid": self.payload_cid,
+            "demandCid": self.demand_cid,
+            "resolutionCid": self.resolution_cid,
+            "catalogCid": self.catalog_cid,
+            "sourceWarrantCids": self.source_warrant_cids,
+            "semantics": sugar_proof_envelope::context_manager_semantics_v1_to_json(&self.semantics),
+        })
+    }
+
+    pub fn to_wire_value(&self) -> Json {
+        let mut value = self.preimage();
+        value
+            .as_object_mut()
+            .expect("edge preimage is an object")
+            .insert("edgeCid".into(), Json::String(self.edge_cid.to_string()));
+        value
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ContextManagerEdgeTransportErrorV1 {
+    Malformed(String),
+    EdgeCidMismatch,
+    StaleResolution,
+    Unresolved,
+    Duplicate,
+}
+
+impl std::fmt::Display for ContextManagerEdgeTransportErrorV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(reason) => {
+                write!(formatter, "malformed-context-manager-edge: {reason}")
+            }
+            Self::EdgeCidMismatch => formatter.write_str("edge-cid-mismatch"),
+            Self::StaleResolution => formatter.write_str("stale-resolution"),
+            Self::Unresolved => formatter.write_str("unresolved-context-manager-edge"),
+            Self::Duplicate => formatter.write_str("duplicate-context-manager-edge"),
         }
     }
+}
+
+impl std::error::Error for ContextManagerEdgeTransportErrorV1 {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerEdgeWireV1 {
+    kind: String,
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    #[serde(rename = "edgeCid")]
+    edge_cid: Cid,
+    #[serde(rename = "useSite")]
+    use_site: SourceFragmentCoordinateV1,
+    #[serde(rename = "managerIdentity")]
+    manager_identity: ContextManagerIdentityWireV1,
+    #[serde(rename = "targetContractCid")]
+    target_contract_cid: Cid,
+    #[serde(rename = "payloadCid")]
+    payload_cid: Cid,
+    #[serde(rename = "demandCid")]
+    demand_cid: Cid,
+    #[serde(rename = "resolutionCid")]
+    resolution_cid: Cid,
+    #[serde(rename = "catalogCid")]
+    catalog_cid: Cid,
+    #[serde(rename = "sourceWarrantCids")]
+    source_warrant_cids: Vec<Cid>,
+    semantics: ContextManagerEdgeSemanticsWireV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerIdentityWireV1 {
+    #[serde(rename = "bridgeSourceSymbol")]
+    bridge_source_symbol: Symbol,
+    #[serde(rename = "importSignature")]
+    import_signature: ContextManagerImportSignatureWireV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerImportSignatureWireV1 {
+    formals: Vec<String>,
+    sorts: Vec<Sort>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerEdgeSemanticsWireV1 {
+    kind: String,
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    enter: ContextManagerEnterWireV1,
+    exit: ContextManagerExitWireV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerEnterWireV1 {
+    completion: String,
+    result: ContextManagerEnterResultWireV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerEnterResultWireV1 {
+    kind: String,
+    projection: String,
+    sort: Sort,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerExitWireV1 {
+    completion: String,
+    disposition: ContextManagerDispositionWireV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerDispositionWireV1 {
+    kind: String,
+}
+
+pub fn decode_context_manager_edge(
+    value: &Json,
+) -> Result<ContextManagerEdgeV1, ContextManagerEdgeTransportErrorV1> {
+    let wire: ContextManagerEdgeWireV1 = serde_json::from_value(value.clone())
+        .map_err(|error| ContextManagerEdgeTransportErrorV1::Malformed(error.to_string()))?;
+    if wire.kind != "context-manager-edge"
+        || wire.schema_version != "1"
+        || wire.semantics.kind != "context-manager-semantics"
+        || wire.semantics.schema_version != "1"
+        || wire.semantics.enter.completion != "total"
+        || wire.semantics.enter.result.kind != "projection"
+        || wire.semantics.enter.result.projection != "enter_result"
+        || wire.semantics.enter.result.sort
+            != (Sort::Primitive {
+                name: "Value".into(),
+            })
+        || wire.semantics.exit.completion != "total"
+        || wire.semantics.exit.disposition.kind != "never-suppresses"
+    {
+        return Err(ContextManagerEdgeTransportErrorV1::Malformed(
+            "unsupported kind, schema, or semantics".into(),
+        ));
+    }
+    if wire
+        .source_warrant_cids
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(ContextManagerEdgeTransportErrorV1::Malformed(
+            "sourceWarrantCids must be sorted and unique".into(),
+        ));
+    }
+    let edge = ContextManagerEdgeV1 {
+        edge_cid: wire.edge_cid,
+        use_site: wire.use_site,
+        bridge_source_symbol: wire.manager_identity.bridge_source_symbol,
+        import_signature: ImportSignatureV1 {
+            formals: wire.manager_identity.import_signature.formals,
+            sorts: wire.manager_identity.import_signature.sorts,
+        },
+        target_contract_cid: wire.target_contract_cid,
+        payload_cid: wire.payload_cid,
+        demand_cid: wire.demand_cid,
+        resolution_cid: wire.resolution_cid,
+        catalog_cid: wire.catalog_cid,
+        source_warrant_cids: wire.source_warrant_cids,
+        semantics: ContextManagerSemanticsV1 {
+            enter: sugar_proof_envelope::EnterResultContractV1 {
+                sort: Sort::Primitive {
+                    name: "Value".into(),
+                },
+            },
+            exit: sugar_proof_envelope::ExitContractV1 {
+                disposition: sugar_proof_envelope::ExitDispositionV1::NeverSuppresses,
+            },
+        },
+    };
+    if Cid::from(jcs_cid(&edge.preimage())) != edge.edge_cid {
+        return Err(ContextManagerEdgeTransportErrorV1::EdgeCidMismatch);
+    }
+    Ok(edge)
 }
 
 pub fn final_check_context_manager_edge(
@@ -776,13 +989,39 @@ pub fn final_check_context_manager_edge(
     catalog: &AuthenticatedContextManagerCatalog,
 ) -> Result<(), &'static str> {
     if edge.target_contract_cid != reference.member_cid
+        || edge.use_site != reference.use_site
+        || edge.bridge_source_symbol != reference.bridge_source_symbol
+        || edge.import_signature != reference.import_signature
+        || edge.payload_cid != reference.payload_cid
         || edge.demand_cid != reference.demand_cid
         || edge.resolution_cid != reference.resolution_cid
         || edge.catalog_cid != reference.catalog_cid
+        || edge.source_warrant_cids != reference.source_warrant_cids
+        || edge.semantics != reference.semantics
     {
         return Err("stale-resolution");
     }
     final_check_context_manager_ref(reference, catalog)
+}
+
+pub fn final_check_context_manager_edges(
+    edges: &[ContextManagerEdgeV1],
+    table: &ResolvedContractRefsV1,
+    catalog: &AuthenticatedContextManagerCatalog,
+) -> Result<(), ContextManagerEdgeTransportErrorV1> {
+    let mut seen = BTreeSet::new();
+    for edge in edges {
+        if !seen.insert(edge.use_site.clone()) {
+            return Err(ContextManagerEdgeTransportErrorV1::Duplicate);
+        }
+        let Some(ContextManagerResolutionV1::Resolved(reference)) = table.get(&edge.use_site)
+        else {
+            return Err(ContextManagerEdgeTransportErrorV1::Unresolved);
+        };
+        final_check_context_manager_edge(edge, reference, catalog)
+            .map_err(|_| ContextManagerEdgeTransportErrorV1::StaleResolution)?;
+    }
+    Ok(())
 }
 
 /// The formals / sorts / EUF-coordinate triple a contract *exports* or a call
@@ -916,6 +1155,7 @@ impl LinkerContract {
 /// calls have `target_contract_cid: None` and `target_symbol` set to a
 /// `"<kit>:<name>"` string for linker resolution.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LinkerCallEdge {
     /// CID of the calling function's contract, as a typed [`Cid`].
     pub source_contract_cid: Cid,
