@@ -4128,24 +4128,85 @@ class Lambda(Expression):
         # is the construction-time testimony that capture substitution ran.
         return rewrite(self, params=new_params, body=new_body)
 
-    def _construct_sugar(self):
-        """Construct only plain positional-or-keyword expression lambdas.
+    def source_visible_call_frame(self):
+        """Project the lambda through the ordinary source-call-frame door."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
 
-        Every other binding role remains loud.  The body constructs through its
-        own node so an unsupported child preserves that child's exact panic.
-        """
+        span = self.line_col_span()
+        site = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+        owner_cid = self.fragment.seal().cid
+        coordinates = tuple(
+            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
+            for index, param in enumerate(self.params)
+        )
+        formal_scope = {
+            param.name: self._make_coordinate_ref(param, coordinate)
+            for param, coordinate in zip(self.params, coordinates, strict=True)
+        }
+        return SourceVisibleCallFrameV1(
+            source_identity_cid=self.unit.source_cid,
+            definition_site=site,
+            definition_fragment_cid=owner_cid,
+            parameters=tuple(param.name for param in self.params),
+            formal_coordinates=coordinates,
+            parameter_kinds=tuple(param.param_kind for param in self.params),
+            default_sugars=tuple(
+                param.default.sugar() if param.default is not None else None
+                for param in self.params
+            ),
+            default_nodes=tuple(param.default for param in self.params),
+            default_fragments=tuple(
+                param.default.fragment if param.default is not None else None
+                for param in self.params
+            ),
+            default_fragment_cids=tuple(
+                param.default.fragment.seal().cid if param.default is not None else None
+                for param in self.params
+            ),
+            body=self._source_visible_body(formal_scope),
+            owner=self,
+        )
+
+    def _source_visible_body(self, scope):
+        from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+        from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+            SourceVisibleFunctionBodySugar,
+        )
+
+        body = self.body.substitute(scope)
+        return SourceVisibleFunctionBodySugar(
+            (ReturnSugar(value=body.sugar(), site=self.fragment),), self.fragment
+        )
+
+    def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
+        from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        if (
-            not isinstance(self.ref, ShadowNode)
-            or len(self.params) != 1
-            or any(
-                param.param_kind != "positional_or_keyword"
-                or param.default is not None
-                or param.annotation is not None
-                for param in self.params
-            )
-        ):
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "BindingCoordinateRef",
+                param.span,
+                (("coordinate", Leaf(coordinate)),),
+            ),
+            self.reporter,
+        )
+
+    def _construct_sugar(self):
+        """Construct an expression lambda carrying its ordinary source frame."""
+        from .shadow import ShadowNode
+
+        if not isinstance(self.ref, ShadowNode):
             return super()._construct_sugar()
 
         from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
@@ -4153,6 +4214,7 @@ class Lambda(Expression):
         return LambdaSugar(
             formals=tuple(param.name for param in self.params),
             body=self.body.sugar(),
+            source_call_frame=self.source_visible_call_frame(),
             site=self.fragment,
         )
 
@@ -4873,7 +4935,10 @@ class Call(Expression):
                 TreeConstructionContextV1,
             )
 
-            if isinstance(context, TreeConstructionContextV1) and context.source_call_frames:
+            if (
+                isinstance(context, TreeConstructionContextV1)
+                and context.source_call_frames
+            ):
                 span = self.line_col_span()
                 coordinate = SourceFragmentCoordinateV1(
                     self.unit.source_cid,
@@ -4922,11 +4987,29 @@ class Call(Expression):
             )
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
+        source_call_frame = None
+        if isinstance(self.func, Lambda):
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            if any(keyword.arg is None for keyword in self.keywords):
+                raise SourceCallBindingGap(
+                    "spread keyword requires typed variadic projection"
+                )
+            source_call_frame = self.func.source_visible_call_frame().bind_node_actuals(
+                self.args,
+                tuple(
+                    (keyword.arg, keyword.value)
+                    for keyword in self.keywords
+                    if keyword.arg is not None
+                ),
+            )
+
         return ComputedCallSugar(
             callee=self.func.sugar(),
             args=tuple(a.sugar() for a in self.args),
             site=self.fragment,
             keywords=keyword_sugars,
+            source_call_frame=source_call_frame,
         )
 
     @staticmethod

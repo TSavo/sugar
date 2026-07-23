@@ -30,6 +30,7 @@ class ComputedCallSugar(Sugar):
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
     keywords: tuple = ()  # (name or explicit "**", sugar), source order
+    source_call_frame: object | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -87,6 +88,44 @@ class ComputedCallSugar(Sugar):
             + keyword_terms,
             symbol_kind="coordinate",
         )
+        frame = self.source_call_frame
+        if frame is not None:
+            from sugar_lift_py_tests.source_call_frame import (
+                SourceCallBindingGap,
+                SourceVisibleCallFrameV1,
+            )
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if not isinstance(frame, SourceVisibleCallFrameV1):
+                raise SugarNotWritten(
+                    owner="ComputedCallSugar.desugar",
+                    observed=type(frame).__name__,
+                    requested="a closed SourceCallFrameV1 variant",
+                    fix="construct a typed source frame or keep the call loud",
+                )
+            try:
+                positional = frame.bind_actuals(positional, kw_values, ctx)
+            except SourceCallBindingGap as exc:
+                raise SugarNotWritten(
+                    owner="ComputedCallSugar.desugar",
+                    observed=str(exc),
+                    requested="actuals matching the authenticated lambda signature",
+                    fix="supply real actuals/defaults or keep the lambda call loud",
+                ) from exc
+            return Complete(
+                CallSiteValue(
+                    target_name="py.call",
+                    arg_values=positional,
+                    parameters=frame.parameters,
+                    term=term,
+                    body=frame.body,
+                    site=self.site,
+                    source_call_frame_cid=frame.frame_cid,
+                    formal_coordinate_cids=tuple(
+                        item.cid for item in frame.formal_coordinates
+                    ),
+                )
+            )
         return Complete(
             CallSiteValue(
                 target_name="py.call",
