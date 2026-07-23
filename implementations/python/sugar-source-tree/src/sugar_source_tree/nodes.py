@@ -576,6 +576,22 @@ class SourceUnit:
 
         return tuple(result) if append_definition(definitions[0]) else None
 
+    def is_builtin_exception_group(self, node: "Name") -> bool:
+        """Authenticate exception-group constructors by runtime identity."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        identity = self.exception_type_identity(node)
+        if identity is None:
+            return False
+        return any(
+            identity
+            == ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const(name)],
+            )
+            for name in ("BaseExceptionGroup", "ExceptionGroup")
+        )
+
 
 class Typeable:
     """The interface: you may ask me for my node type.
@@ -4452,6 +4468,77 @@ class Raise(Statement):
         )
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
+        def group_call(node):
+            return (
+                isinstance(node, Call)
+                and isinstance(node.func, Name)
+                and self.unit.is_builtin_exception_group(node.func)
+            )
+
+        def leaf_sugar(node):
+            leaf_identity = leaf_mro = leaf_name = None
+            if isinstance(node, Call) and isinstance(node.func, Name):
+                leaf_identity = self.unit.exception_type_identity(node.func)
+                leaf_mro = self.unit.exception_type_mro(node.func)
+                leaf_name = node.func.id
+            elif isinstance(node, Name):
+                leaf_identity = self.unit.exception_type_identity(node)
+                leaf_mro = self.unit.exception_type_mro(node)
+                leaf_name = node.id
+            if leaf_identity is None:
+                raise SugarNotWritten(
+                    owner="Raise._construct_sugar",
+                    observed="exception-group leaf lacks authenticated exception identity",
+                    requested="a source-authenticated exception type",
+                    fix="keep opaque/native group members loud",
+                )
+            value = node.sugar()
+            if isinstance(value, CallSiteSugar):
+                value = replace(
+                    value,
+                    exception_type_coordinate=leaf_identity,
+                    exception_type_mro=leaf_mro,
+                )
+            else:
+                value = AuthenticatedExceptionTypeSugar(
+                    value, leaf_identity, leaf_mro, node.fragment
+                )
+            return RaiseSugar(value, None, leaf_name, node.fragment)
+
+        def grouped_sugar(call):
+            if (
+                len(call.args) != 2
+                or call.keywords
+                or not isinstance(call.args[1], (List, Tuple))
+            ):
+                raise SugarNotWritten(
+                    owner="Raise._construct_sugar",
+                    observed="unsupported native exception-group construction",
+                    requested="ExceptionGroup(message, finite list-or-tuple members)",
+                    fix="keep opaque/native group construction loud",
+                )
+            from sugar_lift_py_tests.sugar.grouped_raise_sugar import GroupedRaiseSugar
+
+            return GroupedRaiseSugar(
+                group_identity=call.fragment.seal().cid,
+                message=call.args[0].sugar(),
+                children=tuple(
+                    grouped_sugar(member) if group_call(member) else leaf_sugar(member)
+                    for member in call.args[1].elts
+                ),
+                site=call.fragment,
+            )
+
+        if group_call(self.exc):
+            if self.cause is not None:
+                raise SugarNotWritten(
+                    owner="Raise._construct_sugar",
+                    observed="exception-group raise with explicit cause",
+                    requested="group cause regroup semantics",
+                    fix="keep unsupported native behavior loud",
+                )
+            return grouped_sugar(self.exc)
+
         identity = None
         mro = None
         type_name = None
@@ -4787,6 +4874,50 @@ class TryStar(Statement):
     def substitute(self, scope):
         """Same block-aware substitute as Try (identical fields)."""
         return Try.substitute(self, scope)
+
+    def _construct_sugar(self):
+        """Construct the distinct except* router with authenticated type operands."""
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            AuthenticatedExceptionTypeSugar,
+        )
+        from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
+
+        handlers = []
+        for handler in self.handlers:
+            if handler.type_ is None or not isinstance(handler.type_, Name):
+                raise SugarNotWritten(
+                    owner="TryStar._construct_sugar",
+                    observed="unsupported except* handler type",
+                    requested="one authenticated exception type operand",
+                    fix="keep unsupported native handler behavior loud",
+                )
+            identity = self.unit.exception_type_identity(handler.type_)
+            if identity is None:
+                raise SugarNotWritten(
+                    owner="TryStar._construct_sugar",
+                    observed="except* type lacks authenticated exception identity",
+                    requested="a constructed exception-type coordinate",
+                    fix="resolve the handler type lexically or keep it loud",
+                )
+            handlers.append(
+                (
+                    AuthenticatedExceptionTypeSugar(
+                        handler.type_.sugar(),
+                        identity,
+                        self.unit.exception_type_mro(handler.type_),
+                        handler.type_.fragment,
+                    ),
+                    tuple(stmt.sugar() for stmt in handler.body),
+                    handler._effect_slot_id(),
+                )
+            )
+        return TryStarSugar(
+            body=tuple(stmt.sugar() for stmt in self.body),
+            handlers=tuple(handlers),
+            orelse=tuple(stmt.sugar() for stmt in self.orelse),
+            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+            site=self.fragment,
+        )
 
 
 class Assert(Statement):

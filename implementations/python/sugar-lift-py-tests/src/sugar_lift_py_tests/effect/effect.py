@@ -4,6 +4,7 @@ from typing import Literal, Never, NoReturn
 
 from .coverage_gap_effect import CoverageGapEffect
 from .raise_effect import RaiseEffect
+from .grouped_raise_effect import GroupedRaiseEffect
 from .runtime_effect import RuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .warning_effect import WarningEffect
@@ -14,6 +15,7 @@ from .loop_control_effect import LoopControlEffect
 # No-recognizer is panic, not a typed Incomplete arm.
 Effect = (
     RaiseEffect
+    | GroupedRaiseEffect
     | WarningEffect
     | RuntimeEffect
     | CoverageGapEffect
@@ -37,6 +39,7 @@ def require_effect(effect: object) -> Effect:
         effect,
         (
             RaiseEffect,
+            GroupedRaiseEffect,
             WarningEffect,
             RuntimeEffect,
             CoverageGapEffect,
@@ -54,6 +57,8 @@ def require_effect(effect: object) -> Effect:
 
 
 def effect_kind(effect: Effect) -> str:
+    if isinstance(effect, GroupedRaiseEffect):
+        return "GroupedRaiseEffect"
     if isinstance(effect, RaiseEffect):
         return "RaiseEffect"
     if isinstance(effect, WarningEffect):
@@ -72,6 +77,8 @@ def effect_kind(effect: Effect) -> str:
 
 
 def effect_reason(effect: Effect) -> str:
+    if isinstance(effect, GroupedRaiseEffect):
+        return effect.reason
     if isinstance(effect, RaiseEffect):
         return effect.reason
     if isinstance(effect, WarningEffect):
@@ -90,6 +97,8 @@ def effect_reason(effect: Effect) -> str:
 
 
 def effect_status(effect: Effect) -> EffectStatus:
+    if isinstance(effect, GroupedRaiseEffect):
+        return "raise-effect"
     if isinstance(effect, RaiseEffect):
         return "raise-effect"
     if isinstance(effect, WarningEffect):

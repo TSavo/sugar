@@ -67,6 +67,17 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
 
     raised = effect.raised_value
     operation = getattr(raised, "test_python_subtype", None)
+    if operation is None and effect.exception_type_coordinate is not None:
+        from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+            AuthenticatedExceptionTypeValue,
+        )
+
+        raised = AuthenticatedExceptionTypeValue(
+            raised,
+            effect.exception_type_coordinate,
+            effect.exception_type_mro,
+        )
+        operation = raised.test_python_subtype
     if operation is None:
         raise SugarNotWritten(
             owner="GroupedRaiseEffect.partition",
