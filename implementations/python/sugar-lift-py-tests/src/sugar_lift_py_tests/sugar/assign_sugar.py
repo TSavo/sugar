@@ -4,7 +4,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, _call_pair
 
 
 @dataclass(frozen=True)
@@ -82,3 +82,34 @@ class MultiAssignSugar(Sugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
         return Complete(BlockValue((), can_fall_through=True))
+
+
+@dataclass(frozen=True)
+class ChainedAssignSugar(Sugar):
+    """One evaluated RHS distributed left-to-right across names and stores."""
+
+    bindings: tuple
+    stores: tuple
+    value: object
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="typed store effect",
+            reason="mixed chained stores stay red while lexical bindings continue",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return self.value.desugar(ctx).and_then(
+            lambda _value: (
+                reduce_body(self.stores, ctx)
+                if self.stores
+                else Complete(BlockValue((), can_fall_through=True))
+            )
+        )

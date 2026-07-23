@@ -66,6 +66,56 @@ def test_starred_target_binds_real_prefix_rest_and_suffix_values():
     assert post.args[1].value == 10
 
 
+def test_chained_assign_constructs_one_rhs_sugar_for_every_binding():
+    function = _fn("def arbitrary():\n    renamed = other = 5\n")
+    assignment = next(node for node in function.walk() if node.kind == "Assign")
+    sugar = assignment.sugar()
+    assert sugar.bindings[0][1] is sugar.bindings[1][1]
+
+
+def test_chained_names_receive_distinct_runtime_binding_coordinates():
+    function = _fn(
+        "def arbitrary():\n    renamed = other = 5\n    return renamed + other\n"
+    )
+    trace = function.sugar().substitution_trace
+    entries = dict(trace.records[0].post_bindings)
+    assert (
+        entries["renamed"].state.fragment.seal().cid
+        == entries["other"].state.fragment.seal().cid
+    )
+    assert entries["renamed"].coordinate.cid != entries["other"].coordinate.cid
+
+
+def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
+    entries = (
+        _fn("def arbitrary(o):\n    renamed = o.field = 5\n    return renamed\n")
+        .sugar()
+        .desugar()
+        .value.record.statements
+    )
+    red = [entry for entry in entries if isinstance(entry, Incomplete)]
+    assert len(red) == 1
+    assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
+
+
+def test_mixed_chain_preserves_each_store_face_in_source_order():
+    entries = (
+        _fn(
+            "def arbitrary(o, xs):\n"
+            "    renamed = o.field = xs[0] = 7\n"
+            "    return renamed\n"
+        )
+        .sugar()
+        .desugar()
+        .value.record.statements
+    )
+    red = [entry for entry in entries if isinstance(entry, Incomplete)]
+    assert [type(entry.effect) for entry in red] == [
+        AttributeStoreRuntimeEffect,
+        SubscriptStoreRuntimeEffect,
+    ]
+
+
 def test_nested_tuple_target_binds_each_structural_projection():
     post = _post(
         "def A():\n"

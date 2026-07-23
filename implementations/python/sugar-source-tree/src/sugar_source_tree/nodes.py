@@ -2196,8 +2196,10 @@ class Assign(Statement):
             if isinstance(target, Name):
                 return {target.id: self.value}
             return self._destructured_binding()
-        if all(isinstance(t, Name) for t in self.targets):
-            return {t.id: self.value for t in self.targets}
+        if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
+            # Store targets do not bind lexical names, but they also do not
+            # erase the Name targets in the same left-to-right assignment.
+            return {t.id: self.value for t in self.targets if isinstance(t, Name)}
         return None
 
     def _construct_sugar(self):
@@ -2229,10 +2231,54 @@ class Assign(Statement):
             )
 
         if len(self.targets) > 1 and all(isinstance(t, Name) for t in self.targets):
-            from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
+            from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
 
-            return MultiAssignSugar(
-                bindings=tuple((t.id, self.value.sugar()) for t in self.targets),
+            value_sugar = self.value.sugar()
+            return ChainedAssignSugar(
+                bindings=tuple((t.id, value_sugar) for t in self.targets),
+                stores=(),
+                value=value_sugar,
+                site=self.fragment,
+            )
+
+        if len(self.targets) > 1 and all(
+            isinstance(t, (Name, Attribute, Subscript)) for t in self.targets
+        ):
+            from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
+
+            value_sugar = self.value.sugar()
+            stores = []
+            for target in self.targets:
+                if isinstance(target, Attribute):
+                    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                        AttributeStoreEffectSugar,
+                    )
+
+                    stores.append(
+                        AttributeStoreEffectSugar(
+                            attr=target.attr,
+                            site=target.fragment,
+                        )
+                    )
+                elif isinstance(target, Subscript):
+                    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                        SubscriptStoreEffectSugar,
+                    )
+
+                    stores.append(
+                        SubscriptStoreEffectSugar(
+                            index_text=target.slice_.fragment.text,
+                            site=target.fragment,
+                        )
+                    )
+            return ChainedAssignSugar(
+                bindings=tuple(
+                    (target.id, value_sugar)
+                    for target in self.targets
+                    if isinstance(target, Name)
+                ),
+                stores=tuple(stores),
+                value=value_sugar,
                 site=self.fragment,
             )
 
