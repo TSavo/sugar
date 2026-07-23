@@ -382,3 +382,59 @@ def test_export_transfer_exhaustively_classifies_running_ast_statement_grammar()
     missing, extra = export_statement_coverage()
     assert missing == []
     assert extra == []
+
+
+def test_resolve_import_binding_amortizes_lexical_revalidation(tmp_path: Path) -> None:
+    """Red instrument: resolution must not re-run #6090 once per receipt.
+
+    pandas construction recensus paid ~0.95s × R full-module
+    ``authenticated_import_uses`` revalidations inside ``resolve_import_binding``
+    (R≈125–170 on hot files). Revalidation may stay exact; recompute frequency
+    must be amortized to O(1) per consumer module, not Ω(R).
+
+    See docs/audits/pandas-recensus-latency-bisect.md.
+    """
+    from sugar_lift_py_tests import import_binding as ib
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source="def build(value):\n    return value\n",
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+
+    # N distinct call sites → N authenticated import-use receipts for one module.
+    n_sites = 8
+    lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
+    source = "\n".join(lines) + "\n"
+    path = tmp_path / "consumer_many.py"
+    path.write_text(source, encoding="utf-8")
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    receipts, outcomes = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+    assert len(receipts) == n_sites
+    assert set(outcomes.values()) == {"authenticated-import-use"}
+
+    lexical_passes = {"count": 0}
+    original = ib.authenticated_import_uses
+
+    def counting_authenticated_import_uses(*args, **kwargs):
+        lexical_passes["count"] += 1
+        return original(*args, **kwargs)
+
+    ib.authenticated_import_uses = counting_authenticated_import_uses
+    try:
+        for receipt in receipts:
+            resolve_import_binding(receipt, graph=graph)
+    finally:
+        ib.authenticated_import_uses = original
+
+    # One shared revalidation snapshot for the consumer module is enough.
+    # Ω(n_sites) means each resolve re-ran the full lexical pass (the live bug).
+    assert lexical_passes["count"] <= 1, (
+        f"resolve_import_binding re-ran authenticated_import_uses "
+        f"{lexical_passes['count']} times for {n_sites} receipts from one module; "
+        f"amortize revalidation (cache or batch) so this stays O(1) per module"
+    )
