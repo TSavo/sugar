@@ -103,11 +103,11 @@ class ComprehensionSugar:
     ]
 
 
-def test_current_tree_measurement_has_nonempty_denominator() -> None:
+def test_current_tree_measurement_is_stable_zero() -> None:
     root = Path(__file__).parents[2]
     findings = scan_guarded_loop_recurrence(root)
 
-    assert findings
-    assert {f.code for f in findings} == {
-        "missing-source-loop-recurrence-projection",
-    }
+    assert findings == ()
+    assert summarize_guarded_loop_recurrence(findings)[
+        "R_guarded_loop_recurrence"
+    ] == 0

@@ -23,6 +23,7 @@ def project_loop_post_binding(
     construction: LoopConstructionV1,
     binding_coordinate: BindingCoordinateV1,
     runtime_states: Mapping[str, tuple[BindingEntryV1, ...]],
+    live_guards: Mapping[str, object] | None = None,
 ) -> LoopProjectedBinding:
     """Project one coordinate through every exact completed loop face.
 
@@ -41,8 +42,16 @@ def project_loop_post_binding(
         for record in construction.wire_graph()["records"]
         if record.get("kind") == "loop-completed-face"
     }
+    post_face_cids = {
+        record["completedFaceCid"]
+        for record in construction.wire_graph()["records"]
+        if record.get("kind") == "loop-post-binding"
+        and record["bindingCoordinateCid"] == binding_coordinate.cid
+    }
     projected_faces = []
     for face in construction.completed_faces:
+        if face.cid not in post_face_cids:
+            continue
         record = records.get(face.cid)
         if record is None:
             raise BindingStateWireGap("completed face missing from loop graph")
@@ -67,6 +76,11 @@ def project_loop_post_binding(
                 completion_kind=face.completion_kind,
                 guard_formula_cid=record["guardFormulaCid"],
                 state=matches[0].state,
+                guard_formula=(
+                    None
+                    if live_guards is None
+                    else live_guards.get(record["guardFormulaCid"])
+                ),
             )
         )
     return LoopProjectedBinding(target_cid, tuple(projected_faces))

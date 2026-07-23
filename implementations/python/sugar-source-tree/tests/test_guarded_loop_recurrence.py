@@ -109,12 +109,8 @@ def test_break_and_exhaustion_faces_project_exact_runtime_states_by_coordinate()
     assert projected.target_cid == construction.target.target_cid
     assert [face.completion_kind for face in projected.completed_faces] == [
         "BreakExit",
-        "BodyFallthrough",
-        "NormalExhaustion",
     ]
     assert projected.completed_faces[0].state is break_state
-    assert projected.completed_faces[1].state is exhaustion_state
-    assert projected.completed_faces[2].state is exhaustion_state
 
 
 def test_projection_is_typed_loud_for_missing_state_or_coordinate():

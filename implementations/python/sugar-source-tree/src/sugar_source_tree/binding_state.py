@@ -85,6 +85,7 @@ class LoopProjectedCompletedFace:
     completion_kind: str
     guard_formula_cid: str
     state: BindingState
+    guard_formula: object | None = None
 
     def __post_init__(self) -> None:
         _require_runtime_cid(self.target_cid, "targetCid")

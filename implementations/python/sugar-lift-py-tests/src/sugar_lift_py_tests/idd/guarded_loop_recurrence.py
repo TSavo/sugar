@@ -146,10 +146,18 @@ def scan_guarded_loop_recurrence(
                 )
             )
     nodes_path = next((path for path in python_files if path.name == "nodes.py"), None)
+    live_projection = any(
+        "project_loop_post_binding(" in path.read_text()
+        for path in python_files
+        if path.name in {"nodes.py", "live_loop_construction.py"}
+    )
     if (
         nodes_path is not None
         and binding_state is not None
-        and "project_loop_post_binding(" not in nodes_path.read_text()
+        and (
+            not live_projection
+            or "construct_live_loop_recurrence(" not in nodes_path.read_text()
+        )
     ):
         findings.append(
             _finding(
