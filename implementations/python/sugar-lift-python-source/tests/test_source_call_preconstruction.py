@@ -271,6 +271,35 @@ def test_selected_definition_expansion_bound_stays_typed_loud(
     assert row.kind == "expansion-bound"
 
 
+def test_source_callee_with_unresolved_manager_stays_typed_loud(
+    tmp_path: Path,
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "def arbitrary_helper(manager):\n"
+        "    with manager:\n"
+        "        return 1\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper\n"
+        "arbitrary_helper(object())\n",
+    )
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+        artifact_graph_cache={},
+        source_frame_cache={},
+    )
+
+    row = next(iter(context.source_call_resolutions.values()))
+    assert isinstance(row, SourceCallPreconstructionGapV1)
+    assert row.kind == "source-body-gap"
+
+
 def test_source_visible_function_with_opaque_child_stays_typed_loud(
     tmp_path: Path,
 ) -> None:

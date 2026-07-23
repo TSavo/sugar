@@ -163,6 +163,10 @@ class TreeConstructionContextV1:
     # subclass definition coordinate.  These are never serialized; the class
     # definition projects their sealed CIDs into its own preimage.
     source_class_bases: dict = field(default_factory=dict)
+    # Source-call frame construction deliberately has no CM enrollment pass.
+    # Its nested With nodes must remain capability-loud, not accuse a missing
+    # row in a table that this context never claimed to populate.
+    contract_enrollment_required: bool = True
 
     @classmethod
     def for_source_call_construction(
@@ -178,6 +182,7 @@ class TreeConstructionContextV1:
             call_contract_refs=call_contract_refs,
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
+            contract_enrollment_required=False,
         )
 
 

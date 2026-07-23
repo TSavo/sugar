@@ -3412,6 +3412,8 @@ class With(Statement):
         derived = context.source_derived_contract_refs.get(coordinate)
         if derived is not None:
             return derived
+        if not context.contract_enrollment_required:
+            return None
         try:
             return context.contract_refs.require(coordinate)
         except ContractRefProtocolError as exc:
