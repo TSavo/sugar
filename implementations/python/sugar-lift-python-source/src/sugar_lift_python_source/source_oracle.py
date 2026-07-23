@@ -148,6 +148,23 @@ def path_source(path: str) -> tuple[str, str, str]:
     return (source, str(path), blake3_512_of(source.encode("utf-8")))
 
 
+def dependency_artifact_file(path: str) -> tuple[bytes, str, str]:
+    """Mint one recorded dependency file as ``(bytes, seat, content CID)``.
+
+    The dependency artifact graph supplies the seat; this door only reads and
+    content-addresses it.  It performs no module lookup, import, or execution.
+    Binary files are admitted because a distribution artifact authenticates
+    every recorded byte, not only Python source files.
+    """
+    try:
+        content = Path(path).read_bytes()
+    except (OSError, ValueError) as exc:
+        raise SourceUnavailable(
+            f"cannot read dependency artifact file `{path}`: {exc}"
+        ) from exc
+    return content, str(path), blake3_512_of(content)
+
+
 def resolve_span_memento(
     memento: dict[str, Any], project_root: str | None = None
 ) -> dict[str, Any]:
