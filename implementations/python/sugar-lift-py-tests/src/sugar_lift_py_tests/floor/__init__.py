@@ -57,6 +57,7 @@ from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 from .object_value import ObjectValue
+from .receiver_field_store_value import ReceiverFieldStoreValue
 from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
@@ -123,6 +124,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     PredicateValue,
     RaiseValue,
     RaisesWithValue,
+    ReceiverFieldStoreValue,
     ReturnValue,
     ScopeRebind,
     SequenceConstructor,
@@ -195,6 +197,7 @@ __all__ = [
     "ObjectField",
     "ObjectMethodValue",
     "ObjectValue",
+    "ReceiverFieldStoreValue",
     "OpaqueOpCallsite",
     "PredicateValue",
     "RaiseValue",

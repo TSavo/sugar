@@ -100,22 +100,9 @@ class CallSiteSugar(Sugar):
         source_body = None
         source_frame_cid = None
         if self.source_call_frame is not None:
-            from sugar_lift_py_tests.source_call_frame import (
-                AwaitingBindingCoordinateCallFrameV1,
-                SourceVisibleCallFrameV1,
-            )
+            from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
             from sugar_source_tree.panic import SugarNotWritten
 
-            if isinstance(self.source_call_frame, AwaitingBindingCoordinateCallFrameV1):
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    observed=self.source_call_frame.kind,
-                    requested="the shared BindingCoordinateV1 formal frame",
-                    fix=(
-                        "wire the shared formal binding coordinate into this "
-                        "already-constructed source body; never bind by name"
-                    ),
-                )
             if not isinstance(self.source_call_frame, SourceVisibleCallFrameV1):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
@@ -123,15 +110,19 @@ class CallSiteSugar(Sugar):
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
                 )
-            if self.keywords or len(positional) != len(
-                self.source_call_frame.parameters
-            ):
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            try:
+                positional = self.source_call_frame.bind_actuals(
+                    positional, kw_values, ctx
+                )
+            except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
-                    observed="source call-frame signature mismatch",
-                    requested="actuals matching the constructed source frame",
-                    fix="bind through the ordinary formal frame or keep the call loud",
-                )
+                    observed=str(exc),
+                    requested="actuals matching the authenticated source signature",
+                    fix="supply a real actual/default/variadic occurrence or keep loud",
+                ) from exc
             source_body = self.source_call_frame.body
             source_frame_cid = self.source_call_frame.frame_cid
         return Complete(
@@ -149,6 +140,13 @@ class CallSiteSugar(Sugar):
                 site=self.site,
                 exception_type_coordinate=self.exception_type_coordinate,
                 source_call_frame_cid=source_frame_cid,
+                formal_coordinate_cids=(
+                    tuple(
+                        item.cid for item in self.source_call_frame.formal_coordinates
+                    )
+                    if self.source_call_frame is not None
+                    else ()
+                ),
             )
         )
 
