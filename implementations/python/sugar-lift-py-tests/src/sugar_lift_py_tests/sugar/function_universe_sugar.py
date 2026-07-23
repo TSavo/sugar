@@ -75,6 +75,9 @@ def reduce_block_to_exitset(
                 exits = []
                 for entry in faces.contribution():
                     if isinstance(entry, Incomplete):
+                        if entry.follow().continues:
+                            entries.append(entry)
+                            continue
                         from sugar_lift_py_tests.ir import and_
 
                         guard = (
