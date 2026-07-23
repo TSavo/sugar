@@ -246,6 +246,7 @@ def _run_parent(args: argparse.Namespace) -> int:
     categories: Counter[str] = Counter()
     assertion_counts: Counter[str] = Counter()
     terminal_rows: list[dict[str, Any]] = []
+    floor_rows: list[dict[str, Any]] = []
     representatives: dict[str, list[str]] = defaultdict(list)
     construction_panic_rows: list[dict[str, Any]] = []
     effect_occurrence_counts: Counter[str] = Counter()
@@ -267,6 +268,7 @@ def _run_parent(args: argparse.Namespace) -> int:
         assertion_counts["assertions_total"] += assertion_count
         if assertion_count == 0:
             assertion_counts["files_without_assertions"] += 1
+            floor_rows.append({"file": rel, "category": "completed-no-assertions"})
             continue
         assertion_counts["files_with_assertions"] += 1
         command = [
@@ -308,6 +310,7 @@ def _run_parent(args: argparse.Namespace) -> int:
             )
 
         category = str(row["category"])
+        floor_rows.append({"file": rel, "category": category})
         categories[category] += 1
         if len(representatives[category]) < 10:
             representatives[category].append(rel)
@@ -410,6 +413,23 @@ def _run_parent(args: argparse.Namespace) -> int:
         "factory_walk_unclassified_shape_split": shape_split,
         "factory_walk_unclassified_rows": retained_loci,
     }
+    from pandas_floor_summary import floor_summary
+
+    all_files = sorted(
+        f"{package}/{path.relative_to(root).as_posix()}"
+        for package, root, path in paths
+    )
+    fatal_r = sum(
+        count for category, count in categories.items() if category != "completed"
+    )
+    report["floorSummary"] = floor_summary(
+        floor="fatal-triage",
+        files=all_files,
+        rows=floor_rows,
+        totals={"R_fatal_triage": fatal_r, **dict(categories)},
+        measured=len(floor_rows) == len(all_files),
+        unmeasurable_reasons=(),
+    )
     if args.compact and r_unclassified > COMPACT_LOCUS_LIMIT:
         report["factory_walk_unclassified_rows_truncated"] = True
         report["factory_walk_unclassified_rows_retained"] = COMPACT_LOCUS_LIMIT
