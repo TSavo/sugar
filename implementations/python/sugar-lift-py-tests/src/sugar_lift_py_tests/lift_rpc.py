@@ -1364,19 +1364,36 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
 
     demanded_source = f"module:{source_file.unit.source_cid}"
     panics = []
-    nodes_by_cid = {}
+    # Key nodes by the roll-call identity (sealed CID + source coordinate +
+    # kind) -- the SAME identity `MinorityReport` uses. One sealed fragment CID
+    # is shared by equal source text at DISTINCT loci (e.g. `os` at 3:7 and Name
+    # nodes at 197:28 / 206:14 all seal to one CID); those are distinct
+    # obligations the minority counts separately. Keying panics by CID ALONE
+    # would map every occurrence back to one node, emit duplicate owner
+    # identities the Rust reader rejects, AND under-count R by fusing distinct
+    # source sites. Carry the coordinate so each absent node yields its own
+    # terminal locus, exactly matching `report.R`.
+    def _coord_key(node) -> tuple:
+        lc = node.line_col_span()
+        return (node.fragment.seal().cid, lc.start_line, lc.start_col, node.kind)
+
+    nodes_by_key: dict[tuple, Any] = {}
     for node in reporter.registered:
-        nodes_by_cid.setdefault(node.fragment.seal().cid, node)
-    gaps_by_cid = {}
+        nodes_by_key.setdefault(_coord_key(node), node)
+    gaps_by_key: dict[tuple, Any] = {}
     for node, panic in reporter.gaps:
-        cid = node.fragment.seal().cid
-        nodes_by_cid.setdefault(cid, node)
-        gaps_by_cid.setdefault(cid, panic)
-    absent_cids = [entry.cid for entry in report.minority]
-    absent_cids.extend(cid for cid in gaps_by_cid if cid not in absent_cids)
-    for cid in absent_cids:
-        node = nodes_by_cid[cid]
-        panic = gaps_by_cid.get(cid)
+        key = _coord_key(node)
+        nodes_by_key.setdefault(key, node)
+        gaps_by_key.setdefault(key, panic)
+    absent_keys = [
+        (entry.cid, entry.start_line, entry.start_col, entry.kind)
+        for entry in report.minority
+    ]
+    absent_seen = set(absent_keys)
+    absent_keys.extend(key for key in gaps_by_key if key not in absent_seen)
+    for key in absent_keys:
+        node = nodes_by_key[key]
+        panic = gaps_by_key.get(key)
         lc = node.line_col_span()
         locus = f"{file_rel}:{lc.start_line}:{lc.start_col}"
         terminal = (
