@@ -31,11 +31,30 @@ refusal.
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
+from pathlib import Path
+import sys
 from typing import Any
 
-from .source_tables import parsed_tree
+# The verify plugin is also launched directly from this package's ``src``
+# directory.  Put the sibling typed-tree package on that process's import path
+# before loading it; source still enters only through SourceFile below.
+_tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+if _tree_src.is_dir() and str(_tree_src) not in sys.path:
+    sys.path.insert(0, str(_tree_src))
+
+from sugar_source_tree.backend import BackendCouldNotParse
+from sugar_source_tree.nodes import (
+    AsyncFunctionDef,
+    ClassDef,
+    Expression,
+    FunctionDef,
+    Name,
+    Node,
+)
+from sugar_source_tree.tree import SourceFile
+
+from .canonical import blake3_512_of
 
 Json = dict[str, Any]
 
@@ -125,29 +144,37 @@ def collect_int_signatures(source: str, module_path: str = "") -> dict[str, _Sor
     lookup by bare leaf name would collide them."""
     out: dict[str, _Sorts] = {}
     try:
-        tree = parsed_tree(source)
-    except SyntaxError:
+        source_file = SourceFile(
+            (
+                source,
+                "<verify-dialect>",
+                blake3_512_of(source.encode("utf-8")),
+            )
+        )
+    except (SyntaxError, BackendCouldNotParse):
         return out
 
-    def visit(node: ast.AST, scope: list[tuple[str, str]]) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
+    def visit(node: Node, scope: list[tuple[str, str]]) -> None:
+        for _, _, child in node.children():
+            if isinstance(child, ClassDef):
                 visit(child, scope + [("class", child.name)])
-            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            elif isinstance(child, (FunctionDef, AsyncFunctionDef)):
                 qualname = _qualified_name(scope, child.name)
                 key = f"{module_path}.{qualname}" if module_path else qualname
                 formal_sorts: dict[str, str] = {}
-                for arg in child.args.args:
-                    sort = _sort_for_annotation(arg.annotation)
+                for param in child.params:
+                    if param.param_kind != "positional_or_keyword":
+                        continue
+                    sort = _sort_for_annotation(param.annotation)
                     if sort is not None:
-                        formal_sorts[arg.arg] = sort
+                        formal_sorts[param.name] = sort
                 return_sort = _sort_for_annotation(child.returns)
                 out[key] = _Sorts(formal_sorts=formal_sorts, return_sort=return_sort)
                 visit(child, scope + [("function", child.name)])
             else:
                 visit(child, scope)
 
-    visit(tree, [])
+    visit(source_file.root, [])
     return out
 
 
@@ -164,10 +191,10 @@ def _qualified_name(scope: list[tuple[str, str]], name: str) -> str:
     return ".".join(parts)
 
 
-def _sort_for_annotation(annotation: ast.expr | None) -> str | None:
+def _sort_for_annotation(annotation: Expression | None) -> str | None:
     if annotation is None:
         return None
-    if isinstance(annotation, ast.Name):
+    if isinstance(annotation, Name):
         if annotation.id in _INT_ANNOTATIONS:
             return "Int"
         if annotation.id in _BOOL_ANNOTATIONS:
