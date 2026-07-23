@@ -22,6 +22,12 @@ class BindingCoordinateRefSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if ctx is not None and hasattr(ctx, "temporal"):
+            value = ctx.temporal.value_if_bound(self.coordinate.cid)
+            if value is not None:
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(value)
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(

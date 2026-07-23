@@ -258,6 +258,50 @@ class ExitSet(Generic[T]):
                     exits.append(Halted(guard, incoming.effect, incoming.state))
         return ExitSet(tuple(exits)).normalize()
 
+    def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
+        """Run a source-constructed ``__exit__`` and retain both truth faces.
+
+        This is the source-derived counterpart of contract-selected
+        ``and_exit``.  A completed exit result is interpreted only through the
+        ordinary Python truth predicate.  On an incoming halt, truth consumes
+        the effect and falsity restores that exact effect; neither face is
+        discarded.
+        """
+        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+
+        exits: list[Exit[object]] = []
+        for incoming in self.exits:
+            for ex in exit_es.exits:
+                guard = _and_guards(incoming.guard, ex.guard)
+                if isinstance(ex, Halted):
+                    exits.append(Halted(guard, ex.effect, ex.state))
+                    continue
+                if isinstance(incoming, Completed):
+                    exits.append(Completed(guard, incoming.value))
+                    continue
+                from sugar_lift_py_tests.floor import TermValue
+
+                if isinstance(ex.value, TermValue) and type(ex.value.value) is bool:
+                    truth = true_guard() if ex.value.value else false_guard()
+                else:
+                    truth = predicate_formula(ex.value, site)
+                falsity = (
+                    false_guard()
+                    if _is_true(truth)
+                    else true_guard() if _is_false(truth) else not_(truth)
+                )
+                exits.append(
+                    Completed(_and_guards(guard, truth), incoming.state)
+                )
+                exits.append(
+                    Halted(
+                        _and_guards(guard, falsity),
+                        incoming.effect,
+                        incoming.state,
+                    )
+                )
+        return ExitSet(tuple(exits)).normalize()
+
     def collapse(self):
         """Return the old linear Outcome only for one unconditional exit."""
         normalized = self.normalize()

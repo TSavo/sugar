@@ -991,7 +991,12 @@ class CallSiteValue(FloorValue):
             return None
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+        reduce_ctx = _ctx_with_curried_args(
+            ctx,
+            self.parameters,
+            self.arg_values,
+            self.formal_coordinate_cids,
+        )
         active_demand = _ACTIVE_DIG_DEMAND.get()
         nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
         if active_demand >= nested_budget:
@@ -1081,7 +1086,12 @@ class CallSiteValue(FloorValue):
             )
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+        reduce_ctx = _ctx_with_curried_args(
+            ctx,
+            self.parameters,
+            self.arg_values,
+            self.formal_coordinate_cids,
+        )
         outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
         if isinstance(outcome, Incomplete):
             _force_floor_gap(
@@ -1112,6 +1122,30 @@ class CallSiteValue(FloorValue):
                 arg_values=self.arg_values,
             )
         return floor
+
+    def reduce_source_outcome(self, ctx: Any = None):
+        """Reduce this already-constructed source body without floor projection.
+
+        Context-manager protocol construction needs the body's complete
+        ExitSet, including method halts.  This uses the identical explicit call
+        frame/curry path as ``force_floor`` and never reconstructs source.
+        """
+        if self.body is None or len(self.parameters) != len(self.arg_values):
+            _force_floor_gap(
+                owner="CallSiteValue.reduce_source_outcome",
+                target_name=self.target_name,
+                observed="missing body or callsite arity mismatch",
+                fix="retain the source-visible call frame or keep the call loud",
+            )
+        reduce_ctx = _ctx_with_curried_args(
+            ctx,
+            self.parameters,
+            self.arg_values,
+            self.formal_coordinate_cids,
+        )
+        return _reduce_callsite_body(
+            self.body, reduce_ctx, blame=self.target_name
+        )
 
 
 def force_floor(
@@ -1255,6 +1289,7 @@ def _ctx_with_curried_args(
     ctx: Any,
     parameters: tuple[str, ...],
     arg_values: tuple[FloorValue, ...],
+    formal_coordinate_cids: tuple[str, ...] = (),
 ):
     from sugar_lift_py_tests.temporal import curry_temporal
 
@@ -1265,4 +1300,14 @@ def _ctx_with_curried_args(
         owner="CallSiteValue.force_floor",
         blame="<callsite>",
     )
+    if formal_coordinate_cids:
+        if len(formal_coordinate_cids) != len(arg_values):
+            return result
+        result = curry_temporal(
+            result,
+            formal_coordinate_cids,
+            arg_values,
+            owner="CallSiteValue.force_floor formal coordinates",
+            blame="<callsite-coordinate>",
+        )
     return result

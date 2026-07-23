@@ -35,6 +35,7 @@ class ClassDefinitionValue(FloorValue):
     def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
         from sugar_lift_py_tests.floor import (
             ObjectField,
+            ObjectMethodValue,
             ObjectValue,
             ReceiverFieldStoreValue,
         )
@@ -43,6 +44,7 @@ class ClassDefinitionValue(FloorValue):
         receiver = ObjectValue(
             self.class_name,
             (),
+            methods=self._object_methods(),
             identity=receiver_coordinate_cid or self.class_definition_cid,
         )
         if block is None:
@@ -81,5 +83,23 @@ class ClassDefinitionValue(FloorValue):
         return ObjectValue(
             self.class_name,
             ordered,
+            methods=self._object_methods(),
             identity=_term_content_cid(identity_term),
+        )
+
+    def _object_methods(self):
+        from sugar_lift_py_tests.floor import ObjectMethodValue
+
+        return tuple(
+            ObjectMethodValue(
+                method.name,
+                method.source_call_frame.parameters,
+                method.source_call_frame.body,
+                method.source_call_frame.frame_cid,
+                tuple(
+                    coordinate.cid
+                    for coordinate in method.source_call_frame.formal_coordinates
+                ),
+            )
+            for method in self.methods
         )
