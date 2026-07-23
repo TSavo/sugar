@@ -19,15 +19,14 @@ Asking "which node is this" is ``isinstance`` on THESE classes — blessed
 and encouraged (design review, #5940 section 6). What is banned is tag
 dispatch on strings.
 
-Equality is identity: each build constructs one node per site, so
-``a is b`` is the sameness question within a ``SourceFile``. There is no
-pool and no interning across files — structural equality across sources
-is a CID question, answered by mementos, not by ``__eq__``.
+Field *data* is memoized once per backend site on the unit (source or
+shadow ref + control context). Node shells may be constructed freely over
+that memo — memoize data, construct the class as often as needed. Structural
+equality across sources is a CID question (mementos), not ``__eq__`` on shells.
 
-Nodes carry their own fields; nothing is ever written onto a
-backend node (no stamping). Synthetic nodes (a future ``assert_with_test``)
-are ordinary instances of these classes with no backend handle at all —
-the backend contract stays read-only.
+Nothing is written onto a backend node (no stamping). Shadow rewrite is the
+same construction door with a different backend: a ShadowNode that already
+carries the rewritten shape, then memoized like any other ref.
 """
 
 from __future__ import annotations
@@ -152,6 +151,8 @@ class SourceUnit:
     # Bound by SourceFile after the backend materializes the Module — the sole
     # structural authority for module-body identity. Never a second parse.
     typed_module: object = field(init=False, default=None)
+    # Field-data memo for materialize (see construction_cache.py).
+    construction_cache: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -168,6 +169,7 @@ class SourceUnit:
             ),
         )
         object.__setattr__(self, "typed_module", None)
+        object.__setattr__(self, "construction_cache", None)
 
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
@@ -462,14 +464,10 @@ class _Splice:
 class Node(Typed):
     """Abstract base of every node. The hierarchy is the grammar.
 
-    A node holds only its ``unit`` and its backend reference ``ref``.
-    Every declared accessor — ``Call.args``, ``FunctionDef.body``, a
-    leaf like ``Name.id`` — is a QUERY: resolved through ``ref`` at the
-    moment of access, never precomputed and never held between calls.
-    The class annotations below each concrete class are the contract the
-    backend must satisfy; an accessor the backend cannot answer panics
-    loudly at that accessor, naming it — never silence, never a bare
-    ``None``.
+    Shell over memoized field *data* on the unit ConstructionCache. Accessors
+    resolve each backend slot at most once per (ref, reporter, control_context)
+    into that shared row; re-reads hit the row. Shells are free to construct.
+    Shadow rewrite uses the same door with a shadow backend ref.
     """
 
     unit: SourceUnit
@@ -499,7 +497,7 @@ class Node(Typed):
         # THE construction event IS the registration. Registering here, in the
         # constructor, means calling ``cls(...)`` at all is showing up on the
         # roll -- there is no way to new a node without it. (register only
-        # records the reference; the node's fields stay lazy through ref.)
+        # records the reference; field *data* is memoized on the unit cache.)
         self.reporter.register(self)
         if isinstance(self, (For, AsyncFor, While)):
             object.__setattr__(
@@ -529,18 +527,28 @@ class Node(Typed):
         KIND_REGISTRY[cls.__name__] = cls
 
     def __getattr__(self, name: str):
-        # Every annotated field is a query into the backend, answered per
-        # access. Unknown names — including an accessor the backend's
-        # answer does not cover — panic loudly, naming the accessor.
+        # Field data is memoized on the unit once per site; this shell exposes it.
         if name.startswith("_"):
             raise AttributeError(name)
+        from .construction_cache import ConstructionCache
+
+        cache = self.unit.construction_cache
+        if cache is None:
+            cache = ConstructionCache()
+            object.__setattr__(self.unit, "construction_cache", cache)
+        key = cache.key(self.ref, self.reporter, self.control_context)
+        row = cache.fields.setdefault(key, {})
+        if name in row:
+            return row[name]
         for slot_name, slot in self.ref.describe().slots:
             if slot_name == name:
-                return slot.resolve(
+                value = slot.resolve(
                     self.unit,
                     self.reporter,
                     self._child_control_context(slot_name),
                 )
+                row[name] = value
+                return value
         if name in _declared_fields(type(self)):
             vocabulary_missing(
                 owner="nodes.Node.__getattr__",

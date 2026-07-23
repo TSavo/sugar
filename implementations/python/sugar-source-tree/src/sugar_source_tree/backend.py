@@ -57,23 +57,28 @@ def materialize(
 ) -> Node:
     """Typeable -> Typed: THE construction event. Panics on MISSING kind.
 
-    The returned node holds only ``unit``, ``ref``, and its ``reporter``;
-    every field access on it is a fresh query through ``ref.describe()``.
-    The reporter is threaded here so EVERY constructed node carries one and
-    hands it on to the children it later resolves.
-
-    THE construction event IS the registration: a node registers on the roll in
-    its own constructor (``Node.__post_init__``), so being constructed is being
-    on the roster and there is no way to new a node off the roll -- that is what
-    it means to be an AST node. materialize does not register; the constructor
-    does.
+    Constructs a Node shell for this backend ref (source or shadow). Field
+    *data* is memoized on the unit's ConstructionCache — slots resolve once
+    per (ref, reporter, control_context) into a shared row; shells may be
+    built freely over that row. Registration runs in the constructor.
     """
+    from .construction_cache import ConstructionCache
+
+    ctx = control_context or ControlConstructionContextV1()
+    cache = getattr(unit, "construction_cache", None)
+    if cache is None:
+        cache = ConstructionCache()
+        object.__setattr__(unit, "construction_cache", cache)
+    # Ensure the field row exists (filled lazily on first accessor).
+    key = cache.key(ref, reporter, ctx)
+    cache.fields.setdefault(key, {})
+
     cls = ref.resolve_type()
     return cls(
         unit=unit,
         ref=ref,
         reporter=reporter,
-        control_context=control_context or ControlConstructionContextV1(),
+        control_context=ctx,
     )
 
 
