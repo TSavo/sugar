@@ -12,6 +12,9 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Any, Callable
+
+from sugar_lift_py_tests.audit_only import collect_construction_panic
 
 
 class FileTimeout(Exception):
@@ -121,6 +124,20 @@ def _git_commit(root: Path) -> str:
     ).strip()
 
 
+def _collect_file_construction(
+    label: str, walker: Callable[[], Any]
+) -> tuple[Any | None, dict[str, Any] | None]:
+    value, gap = collect_construction_panic(label, walker)
+    if gap is None:
+        return value, None
+    return None, {
+        "file": label,
+        "type": "ConstructionPanic",
+        "message": gap.message,
+        "gap": gap.info,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("corpus", type=Path)
@@ -139,6 +156,7 @@ def main() -> int:
     mechanisms: dict[str, Counter] = defaultdict(Counter)
     families = Counter()
     defects = []
+    construction_panics: list[dict[str, Any]] = []
     files_completed = 0
     functions_total = 0
     functions_clean = 0
@@ -157,15 +175,30 @@ def main() -> int:
                 if labels:
                     syntax[(type(node).__name__, node.lineno, node.col_offset)] = labels
 
-            reporter = CollectingReporter()
-            source_file = SourceFile.from_path(str(path), reporter=reporter)
-            for function in source_file.functions():
-                functions_total += 1
-                try:
-                    function.sugar()
-                    functions_clean += 1
-                except SugarNotWritten:
-                    pass
+            def construct_file():
+                nonlocal functions_total, functions_clean
+                reporter = CollectingReporter()
+                source_file = SourceFile.from_path(str(path), reporter=reporter)
+                for function in source_file.functions():
+                    functions_total += 1
+                    try:
+                        function.sugar()
+                        functions_clean += 1
+                    except SugarNotWritten:
+                        pass
+                return reporter
+
+            reporter, panic_row = _collect_file_construction(relative, construct_file)
+            if panic_row is not None:
+                construction_panics.append(panic_row)
+                families["ConstructionPanic"] += 1
+                print(
+                    f"[{index}/{len(files)}] CONSTRUCTION-PANIC {relative}: "
+                    f"{panic_row['message']}",
+                    flush=True,
+                )
+                continue
+            assert reporter is not None
 
             registered = {_coordinate(node) for node in reporter.registered}
             present = {_coordinate(node) for node in reporter.present}
@@ -199,9 +232,7 @@ def main() -> int:
                     f"direct-labelled={direct}",
                     flush=True,
                 )
-        except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
+        except Exception as exc:
             defects.append(
                 {"file": relative, "type": type(exc).__name__, "message": str(exc)}
             )
@@ -220,6 +251,8 @@ def main() -> int:
         "filesTotal": len(files),
         "filesCompleted": files_completed,
         "defects": defects,
+        "constructionPanics": construction_panics,
+        "R_construction_panics": len(construction_panics),
         "functionsTotal": functions_total,
         "functionsConstructClean": functions_clean,
         "constructs": {
@@ -242,7 +275,7 @@ def main() -> int:
     print(rendered, flush=True)
     if args.json is not None:
         args.json.write_text(rendered + "\n")
-    return 1 if defects or files_completed != len(files) else 0
+    return 1 if defects or construction_panics or files_completed != len(files) else 0
 
 
 if __name__ == "__main__":
