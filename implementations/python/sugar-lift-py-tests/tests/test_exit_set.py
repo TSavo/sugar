@@ -38,7 +38,7 @@ def test_conditional_halt_keeps_halted_and_complementary_completed_exits():
     exits = ExitSet.conditional_halt(condition, effect, "state")
 
     assert exits.exits == (
-        Halted(condition, effect),
+        Halted(condition, effect, "state"),
         Completed(not_(condition), "state"),
     )
     assert exits.collapse() is exits
@@ -67,7 +67,7 @@ def test_sequencing_maps_only_completed_exits():
     sequenced = exits.sequence(lambda value: ExitSet.completed(value + 1))
 
     assert sequenced.exits == (
-        Halted(condition, effect),
+        Halted(condition, effect, 1),
         Completed(not_(condition), 2),
     )
 
@@ -213,9 +213,7 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
         ExitSet.completed(True),
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
-    assert all(isinstance(e, Completed) for e in after.exits)
-    assert any(e.value == "state" for e in after.exits if isinstance(e, Completed))
-    assert any(e.value is None for e in after.exits if isinstance(e, Completed))
+    assert after.collapse() == Complete("state")
 
 
 def test_and_exit_membrane_suppresses_matcher_authority():
