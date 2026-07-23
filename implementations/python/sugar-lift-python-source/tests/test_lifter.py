@@ -3867,7 +3867,7 @@ def test_liftable_nonliteral_defaults_roundtrip_stably() -> None:
     )
 
 
-def test_known_external_constant_defaults_lift_without_effects() -> None:
+def test_external_constant_defaults_have_no_spelling_authority() -> None:
     source = (
         "import numpy as np\n"
         "import os\n"
@@ -3879,29 +3879,11 @@ def test_known_external_constant_defaults_lift_without_effects() -> None:
 
     result = lift_source(source, "known_external_default.py")
 
-    assert result.refusals == []
-    contract = _contract(result.ir, ".f")
-    assert contract["effects"] == []
-    assert contract["parameterShape"] == [
-        {
-            "name": "missing",
-            "kind": "positional-or-keyword",
-            "default": _float_const(float("nan")),
-        },
-        {
-            "name": "dest",
-            "kind": "positional-or-keyword",
-            "default": _str_const("."),
-        },
-        {
-            "name": "protocol",
-            "kind": "positional-or-keyword",
-            "default": _int_const(pickle.HIGHEST_PROTOCOL),
-        },
-    ]
+    assert any(row["kind"] == "non-literal-default" for row in result.refusals)
+    assert not any(str(row.get("fnName", "")).endswith(".f") for row in result.ir)
 
 
-def test_known_imported_header_size_default_lifts_without_effects() -> None:
+def test_imported_named_default_stays_loud_without_authenticated_value() -> None:
     source = (
         "from _format_impl import _MAX_HEADER_SIZE\n"
         "\n"
@@ -3911,16 +3893,8 @@ def test_known_imported_header_size_default_lifts_without_effects() -> None:
 
     result = lift_source(source, "known_imported_header_size_default.py")
 
-    assert result.refusals == []
-    contract = _contract(result.ir, ".f")
-    assert contract["effects"] == []
-    assert contract["parameterShape"] == [
-        {
-            "name": "max_header_size",
-            "kind": "positional-or-keyword",
-            "default": _int_const(10000),
-        }
-    ]
+    assert any(row["kind"] == "non-literal-default" for row in result.refusals)
+    assert not any(str(row.get("fnName", "")).endswith(".f") for row in result.ir)
 
 
 def test_unknown_imported_name_default_remains_refused() -> None:
@@ -4496,7 +4470,7 @@ def test_transparent_wraps_final_and_deprecated_decorators_lift_body() -> None:
     assert "decoratorKinds" not in contract
 
 
-def test_transparent_set_module_decorator_lifts_body_without_marker() -> None:
+def test_set_module_spelling_does_not_confer_transparency() -> None:
     source = (
         "def set_module(module):\n"
         "    def decorator(func):\n"
@@ -4511,13 +4485,11 @@ def test_transparent_set_module_decorator_lifts_body_without_marker() -> None:
 
     result = lift_source(source, "set_module_decorator.py")
 
-    contract = _contract(result.ir, ".f")
-    assert result.refusals == []
-    assert _function_body(result, ".f") == _return(_var("x"))
-    assert "decoratorKinds" not in contract
+    assert any(row["kind"] == "decorator-refused" for row in result.refusals)
+    assert not any(str(row.get("fnName", "")).endswith(".f") for row in result.ir)
 
 
-def test_overload_stub_body_mints_no_contract_or_body_fact() -> None:
+def test_overload_spelling_does_not_confer_stub_authority() -> None:
     source = (
         "import typing\n"
         "\n"
@@ -4528,7 +4500,7 @@ def test_overload_stub_body_mints_no_contract_or_body_fact() -> None:
 
     result = lift_source(source, "overload_stub.py")
 
-    assert result.refusals == []
+    assert any(row["kind"] == "decorator-refused" for row in result.refusals)
     assert not any(str(item.get("fnName", "")).endswith(".f") for item in result.ir)
     source_body = _source_unit_contract(result.ir)["post"]["args"][1]["args"][1]
     assert source_body["name"] == "python:pass"

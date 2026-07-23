@@ -5,6 +5,52 @@ from typing import Any
 
 Json = Any
 
+class UnsupportedStatementGrammar(RuntimeError):
+    pass
+
+
+AST_STATEMENT_TYPE_NAMES = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Return",
+        "Delete",
+        "Assign",
+        "TypeAlias",
+        "AugAssign",
+        "AnnAssign",
+        "For",
+        "AsyncFor",
+        "While",
+        "If",
+        "With",
+        "AsyncWith",
+        "Match",
+        "Raise",
+        "Try",
+        "TryStar",
+        "Assert",
+        "Import",
+        "ImportFrom",
+        "Global",
+        "Nonlocal",
+        "Expr",
+        "Pass",
+        "Break",
+        "Continue",
+    }
+)
+AST_STATEMENT_TYPES = frozenset(
+    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
+)
+if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
+
+
+class UnsupportedStatementVariant(RuntimeError):
+    pass
+
 
 def function_param_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     return [arg.arg for arg in _ordered_signature_args(node.args)]
@@ -58,7 +104,9 @@ def stmt_to_template(stmt: ast.stmt, params: list[str]) -> Json:
             },
             "trailing_semi": False,
         }
-    return {"kind": "other", "variant": type(stmt).__name__}
+    if type(stmt) in AST_STATEMENT_TYPES:
+        return {"kind": "other", "variant": type(stmt).__name__}
+    raise UnsupportedStatementVariant(type(stmt).__name__)
 
 
 def expr_to_template(expr: ast.expr, params: list[str]) -> Json:

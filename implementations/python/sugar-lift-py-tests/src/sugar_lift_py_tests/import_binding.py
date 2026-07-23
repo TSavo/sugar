@@ -16,6 +16,52 @@ from typing import Any, Iterable
 from .canonicalizer import blake3_512_of, encode_jcs
 from .context_manager_contract import _json_value
 
+class UnsupportedStatementGrammar(RuntimeError):
+    pass
+
+
+AST_STATEMENT_TYPE_NAMES = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Return",
+        "Delete",
+        "Assign",
+        "TypeAlias",
+        "AugAssign",
+        "AnnAssign",
+        "For",
+        "AsyncFor",
+        "While",
+        "If",
+        "With",
+        "AsyncWith",
+        "Match",
+        "Raise",
+        "Try",
+        "TryStar",
+        "Assert",
+        "Import",
+        "ImportFrom",
+        "Global",
+        "Nonlocal",
+        "Expr",
+        "Pass",
+        "Break",
+        "Continue",
+    }
+)
+AST_STATEMENT_TYPES = frozenset(
+    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
+)
+if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
+
+
+class UnsupportedStatementVariant(RuntimeError):
+    pass
+
 
 def _hash(value: Any) -> str:
     return blake3_512_of(encode_jcs(_json_value(value)).encode("utf-8"))
@@ -445,10 +491,12 @@ class _Pass:
                 for name in _bound_names(target):
                     state[name] = frozenset({_UNBOUND})
             return state
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.expr):
-                self.expression(child, state, scope)
-        return state
+        if type(node) in AST_STATEMENT_TYPES:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.expr):
+                    self.expression(child, state, scope)
+            return state
+        raise UnsupportedStatementVariant(type(node).__name__)
 
 
 def _function_locals(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
