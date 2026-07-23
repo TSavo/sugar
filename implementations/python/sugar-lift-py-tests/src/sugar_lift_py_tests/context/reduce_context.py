@@ -32,7 +32,6 @@ class ReduceContext:
     # the attribute crashed the numpy/pandas package audit as unstructured exit=2
     # after opaque body dig started reducing vendor-bridged bodies.
     external_bridge_sink: Any = None
-    binding_coordinate_values: tuple[tuple[str, Any], ...] = ()
 
     @classmethod
     def root(
@@ -66,7 +65,6 @@ class ReduceContext:
             ),
             dig_sink=source.dig_sink,
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
-            binding_coordinate_values=getattr(source, "binding_coordinate_values", ()),
         )
 
     def record_operation(
@@ -103,23 +101,4 @@ class ReduceContext:
             prefer_ground_module_bindings=self.prefer_ground_module_bindings,
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
-            binding_coordinate_values=self.binding_coordinate_values,
-        )
-
-    def with_binding_coordinate_values(self, values) -> "ReduceContext":
-        result = self.with_temporal(self.temporal)
-        result.binding_coordinate_values = tuple(values)
-        return result
-
-    def value_for_binding_coordinate(self, coordinate_cid: str):
-        for candidate, value in reversed(self.binding_coordinate_values):
-            if candidate == coordinate_cid:
-                return value
-        from sugar_source_tree.panic import SugarNotWritten
-
-        raise SugarNotWritten(
-            owner="ReduceContext.value_for_binding_coordinate",
-            observed=coordinate_cid,
-            requested="an authenticated formal-to-actual binding",
-            fix="bind the exact call occurrence before reducing its source body",
         )

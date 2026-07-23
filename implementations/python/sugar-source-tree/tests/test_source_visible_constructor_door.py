@@ -56,7 +56,7 @@ def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.body is frame.body
+    assert outcome.value.body == frame.body
     assert outcome.value.parameters == ()
     assert frame.frame_cid.startswith("blake3-512:")
     constructed = outcome.value.force_floor(
@@ -98,14 +98,21 @@ def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() ->
 def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinate() -> (
     None
 ):
+    context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
         "class RenamedGuard:\n"
         "    def __init__(self, expected):\n"
         "        self.expected = expected\n\n"
         "    def enter(self):\n"
-        "        return self\n"
+        "        return self\n\n"
+        "RenamedGuard(11)\n",
+        context=context,
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    context.source_call_frames[_coordinate(call)] = (
+        class_node.source_visible_constructor_frame()
+    )
 
     outcome = class_node.sugar().desugar()
 
@@ -117,7 +124,9 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
     )
     assert outcome.value.initializer is not None
     assert outcome.value.class_definition_cid.startswith("blake3-512:")
-    receiver = outcome.value.construct_receiver_state((TermValue(11),))
+    receiver = call.sugar().desugar().value.force_floor(
+        None, owner="typed-class-call", project_callsite=False
+    )
 
     assert receiver.class_name == "RenamedGuard"
     assert {field.name: field.value for field in receiver.fields} == {

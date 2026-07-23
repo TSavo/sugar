@@ -28,9 +28,9 @@ class ClassDefinitionSugar(Sugar):
             reason="class structure is source testimony, not a proposition",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        preimage = {
+    @property
+    def preimage(self):
+        return {
             "kind": "python-class-definition",
             "schemaVersion": "1",
             "sourceIdentityCid": self.source_identity_cid,
@@ -44,13 +44,20 @@ class ClassDefinitionSugar(Sugar):
                 for method in self.methods
             ],
         }
+
+    @property
+    def class_definition_cid(self) -> str:
+        return cid_of_json(self.preimage)
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        del ctx
         initializer = next(
             (method for method in self.methods if method.name == "__init__"), None
         )
         return Complete(
             ClassDefinitionValue(
                 self.class_name,
-                cid_of_json(preimage),
+                self.class_definition_cid,
                 self.methods,
                 initializer,
             )

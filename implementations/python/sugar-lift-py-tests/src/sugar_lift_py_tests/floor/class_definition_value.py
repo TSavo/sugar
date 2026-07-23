@@ -32,43 +32,26 @@ class ClassDefinitionValue(FloorValue):
             symbol_kind="coordinate",
         )
 
-    def construct_receiver_state(self, actuals: tuple[object, ...]):
+    def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
         from sugar_lift_py_tests.floor import (
-            CallSiteValue,
             ObjectField,
             ObjectValue,
             ReceiverFieldStoreValue,
         )
         from sugar_lift_py_tests.ir import _term_content_cid, ctor, str_const
 
-        receiver = ObjectValue(self.class_name, (), identity=self.class_definition_cid)
-        if self.initializer is None:
+        receiver = ObjectValue(
+            self.class_name,
+            (),
+            identity=receiver_coordinate_cid or self.class_definition_cid,
+        )
+        if block is None:
             return receiver
-        frame = self.initializer.source_call_frame
-        values = (receiver, *actuals)
-        call = CallSiteValue(
-            target_name="python:source-class-init",
-            arg_values=values,
-            parameters=frame.parameters,
-            term=ctor(
-                "python:source-class-init",
-                [str_const(self.class_definition_cid)],
-                symbol_kind="coordinate",
-            ),
-            body=frame.body,
-            source_call_frame_cid=frame.frame_cid,
-            formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
-        )
-        block = call.force_floor(
-            None,
-            owner="ClassDefinitionValue.construct_receiver_state",
-            project_callsite=False,
-        )
         fields: dict[str, object] = {}
         for statement in block.statements:
             if not isinstance(statement, ReceiverFieldStoreValue):
                 continue
-            if statement.receiver != receiver:
+            if statement.receiver.identity != receiver.identity:
                 raise SugarNotWritten(
                     owner="ClassDefinitionValue.construct_receiver_state",
                     observed="receiver coordinate mismatch",

@@ -9,7 +9,8 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 @dataclass(frozen=True)
 class ClassConstructorBodySugar(Sugar):
     definition: Sugar
-    formal_coordinates: tuple[object, ...]
+    initializer_body: Sugar | None
+    receiver_coordinate_cid: str | None
     site: object = field(compare=False)
 
     @classmethod
@@ -23,19 +24,36 @@ class ClassConstructorBodySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        if ctx is None:
-            from sugar_source_tree.panic import SugarNotWritten
+        def construct(value):
+            if self.initializer_body is None:
+                return Complete(
+                    value.construct_receiver_state_from_block(
+                        None, self.receiver_coordinate_cid
+                    )
+                )
+            from sugar_lift_py_tests.floor import CallSiteValue
+            from sugar_lift_py_tests.ir import ctor, str_const
 
-            raise SugarNotWritten(
-                owner="ClassConstructorBodySugar.desugar",
-                observed="missing source-call binding frame",
-                requested="coordinate-bound class constructor actuals",
-                fix="reduce the class call through its SourceVisibleCallFrameV1",
+            call = CallSiteValue(
+                target_name="python:source-class-init",
+                arg_values=(),
+                parameters=(),
+                term=ctor(
+                    "python:source-class-init",
+                    [str_const(value.class_definition_cid)],
+                    symbol_kind="coordinate",
+                ),
+                body=self.initializer_body,
             )
-        actuals = tuple(
-            ctx.value_for_binding_coordinate(item.cid)
-            for item in self.formal_coordinates
-        )
-        return self.definition.desugar(ctx).and_then(
-            lambda value: Complete(value.construct_receiver_state(actuals))
-        )
+            block = call.force_floor(
+                ctx,
+                owner="ClassConstructorBodySugar.desugar",
+                project_callsite=False,
+            )
+            return Complete(
+                value.construct_receiver_state_from_block(
+                    block, self.receiver_coordinate_cid
+                )
+            )
+
+        return self.definition.desugar(ctx).and_then(construct)
