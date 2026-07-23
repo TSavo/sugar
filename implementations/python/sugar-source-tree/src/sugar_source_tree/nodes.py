@@ -58,6 +58,7 @@ from .binding_state import (
     BindingEntryV1,
     BindingMap,
     BindingState,
+    BindingStateWireGap,
     BranchResultSlot,
     GuardedBinding,
     LoopProjectedBinding,
@@ -4839,12 +4840,21 @@ class ListComp(Expression):
         )
 
     def _recurrence_generators(self):
+        from sugar_lift_python_source.canonical import cid_of_json
         from sugar_lift_py_tests.sugar.comprehension_sugar import (
             ComprehensionGeneratorSugar,
         )
+        from .binding_state import mint_binding_coordinate_v1
 
         specs = []
-        for gen in self.generators:
+        scope_owner_cid = cid_of_json(
+            {
+                "kind": "comprehension-binding-scope",
+                "schemaVersion": "1",
+                "source": self.fragment.seal().to_dict(),
+            }
+        )
+        for generator_index, gen in enumerate(self.generators):
             if (
                 gen.is_async
                 or gen.target.kind != "Name"
@@ -4853,7 +4863,12 @@ class ListComp(Expression):
                 return None
             specs.append(
                 ComprehensionGeneratorSugar(
-                    target=gen.target.id,
+                    source_name=gen.target.id,
+                    binding_coordinate_cid=mint_binding_coordinate_v1(
+                        scope_owner_cid=scope_owner_cid,
+                        binding_site=gen.target.fragment,
+                        projection_path=("generators", generator_index, "target"),
+                    ).cid,
                     iterable=gen.iter.sugar(),
                     filters=tuple(guard.sugar() for guard in gen.ifs),
                 )
@@ -5779,8 +5794,6 @@ class BranchResultRef(Expression):
 def _construct_binding_projection(state):
     from sugar_lift_py_tests.sugar.binding_projection import (
         GuardedProjection,
-        LoopCompletedFaceProjection,
-        LoopCompletedFacesProjection,
         UnboundProjection,
     )
 
@@ -5796,16 +5809,9 @@ def _construct_binding_projection(state):
             _construct_binding_projection(state.when_false),
         )
     if isinstance(state, LoopProjectedBinding):
-        return LoopCompletedFacesProjection(
-            target_cid=state.target_cid,
-            completed_faces=tuple(
-                LoopCompletedFaceProjection(
-                    completion_kind=face.completion_kind,
-                    guard_formula_cid=face.guard_formula_cid,
-                    state=_construct_binding_projection(face.state),
-                )
-                for face in state.completed_faces
-            ),
+        raise BindingStateWireGap(
+            "loop projected binding has CID-only guards; exact guard formula "
+            "testimony is required before downstream construction"
         )
     raise TypeError(type(state))
 

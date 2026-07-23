@@ -20,19 +20,4 @@ class GuardedProjection:
     when_false: BindingProjection
 
 
-@dataclass(frozen=True)
-class LoopCompletedFaceProjection:
-    completion_kind: str
-    guard_formula_cid: str
-    state: BindingProjection
-
-
-@dataclass(frozen=True)
-class LoopCompletedFacesProjection:
-    target_cid: str
-    completed_faces: tuple[LoopCompletedFaceProjection, ...]
-
-
-BindingProjection: TypeAlias = (
-    "Sugar | UnboundProjection | GuardedProjection | LoopCompletedFacesProjection"
-)
+BindingProjection: TypeAlias = "Sugar | UnboundProjection | GuardedProjection"

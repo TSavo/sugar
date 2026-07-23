@@ -11,7 +11,8 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class ComprehensionGeneratorSugar:
-    target: str
+    source_name: str
+    binding_coordinate_cid: str
     iterable: Sugar
     filters: tuple[Sugar, ...]
 
@@ -63,7 +64,15 @@ class ComprehensionSugar(Sugar):
         if filter_index == len(generator.filters):
             return self._desugar_generators(
                 index + 1,
-                (*resolved, (generator.target, iterable, filters)),
+                (
+                    *resolved,
+                    (
+                        generator.source_name,
+                        generator.binding_coordinate_cid,
+                        iterable,
+                        filters,
+                    ),
+                ),
                 ctx,
             )
         return generator.filters[filter_index].desugar(ctx).and_then(
@@ -80,7 +89,14 @@ class ComprehensionSugar(Sugar):
 
     def _complete(self, resolved, element, key=None) -> Outcome:
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-        from sugar_lift_py_tests.ir import PrimitiveSort, _Lambda, _intern_term, ctor
+        from sugar_lift_py_tests.ir import (
+            PrimitiveSort,
+            _Lambda,
+            _intern_term,
+            ctor,
+            make_var,
+            subst_var_in_term,
+        )
         from sugar_lift_py_tests.outcome import Complete
 
         owner = str(self.site)
@@ -95,34 +111,45 @@ class ComprehensionSugar(Sugar):
         )
         body = element_term
         recurrence_rows = []
-        for target, iterable, filters in reversed(resolved):
+        for source_name, binding_coordinate_cid, iterable, filters in reversed(resolved):
+            coordinate_var = make_var(binding_coordinate_cid)
+            body = subst_var_in_term(body, source_name, coordinate_var)
             for guard in reversed(filters):
+                guard_term = subst_var_in_term(
+                    guard.to_term(owner=owner), source_name, coordinate_var
+                )
                 body = ctor(
                     "python:loop.filter_guard",
                     [
-                        guard.to_term(owner=owner),
+                        guard_term,
                         body,
                         ctor("python:loop.latch", [], symbol_kind="coordinate"),
                     ],
                     symbol_kind="coordinate",
                 )
-            recurrence_rows.append((target, iterable, body))
+            recurrence_rows.append((binding_coordinate_cid, iterable, body))
             body = ctor(
                 "python:loop.flat_map",
                 [
                     iterable.to_term(owner=owner),
-                    _intern_term(_Lambda(target, PrimitiveSort("Value"), body)),
+                    _intern_term(
+                        _Lambda(
+                            binding_coordinate_cid,
+                            PrimitiveSort("Value"),
+                            body,
+                        )
+                    ),
                     ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
                 ],
                 symbol_kind="coordinate",
             )
-        outer_target, outer_iterable, outer_body = recurrence_rows[-1]
+        outer_coordinate, outer_iterable, outer_body = recurrence_rows[-1]
         term = ctor(
             self.kind,
             [
                 outer_iterable.to_term(owner=owner),
                 _intern_term(
-                    _Lambda(outer_target, PrimitiveSort("Value"), outer_body)
+                    _Lambda(outer_coordinate, PrimitiveSort("Value"), outer_body)
                 ),
                 ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
             ],

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from sugar_lift_py_tests.loop_construction import LoopConstructionV1
+from sugar_lift_py_tests.loop_construction import (
+    LoopConstructionV1,
+    decode_loop_construction_v1,
+)
 
 from .binding_provenance import BindingCoordinateV1
 from .binding_state import (
@@ -31,6 +34,7 @@ def project_loop_post_binding(
 
     if not isinstance(construction, LoopConstructionV1):
         raise BindingStateWireGap("loop projection requires LoopConstructionV1")
+    construction = decode_loop_construction_v1(construction.wire_graph())
     target_cid = construction.target.target_cid
     records = {
         record["completedFaceCid"]: record
