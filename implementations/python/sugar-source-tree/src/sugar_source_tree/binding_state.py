@@ -547,6 +547,10 @@ def _canonical_constructed_value(value: object) -> Any:
 
     if value is None or isinstance(value, (bool, int, str)):
         return value
+    if isinstance(value, float):
+        # Raw JSON floats are CID hazards (NaN, -0.0, precision); repr is the
+        # shortest deterministic round-trip, so seal the float as tagged text.
+        return {"floatRepr": repr(value)}
     if isinstance(value, Enum):
         return {
             "enumType": f"{type(value).__module__}.{type(value).__qualname__}",

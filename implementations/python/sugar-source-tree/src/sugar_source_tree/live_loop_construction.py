@@ -428,7 +428,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             loop.orelse, exhaustion_scope
         )
         else_runtime = tuple(
-            replace(else_net[name], coordinate=pre_entry.coordinate)
+            replace(
+                else_net.get(name, exhaustion_scope[name]),
+                coordinate=pre_entry.coordinate,
+            )
             for name, pre_entry in zip(carried_names, pre_entries, strict=True)
         )
         else_state, else_runtime = _sealed_state(else_runtime)
@@ -450,8 +453,15 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             },
             "completedFaceCid",
         )
-        records.append(else_output)
-        face_records.append(else_output)
+        # Content-addressed graph: an identical CID IS the same record. A
+        # state-neutral else lane reproduces the exhaustion face exactly; the
+        # obligation below still records the else transform against it.
+        if all(
+            prior["completedFaceCid"] != else_output["completedFaceCid"]
+            for prior in face_records
+        ):
+            records.append(else_output)
+            face_records.append(else_output)
         else_body = _record(
             {
                 "kind": "loop-body-transform",
