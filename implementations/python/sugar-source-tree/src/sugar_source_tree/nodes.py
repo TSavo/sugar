@@ -1678,8 +1678,14 @@ class FunctionDef(Statement):
         )
 
         substituted_body, _ = self._substitute_body(self.body, formal_scope)
+        generator_steps = self._source_visible_generator_steps_from(substituted_body)
         body = SourceVisibleFunctionBodySugar(
-            tuple(statement.sugar() for statement in substituted_body), self.fragment
+            (
+                ()
+                if generator_steps is not None
+                else tuple(statement.sugar() for statement in substituted_body)
+            ),
+            self.fragment,
         )
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
@@ -1703,6 +1709,14 @@ class FunctionDef(Statement):
             ),
             body=body,
             owner=self,
+            generator_steps=generator_steps,
+            generator_step_fragment_cids=(
+                ()
+                if generator_steps is None
+                else tuple(
+                    statement.fragment.seal().cid for statement in substituted_body
+                )
+            ),
         )
 
     def _source_visible_body(self, scope):
@@ -1711,8 +1725,80 @@ class FunctionDef(Statement):
         )
 
         substituted_body, _ = self._substitute_body(self.body, scope)
+        if self._source_visible_generator_steps_from(substituted_body) is not None:
+            return SourceVisibleFunctionBodySugar((), self.fragment)
         return SourceVisibleFunctionBodySugar(
             tuple(statement.sugar() for statement in substituted_body), self.fragment
+        )
+
+    def _source_visible_generator_steps(self, scope):
+        substituted_body, _ = self._substitute_body(self.body, scope)
+        return self._source_visible_generator_steps_from(substituted_body)
+
+    def _source_visible_generator_steps_from(self, body):
+        if not self._owns_yield(body):
+            return None
+        from sugar_lift_py_tests.generator_construction import (
+            FinallyStepV1,
+            OpaqueStepV1,
+            ReturnStepV1,
+            YieldStepV1,
+        )
+
+        steps = []
+
+        def append_statement(statement):
+            if isinstance(statement, Expr) and isinstance(statement.value, Yield):
+                value = statement.value.value
+                steps.append(YieldStepV1(None if value is None else value.sugar()))
+            elif isinstance(statement, Return):
+                steps.append(
+                    ReturnStepV1(
+                        None if statement.value is None else statement.value.sugar()
+                    )
+                )
+            elif (
+                isinstance(statement, Try)
+                and not statement.handlers
+                and not statement.orelse
+                and statement.finalbody
+                and self._owns_yield(statement.body)
+            ):
+                for nested in statement.body:
+                    append_statement(nested)
+                steps.append(
+                    FinallyStepV1(
+                        tuple(item.sugar() for item in statement.finalbody)
+                    )
+                )
+            else:
+                steps.append(OpaqueStepV1(statement.kind))
+
+        for statement in body:
+            append_statement(statement)
+        if not steps or not isinstance(steps[-1], ReturnStepV1):
+            steps.append(ReturnStepV1())
+        return tuple(steps)
+
+    @staticmethod
+    def _owns_yield(body) -> bool:
+        def visit(node) -> bool:
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+                return False
+            if isinstance(node, Yield):
+                return True
+            for field in getattr(node, "_child_fields", ()):
+                value = getattr(node, field)
+                if isinstance(value, Node) and visit(value):
+                    return True
+                if isinstance(value, tuple) and any(
+                    visit(item) for item in value if isinstance(item, Node)
+                ):
+                    return True
+            return False
+
+        return any(
+            isinstance(statement, Yield) or visit(statement) for statement in body
         )
 
     def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
@@ -3794,6 +3880,35 @@ class With(Statement):
         self.reporter.report_gap(self, panic)
         raise panic
 
+    def _generator_manager_frame(self, item: WithItem):
+        if not isinstance(item.context_expr, Call):
+            return None
+        context = self.unit.construction_context
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if not isinstance(context, TreeConstructionContextV1):
+            return None
+        span = item.context_expr.line_col_span()
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+        frame = context.source_call_frames.get(coordinate)
+        if frame is None or frame.generator_steps is None:
+            return None
+        return frame
+
+    def _generator_manager_sugar(self, item: WithItem):
+        if self._generator_manager_frame(item) is None:
+            return None
+        return item.context_expr.sugar()
+
     def _require_narrow_cm_ref(self, item: WithItem):
         resolution = self._prebound_manager_resolution(item)
         if resolution is None:
@@ -3894,6 +4009,24 @@ class With(Statement):
                 self.reporter.report_gap(self, panic)
                 raise panic
             as_name = item.optional_vars.id
+
+        generator_manager = self._generator_manager_sugar(item)
+        if generator_manager is not None:
+            from sugar_lift_py_tests.sugar.generator_with_sugar import (
+                GeneratorWithSugar,
+            )
+
+            enter_slot = (
+                f"{item._manager_slot_id()}#enter_result"
+                if as_name is not None
+                else None
+            )
+            return GeneratorWithSugar(
+                manager=generator_manager,
+                body=tuple(stmt.sugar() for stmt in self.body),
+                enter_slot_id=enter_slot,
+                site=self.fragment,
+            )
 
         resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
@@ -4087,7 +4220,8 @@ class With(Statement):
                 return self if not changed else rewrite(self, **changed)
             item = items[0]
             if item.optional_vars is not None and item.optional_vars.kind == "Name":
-                self._require_narrow_cm_ref(item)
+                if self._generator_manager_frame(item) is None:
+                    self._require_narrow_cm_ref(item)
                 enter_slot = f"{item._manager_slot_id()}#enter_result"
                 body_scope[item.optional_vars.id] = item._make_observation_ref(
                     enter_slot, ENTER_RESULT
@@ -4119,7 +4253,8 @@ class With(Statement):
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
                 return None
-            self._require_narrow_cm_ref(item)
+            if self._generator_manager_frame(item) is None:
+                self._require_narrow_cm_ref(item)
             enter_slot = f"{item._manager_slot_id()}#enter_result"
             return {
                 item.optional_vars.id: item._make_observation_ref(
@@ -5608,6 +5743,16 @@ class Yield(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.yield_suspension_sugar import (
+            YieldSuspensionSugar,
+        )
+
+        return YieldSuspensionSugar(
+            value=None if self.value is None else self.value.sugar(),
+            site=self.fragment,
+        )
 
 
 class YieldFrom(Expression):
