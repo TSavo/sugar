@@ -83,12 +83,15 @@ def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) 
     # If construction raises a non-typed-gap exception, the child must let
     # it propagate (so the parent's subprocess exits nonzero = bare exception).
     # We force a bare exception from the production door and assert it escapes.
-    import sugar_source_tree.tree as tree_mod
-
     def _boom(*a, **k):
         raise RuntimeError("planted bare exception in construction")
 
-    monkeypatch.setattr(tree_mod.SourceFile, "from_path", staticmethod(_boom))
+    import sys
+
+    production_source_file = sys.modules.get("_production_source_file")
+    if production_source_file is None:
+        import _production_source_file as production_source_file
+    monkeypatch.setattr(production_source_file, "production_source_file", _boom)
     path = _write(tmp_path, "def a():\n    return 1\n")
     with pytest.raises(RuntimeError, match="planted bare exception"):
         _CHILD.run_production_lift_child(path, "mod.py")

@@ -116,6 +116,8 @@ class WithConstructionGapKind(str, Enum):
     UNAUTHENTICATED_MEMBER = "unauthenticated-member"
     PAYLOAD_CID_MISMATCH = "payload-cid-mismatch"
     UNSUPPORTED_CM_SCHEMA = "unsupported-cm-schema"
+    NO_DERIVED_CONTRACT = "no-derived-contract"
+    STALE_DERIVED_CONTRACT = "stale-derived-contract"
     UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS = "unsupported-context-manager-semantics"
     MULTIPLE_CONTEXT_MANAGER_ITEMS = "multiple-context-manager-items"
     UNSUPPORTED_WITH_BINDING_TARGET = "unsupported-with-binding-target"

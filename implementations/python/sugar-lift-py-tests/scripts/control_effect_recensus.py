@@ -138,6 +138,17 @@ def _collect_file_construction(
     }
 
 
+def _production_source_file(path, *, root, reporter, distribution_index=None):
+    from _production_source_file import production_source_file
+
+    return production_source_file(
+        path,
+        root=root,
+        reporter=reporter,
+        distribution_index=distribution_index,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("corpus", type=Path)
@@ -148,7 +159,15 @@ def main() -> int:
 
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
+
+    import importlib.metadata
+
+    package_distributions = importlib.metadata.packages_distributions()
+    distribution_index = {
+        package: importlib.metadata.distribution(distributions[0])
+        for package, distributions in package_distributions.items()
+        if len(distributions) == 1
+    }
 
     files = sorted(args.corpus.rglob("*.py"))
     signal.signal(signal.SIGALRM, _timeout)
@@ -179,7 +198,12 @@ def main() -> int:
             def construct_file():
                 nonlocal functions_total, functions_clean
                 reporter = CollectingReporter()
-                source_file = SourceFile.from_path(str(path), reporter=reporter)
+                source_file = _production_source_file(
+                    path,
+                    root=args.corpus,
+                    reporter=reporter,
+                    distribution_index=distribution_index,
+                )
                 for function in source_file.functions():
                     functions_total += 1
                     try:
