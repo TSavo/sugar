@@ -288,3 +288,18 @@ def test_missing_root_is_auditor_error_not_crash(tmp_path: Path) -> None:
     assert any(row.kind == "auditor-root-error" for row in offenders)
     assert _SCANNER.r_construction_side_doors(offenders) == 0
     assert _SCANNER.r_auditor_errors(offenders) >= 1
+
+
+def test_compiler_public_api_has_no_backend_ast_authority() -> None:
+    """The compiler orchestrates; only its backend adapter may own stdlib AST."""
+    package = (
+        Path(__file__).resolve().parents[2]
+        / "sugar-lift-python-source"
+        / "src"
+        / "sugar_lift_python_source"
+    )
+    offenders = _SCANNER.scan_roots((package / "compiler.py",))
+
+    assert _SCANNER.r_construction_side_doors(offenders) == 0, (
+        _SCANNER.format_report(offenders)
+    )
