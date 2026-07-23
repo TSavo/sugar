@@ -33,15 +33,19 @@ def _out(src):
     return _fn(src).sugar().desugar().value.post().args[1]
 
 
+def _is_binding_coordinate(value):
+    return isinstance(value, str) and value.startswith("blake3-512:")
+
+
 def test_filtered_listcomp_keeps_ground_true_elements():
     term = _out("def A():\n    return [x for x in [1, 2, 3, 4] if x > 2]\n")
     assert term.name == "array"
     assert [arg.value for arg in term.args] == [3, 4]
 
 
-def test_undecidable_filtered_listcomp_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n").sugar()
+def test_undecidable_filtered_listcomp_retains_guard_without_guessing_verdict():
+    term = _out("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
+    assert term.args[1].body.name == "python:loop.filter_guard"
 
 
 def test_dictcomp_over_concrete_range_dissolves():
@@ -85,8 +89,8 @@ def test_filtered_setcomp_keeps_only_ground_true_members():
     ],
 )
 def test_filtered_set_and_dict_do_not_fabricate_symbolic_guard_verdict(source):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A(keep):\n    return {source}\n").sugar()
+    term = _out(f"def A(keep):\n    return {source}\n")
+    assert term.args[1].body.name == "python:loop.filter_guard"
 
 
 def test_setcomp_preserves_duplicate_elimination():
@@ -113,7 +117,7 @@ def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, tra
     term = _out(f"def A(xs):\n    return {source}\n")
     assert term.name == coordinate
     assert term.args[0].name == "xs"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[1].param_name)
     assert term.args[1].param_sort.name == "Value"
     body = term.args[1].body
     if coordinate == "py.dictcomp":
@@ -123,24 +127,52 @@ def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, tra
         assert body.name == transform
 
 
+def test_nested_symbolic_generators_build_flat_map_recurrence():
+    term = _out("def A(xs, ys):\n    return [x + y for x in xs for y in ys]\n")
+
+    assert term.name == "py.listcomp"
+    assert term.args[0].name == "xs"
+    assert term.args[2].name == "python:loop.exhaustion"
+    inner = term.args[1].body
+    assert inner.name == "python:loop.flat_map"
+    assert inner.args[0].name == "ys"
+    assert inner.args[2].name == "python:loop.exhaustion"
+    yielded = inner.args[1].body
+    assert yielded.name == "+"
+
+
+def test_symbolic_comprehension_filter_is_a_guard_in_the_recurrence():
+    term = _out("def A(xs, keep):\n    return [x for x in xs if keep(x)]\n")
+
+    guarded = term.args[1].body
+    assert guarded.name == "python:loop.filter_guard"
+    assert guarded.args[0].name == "py.call"
+    assert guarded.args[1].name == term.args[1].param_name
+    assert guarded.args[2].name == "python:loop.latch"
+
+
+def test_generator_expression_uses_same_recurrence_without_eager_builder_claim():
+    term = _out("def A(xs, keep):\n    return (x for x in xs if keep(x))\n")
+
+    assert term.name == "py.generatorexp"
+    assert term.args[0].name == "xs"
+    assert term.args[1].body.name == "python:loop.filter_guard"
+    assert term.args[2].name == "python:loop.exhaustion"
+
+
 def test_symbolic_comprehension_serializes_transform_as_real_lambda():
     term = _out("def A(xs, y):\n    return [f(x, y) for x in xs]\n")
     wire = json.loads(encode_jcs(term_to_value(term)))
     transform = wire["args"][1]
 
-    assert transform == {
-        "kind": "lambda",
-        "paramName": "x",
-        "paramSort": {"kind": "primitive", "name": "Value"},
-        "body": {
-            "kind": "ctor",
-            "name": "call:f",
-            "args": [
-                {"kind": "var", "name": "x"},
-                {"kind": "var", "name": "y"},
-            ],
-        },
-    }
+    assert transform["kind"] == "lambda"
+    assert _is_binding_coordinate(transform["paramName"])
+    assert transform["paramSort"] == {"kind": "primitive", "name": "Value"}
+    assert transform["body"]["name"] == "call:f"
+    assert transform["body"]["args"] == [
+        {"kind": "var", "name": transform["paramName"]},
+        {"kind": "var", "name": "y"},
+    ]
     assert _free_vars_in_ir_term(term.args[1]) == frozenset({"y"})
     assert _free_vars_in_ir_term(term) == frozenset({"xs", "y"})
 
@@ -172,7 +204,7 @@ def test_same_spelled_outer_iterable_remains_free_while_element_is_bound():
     transform = term.args[1]
     assert _free_vars_in_ir_term(transform) == frozenset()
     assert transform.body.name == "call:f"
-    assert transform.body.args[0].name == "x"
+    assert transform.body.args[0].name == transform.param_name
 
 
 def test_nested_lambda_same_name_does_not_escape_comprehension_transform():
@@ -186,10 +218,10 @@ def test_nested_symbolic_listcomp_builds_composed_lambda_binders():
     )
 
     assert term.name == "py.listcomp"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[1].param_name)
     inner = term.args[1].body
     assert inner.name == "py.listcomp"
-    assert inner.args[1].param_name == "y"
+    assert _is_binding_coordinate(inner.args[1].param_name)
     assert inner.args[1].body.name == "call:f"
     assert _free_vars_in_ir_term(term) == frozenset({"xs", "ys", "z"})
 
@@ -199,8 +231,8 @@ def test_nested_comprehension_iterable_builds_without_flattening():
 
     assert term.name == "py.listcomp"
     assert term.args[0].name == "py.listcomp"
-    assert term.args[0].args[1].param_name == "y"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[0].args[1].param_name)
+    assert _is_binding_coordinate(term.args[1].param_name)
     assert _free_vars_in_ir_term(term) == frozenset({"ys"})
 
 
@@ -208,10 +240,10 @@ def test_nested_generator_expression_retains_both_lazy_coordinates():
     term = _out("def A(xs, ys):\n" "    return ((f(x, y) for y in ys) for x in xs)\n")
 
     assert term.name == "py.generatorexp"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[1].param_name)
     inner = term.args[1].body
     assert inner.name == "py.generatorexp"
-    assert inner.args[1].param_name == "y"
+    assert _is_binding_coordinate(inner.args[1].param_name)
     assert _free_vars_in_ir_term(term) == frozenset({"xs", "ys"})
 
 
@@ -243,11 +275,13 @@ def test_nested_arm_composes_already_built_comprehension_kinds(
     assert _free_vars_in_ir_term(term) == frozenset(free)
 
 
-def test_nested_comprehension_does_not_admit_an_inner_filtered_gap():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(xs, ys):\n" "    return [[y for y in ys if keep(y)] for x in xs]\n"
-        ).sugar()
+def test_nested_comprehension_retains_inner_filtered_guard():
+    term = _out(
+        "def A(xs, ys, keep):\n"
+        "    return [[y for y in ys if keep(y)] for x in xs]\n"
+    )
+    assert term.args[1].body.name == "py.listcomp"
+    assert term.args[1].body.args[1].body.name == "python:loop.filter_guard"
 
 
 @pytest.mark.parametrize(
@@ -257,24 +291,25 @@ def test_nested_comprehension_does_not_admit_an_inner_filtered_gap():
         "{x: x for x in [y for y in ys]}",
     ],
 )
-def test_list_generator_nested_arm_does_not_widen_set_or_dict(source):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A(ys):\n    return {source}\n").sugar()
+def test_list_generator_nested_arm_uses_same_recurrence_for_set_or_dict(source):
+    term = _out(f"def A(ys):\n    return {source}\n")
+    assert term.name in {"py.setcomp", "py.dictcomp"}
+    assert term.args[0].name == "py.listcomp"
 
 
 def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
     term = _out("def A(xs):\n" "    x = 999\n" "    return [f(x) for x in xs]\n")
     assert term.name == "py.listcomp"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[1].param_name)
     assert term.args[1].body.name == "call:f"
-    assert term.args[1].body.args[0].name == "x"
+    assert term.args[1].body.args[0].name == term.args[1].param_name
 
 
 def test_concrete_generator_builds_lazy_coordinate_without_materializing():
     term = _out("def A():\n    return (f(x) for x in [1, 2])\n")
     assert term.name == "py.generatorexp"
     assert term.args[0].name == "array"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[1].param_name)
     assert term.args[1].body.name == "call:f"
 
 
@@ -291,8 +326,8 @@ def test_shadowed_consumer_does_not_materialize_generator():
         "    list = materialize\n"
         "    return list(x for x in [0, 1])\n"
     )
-    assert term.name == "call:materialize"
-    assert term.args[0].name == "py.generatorexp"
+    assert term.name == "py.call"
+    assert term.args[1].name == "py.generatorexp"
 
 
 def test_list_and_generator_keep_distinct_eager_and_lazy_coordinates():
@@ -300,14 +335,15 @@ def test_list_and_generator_keep_distinct_eager_and_lazy_coordinates():
     lazy = _out("def A(xs):\n    return (f(x) for x in xs)\n")
     assert eager.name == "py.listcomp"
     assert lazy.name == "py.generatorexp"
-    assert eager.args[1] == lazy.args[1]
+    assert eager.args[1].body.name == lazy.args[1].body.name == "call:f"
+    assert eager.args[1].param_name != lazy.args[1].param_name
     assert eager != lazy
 
 
 def test_generator_creation_keeps_call_inside_unexecuted_transform_template():
     term = _out("def A(xs):\n    return (f(x) for x in xs)\n")
     transform = term.args[1]
-    assert transform.param_name == "x"
+    assert _is_binding_coordinate(transform.param_name)
     assert transform.body.name == "call:f"
     assert _free_vars_in_ir_term(term) == frozenset({"xs"})
 
@@ -315,7 +351,7 @@ def test_generator_creation_keeps_call_inside_unexecuted_transform_template():
 def test_over_fuel_concrete_comprehension_builds_lambda_transform_coordinate():
     term = _out("def A():\n    return [f(x) for x in range(129)]\n")
     assert term.name == "py.listcomp"
-    assert term.args[1].param_name == "x"
+    assert _is_binding_coordinate(term.args[1].param_name)
 
 
 def test_lambda_substitution_alpha_renames_to_avoid_capture():
@@ -333,14 +369,16 @@ def test_lambda_substitution_alpha_renames_to_avoid_capture():
 def test_shadowed_range_is_not_unrolled_but_builds_symbolic_coordinate():
     term = _out("def A(range):\n    return [x for x in range(3)]\n")
     assert term.name == "py.listcomp"
-    assert term.args[0].name == "call:range"
+    assert term.args[0].name == "py.call"
 
 
-def test_every_filter_must_be_ground_decidable():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n"
-        ).sugar()
+def test_every_symbolic_filter_becomes_an_ordered_guard():
+    term = _out(
+        "def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n"
+    )
+    first = term.args[1].body
+    assert first.name == "python:loop.filter_guard"
+    assert first.args[1].name == "python:loop.filter_guard"
 
 
 @pytest.mark.parametrize(

@@ -58,8 +58,10 @@ from .binding_state import (
     BindingEntryV1,
     BindingMap,
     BindingState,
+    BindingStateWireGap,
     BranchResultSlot,
     GuardedBinding,
+    LoopProjectedBinding,
     RuntimeBindingEntryFactoryV1,
     SubstitutionTraceBuilderV1,
     UnboundBinding,
@@ -2752,47 +2754,16 @@ class For(Statement):
         return carried, facts
 
     def substitution_binding(self, scope):
-        """The carried fold's binding for the rest of the block. A symbolic loop
-        `total = total OP x` over `xs` rebinds `total`, for the tail, to the fold
-        coordinate `py.fold.<op>(init, xs)` -- a REFERENCE the dig resolves, the
-        same shape as a recursion's `call:f(...)`, not an opaque dead-end. So
-        `return total` after the loop becomes `return py.fold.add(0, xs)`. A
-        concrete iterable never reaches here (it unrolled via _Splice); only the
-        symbolic single-accumulator `var = var OP x` shape is a fold today."""
-        if self._concrete_elements(self.iter) is not None:
-            return None  # concrete unrolled in substitute
-        if self._body_has_owned_loop_control():
-            # ForUniversalSugar is valid only for fact-only loops with no
-            # possible early exit.  Jump-bearing symbolic loops require the
-            # typed recursive LoopConstructionV1 arm; never quantify over the
-            # whole iterable after a reachable break/continue.
-            return super()._construct_sugar()
-        if self.orelse or self.target.kind != "Name":
-            return None
-        carried, facts = self._carried_and_facts()
-        if facts or len(carried) != 1:
-            return None  # accumulator+assert, or multi/zero carried -- not a fold
-        assign = carried[0]
-        if assign.kind != "Assign" or len(assign.targets) != 1:
-            return None
-        name = assign.targets[0]
-        if name.kind != "Name":
-            return None
-        value = assign.value
-        # value must be `<name> OP <expr involving the loop target>`.
-        if (
-            value.kind != "BinOp"
-            or value.left.kind != "Name"
-            or value.left.id != name.id
-        ):
-            return None
-        init = scope.get(name.id)
-        if init is None:
-            return None  # no pre-loop value to seed the fold
-        init = unwrap_binding_state(init)
-        op = value.op.kind
-        fold = self._make_call(self._make_name(f"py.fold.{op}"), (init, self.iter))
-        return {name.id: fold}
+        """Never synthesize a symbolic loop post-value.
+
+        The only lawful symbolic post-binding is projected from a decoded
+        ``LoopConstructionV1`` by ``project_loop_post_binding`` after the loop
+        has constructed its exact completed faces. Until block sequencing owns
+        that projection, the source occurrence remains typed-loud and contributes
+        no fabricated tail binding here.
+        """
+        del scope
+        return None
 
     def _make_name(self, identifier: str) -> "Node":
         from .backend import Leaf, materialize
@@ -2818,35 +2789,9 @@ class For(Statement):
         )
 
     def _construct_sugar(self):
-        """A loop that did NOT dissolve in substitute is symbolic: its iterable is
-        a hole (a formal), so it cannot unroll. Its meaning is the FOL that was
-        always there. An assert-only body is the degenerate fold -- the universal
-        `forall x in xs: P(x)` (ForUniversalSugar). A PURE-fold body (only carried
-        assignments) states no fact of its own: the fold rides its
-        substitution_binding into the tail, so the loop itself is inert here. A
-        body with BOTH a carried accumulator and asserts (the accumulator-
-        referencing case) and a tuple target / else stay loud until written."""
-        from sugar_lift_py_tests.sugar.for_universal_sugar import ForUniversalSugar
-
-        if self.orelse or self.target.kind != "Name":
-            return super()._construct_sugar()
-        carried, facts = self._carried_and_facts()
-        if carried and facts:
-            return (
-                super()._construct_sugar()
-            )  # accumulator-referencing assert -- point 3
-        if carried:
-            # Pure fold: the loop states nothing; its meaning is the fold binding
-            # (substitution_binding), consumed where the carried name is read.
-            from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-
-            return InertSugar(site=self.fragment)
-        return ForUniversalSugar(
-            target=self.target.id,
-            iterable=self.iter.sugar(),
-            body=tuple(s.sugar() for s in self.body),
-            site=self.fragment,
-        )
+        """A residual symbolic loop is typed-loud until its recurrence graph is
+        sealed; it is never weakened to a universal or an inert pseudo-fold."""
+        return super()._construct_sugar()
 
     def _body_has_loop_control(self) -> bool:
         """True when any `break`/`continue` appears anywhere in the body. The
@@ -4893,18 +4838,55 @@ class ListComp(Expression):
         )
 
     def _construct_sugar(self):
-        gen = ListComp._simple_generator(self, allow_nested_iterable=True)
-        if gen is None or ListComp._contains_named_expression(self, (self.elt,)):
+        generators = ListComp._recurrence_generators(self)
+        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
             return super()._construct_sugar()
-        from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
+        from sugar_lift_py_tests.sugar.comprehension_sugar import (
+            ComprehensionSugar,
+        )
 
         return ComprehensionSugar(
             kind="py.listcomp",
-            target=gen.target.id,
-            iterable=gen.iter.sugar(),
+            generators=generators,
             element=self.elt.sugar(),
             site=self.fragment,
         )
+
+    def _recurrence_generators(self):
+        from sugar_lift_python_source.canonical import cid_of_json
+        from sugar_lift_py_tests.sugar.comprehension_sugar import (
+            ComprehensionGeneratorSugar,
+        )
+        from .binding_state import mint_binding_coordinate_v1
+
+        specs = []
+        scope_owner_cid = cid_of_json(
+            {
+                "kind": "comprehension-binding-scope",
+                "schemaVersion": "1",
+                "source": self.fragment.seal().to_dict(),
+            }
+        )
+        for generator_index, gen in enumerate(self.generators):
+            if (
+                gen.is_async
+                or gen.target.kind != "Name"
+                or ListComp._contains_named_expression(self, (gen.iter, *gen.ifs))
+            ):
+                return None
+            specs.append(
+                ComprehensionGeneratorSugar(
+                    source_name=gen.target.id,
+                    binding_coordinate_cid=mint_binding_coordinate_v1(
+                        scope_owner_cid=scope_owner_cid,
+                        binding_site=gen.target.fragment,
+                        projection_path=("generators", generator_index, "target"),
+                    ).cid,
+                    iterable=gen.iter.sugar(),
+                    filters=tuple(guard.sugar() for guard in gen.ifs),
+                )
+            )
+        return tuple(specs)
 
     def _simple_generator(self, *, allow_nested_iterable=False):
         if len(self.generators) != 1:
@@ -5000,15 +4982,14 @@ class SetComp(Expression):
         )
 
     def _construct_sugar(self):
-        gen = ListComp._simple_generator(self)
-        if gen is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+        generators = ListComp._recurrence_generators(self)
+        if generators is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
         return ComprehensionSugar(
             kind="py.setcomp",
-            target=gen.target.id,
-            iterable=gen.iter.sugar(),
+            generators=generators,
             element=self.elt.sugar(),
             site=self.fragment,
         )
@@ -5109,8 +5090,8 @@ class DictComp(Expression):
         )
 
     def _construct_sugar(self):
-        gen = ListComp._simple_generator(self)
-        if gen is None or ListComp._contains_forbidden_shape(
+        generators = ListComp._recurrence_generators(self)
+        if generators is None or ListComp._contains_forbidden_shape(
             self, (self.key, self.value)
         ):
             return super()._construct_sugar()
@@ -5118,8 +5099,7 @@ class DictComp(Expression):
 
         return ComprehensionSugar(
             kind="py.dictcomp",
-            target=gen.target.id,
-            iterable=gen.iter.sugar(),
+            generators=generators,
             key=self.key.sugar(),
             element=self.value.sugar(),
             site=self.fragment,
@@ -5149,15 +5129,14 @@ class GeneratorExp(Expression):
         return self if not changed else rewrite(self, **changed)
 
     def _construct_sugar(self):
-        gen = ListComp._simple_generator(self, allow_nested_iterable=True)
-        if gen is None or ListComp._contains_named_expression(self, (self.elt,)):
+        generators = ListComp._recurrence_generators(self)
+        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
         return ComprehensionSugar(
             kind="py.generatorexp",
-            target=gen.target.id,
-            iterable=gen.iter.sugar(),
+            generators=generators,
             element=self.elt.sugar(),
             site=self.fragment,
         )
@@ -5841,6 +5820,11 @@ def _construct_binding_projection(state):
             state.slot,
             _construct_binding_projection(state.when_true),
             _construct_binding_projection(state.when_false),
+        )
+    if isinstance(state, LoopProjectedBinding):
+        raise BindingStateWireGap(
+            "loop projected binding has CID-only guards; exact guard formula "
+            "testimony is required before downstream construction"
         )
     raise TypeError(type(state))
 
