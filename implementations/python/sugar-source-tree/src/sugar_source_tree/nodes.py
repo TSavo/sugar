@@ -1844,6 +1844,17 @@ class ClassDef(Statement):
             for item in self.body
             if isinstance(item, ClassDef)
         )
+        base_sugars = ()
+        if self.bases:
+            context = self.unit.construction_context
+            table = (
+                getattr(context, "source_class_bases", None)
+                if context is not None
+                else None
+            )
+            base_sugars = () if table is None else table.get(
+                self.fragment.seal().cid, ()
+            )
         return ClassDefinitionSugar(
             class_name=self.name,
             source_identity_cid=self.unit.source_cid,
@@ -1857,6 +1868,8 @@ class ClassDef(Statement):
             decorator_cids=tuple(
                 item.fragment.seal().cid for item in self.decorators
             ),
+            base_sugars=base_sugars,
+            base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
         )
 
