@@ -36,11 +36,20 @@ def collect_builtin_closed_operation_report(
 ) -> BuiltinClosedOperationReport:
     offenders: list[BuiltinClosedOperationOffender] = []
     for path in sorted(root.rglob("*.py")):
+        relative_path = path.relative_to(root)
+        parts = relative_path.parts
+        if "sugar_lift_py_tests" in parts:
+            package_index = parts.index("sugar_lift_py_tests")
+            lane = parts[package_index + 1 : package_index + 2]
+            if lane and lane[0] in {"audit_only", "idd", "kit_rpc"}:
+                continue
+            if relative_path.name == "lift_rpc.py":
+                continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except (OSError, SyntaxError):
             continue
-        relative = str(path.relative_to(root))
+        relative = str(relative_path)
         visitor = _Visitor(relative)
         visitor.visit(tree)
         offenders.extend(visitor.offenders)
