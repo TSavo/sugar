@@ -29,6 +29,7 @@ class MethodCallSugar(Sugar):
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
     keywords: tuple = ()  # (name, sugar) pairs, in source order
+    source_call_frame: object = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -67,24 +68,37 @@ class MethodCallSugar(Sugar):
                     receiver, tuple(rest), kw_values + ((name, value),), positional, ctx
                 )
             )
-        from sugar_lift_py_tests.floor import ObjectValue
+        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
+
+        if (
+            isinstance(receiver, CallSiteValue)
+            and receiver.body is not None
+            and receiver.source_call_frame_cid is not None
+        ):
+            receiver = receiver.force_floor(
+                ctx,
+                owner="authenticated method receiver",
+                project_callsite=False,
+            )
 
         if isinstance(receiver, ObjectValue):
-            if kw_values:
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="MethodCallSugar._collect_kwargs",
-                    observed="source-visible object method called with keywords",
-                    requested="keyword binding through its SourceVisibleCallFrameV1",
-                    fix="extend the sole method call frame binder; never drop keywords",
-                )
             return receiver.call_method_value(
                 self.name,
                 positional,
                 owner="MethodCallSugar",
                 blame=self.site,
                 ctx=ctx,
+                keywords=kw_values,
+                required_frame=self.source_call_frame,
+            )
+        if self.source_call_frame is not None:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="MethodCallSugar._collect_kwargs",
+                observed=type(receiver).__name__,
+                requested="authenticated constructed receiver matching the method frame",
+                fix="preserve receiver identity or keep authenticated dispatch loud",
             )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -107,7 +121,7 @@ class MethodCallSugar(Sugar):
                 arg_values=(receiver, *positional, *(v for _, v in kw_values)),
                 parameters=(),
                 term=term,
-                body=None,  # the dig is CUED, not inlined here
+                body=None,
                 site=self.site,
                 runtime_dispatch_receiver=receiver,
             )

@@ -231,7 +231,7 @@ def main() -> int:
                 ):
                     source_call_preconstruction[
                         (
-                            "source-visible"
+                            f"source-visible-{row.dispatch_kind}"
                             if isinstance(row, SourceCallPreconstructionRefV1)
                             else row.kind
                         )

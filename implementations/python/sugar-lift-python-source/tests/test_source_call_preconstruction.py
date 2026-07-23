@@ -282,3 +282,155 @@ def test_cross_file_frame_preserves_real_variadic_actuals(tmp_path: Path) -> Non
     assert value.arg_values[1].elements == (TermValue(2), TermValue(3))
     assert isinstance(value.arg_values[2], DictValue)
     assert value.arg_values[2].entries == ((StringValue("label"), TermValue(4)),)
+
+
+def test_renamed_source_class_constructor_and_method_use_authenticated_frames(
+    tmp_path: Path,
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "class arbitrary_helper:\n"
+        "    def __init__(self, seed=11):\n"
+        "        self.seed = seed\n\n"
+        "    def project(self, value=17, *rest, **options):\n"
+        "        return value\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as Renamed\n"
+        "Renamed(13).project(value=23, label=29)\n",
+    )
+    calls = tuple(node for node in source_file.nodes() if isinstance(node, Call))
+    constructor = next(call for call in calls if not hasattr(call.func, "attr"))
+    method = next(
+        call for call in calls if getattr(call.func, "attr", None) == "project"
+    )
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    constructor_row = context.source_call_resolutions[_coordinate(constructor)]
+    method_row = context.source_call_resolutions[_coordinate(method)]
+    assert isinstance(constructor_row, SourceCallPreconstructionRefV1)
+    assert isinstance(method_row, SourceCallPreconstructionRefV1)
+    assert method_row.resolved_object_cid == constructor_row.resolved_object_cid
+    method_value = method.sugar().desugar().value
+    assert isinstance(method_value, CallSiteValue)
+    method_result = method_value.force_floor(
+        None, owner="renamed authenticated method", project_callsite=False
+    )
+    assert method_result.statements == (ReturnValue(TermValue(23)),)
+
+
+def test_authenticated_class_missing_method_stays_typed_loud(tmp_path: Path) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "class arbitrary_helper:\n" "    def __init__(self):\n" "        pass\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as Renamed\n"
+        "Renamed().missing(23)\n",
+    )
+    method = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Call) and getattr(node.func, "attr", None) == "missing"
+    )
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    row = context.source_call_resolutions[_coordinate(method)]
+    assert isinstance(row, SourceCallPreconstructionGapV1)
+    assert row.kind == "dynamic-call-target"
+    assert _coordinate(method) not in context.source_call_frames
+    with pytest.raises(SugarNotWritten, match="dynamic-call-target"):
+        method.sugar().desugar()
+
+
+def test_assigned_constructed_receiver_uses_its_authenticated_method_frame(
+    tmp_path: Path,
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "class arbitrary_helper:\n"
+        "    def __init__(self, seed):\n"
+        "        self.seed = seed\n\n"
+        "    def project(self, value=17, **options):\n"
+        "        return value\n",
+    )
+    path, source_file, _context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as Renamed\n"
+        "def consume():\n"
+        "    receiver = Renamed(13)\n"
+        "    return receiver.project(label=29)\n",
+    )
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+    function = next(source_file.functions()).substitute({})
+    method = next(
+        node
+        for node in function.walk()
+        if isinstance(node, Call) and getattr(node.func, "attr", None) == "project"
+    )
+
+    method_value = method.sugar().desugar().value
+    assert isinstance(method_value, CallSiteValue)
+    result = method_value.force_floor(
+        None, owner="assigned authenticated receiver", project_callsite=False
+    )
+    assert result.statements == (ReturnValue(TermValue(17)),)
+
+
+def test_authenticated_constructor_method_follows_local_mro(tmp_path: Path) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "class Ancestor:\n"
+        "    def project(self, value=31):\n"
+        "        return value\n\n"
+        "class arbitrary_helper(Ancestor):\n"
+        "    def __init__(self):\n"
+        "        pass\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as Renamed\n"
+        "Renamed().project()\n",
+    )
+    method = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Call) and getattr(node.func, "attr", None) == "project"
+    )
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    row = context.source_call_resolutions[_coordinate(method)]
+    assert isinstance(row, SourceCallPreconstructionRefV1)
+    result = (
+        method.sugar()
+        .desugar()
+        .value.force_floor(
+            None, owner="authenticated inherited method", project_callsite=False
+        )
+    )
+    assert result.statements == (ReturnValue(TermValue(31)),)
