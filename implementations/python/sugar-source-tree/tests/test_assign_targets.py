@@ -57,14 +57,53 @@ def test_chained_assign_binds_every_target():
     assert post.args[1].value == 10
 
 
-def test_starred_target_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    a, *b = (1, 2, 3)\n    return a\n").sugar()
+def test_starred_target_binds_real_prefix_rest_and_suffix_values():
+    post = _post(
+        "def A():\n"
+        "    a, *rest, z = (1, 2, 3, 4)\n"
+        "    return a + rest[0] + rest[1] + z\n"
+    )
+    assert post.args[1].value == 10
 
 
-def test_nested_tuple_target_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    (a, b), c = (1, 2), 3\n    return c\n").sugar()
+def test_nested_tuple_target_binds_each_structural_projection():
+    post = _post(
+        "def A():\n"
+        "    (a, (b, c)), d = (1, (2, 3)), 4\n"
+        "    return a + b + c + d\n"
+    )
+    assert post.args[1].value == 10
+
+
+def test_nested_tuple_projection_pairing_discriminates():
+    left = _post(
+        "def A():\n    (a, (b, c)) = (1, (2, 4))\n    return b - c\n"
+    ).args[1].value
+    right = _post(
+        "def A():\n    (a, (b, c)) = (1, (4, 2))\n    return b - c\n"
+    ).args[1].value
+    assert (left, right) == (-2, 2)
+
+
+def test_nested_and_starred_targets_use_one_runtime_binding_entry_model():
+    function = _fn(
+        "def arbitrary():\n"
+        "    (a, (b, *rest)), z = (1, (2, 3, 4)), 5\n"
+        "    return a + b + rest[0] + rest[1] + z\n"
+    )
+    trace = function.sugar().substitution_trace
+    first = trace.records[0]
+    entries = dict(first.post_bindings)
+    assert set(entries) == {"a", "b", "rest", "z"}
+    assert len({entry.coordinate.cid for entry in entries.values()}) == 4
+    paths = {
+        name: tuple(entry.coordinate.preimage["projectionPath"])
+        for name, entry in entries.items()
+    }
+    assert paths["a"][-4:] == ("tuple", 0, "tuple", 0)
+    assert paths["b"][-4:] == ("tuple", 1, "tuple", 0)
+    assert paths["rest"][-1] == "starred"
+    assert paths["z"][-2:] == ("tuple", 1)
 
 
 def test_arity_mismatch_stays_loud():
