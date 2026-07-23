@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import Literal
 
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -101,7 +101,7 @@ def construct_manager_behavior(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
 
-    context = SimpleNamespace(source_call_frames={})
+    context = TreeConstructionContextV1.for_source_call_construction()
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,

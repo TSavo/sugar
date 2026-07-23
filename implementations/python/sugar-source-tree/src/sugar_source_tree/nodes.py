@@ -4385,12 +4385,12 @@ class Call(Expression):
                     contract_ref = resolution
 
             source_call_frame = None
-            frames = getattr(context, "source_call_frames", None)
-            if frames is not None:
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+                TreeConstructionContextV1,
+            )
 
+            if isinstance(context, TreeConstructionContextV1) and context.source_call_frames:
                 span = self.line_col_span()
                 coordinate = SourceFragmentCoordinateV1(
                     self.unit.source_cid,
@@ -4399,7 +4399,7 @@ class Call(Expression):
                     span.end_line,
                     span.end_col,
                 )
-                source_call_frame = frames.get(coordinate)
+                source_call_frame = context.source_call_frames.get(coordinate)
 
             return CallSiteSugar(
                 target_name=self.func.id,

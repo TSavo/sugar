@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.context_manager_resolution import (
+    SourceFragmentCoordinateV1,
+    TreeConstructionContextV1,
+)
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -41,7 +42,7 @@ def _coordinate(node) -> SourceFragmentCoordinateV1:
 
 
 def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
-    context = SimpleNamespace(source_call_frames={})
+    context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
         "def renamed_value():\n" "    return 7\n\n" "renamed_value()\n",
         context=context,
@@ -68,7 +69,7 @@ def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
 
 
 def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() -> None:
-    context = SimpleNamespace(source_call_frames={})
+    context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
         "def renamed_identity(value):\n" "    return value\n\n" "renamed_identity(7)\n",
         context=context,
@@ -126,7 +127,7 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
 
 
 def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
-    context = SimpleNamespace(source_call_frames={})
+    context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
         "def renamed_default(value=9):\n"
         "    return value\n\n"
