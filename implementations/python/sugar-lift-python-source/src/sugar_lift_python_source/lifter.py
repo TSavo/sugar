@@ -933,8 +933,19 @@ class _Emitter:
             self.effects.add_panics()
             return ctor("python:delete", *targets)
         if isinstance(node, ast.Raise):
+            if node.exc is None:
+                raise _UnsupportedSyntax(
+                    node,
+                    "bare raise requires active-exception context",
+                    kind="bare-raise-refused",
+                )
             self.effects.add_panics()
-            value = none_const() if node.exc is None else self.expr(node.exc)
+            value = self.expr(node.exc)
+            cause = (
+                ctor("python:no_value")
+                if node.cause is None
+                else self.expr(node.cause)
+            )
             self.panic_loci.append(
                 self.runtime_failure_locus(
                     node,
@@ -943,7 +954,7 @@ class _Emitter:
                     exception_class=_exception_class(node.exc),
                 )
             )
-            return ctor("python:raise", value)
+            return ctor("python:raise", value, cause)
         raise _UnsupportedSyntax(
             node, f"unhandled statement kind: {type(node).__name__}"
         )

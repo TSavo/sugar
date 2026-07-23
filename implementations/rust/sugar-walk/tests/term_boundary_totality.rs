@@ -264,6 +264,71 @@ fn python_formatted_value_operands_round_trip_in_reference_order() {
 }
 
 #[test]
+fn python_raise_binary_operands_round_trip_in_reference_order() {
+    let forms = [
+        (
+            "absent-cause",
+            ctor(
+                "python:raise",
+                vec![var("Exc"), ctor("python:no_value", vec![])],
+            ),
+        ),
+        (
+            "explicit-cause",
+            ctor("python:raise", vec![var("Exc"), var("cause")]),
+        ),
+        (
+            "explicit-none-cause",
+            ctor(
+                "python:raise",
+                vec![
+                    var("Exc"),
+                    ir::Term::Const {
+                        value: serde_json::Value::Null,
+                        sort: primitive("Unit"),
+                    },
+                ],
+            ),
+        ),
+    ];
+
+    for (label, original) in forms {
+        let raised = raise_ir(&lower_ir(&original));
+        assert_same_term_json_bytes(label, &original, &raised);
+        let ir::Term::Ctor { name, args } = raised else {
+            panic!("{label} did not remain a ctor");
+        };
+        assert_eq!(name, "python:raise");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], var("Exc"));
+        assert_eq!(args[1], original_args(&original)[1]);
+    }
+}
+
+#[test]
+fn unit_null_has_an_explicit_canonical_signature() {
+    let value = ctor(
+        "python:raise",
+        vec![
+            var("Exc"),
+            ir::Term::Const {
+                value: serde_json::Value::Null,
+                sort: primitive("Unit"),
+            },
+        ],
+    );
+
+    assert_same_term_json_bytes("explicit-none-cause", &value, &raise_ir(&lower_ir(&value)));
+}
+
+fn original_args(term: &ir::Term) -> &[ir::Term] {
+    let ir::Term::Ctor { args, .. } = term else {
+        panic!("expected ctor")
+    };
+    args
+}
+
+#[test]
 fn ir_formulas_round_trip_through_term_boundary_byte_identically() {
     let corpus = formula_corpus();
     for (label, original) in &corpus {

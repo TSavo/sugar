@@ -392,6 +392,7 @@ fn parse_term_at(v: &Json, path: &str) -> Result<Rc<Term>, ParseError> {
                 ("String", Json::String(s)) => ConstValue::String(s.clone()),
                 ("Bool", Json::Bool(b)) => ConstValue::Bool(*b),
                 ("Real", Json::String(s)) => ConstValue::Real(s.clone()),
+                ("Unit", Json::Null) => ConstValue::Null,
                 (s, v) => {
                     return Err(ParseError::Mismatch {
                         path: format!("{path}.value"),

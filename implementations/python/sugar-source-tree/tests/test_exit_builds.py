@@ -71,8 +71,10 @@ def test_unwritten_raised_child_stays_loud() -> None:
         _statement("def A():\n    raise (lambda: 1)\n", "Raise").sugar()
 
 
-def test_raise_from_stays_loud() -> None:
-    with pytest.raises(SugarNotWritten):
-        _statement(
-            "def A():\n    raise ValueError from KeyError\n", "Raise"
-        ).sugar()
+def test_raise_from_carries_the_built_cause() -> None:
+    outcome = _statement(
+        "def A():\n    raise ValueError from KeyError\n", "Raise"
+    ).sugar().desugar()
+
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect.cause_value.to_term(owner="raise-cause").name == "KeyError"

@@ -79,6 +79,7 @@ impl From<ConstValue> for serde_json::Value {
             ConstValue::Real(n) => serde_json::Value::String(n),
             ConstValue::String(s) => serde_json::Value::String(s),
             ConstValue::Bool(b) => serde_json::Value::Bool(b),
+            ConstValue::Null => serde_json::Value::Null,
         }
     }
 }
@@ -90,6 +91,7 @@ impl From<&ConstValue> for serde_json::Value {
             ConstValue::Real(n) => serde_json::Value::String(n.clone()),
             ConstValue::String(s) => serde_json::Value::String(s.clone()),
             ConstValue::Bool(b) => serde_json::Value::Bool(*b),
+            ConstValue::Null => serde_json::Value::Null,
         }
     }
 }
@@ -109,6 +111,7 @@ impl TryFrom<serde_json::Value> for ConstValue {
                 .ok_or_else(|| format!("ConstValue::Int expected, got {n}")),
             serde_json::Value::String(s) => Ok(ConstValue::String(s)),
             serde_json::Value::Bool(b) => Ok(ConstValue::Bool(b)),
+            serde_json::Value::Null => Ok(ConstValue::Null),
             other => Err(format!(
                 "ConstValue expected number/string/bool, got {other}"
             )),

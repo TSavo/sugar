@@ -2471,17 +2471,16 @@ class Raise(Statement):
         return ".".join(reversed(parts))
 
     def _construct_sugar(self):
-        """Build the raised child and carry it on the function's halt exit."""
-        if self.cause is not None:
-            # `raise X from Y` -- the cause is exception-chaining provenance, not
-            # part of the halt. Carrying it is not written yet, so rather than
-            # silently drop it we FAIL LOUDLY (the MISSING-becomes-success this
-            # design forbids), exactly as AssertSugar does with its message.
+        """Build exception and explicit cause children for the halt effect."""
+        if self.exc is None:
+            # Re-raise needs authenticated active-exception context. It remains
+            # outside this arm rather than fabricating an exception operand.
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
         return RaiseSugar(
-            exception=self.exc.sugar() if self.exc is not None else None,
+            exception=self.exc.sugar(),
+            cause=self.cause.sugar() if self.cause is not None else None,
             exception_name=self._exception_name(),
             site=self.fragment,
         )

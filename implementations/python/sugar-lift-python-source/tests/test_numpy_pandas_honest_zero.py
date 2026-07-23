@@ -21,6 +21,7 @@ CLOSED_REFUSAL_KINDS = {
     "io-error",
     "path-traversal",
     "async-refused",
+    "bare-raise-refused",
     "generator-refused",
     "global-nonlocal-refused",
     "for-else-refused",

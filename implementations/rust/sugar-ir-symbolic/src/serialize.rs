@@ -84,6 +84,7 @@ pub fn term_to_value(t: &Term) -> Arc<Value> {
                 ConstValue::Real(n) => Value::string(n.clone()),
                 ConstValue::String(s) => Value::string(s.clone()),
                 ConstValue::Bool(b) => Value::boolean(*b),
+                ConstValue::Null => Value::null(),
             };
             Value::object([
                 ("kind", Value::string("const")),
@@ -278,6 +279,7 @@ fn write_term(out: &mut String, t: &Term) {
                 ConstValue::Real(n) => write_string(out, n),
                 ConstValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
                 ConstValue::String(s) => write_string(out, s),
+                ConstValue::Null => out.push_str("null"),
             }
             out.push_str(r#","sort":"#);
             write_sort(out, sort);

@@ -1657,7 +1657,10 @@ def test_raise_emits_runtime_failure_locus_without_changing_effect_set() -> None
     assert body == {
         "kind": "ctor",
         "name": "python:raise",
-        "args": [{"kind": "var", "name": "ValueError"}],
+        "args": [
+            {"kind": "var", "name": "ValueError"},
+            _no_value(),
+        ],
     }
     assert contract["effects"] == [{"kind": "panics"}]
     assert _runtime_failure_loci(contract) == [
@@ -1672,6 +1675,116 @@ def test_raise_emits_runtime_failure_locus_without_changing_effect_set() -> None
             "col": 4,
         }
     ]
+
+
+def test_raise_from_reference_preserves_explicit_cause() -> None:
+    result = lift_source(
+        "def f(Exc, cause):\n    raise Exc from cause\n",
+        "raise_from.py",
+    )
+
+    assert result.refusals == []
+    assert _function_body(result) == {
+        "kind": "ctor",
+        "name": "python:raise",
+        "args": [_var("Exc"), _var("cause")],
+    }
+
+
+def test_raise_from_none_is_distinct_from_absent_cause() -> None:
+    explicit = lift_source(
+        "def f(Exc):\n    raise Exc from None\n",
+        "raise_from_none.py",
+    )
+    absent = lift_source(
+        "def f(Exc):\n    raise Exc\n",
+        "raise_without_from.py",
+    )
+
+    assert _function_body(explicit)["args"][1] == _none_const()
+    assert _function_body(absent)["args"][1] == _no_value()
+    assert _function_body(explicit)["args"][1] != _function_body(absent)["args"][1]
+
+
+def test_raise_none_from_cause_roundtrip_preserves_explicit_none_exception() -> None:
+    term = {
+        "kind": "ctor",
+        "name": "python:raise",
+        "args": [_none_const(), _var("cause")],
+    }
+
+    compiled = compile_body_term(term, formals=["cause"])
+    relifted = lift_source(compiled, "roundtrip_raise_none.py")
+
+    assert relifted.refusals == []
+    assert _function_body(relifted) == term
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        {"kind": "ctor", "name": "python:raise", "args": [_var("Exc")]},
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [_var("Exc"), _no_value(), _var("extra")],
+        },
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [_no_value(), _var("Exc")],
+        },
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [
+                _var("Exc"),
+                {"kind": "ctor", "name": "python:no_value", "args": [_var("x")]},
+            ],
+        },
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [
+                _var("Exc"),
+                {"kind": "ctor", "name": "python:pass", "args": [_none_const()]},
+            ],
+        },
+    ],
+)
+def test_malformed_binary_raise_terms_stay_loud(term) -> None:
+    with pytest.raises(ValueError):
+        compile_body_term(term, formals=["Exc", "x"])
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [_var("Exc"), _no_value()],
+        },
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [_var("Exc"), _var("cause")],
+        },
+        {
+            "kind": "ctor",
+            "name": "python:raise",
+            "args": [_var("Exc"), _none_const()],
+        },
+    ],
+)
+def test_binary_raise_roundtrip_preserves_both_operands(term) -> None:
+    compiled = compile_body_term(term, formals=["Exc", "cause"])
+    relifted = lift_source(compiled, "roundtrip_raise.py")
+
+    body = _function_body(relifted)
+    assert relifted.refusals == []
+    assert body == term
+    assert cid_of_json(body) == cid_of_json(term)
 
 
 def test_multiple_raise_sites_keep_distinct_runtime_failure_loci() -> None:
@@ -1695,27 +1808,13 @@ def test_multiple_raise_sites_keep_distinct_runtime_failure_loci() -> None:
     assert all(locus["subkind"] == "explicit-raise" for locus in loci)
 
 
-def test_bare_raise_emits_runtime_failure_locus_with_unit_arg() -> None:
+def test_bare_raise_stays_loud_without_active_exception_contract() -> None:
     source = "def f():\n    raise\n"
 
     result = lift_source(source, "bare_raise.py")
 
-    contract = _contract(result.ir, ".f")
-    assert result.refusals == []
-    assert _runtime_failure_loci(contract) == [
-        {
-            "effectKind": PANIC_FREEDOM_EFFECT_KIND,
-            "callee": RUNTIME_FAILURE_SITE_CONCEPT,
-            "subkind": "explicit-raise",
-            "argTerm": {
-                "kind": "const",
-                "value": None,
-                "sort": {"kind": "primitive", "name": "Unit"},
-            },
-            "file": "bare_raise.py",
-            "line": 2,
-            "col": 4,
-        }
+    assert [(entry["kind"], entry["reason"]) for entry in result.refusals] == [
+        ("bare-raise-refused", "bare raise requires active-exception context")
     ]
 
 
