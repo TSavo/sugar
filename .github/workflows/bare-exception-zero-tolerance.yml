@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   bare-exception-zero-tolerance:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     env:
       PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-py-tests/src"
     steps:
