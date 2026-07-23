@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Any, Optional, Sequence
+import re
+from typing import Any, Mapping, Optional, Sequence
 
 from .canonicalizer import blake3_512_of, encode_jcs, varr, vobj, vstr
 from .claim_envelope import ClaimEnvelope, _assemble_layered
@@ -112,7 +113,7 @@ class WarningEffectKindV1:
 
 @dataclass(frozen=True)
 class FormalArgumentProjectionV1:
-    index: int
+    parameter_index: int
     kind: str = "formal-argument"
 
 
@@ -123,8 +124,22 @@ class NoMessagePatternV1:
 
 @dataclass(frozen=True)
 class OptionalFormalArgumentProjectionV1:
-    index: int
+    parameter_index: int
     kind: str = "optional-formal-argument"
+
+
+@dataclass(frozen=True)
+class VariadicPositionalElementProjectionV1:
+    parameter_index: int
+    element_index: int
+    kind: str = "variadic-positional-element"
+
+
+@dataclass(frozen=True)
+class VariadicKeywordEntryProjectionV1:
+    parameter_index: int
+    keyword: str
+    kind: str = "variadic-keyword-entry"
 
 
 @dataclass(frozen=True)
@@ -158,15 +173,102 @@ class KeywordOnlyV1:
 
 
 @dataclass(frozen=True)
+class VariadicPositionalV1:
+    kind: str = "variadic-positional"
+
+
+@dataclass(frozen=True)
+class VariadicKeywordV1:
+    kind: str = "variadic-keyword"
+
+
+def _validate_literal_default(value: Any) -> None:
+    if not isinstance(value, dict):
+        raise ContextManagerContractError("literal default must be an exact typed term")
+    if set(value) == {"kind", "name", "args"} and value == {"kind": "ctor", "name": "None", "args": []}:
+        return
+    if set(value) != {"kind", "value", "sort"} or value.get("kind") != "const":
+        raise ContextManagerContractError("literal default must be None or an exact typed constant")
+    sort = value["sort"]
+    if not isinstance(sort, dict) or set(sort) != {"kind", "name"} or sort.get("kind") != "primitive":
+        raise ContextManagerContractError("literal default has malformed sort testimony")
+    name = sort.get("name")
+    literal = value["value"]
+    valid = (
+        (name == "Bool" and type(literal) is bool)
+        or (name == "Int" and type(literal) is int)
+        or (name == "String" and isinstance(literal, str))
+    )
+    if not valid:
+        raise ContextManagerContractError("literal default sort/value mismatch")
+
+
+@dataclass(frozen=True)
+class NoDefaultV1:
+    kind: str = "no-default"
+
+
+@dataclass(frozen=True)
+class LiteralDefaultV1:
+    value: Any
+    kind: str = "literal-default"
+
+    def __post_init__(self) -> None:
+        _validate_literal_default(self.value)
+
+
+@dataclass(frozen=True)
+class ProviderValueRefV1:
+    value_ref_cid: str
+    sort: Sort
+    kind: str = "provider-value-ref"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value_ref_cid, str) or re.fullmatch(r"blake3-512:[0-9a-f]{128}", self.value_ref_cid) is None:
+            raise ContextManagerContractError("provider default valueRefCid must be a CID")
+
+
+@dataclass(frozen=True)
+class AuthenticatedProviderValueV1:
+    """Catalog-resolved provider value testimony used by optional defaults."""
+
+    value: Any
+    sort: Sort
+
+
+@dataclass(frozen=True)
 class CallParameterV1:
     name: str
     sort: Sort
-    passing: PositionalOnlyV1 | PositionalOrKeywordV1 | KeywordOnlyV1
+    passing: PositionalOnlyV1 | PositionalOrKeywordV1 | KeywordOnlyV1 | VariadicPositionalV1 | VariadicKeywordV1
     required: bool
+    default: NoDefaultV1 | LiteralDefaultV1 | ProviderValueRefV1
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ContextManagerContractError("call parameter name must be nonempty")
+        _validate_call_parameter_v1(self)
+
+
+def _validate_call_parameter_v1(parameter: CallParameterV1) -> None:
+    self = parameter
+    if not self.name:
+        raise ContextManagerContractError("call parameter name must be nonempty")
+    if type(self.required) is not bool:
+        raise ContextManagerContractError("call parameter required must be bool")
+    variadic = isinstance(self.passing, (VariadicPositionalV1, VariadicKeywordV1))
+    if variadic:
+        if self.required or not isinstance(self.default, NoDefaultV1) or self.sort != PrimitiveSort("Value"):
+            raise ContextManagerContractError("variadic parameter requires Value, required=false, default=no-default")
+    elif self.required:
+        if not isinstance(self.default, NoDefaultV1):
+            raise ContextManagerContractError("required parameter must have no-default")
+    elif isinstance(self.default, NoDefaultV1):
+        raise ContextManagerContractError("optional fixed parameter requires authenticated default")
+    if isinstance(self.default, LiteralDefaultV1) and self.default.value.get("kind") == "const":
+        literal_sort = _decode_sort(self.default.value["sort"])
+        if literal_sort != self.sort:
+            raise ContextManagerContractError("literal default sort must equal parameter sort")
+    if isinstance(self.default, ProviderValueRefV1) and self.default.sort != self.sort:
+        raise ContextManagerContractError("provider default sort must equal parameter sort")
 
 
 @dataclass(frozen=True)
@@ -177,20 +279,127 @@ class ImportSignatureV2:
         names = tuple(parameter.name for parameter in self.parameters)
         if len(set(names)) != len(names):
             raise ContextManagerContractError("call parameter names must be unique")
+        passing_rank = {
+            PositionalOnlyV1: 0,
+            PositionalOrKeywordV1: 1,
+            VariadicPositionalV1: 2,
+            KeywordOnlyV1: 3,
+            VariadicKeywordV1: 4,
+        }
+        ranks = []
+        for parameter in self.parameters:
+            rank = passing_rank.get(type(parameter.passing))
+            if rank is None:
+                raise ContextManagerContractError("unknown parameter passing mode")
+            ranks.append(rank)
+        if ranks != sorted(ranks):
+            raise ContextManagerContractError("call parameter passing modes are illegally ordered")
+        if sum(isinstance(p.passing, VariadicPositionalV1) for p in self.parameters) > 1 or sum(isinstance(p.passing, VariadicKeywordV1) for p in self.parameters) > 1:
+            raise ContextManagerContractError("at most one variadic positional and keyword parameter")
 
 
 @dataclass(frozen=True)
 class EffectBoundarySemanticsV1:
     mode: ExpectsModeV1 | SuppressesModeV1
     effect_kind: RaiseEffectKindV1 | WarningEffectKindV1
-    expected_type_operand: FormalArgumentProjectionV1
-    message_pattern_operand: NoMessagePatternV1 | OptionalFormalArgumentProjectionV1
+    expected_type_operand: FormalArgumentProjectionV1 | VariadicPositionalElementProjectionV1 | VariadicKeywordEntryProjectionV1
+    message_pattern_operand: NoMessagePatternV1 | OptionalFormalArgumentProjectionV1 | VariadicPositionalElementProjectionV1 | VariadicKeywordEntryProjectionV1
     binding: NoBindingV1 | ExceptionInfoBindingV1 | WarningObservationBindingV1
     kind: str = "effect-boundary"
     schema_version: str = "1"
 
 
 ContextManagerSemanticsV1 = ProtocolResourceSemanticsV1 | EffectBoundarySemanticsV1
+
+
+@dataclass(frozen=True)
+class ConstructedOperandOccurrenceV1:
+    occurrence: Any
+    keyword: str | None
+    value: Any
+
+
+@dataclass(frozen=True)
+class VariadicPositionalActualV1:
+    formal_index: int
+    elements: tuple[ConstructedOperandOccurrenceV1, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.formal_index, bool) or not isinstance(self.formal_index, int) or self.formal_index < 0:
+            raise ContextManagerContractError("variadic positional actual requires a nonnegative formal index")
+        if any(element.keyword is not None for element in self.elements):
+            raise ContextManagerContractError("variadic positional actual cannot carry keyword entries")
+
+
+@dataclass(frozen=True)
+class VariadicKeywordActualV1:
+    formal_index: int
+    entries: tuple[ConstructedOperandOccurrenceV1, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.formal_index, bool) or not isinstance(self.formal_index, int) or self.formal_index < 0:
+            raise ContextManagerContractError("variadic keyword actual requires a nonnegative formal index")
+        keys = tuple(entry.keyword for entry in self.entries)
+        if any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != len(keys):
+            raise ContextManagerContractError("variadic keyword actuals require unique real keywords")
+
+
+def project_formal_selector_v1(
+    selector,
+    *,
+    fixed_actuals: Mapping[int, Any],
+    variadic_positional_actuals: Mapping[int, VariadicPositionalActualV1],
+    variadic_keyword_actuals: Mapping[int, VariadicKeywordActualV1],
+):
+    """Project an already-constructed actual; never create a replacement value."""
+    if isinstance(selector, (FormalArgumentProjectionV1, OptionalFormalArgumentProjectionV1)):
+        try:
+            return fixed_actuals[selector.parameter_index]
+        except KeyError as exc:
+            if isinstance(selector, OptionalFormalArgumentProjectionV1):
+                return None
+            raise ContextManagerContractError("required formal actual is absent") from exc
+    if isinstance(selector, VariadicPositionalElementProjectionV1):
+        pack = variadic_positional_actuals.get(selector.parameter_index)
+        if pack is None or pack.formal_index != selector.parameter_index:
+            raise ContextManagerContractError("variadic positional actual is absent")
+        try:
+            return pack.elements[selector.element_index].value
+        except IndexError as exc:
+            raise ContextManagerContractError("variadic positional element is out of range") from exc
+    if isinstance(selector, VariadicKeywordEntryProjectionV1):
+        pack = variadic_keyword_actuals.get(selector.parameter_index)
+        if pack is None or pack.formal_index != selector.parameter_index:
+            raise ContextManagerContractError("variadic keyword actual is absent")
+        matches = tuple(entry for entry in pack.entries if entry.keyword == selector.keyword)
+        if len(matches) != 1:
+            raise ContextManagerContractError("variadic keyword entry is absent or ambiguous")
+        return matches[0].value
+    raise ContextManagerContractError("unknown formal selector")
+
+
+def resolve_parameter_default_v1(
+    parameter: CallParameterV1,
+    provider_values: Mapping[str, AuthenticatedProviderValueV1],
+):
+    default = parameter.default
+    if isinstance(default, NoDefaultV1):
+        raise ContextManagerContractError("parameter has no authenticated default")
+    if isinstance(default, LiteralDefaultV1):
+        return default.value
+    if isinstance(default, ProviderValueRefV1):
+        try:
+            testimony = provider_values[default.value_ref_cid]
+        except KeyError as exc:
+            raise ContextManagerContractError("unresolved provider default") from exc
+        if not isinstance(testimony, AuthenticatedProviderValueV1):
+            raise ContextManagerContractError(
+                "provider default lacks authenticated value testimony"
+            )
+        if testimony.sort != default.sort or testimony.sort != parameter.sort:
+            raise ContextManagerContractError("provider default sort mismatch")
+        return testimony.value
+    raise ContextManagerContractError("unknown authenticated default")
 
 
 @dataclass(frozen=True)
@@ -204,6 +413,33 @@ class PublishedContextManagerContractV1:
 
 class ContextManagerContractError(ValueError):
     """A sealed CM-contract member is malformed, stale, or unauthenticated."""
+
+
+def _selector_to_value(selector):
+    index = getattr(selector, "parameter_index", None)
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise ContextManagerContractError("selector requires a nonnegative parameter index")
+    if isinstance(selector, FormalArgumentProjectionV1):
+        return vobj([("kind", vstr("formal-argument")), ("parameterIndex", _json_value(index))])
+    if isinstance(selector, OptionalFormalArgumentProjectionV1):
+        return vobj([("kind", vstr("optional-formal-argument")), ("parameterIndex", _json_value(index))])
+    if isinstance(selector, VariadicPositionalElementProjectionV1):
+        if isinstance(selector.element_index, bool) or not isinstance(selector.element_index, int) or selector.element_index < 0:
+            raise ContextManagerContractError("variadic element selector requires a nonnegative element index")
+        return vobj([
+            ("kind", vstr("variadic-positional-element")),
+            ("parameterIndex", _json_value(index)),
+            ("elementIndex", _json_value(selector.element_index)),
+        ])
+    if isinstance(selector, VariadicKeywordEntryProjectionV1):
+        if not isinstance(selector.keyword, str) or not selector.keyword:
+            raise ContextManagerContractError("variadic keyword selector requires a keyword")
+        return vobj([
+            ("kind", vstr("variadic-keyword-entry")),
+            ("parameterIndex", _json_value(index)),
+            ("keyword", vstr(selector.keyword)),
+        ])
+    raise ContextManagerContractError("unknown formal selector")
 
 
 def semantics_to_value(semantics: ContextManagerSemanticsV1):
@@ -257,26 +493,19 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
             binding = "warning-observation"
         else:
             raise ContextManagerContractError("unknown effect-boundary binding")
-        expected = semantics.expected_type_operand
-        if not isinstance(expected, FormalArgumentProjectionV1) or isinstance(expected.index, bool) or not isinstance(expected.index, int) or expected.index < 0:
-            raise ContextManagerContractError("expected-type selector requires a nonnegative formal position")
+        expected_value = _selector_to_value(semantics.expected_type_operand)
         message = semantics.message_pattern_operand
         if isinstance(message, NoMessagePatternV1):
             message_value = vobj([("kind", vstr("none"))])
-        elif isinstance(message, OptionalFormalArgumentProjectionV1) and not isinstance(message.index, bool) and isinstance(message.index, int) and message.index >= 0:
-            message_value = vobj([("kind", vstr("optional-formal-argument")), ("index", _json_value(message.index))])
         else:
-            raise ContextManagerContractError("unknown message-pattern selector")
+            message_value = _selector_to_value(message)
         return vobj([
             ("kind", vstr("effect-boundary")),
             ("schemaVersion", vstr("1")),
             ("mode", vobj([("kind", vstr(mode))])),
             ("matcher", vobj([
                 ("effectKind", vobj([("kind", vstr(effect_kind))])),
-                ("expectedTypeOperand", vobj([
-                    ("kind", vstr("formal-argument")),
-                    ("index", _json_value(expected.index)),
-                ])),
+                ("expectedTypeOperand", expected_value),
                 ("messagePatternOperand", message_value),
             ])),
             ("binding", vobj([("kind", vstr(binding))])),
@@ -307,8 +536,8 @@ def publish_effect_boundary_context_manager_contract(
     *, bridge_source_symbol: str, import_signature: ImportSignatureV2,
     mode: ExpectsModeV1 | SuppressesModeV1,
     effect_kind: RaiseEffectKindV1 | WarningEffectKindV1,
-    expected_type_operand: FormalArgumentProjectionV1,
-    message_pattern_operand: NoMessagePatternV1 | OptionalFormalArgumentProjectionV1,
+    expected_type_operand: FormalArgumentProjectionV1 | VariadicPositionalElementProjectionV1 | VariadicKeywordEntryProjectionV1,
+    message_pattern_operand: NoMessagePatternV1 | OptionalFormalArgumentProjectionV1 | VariadicPositionalElementProjectionV1 | VariadicKeywordEntryProjectionV1,
     binding: NoBindingV1 | ExceptionInfoBindingV1 | WarningObservationBindingV1,
     source_warrants: Sequence[str], signer: Signer, declared_at: str,
 ) -> ClaimEnvelope:
@@ -402,21 +631,40 @@ def import_signature_to_value(signature: ImportSignatureV2):
         raise ContextManagerContractError("ImportSignatureV2 required")
     rows = []
     for parameter in signature.parameters:
+        _validate_call_parameter_v1(parameter)
         if isinstance(parameter.passing, PositionalOnlyV1):
             passing = "positional-only"
         elif isinstance(parameter.passing, PositionalOrKeywordV1):
             passing = "positional-or-keyword"
         elif isinstance(parameter.passing, KeywordOnlyV1):
             passing = "keyword-only"
+        elif isinstance(parameter.passing, VariadicPositionalV1):
+            passing = "variadic-positional"
+        elif isinstance(parameter.passing, VariadicKeywordV1):
+            passing = "variadic-keyword"
         else:
             raise ContextManagerContractError("unknown parameter passing mode")
         if type(parameter.required) is not bool:
             raise ContextManagerContractError("call parameter required must be bool")
+        if isinstance(parameter.default, NoDefaultV1):
+            default = vobj([("kind", vstr("no-default"))])
+        elif isinstance(parameter.default, LiteralDefaultV1):
+            _validate_literal_default(parameter.default.value)
+            default = vobj([("kind", vstr("literal-default")), ("value", _json_value(parameter.default.value))])
+        elif isinstance(parameter.default, ProviderValueRefV1):
+            default = vobj([
+                ("kind", vstr("provider-value-ref")),
+                ("valueRefCid", vstr(parameter.default.value_ref_cid)),
+                ("sort", sort_to_value(parameter.default.sort)),
+            ])
+        else:
+            raise ContextManagerContractError("unknown authenticated default")
         rows.append(vobj([
             ("name", vstr(parameter.name)),
             ("sort", sort_to_value(parameter.sort)),
             ("passing", vobj([("kind", vstr(passing))])),
             ("required", _json_value(parameter.required)),
+            ("default", default),
         ]))
     return vobj([("parameters", varr([
         *rows
@@ -431,14 +679,27 @@ def decode_import_signature_v2(raw: Any) -> ImportSignatureV2:
         "positional-only": PositionalOnlyV1,
         "positional-or-keyword": PositionalOrKeywordV1,
         "keyword-only": KeywordOnlyV1,
+        "variadic-positional": VariadicPositionalV1,
+        "variadic-keyword": VariadicKeywordV1,
     }
     for value in raw["parameters"]:
-        if not isinstance(value, dict) or set(value) != {"name", "sort", "passing", "required"}:
+        if not isinstance(value, dict) or set(value) != {"name", "sort", "passing", "required", "default"}:
             raise ContextManagerContractError("malformed call parameter")
         if not isinstance(value["name"], str) or not value["name"] or type(value["required"]) is not bool:
             raise ContextManagerContractError("malformed call parameter fields")
         passing = _tag(value["passing"], passing_types, "parameter passing mode")
-        parameters.append(CallParameterV1(value["name"], _decode_sort(value["sort"]), passing, value["required"]))
+        raw_default = value["default"]
+        if not isinstance(raw_default, dict) or "kind" not in raw_default:
+            raise ContextManagerContractError("malformed authenticated default")
+        if raw_default.get("kind") == "no-default" and set(raw_default) == {"kind"}:
+            default = NoDefaultV1()
+        elif raw_default.get("kind") == "literal-default" and set(raw_default) == {"kind", "value"}:
+            default = LiteralDefaultV1(raw_default["value"])
+        elif raw_default.get("kind") == "provider-value-ref" and set(raw_default) == {"kind", "valueRefCid", "sort"}:
+            default = ProviderValueRefV1(raw_default["valueRefCid"], _decode_sort(raw_default["sort"]))
+        else:
+            raise ContextManagerContractError("unknown or malformed authenticated default")
+        parameters.append(CallParameterV1(value["name"], _decode_sort(value["sort"]), passing, value["required"], default))
     return ImportSignatureV2(tuple(parameters))
 
 
@@ -483,14 +744,40 @@ def _tag(raw: Any, allowed: dict[str, Any], owner: str):
     return allowed[raw["kind"]]()
 
 
-def _projection(raw: Any, *, optional: bool):
-    expected = "optional-formal-argument" if optional else "formal-argument"
-    if not isinstance(raw, dict) or set(raw) != {"kind", "index"} or raw["kind"] != expected:
-        raise ContextManagerContractError("malformed formal argument projection")
-    if isinstance(raw["index"], bool) or not isinstance(raw["index"], int) or raw["index"] < 0:
-        raise ContextManagerContractError("formal argument index must be nonnegative")
-    cls = OptionalFormalArgumentProjectionV1 if optional else FormalArgumentProjectionV1
-    return cls(raw["index"])
+def _decode_selector(raw: Any, *, allow_optional: bool):
+    if not isinstance(raw, dict) or not isinstance(raw.get("kind"), str):
+        raise ContextManagerContractError("malformed formal selector")
+    kind = raw["kind"]
+    fixed_cls = OptionalFormalArgumentProjectionV1 if allow_optional else FormalArgumentProjectionV1
+    fixed_kind = "optional-formal-argument" if allow_optional else "formal-argument"
+    if kind == fixed_kind and set(raw) == {"kind", "parameterIndex"}:
+        selector = fixed_cls(raw["parameterIndex"])
+    elif kind == "variadic-positional-element" and set(raw) == {"kind", "parameterIndex", "elementIndex"}:
+        selector = VariadicPositionalElementProjectionV1(raw["parameterIndex"], raw["elementIndex"])
+    elif kind == "variadic-keyword-entry" and set(raw) == {"kind", "parameterIndex", "keyword"}:
+        selector = VariadicKeywordEntryProjectionV1(raw["parameterIndex"], raw["keyword"])
+    else:
+        raise ContextManagerContractError("unknown or malformed formal selector")
+    _selector_to_value(selector)
+    return selector
+
+
+def _selector_parameter(selector, signature: ImportSignatureV2) -> CallParameterV1:
+    if selector.parameter_index >= len(signature.parameters):
+        raise ContextManagerContractError("selector is outside ImportSignatureV2")
+    parameter = signature.parameters[selector.parameter_index]
+    if isinstance(selector, (FormalArgumentProjectionV1, OptionalFormalArgumentProjectionV1)):
+        if isinstance(parameter.passing, (VariadicPositionalV1, VariadicKeywordV1)):
+            raise ContextManagerContractError("fixed selector cannot address a variadic parameter")
+    elif isinstance(selector, VariadicPositionalElementProjectionV1):
+        if not isinstance(parameter.passing, VariadicPositionalV1):
+            raise ContextManagerContractError("variadic element selector requires *args")
+    elif isinstance(selector, VariadicKeywordEntryProjectionV1):
+        if not isinstance(parameter.passing, VariadicKeywordV1):
+            raise ContextManagerContractError("variadic keyword selector requires **kwargs")
+    else:
+        raise ContextManagerContractError("unknown formal selector")
+    return parameter
 
 
 def _decode_effect_boundary(raw: Any, signature: ImportSignatureV2) -> EffectBoundarySemanticsV1:
@@ -501,26 +788,25 @@ def _decode_effect_boundary(raw: Any, signature: ImportSignatureV2) -> EffectBou
         raise ContextManagerContractError("malformed effect-boundary matcher")
     mode = _tag(raw["mode"], {"expects": ExpectsModeV1, "suppresses": SuppressesModeV1}, "effect-boundary mode")
     effect_kind = _tag(matcher["effectKind"], {"raise": RaiseEffectKindV1, "warning": WarningEffectKindV1}, "effect kind")
-    expected = _projection(matcher["expectedTypeOperand"], optional=False)
+    expected = _decode_selector(matcher["expectedTypeOperand"], allow_optional=False)
     message_raw = matcher["messagePatternOperand"]
     if isinstance(message_raw, dict) and set(message_raw) == {"kind"} and message_raw["kind"] == "none":
         message = NoMessagePatternV1()
     else:
-        message = _projection(message_raw, optional=True)
+        message = _decode_selector(message_raw, allow_optional=True)
     binding = _tag(raw["binding"], {"none": NoBindingV1, "exception-info": ExceptionInfoBindingV1, "warning-observation": WarningObservationBindingV1}, "effect-boundary binding")
-    if expected.index >= len(signature.parameters):
-        raise ContextManagerContractError("expected-type selector is outside ImportSignatureV2")
-    expected_parameter = signature.parameters[expected.index]
-    if not expected_parameter.required or expected_parameter.sort != PrimitiveSort("Value"):
-        raise ContextManagerContractError("expected-type selector requires a required Value formal")
-    if isinstance(message, OptionalFormalArgumentProjectionV1):
-        if message.index >= len(signature.parameters):
-            raise ContextManagerContractError("message selector is outside ImportSignatureV2")
-        parameter = signature.parameters[message.index]
-        if message.index == expected.index:
+    expected_parameter = _selector_parameter(expected, signature)
+    if expected_parameter.sort != PrimitiveSort("Value"):
+        raise ContextManagerContractError("expected-type selector requires a Value formal")
+    if not isinstance(message, NoMessagePatternV1):
+        parameter = _selector_parameter(message, signature)
+        if message == expected:
             raise ContextManagerContractError("effect-boundary selectors must be distinct")
-        if parameter.required or not isinstance(parameter.passing, (PositionalOrKeywordV1, KeywordOnlyV1)) or parameter.sort != PrimitiveSort("String"):
-            raise ContextManagerContractError("message selector requires an optional keyword-bindable String formal")
+        if isinstance(message, OptionalFormalArgumentProjectionV1):
+            if parameter.required or not isinstance(parameter.passing, (PositionalOrKeywordV1, KeywordOnlyV1)) or parameter.sort not in (PrimitiveSort("String"), PrimitiveSort("Value")):
+                raise ContextManagerContractError("message selector requires an optional keyword-bindable String-or-Value formal")
+        elif parameter.sort != PrimitiveSort("Value"):
+            raise ContextManagerContractError("variadic message selector requires a Value pack")
     return EffectBoundarySemanticsV1(mode, effect_kind, expected, message, binding)
 
 

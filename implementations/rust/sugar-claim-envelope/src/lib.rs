@@ -119,7 +119,7 @@ pub enum KitContractDeclarationV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitContextManagerSemanticsV1 {
     #[serde(rename = "protocol-resource")]
     ProtocolResource {
@@ -144,13 +144,13 @@ pub struct KitEffectMatcherV1 {
     #[serde(rename = "effectKind")]
     pub effect_kind: KitEffectKindV1,
     #[serde(rename = "expectedTypeOperand")]
-    pub expected_type_operand: KitFormalArgumentV1,
+    pub expected_type_operand: KitExpectedTypeOperandV1,
     #[serde(rename = "messagePatternOperand")]
     pub message_pattern_operand: KitMessagePatternOperandV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitEffectBoundaryModeV1 {
     #[serde(rename = "expects")]
     Expects,
@@ -158,7 +158,7 @@ pub enum KitEffectBoundaryModeV1 {
     Suppresses,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitEffectKindV1 {
     #[serde(rename = "raise")]
     Raise,
@@ -166,7 +166,7 @@ pub enum KitEffectKindV1 {
     Warning,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitEffectBoundaryBindingV1 {
     #[serde(rename = "none")]
     None,
@@ -175,32 +175,62 @@ pub enum KitEffectBoundaryBindingV1 {
     #[serde(rename = "warning-observation")]
     WarningObservation,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KitFormalArgumentV1 {
-    pub kind: KitFormalArgumentKindV1,
-    pub index: u32,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KitFormalArgumentKindV1 {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum KitExpectedTypeOperandV1 {
     #[serde(rename = "formal-argument")]
-    FormalArgument,
+    FormalArgument {
+        #[serde(rename = "parameterIndex")]
+        parameter_index: u32,
+    },
+    #[serde(rename = "variadic-positional-element")]
+    VariadicPositionalElement {
+        #[serde(rename = "parameterIndex")]
+        parameter_index: u32,
+        #[serde(rename = "elementIndex")]
+        element_index: u32,
+    },
+    #[serde(rename = "variadic-keyword-entry")]
+    VariadicKeywordEntry {
+        #[serde(rename = "parameterIndex")]
+        parameter_index: u32,
+        keyword: String,
+    },
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitMessagePatternOperandV1 {
     #[serde(rename = "none")]
     None,
     #[serde(rename = "optional-formal-argument")]
-    OptionalFormalArgument { index: u32 },
+    OptionalFormalArgument {
+        #[serde(rename = "parameterIndex")]
+        parameter_index: u32,
+    },
+    #[serde(rename = "variadic-positional-element")]
+    VariadicPositionalElement {
+        #[serde(rename = "parameterIndex")]
+        parameter_index: u32,
+        #[serde(rename = "elementIndex")]
+        element_index: u32,
+    },
+    #[serde(rename = "variadic-keyword-entry")]
+    VariadicKeywordEntry {
+        #[serde(rename = "parameterIndex")]
+        parameter_index: u32,
+        keyword: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KitTotalEnterV1 {
     pub completion: KitTotalCompletionV1,
     pub result: KitEnterResultV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KitEnterResultV1 {
     pub kind: KitProjectionKindV1,
     pub projection: KitEnterProjectionV1,
@@ -220,20 +250,21 @@ pub enum KitEnterProjectionV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KitTotalExitV1 {
     pub completion: KitTotalCompletionV1,
     pub disposition: KitExitDispositionV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitTotalCompletionV1 {
     #[serde(rename = "total")]
     Total,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", deny_unknown_fields)]
 pub enum KitExitDispositionV1 {
     #[serde(rename = "never-suppresses")]
     NeverSuppresses,

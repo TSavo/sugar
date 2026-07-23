@@ -235,6 +235,7 @@ fn exact_symbol_with_different_signature_stays_a_typed_gap() {
                 },
                 passing: sugar_proof_envelope::ParameterPassingV1::PositionalOrKeyword,
                 required: true,
+                default: sugar_proof_envelope::ParameterDefaultV1::NoDefault,
             }],
         },
     );

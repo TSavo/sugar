@@ -67,14 +67,14 @@ pub use sign::{
 };
 pub use typed_member::{
     context_manager_contract_from_stored, context_manager_semantics_v1_to_json,
-    decode_context_manager_semantics_v1, import_signature_v2_to_json,
+    decode_context_manager_semantics_v1, decode_import_signature_v2, import_signature_v2_to_json,
     AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, CallParameterV1,
     ContextManagerContractMember, ContextManagerSemanticsV1, ContractMember,
     EffectBoundaryBindingV1, EffectBoundaryModeV1, EffectBoundarySemanticsV1, EffectKindV1,
     EffectSiteAnnotationMember, EnterResultContractV1, ExitContractV1, ExitDispositionV1,
-    FactoryWalkMementoMember, FormalArgumentProjectionV1, ImplicationMember, ImportSignatureV2,
+    FactoryWalkMementoMember, FormalSelectorV1, ImplicationMember, ImportSignatureV2,
     LibrarySugarBindingEntryMember, Member, MemberError, MemberKind, MessagePatternProjectionV1,
-    ParameterPassingV1, PlanMementoMember, ProofRunMember, ResourceSemanticsV1,
+    ParameterDefaultV1, ParameterPassingV1, PlanMementoMember, ProofRunMember, ResourceSemanticsV1,
     SourceMementoMember, StageReceiptMember, TotalCompletionV1, WitnessClaimMember,
     WitnessMementoMember,
 };

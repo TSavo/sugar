@@ -910,6 +910,7 @@ pub struct CallParameterV1 {
     pub sort: Sort,
     pub passing: ParameterPassingV1,
     pub required: bool,
+    pub default: ParameterDefaultV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -922,6 +923,26 @@ pub enum ParameterPassingV1 {
     PositionalOrKeyword,
     #[serde(rename = "keyword-only")]
     KeywordOnly,
+    #[serde(rename = "variadic-positional")]
+    VariadicPositional,
+    #[serde(rename = "variadic-keyword")]
+    VariadicKeyword,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum ParameterDefaultV1 {
+    #[serde(rename = "no-default")]
+    NoDefault,
+    #[serde(rename = "literal-default")]
+    LiteralDefault { value: Json },
+    #[serde(rename = "provider-value-ref")]
+    ProviderValueRef {
+        #[serde(rename = "valueRefCid")]
+        value_ref_cid: String,
+        sort: Sort,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -967,14 +988,51 @@ pub enum EffectKindV1 {
     Raise,
     Warning,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FormalArgumentProjectionV1 {
-    pub index: u32,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormalSelectorV1 {
+    FormalArgument {
+        parameter_index: u32,
+    },
+    OptionalFormalArgument {
+        parameter_index: u32,
+    },
+    VariadicPositionalElement {
+        parameter_index: u32,
+        element_index: u32,
+    },
+    VariadicKeywordEntry {
+        parameter_index: u32,
+        keyword: String,
+    },
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl FormalSelectorV1 {
+    pub fn parameter_index(&self) -> u32 {
+        match self {
+            Self::FormalArgument { parameter_index }
+            | Self::OptionalFormalArgument { parameter_index }
+            | Self::VariadicPositionalElement {
+                parameter_index, ..
+            }
+            | Self::VariadicKeywordEntry {
+                parameter_index, ..
+            } => *parameter_index,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessagePatternProjectionV1 {
     None,
-    OptionalFormalArgument { index: u32 },
+    OptionalFormalArgument {
+        parameter_index: u32,
+    },
+    VariadicPositionalElement {
+        parameter_index: u32,
+        element_index: u32,
+    },
+    VariadicKeywordEntry {
+        parameter_index: u32,
+        keyword: String,
+    },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectBoundaryBindingV1 {
@@ -986,9 +1044,32 @@ pub enum EffectBoundaryBindingV1 {
 pub struct EffectBoundarySemanticsV1 {
     pub mode: EffectBoundaryModeV1,
     pub effect_kind: EffectKindV1,
-    pub expected_type_operand: FormalArgumentProjectionV1,
+    pub expected_type_operand: FormalSelectorV1,
     pub message_pattern_operand: MessagePatternProjectionV1,
     pub binding: EffectBoundaryBindingV1,
+}
+
+fn formal_selector_v1_to_json(value: &FormalSelectorV1) -> Json {
+    match value {
+        FormalSelectorV1::FormalArgument { parameter_index } => {
+            serde_json::json!({"kind":"formal-argument","parameterIndex":parameter_index})
+        }
+        FormalSelectorV1::OptionalFormalArgument { parameter_index } => {
+            serde_json::json!({"kind":"optional-formal-argument","parameterIndex":parameter_index})
+        }
+        FormalSelectorV1::VariadicPositionalElement {
+            parameter_index,
+            element_index,
+        } => {
+            serde_json::json!({"kind":"variadic-positional-element","parameterIndex":parameter_index,"elementIndex":element_index})
+        }
+        FormalSelectorV1::VariadicKeywordEntry {
+            parameter_index,
+            keyword,
+        } => {
+            serde_json::json!({"kind":"variadic-keyword-entry","parameterIndex":parameter_index,"keyword":keyword})
+        }
+    }
 }
 
 pub fn context_manager_semantics_v1_to_json(value: &ContextManagerSemanticsV1) -> Json {
@@ -1017,10 +1098,12 @@ pub fn context_manager_semantics_v1_to_json(value: &ContextManagerSemanticsV1) -
             "mode": {"kind": match value.mode { EffectBoundaryModeV1::Expects => "expects", EffectBoundaryModeV1::Suppresses => "suppresses" }},
             "matcher": {
                 "effectKind": {"kind": match value.effect_kind { EffectKindV1::Raise => "raise", EffectKindV1::Warning => "warning" }},
-                "expectedTypeOperand": {"kind": "formal-argument", "index": value.expected_type_operand.index},
-                "messagePatternOperand": match value.message_pattern_operand {
+                "expectedTypeOperand": formal_selector_v1_to_json(&value.expected_type_operand),
+                "messagePatternOperand": match &value.message_pattern_operand {
                     MessagePatternProjectionV1::None => serde_json::json!({"kind":"none"}),
-                    MessagePatternProjectionV1::OptionalFormalArgument { index } => serde_json::json!({"kind":"optional-formal-argument", "index":index}),
+                    MessagePatternProjectionV1::OptionalFormalArgument { parameter_index } => serde_json::json!({"kind":"optional-formal-argument", "parameterIndex":parameter_index}),
+                    MessagePatternProjectionV1::VariadicPositionalElement { parameter_index, element_index } => serde_json::json!({"kind":"variadic-positional-element","parameterIndex":parameter_index,"elementIndex":element_index}),
+                    MessagePatternProjectionV1::VariadicKeywordEntry { parameter_index, keyword } => serde_json::json!({"kind":"variadic-keyword-entry","parameterIndex":parameter_index,"keyword":keyword}),
                 },
             },
             "binding": {"kind": match value.binding { EffectBoundaryBindingV1::None => "none", EffectBoundaryBindingV1::ExceptionInfo => "exception-info", EffectBoundaryBindingV1::WarningObservation => "warning-observation" }},
@@ -1088,6 +1171,227 @@ fn closed_tag(value: &Json, allowed: &[&str], owner: &str) -> Result<String, Str
         return Err(format!("unknown {owner}: {kind}"));
     }
     Ok(kind.to_string())
+}
+
+fn nonnegative_u32(value: &Json, owner: &str) -> Result<u32, String> {
+    value
+        .as_u64()
+        .filter(|v| *v <= u32::MAX as u64)
+        .map(|v| v as u32)
+        .ok_or_else(|| format!("{owner} must be a nonnegative u32"))
+}
+
+fn decode_formal_selector(value: &Json, allow_optional: bool) -> Result<FormalSelectorV1, String> {
+    let kind = value
+        .get("kind")
+        .and_then(Json::as_str)
+        .ok_or_else(|| "formal selector kind must be a string".to_string())?;
+    match kind {
+        "formal-argument" if !allow_optional => {
+            let row = exact_object(value, &["kind", "parameterIndex"], "formal selector")?;
+            Ok(FormalSelectorV1::FormalArgument {
+                parameter_index: nonnegative_u32(&row["parameterIndex"], "parameterIndex")?,
+            })
+        }
+        "optional-formal-argument" if allow_optional => {
+            let row = exact_object(value, &["kind", "parameterIndex"], "formal selector")?;
+            Ok(FormalSelectorV1::OptionalFormalArgument {
+                parameter_index: nonnegative_u32(&row["parameterIndex"], "parameterIndex")?,
+            })
+        }
+        "variadic-positional-element" => {
+            let row = exact_object(
+                value,
+                &["kind", "parameterIndex", "elementIndex"],
+                "formal selector",
+            )?;
+            Ok(FormalSelectorV1::VariadicPositionalElement {
+                parameter_index: nonnegative_u32(&row["parameterIndex"], "parameterIndex")?,
+                element_index: nonnegative_u32(&row["elementIndex"], "elementIndex")?,
+            })
+        }
+        "variadic-keyword-entry" => {
+            let row = exact_object(
+                value,
+                &["kind", "parameterIndex", "keyword"],
+                "formal selector",
+            )?;
+            let keyword = row["keyword"]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| "variadic keyword selector requires a keyword".to_string())?;
+            Ok(FormalSelectorV1::VariadicKeywordEntry {
+                parameter_index: nonnegative_u32(&row["parameterIndex"], "parameterIndex")?,
+                keyword: keyword.to_string(),
+            })
+        }
+        other => Err(format!("unknown formal selector: {other}")),
+    }
+}
+
+fn selector_parameter<'a>(
+    selector: &FormalSelectorV1,
+    signature: &'a ImportSignatureV2,
+) -> Result<&'a CallParameterV1, String> {
+    let parameter = signature
+        .parameters
+        .get(selector.parameter_index() as usize)
+        .ok_or_else(|| "selector is outside ImportSignatureV2".to_string())?;
+    match selector {
+        FormalSelectorV1::FormalArgument { .. }
+        | FormalSelectorV1::OptionalFormalArgument { .. }
+            if matches!(
+                parameter.passing,
+                ParameterPassingV1::VariadicPositional | ParameterPassingV1::VariadicKeyword
+            ) =>
+        {
+            Err("fixed selector cannot address a variadic parameter".into())
+        }
+        FormalSelectorV1::VariadicPositionalElement { .. }
+            if parameter.passing != ParameterPassingV1::VariadicPositional =>
+        {
+            Err("variadic element selector requires *args".into())
+        }
+        FormalSelectorV1::VariadicKeywordEntry { .. }
+            if parameter.passing != ParameterPassingV1::VariadicKeyword =>
+        {
+            Err("variadic keyword selector requires **kwargs".into())
+        }
+        _ => Ok(parameter),
+    }
+}
+
+fn validate_literal_default(value: &Json) -> Result<Option<Sort>, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "literal default must be an exact typed term".to_string())?;
+    if object.len() == 3 && value == &serde_json::json!({"kind":"ctor","name":"None","args":[]}) {
+        return Ok(None);
+    }
+    if object.len() != 3 || object.get("kind") != Some(&Json::String("const".into())) {
+        return Err("literal default must be None or an exact typed constant".into());
+    }
+    let sort: Sort = serde_json::from_value(
+        object
+            .get("sort")
+            .cloned()
+            .ok_or_else(|| "literal default lacks sort testimony".to_string())?,
+    )
+    .map_err(|e| format!("literal default has malformed sort testimony: {e}"))?;
+    let literal = object
+        .get("value")
+        .ok_or_else(|| "literal default lacks a value".to_string())?;
+    let valid = match sort {
+        Sort::Primitive { ref name } if name == "Bool" => literal.is_boolean(),
+        Sort::Primitive { ref name } if name == "Int" => {
+            literal.as_i64().is_some() || literal.as_u64().is_some()
+        }
+        Sort::Primitive { ref name } if name == "String" => literal.is_string(),
+        _ => false,
+    };
+    if !valid {
+        return Err("literal default sort/value mismatch".into());
+    }
+    Ok(Some(sort))
+}
+
+fn validate_import_signature(signature: &ImportSignatureV2) -> Result<(), String> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut variadic_positional = false;
+    let mut variadic_keyword = false;
+    let mut rank = 0_u8;
+    for parameter in &signature.parameters {
+        if parameter.name.is_empty() || !names.insert(parameter.name.clone()) {
+            return Err("ImportSignatureV2 parameter names must be nonempty and unique".into());
+        }
+        let next_rank = match parameter.passing {
+            ParameterPassingV1::PositionalOnly => 0,
+            ParameterPassingV1::PositionalOrKeyword => 1,
+            ParameterPassingV1::VariadicPositional => {
+                if std::mem::replace(&mut variadic_positional, true) {
+                    return Err(
+                        "ImportSignatureV2 permits at most one variadic positional parameter"
+                            .into(),
+                    );
+                }
+                2
+            }
+            ParameterPassingV1::KeywordOnly => 3,
+            ParameterPassingV1::VariadicKeyword => {
+                if std::mem::replace(&mut variadic_keyword, true) {
+                    return Err(
+                        "ImportSignatureV2 permits at most one variadic keyword parameter".into(),
+                    );
+                }
+                4
+            }
+        };
+        if next_rank < rank {
+            return Err("ImportSignatureV2 parameters are not in Python passing order".into());
+        }
+        rank = next_rank;
+        let is_variadic = matches!(
+            parameter.passing,
+            ParameterPassingV1::VariadicPositional | ParameterPassingV1::VariadicKeyword
+        );
+        if is_variadic
+            && parameter.sort
+                != (Sort::Primitive {
+                    name: "Value".into(),
+                })
+        {
+            return Err("variadic parameters require primitive Value sort".into());
+        }
+        if is_variadic && (parameter.required || parameter.default != ParameterDefaultV1::NoDefault)
+        {
+            return Err(
+                "variadic parameters are optional operand packs with no scalar default".into(),
+            );
+        }
+        match &parameter.default {
+            value
+                if !is_variadic
+                    && parameter.required
+                    && value != &ParameterDefaultV1::NoDefault =>
+            {
+                return Err("required parameters must have no-default testimony".into());
+            }
+            ParameterDefaultV1::NoDefault if !is_variadic && !parameter.required => {
+                return Err(
+                    "optional fixed parameters require authenticated default testimony".into(),
+                )
+            }
+            ParameterDefaultV1::LiteralDefault { value } => {
+                if let Some(literal_sort) = validate_literal_default(value)? {
+                    if literal_sort != parameter.sort {
+                        return Err("literal default sort must equal parameter sort".into());
+                    }
+                }
+            }
+            ParameterDefaultV1::ProviderValueRef {
+                value_ref_cid,
+                sort,
+            } => {
+                MementoCid::try_parse(value_ref_cid.clone())
+                    .map_err(|_| "provider default valueRefCid must be a CID".to_string())?;
+                if sort != &parameter.sort {
+                    return Err("provider default sort must equal parameter sort".into());
+                }
+            }
+            ParameterDefaultV1::NoDefault => {}
+        }
+    }
+    Ok(())
+}
+
+/// Decode and validate the complete authenticated provider call signature.
+/// Serde's closed enums and `deny_unknown_fields` make unknown variants/fields loud;
+/// the second phase enforces Python parameter order and default testimony.
+pub fn decode_import_signature_v2(value: &Json) -> Result<ImportSignatureV2, String> {
+    let signature: ImportSignatureV2 = serde_json::from_value(value.clone())
+        .map_err(|e| format!("malformed ImportSignatureV2: {e}"))?;
+    validate_import_signature(&signature)?;
+    Ok(signature)
 }
 
 pub fn decode_context_manager_semantics_v1(
@@ -1198,30 +1502,15 @@ pub fn decode_context_manager_semantics_v1(
                     "warning" => EffectKindV1::Warning,
                     other => return Err(format!("unknown effect kind: {other}")),
                 };
-            let expected = exact_object(
-                &matcher["expectedTypeOperand"],
-                &["kind", "index"],
-                "expected type operand",
-            )?;
-            let expected_index = expected["index"]
-                .as_u64()
-                .filter(|v| *v <= u32::MAX as u64)
-                .ok_or_else(|| "formal argument index must be a nonnegative u32".to_string())?
-                as usize;
-            if expected["kind"] != "formal-argument" {
-                return Err("expected type operand must be a formal argument".into());
-            }
-            let expected_parameter = signature
-                .parameters
-                .get(expected_index)
-                .ok_or_else(|| "expected-type selector is outside ImportSignatureV2".to_string())?;
-            if !expected_parameter.required
-                || expected_parameter.sort
-                    != (Sort::Primitive {
-                        name: "Value".into(),
-                    })
+            let expected_type_operand =
+                decode_formal_selector(&matcher["expectedTypeOperand"], false)?;
+            let expected_parameter = selector_parameter(&expected_type_operand, signature)?;
+            if expected_parameter.sort
+                != (Sort::Primitive {
+                    name: "Value".into(),
+                })
             {
-                return Err("expected-type selector requires a required Value formal".into());
+                return Err("expected-type selector requires Value testimony".into());
             }
             let message = matcher["messagePatternOperand"]
                 .as_object()
@@ -1235,42 +1524,62 @@ pub fn decode_context_manager_semantics_v1(
                     )?;
                     MessagePatternProjectionV1::None
                 }
-                Some("optional-formal-argument") => {
-                    let m = exact_object(
-                        &matcher["messagePatternOperand"],
-                        &["kind", "index"],
-                        "message pattern operand",
-                    )?;
-                    let index = m["index"]
-                        .as_u64()
-                        .filter(|v| *v <= u32::MAX as u64)
-                        .ok_or_else(|| {
-                            "optional formal argument index must be a nonnegative u32".to_string()
-                        })? as usize;
-                    if index == expected_index {
+                Some(
+                    "optional-formal-argument"
+                    | "variadic-positional-element"
+                    | "variadic-keyword-entry",
+                ) => {
+                    let selector = decode_formal_selector(&matcher["messagePatternOperand"], true)?;
+                    if selector.parameter_index() == expected_type_operand.parameter_index() {
                         return Err("effect-boundary selectors must be distinct".into());
                     }
-                    let parameter = signature.parameters.get(index).ok_or_else(|| {
-                        "message selector is outside ImportSignatureV2".to_string()
-                    })?;
-                    if parameter.required
-                        || !matches!(
-                            parameter.passing,
-                            ParameterPassingV1::PositionalOrKeyword
-                                | ParameterPassingV1::KeywordOnly
-                        )
-                        || parameter.sort
-                            != (Sort::Primitive {
-                                name: "String".into(),
-                            })
-                    {
-                        return Err(
-                            "message selector requires an optional keyword-bindable String formal"
-                                .into(),
-                        );
+                    let parameter = selector_parameter(&selector, signature)?;
+                    match &selector {
+                        FormalSelectorV1::OptionalFormalArgument { .. }
+                            if parameter.required
+                                || !matches!(
+                                    parameter.passing,
+                                    ParameterPassingV1::PositionalOrKeyword
+                                        | ParameterPassingV1::KeywordOnly
+                                )
+                                || !matches!(&parameter.sort, Sort::Primitive { name } if name == "String" || name == "Value") =>
+                        {
+                            return Err("message selector requires an optional keyword-bindable String-or-Value formal".into());
+                        }
+                        FormalSelectorV1::VariadicPositionalElement { .. }
+                        | FormalSelectorV1::VariadicKeywordEntry { .. }
+                            if parameter.sort
+                                != (Sort::Primitive {
+                                    name: "Value".into(),
+                                }) =>
+                        {
+                            return Err(
+                                "variadic message selector requires a Value operand pack".into()
+                            );
+                        }
+                        _ => {}
                     }
-                    MessagePatternProjectionV1::OptionalFormalArgument {
-                        index: index as u32,
+                    match selector {
+                        FormalSelectorV1::OptionalFormalArgument { parameter_index } => {
+                            MessagePatternProjectionV1::OptionalFormalArgument { parameter_index }
+                        }
+                        FormalSelectorV1::VariadicPositionalElement {
+                            parameter_index,
+                            element_index,
+                        } => MessagePatternProjectionV1::VariadicPositionalElement {
+                            parameter_index,
+                            element_index,
+                        },
+                        FormalSelectorV1::VariadicKeywordEntry {
+                            parameter_index,
+                            keyword,
+                        } => MessagePatternProjectionV1::VariadicKeywordEntry {
+                            parameter_index,
+                            keyword,
+                        },
+                        FormalSelectorV1::FormalArgument { .. } => {
+                            return Err("message selector cannot be a required formal".into())
+                        }
                     }
                 }
                 Some(other) => return Err(format!("unknown message pattern operand: {other}")),
@@ -1280,9 +1589,7 @@ pub fn decode_context_manager_semantics_v1(
                 EffectBoundarySemanticsV1 {
                     mode,
                     effect_kind,
-                    expected_type_operand: FormalArgumentProjectionV1 {
-                        index: expected_index as u32,
-                    },
+                    expected_type_operand,
                     message_pattern_operand,
                     binding,
                 },
@@ -1336,16 +1643,8 @@ impl ContextManagerContractMember {
         let signature = ImportSignatureV2 {
             parameters: header.import_signature.parameters,
         };
-        let mut names = std::collections::BTreeSet::new();
-        if signature
-            .parameters
-            .iter()
-            .any(|parameter| parameter.name.is_empty() || !names.insert(parameter.name.clone()))
-        {
-            return Err(MemberError::InvalidContextManagerContract(
-                "ImportSignatureV2 parameter names must be nonempty and unique".into(),
-            ));
-        }
+        validate_import_signature(&signature)
+            .map_err(MemberError::InvalidContextManagerContract)?;
         let semantics = decode_context_manager_semantics_v1(&header.payload, &signature)
             .map_err(|detail| MemberError::InvalidContextManagerContract(detail))?;
         let payload = header.payload.clone();
