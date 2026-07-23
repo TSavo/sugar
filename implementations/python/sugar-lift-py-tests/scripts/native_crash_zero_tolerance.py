@@ -48,6 +48,7 @@ class AuditSummary(NamedTuple):
     timeouts: int
     non_native_red: int
     offenders: tuple[NativeCrashOffender, ...]
+    rows: tuple[ChildResult, ...]
 
 
 def native_crash_offender(
@@ -200,6 +201,7 @@ def audit_paths(
         timeouts=sum(row.category == "timeout" for row in rows),
         non_native_red=sum(row.category == "non-native-red" for row in rows),
         offenders=offenders,
+        rows=tuple(rows),
     )
 
 
@@ -232,6 +234,7 @@ def main() -> int:
     )
     parser.add_argument("--child-file", type=Path)
     parser.add_argument("--child-rel")
+    parser.add_argument("--json", type=Path)
     args = parser.parse_args()
 
     if args.child_file or args.child_rel:
@@ -260,6 +263,32 @@ def main() -> int:
         file_timeout=args.file_timeout,
         workers=max(1, args.workers),
     )
+    if args.json is not None:
+        from pandas_floor_summary import floor_summary, relative_files, write_json
+
+        files = relative_files(paths, args.repo_root)
+        payload = floor_summary(
+            floor="native-crash",
+            files=files,
+            rows=[
+                {
+                    "file": row.file,
+                    "category": row.category,
+                    "returncode": row.returncode,
+                    "signal": row.offender.signal if row.offender else None,
+                }
+                for row in summary.rows
+            ],
+            totals={
+                "R_native_crashes": len(summary.offenders),
+                "completed": summary.completed,
+                "nonNativeRed": summary.non_native_red,
+                "timeouts": summary.timeouts,
+            },
+            measured=summary.timeouts == 0,
+            unmeasurable_reasons=("timeout",) if summary.timeouts else (),
+        )
+        write_json(args.json, payload)
     print(
         "NATIVE-CRASH SURFACE: "
         f"discovered={summary.discovered} completed={summary.completed} "

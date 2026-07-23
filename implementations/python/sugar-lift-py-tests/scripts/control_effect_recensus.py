@@ -157,6 +157,7 @@ def main() -> int:
     families = Counter()
     defects = []
     construction_panics: list[dict[str, Any]] = []
+    floor_rows: list[dict[str, Any]] = []
     files_completed = 0
     functions_total = 0
     functions_clean = 0
@@ -197,6 +198,12 @@ def main() -> int:
                     f"{panic_row['message']}",
                     flush=True,
                 )
+                floor_rows.append(
+                    {
+                        "file": f"{args.corpus.name}/{relative}",
+                        "category": "construction-panic",
+                    }
+                )
                 continue
             assert reporter is not None
 
@@ -225,6 +232,9 @@ def main() -> int:
                     if mechanism is not None:
                         mechanisms[label][mechanism] += 1
             files_completed += 1
+            floor_rows.append(
+                {"file": f"{args.corpus.name}/{relative}", "category": "completed"}
+            )
             if index % 100 == 0:
                 direct = sum(row["direct-loud"] for row in counts.values())
                 print(
@@ -240,6 +250,13 @@ def main() -> int:
                 f"[{index}/{len(files)}] DEFECT {type(exc).__name__} "
                 f"{relative}: {exc}",
                 flush=True,
+            )
+            floor_rows.append(
+                {
+                    "file": f"{args.corpus.name}/{relative}",
+                    "category": "unmeasurable",
+                    "reason": type(exc).__name__,
+                }
             )
         finally:
             signal.alarm(0)
@@ -270,6 +287,30 @@ def main() -> int:
         "elapsedSeconds": time.time() - started,
         "python": sys.version,
     }
+    from pandas_floor_summary import floor_summary
+
+    file_names = sorted(
+        f"{args.corpus.name}/{path.relative_to(args.corpus)}" for path in files
+    )
+    result["floorSummary"] = floor_summary(
+        floor="control-effect",
+        files=file_names,
+        rows=floor_rows,
+        totals={
+            "R_control_effect": result["R"],
+            "constructionPanics": len(construction_panics),
+            "unmeasurable": len(defects),
+        },
+        measured=(
+            not defects
+            and not construction_panics
+            and files_completed == len(files)
+        ),
+        unmeasurable_reasons=(
+            (["construction-panic"] if construction_panics else [])
+            + (["defect"] if defects else [])
+        ),
+    )
     rendered = json.dumps(result, indent=2)
     print("=== RESULT JSON ===", flush=True)
     print(rendered, flush=True)

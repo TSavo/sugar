@@ -34,6 +34,11 @@ class ChildResult(NamedTuple):
     offender: TimeoutOffender | None
 
 
+class AuditSummary(NamedTuple):
+    rows: tuple[ChildResult, ...]
+    offenders: tuple[TimeoutOffender, ...]
+
+
 def timeout_offender(*, file: str, timeout_seconds: float) -> TimeoutOffender:
     return TimeoutOffender(file, timeout_seconds)
 
@@ -104,6 +109,24 @@ def _run_child(path: Path, rel: str) -> int:
     return run_production_lift_child(path, rel)
 
 
+def audit_paths(
+    paths: Sequence[Path], *, root: Path, file_timeout: int, workers: int
+) -> AuditSummary:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        rows = tuple(
+            executor.map(
+                lambda path: _run_isolated(
+                    path, root=root, file_timeout=file_timeout
+                ),
+                sorted(paths),
+            )
+        )
+    return AuditSummary(
+        rows=rows,
+        offenders=tuple(row.offender for row in rows if row.offender is not None),
+    )
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -122,6 +145,7 @@ def main() -> int:
     )
     parser.add_argument("--child-file", type=Path)
     parser.add_argument("--child-rel")
+    parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     if args.child_file or args.child_rel:
         if args.child_file is None or args.child_rel is None:
@@ -142,16 +166,40 @@ def main() -> int:
     except ValueError as error:
         print(f"TIMEOUT ZERO-TOLERANCE RED: {error}")
         return 1
-    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
-        rows = list(
-            executor.map(
-                lambda path: _run_isolated(
-                    path, root=args.repo_root, file_timeout=args.file_timeout
-                ),
-                paths,
-            )
+    summary = audit_paths(
+        paths,
+        root=args.repo_root,
+        file_timeout=args.file_timeout,
+        workers=max(1, args.workers),
+    )
+    rows = summary.rows
+    offenders = summary.offenders
+    if args.json is not None:
+        from pandas_floor_summary import floor_summary, relative_files, write_json
+
+        files = relative_files(paths, args.repo_root)
+        payload = floor_summary(
+            floor="timeout",
+            files=files,
+            rows=[
+                {
+                    "file": row.file,
+                    "category": row.category,
+                    "timeoutSeconds": (
+                        row.offender.timeout_seconds if row.offender else None
+                    ),
+                }
+                for row in rows
+            ],
+            totals={
+                "R_timeouts": len(offenders),
+                "completed": sum(row.category == "completed" for row in rows),
+                "nativeCrashes": sum(row.category == "native-crash" for row in rows),
+                "nonNativeRed": sum(row.category == "non-native-red" for row in rows),
+            },
+            measured=True,
         )
-    offenders = tuple(row.offender for row in rows if row.offender is not None)
+        write_json(args.json, payload)
     print(
         "TIMEOUT SURFACE: "
         f"discovered={len(rows)} "

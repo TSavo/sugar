@@ -38,6 +38,7 @@ class AuditSummary(NamedTuple):
     non_native_red: int
     native_crashes: int
     offenders: tuple[SilentOffender, ...]
+    rows: tuple[ChildResult, ...]
 
 
 def _roll_call_keys(audit: Mapping[str, Any]) -> set[tuple[str, int, int, str]]:
@@ -242,6 +243,7 @@ def audit_paths(
         non_native_red=sum(row.category == "non-native-red" for row in rows),
         native_crashes=sum(row.category == "native-crash" for row in rows),
         offenders=offenders,
+        rows=tuple(rows),
     )
 
 
@@ -285,6 +287,7 @@ def main() -> int:
     )
     parser.add_argument("--child-file", type=Path)
     parser.add_argument("--child-rel")
+    parser.add_argument("--json", type=Path)
     args = parser.parse_args()
 
     if args.child_file or args.child_rel:
@@ -304,6 +307,37 @@ def main() -> int:
         file_timeout=args.file_timeout,
         workers=max(1, args.workers),
     )
+    incomplete = tuple(
+        sorted({row.category for row in summary.rows if row.category != "completed"})
+    )
+    if args.json is not None:
+        from pandas_floor_summary import floor_summary, relative_files, write_json
+
+        files = relative_files(paths, args.repo_root)
+        payload = floor_summary(
+            floor="silent",
+            files=files,
+            rows=[
+                {
+                    "file": row.file,
+                    "category": row.category,
+                    "silentLoci": [offender._asdict() for offender in row.offenders],
+                    "silentCount": r_silent(row.offenders),
+                }
+                for row in summary.rows
+            ],
+            totals={
+                "R_silent": r_silent(summary.offenders),
+                "completed": summary.completed,
+                "constructionPanics": summary.construction_panics,
+                "nativeCrashes": summary.native_crashes,
+                "nonNativeRed": summary.non_native_red,
+                "timeouts": summary.timeouts,
+            },
+            measured=not incomplete,
+            unmeasurable_reasons=incomplete,
+        )
+        write_json(args.json, payload)
     print(
         "SILENT SURFACE: "
         f"files_discovered={summary.discovered} files_completed={summary.completed} "
@@ -312,6 +346,12 @@ def main() -> int:
         f"non_native_red={summary.non_native_red} "
         f"native_crashes={summary.native_crashes} timeouts={summary.timeouts}"
     )
+    if incomplete:
+        print(
+            "SILENT ZERO-TOLERANCE RED: measurement incomplete: "
+            + ", ".join(incomplete)
+        )
+        return 1
     if summary.offenders:
         print("SILENT ZERO-TOLERANCE RED")
         print(format_report(summary.offenders))
