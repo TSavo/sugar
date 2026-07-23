@@ -109,14 +109,13 @@ def lift_source(
         )
         return result
 
-    collector = _DefinitionCollector()
-    collector.visit(tree)
+    definitions, class_definitions = _collect_definitions(tree)
     lines = source.splitlines()
     source_lines = source.splitlines(keepends=True)
     rel_path = source_path.replace(os.sep, "/")
     emit_bind = layer in ("library-bindings", "all")
     emit_general = layer == "all"
-    for info in collector.definitions:
+    for info in definitions:
         try:
             if emit_bind:
                 entry = _library_binding_entry_for_function(
@@ -145,7 +144,7 @@ def lift_source(
                 }
             )
     if emit_bind:
-        for cls_info in collector.class_definitions:
+        for cls_info in class_definitions:
             entry = _concept_gap_memento_for_class(
                 cls_info.node, rel_path, result.diagnostics
             )
@@ -221,23 +220,18 @@ class _ClassInfo:
     node: typed.ClassDef
 
 
-class _DefinitionCollector(typed.TypedNodeWalker):
-    def __init__(self) -> None:
-        self.definitions: list[_FunctionInfo] = []
-        self.class_definitions: list[_ClassInfo] = []
-
-    def visit_FunctionDef(self, node: typed.FunctionDef) -> None:
-        self.definitions.append(_FunctionInfo(node=node))
-        self.generic_visit(node)
-
-    def visit_AsyncFunctionDef(self, node: typed.AsyncFunctionDef) -> None:
-        self.definitions.append(_FunctionInfo(node=node))
-        self.generic_visit(node)
-
-    def visit_ClassDef(self, node: typed.ClassDef) -> None:
-        self.class_definitions.append(_ClassInfo(node=node))
-        # still recurse so method definitions inside classes are visited for function lifting
-        self.generic_visit(node)
+def _collect_definitions(
+    tree: typed.Module,
+) -> tuple[list[_FunctionInfo], list[_ClassInfo]]:
+    """Collect functions/classes via typed.walk — no visitor side door."""
+    definitions: list[_FunctionInfo] = []
+    class_definitions: list[_ClassInfo] = []
+    for node in typed.walk(tree):
+        if isinstance(node, (typed.FunctionDef, typed.AsyncFunctionDef)):
+            definitions.append(_FunctionInfo(node=node))
+        elif isinstance(node, typed.ClassDef):
+            class_definitions.append(_ClassInfo(node=node))
+    return definitions, class_definitions
 
 
 def _entry_for_function(
