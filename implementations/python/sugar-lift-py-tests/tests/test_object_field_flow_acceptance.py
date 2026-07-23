@@ -403,7 +403,7 @@ def test_custom_setitem_receiver_stays_loud(tmp_path):
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 
 
-def test_plain_object_without_setitem_stays_loud(tmp_path):
+def test_plain_object_subscript_store_then_read_uses_same_field_map(tmp_path):
     path = tmp_path / "plain_object_subscript.py"
     path.write_text(
         "class Vessel:\n    pass\n\n"
@@ -411,6 +411,37 @@ def test_plain_object_without_setitem_stays_loud(tmp_path):
         "    item = Vessel()\n"
         "    item[0] = 7\n"
         "    return item[0]\n"
+    )
+    assert not _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    states = _object_states(path, "boundary")
+    assert states[-1].selectors
+    assert states[-1].field(states[-1].selectors[0]) is not None
+
+
+def test_distinct_constructed_subscript_keys_do_not_collide(tmp_path):
+    path = tmp_path / "distinct_subscript_keys.py"
+    path.write_text(
+        "class Vessel:\n    pass\n\n"
+        "def boundary():\n"
+        "    item = Vessel()\n"
+        "    item[0] = 7\n"
+        "    item[1] = 11\n"
+        "    return item[0]\n"
+    )
+    assert not _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    state = _object_states(path, "boundary")[-1]
+    assert len(state.selectors) == 2
+    assert len(set(state.version_cids)) == 2
+
+
+def test_symbolic_subscript_key_stays_typed_loud(tmp_path):
+    path = tmp_path / "symbolic_subscript_key.py"
+    path.write_text(
+        "class Vessel:\n    pass\n\n"
+        "def boundary(key):\n"
+        "    item = Vessel()\n"
+        "    item[key] = 7\n"
+        "    return item[key]\n"
     )
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 
