@@ -111,6 +111,9 @@ class SourceUnit:
     line_table: LineTable = field(init=False, default=None)  # type: ignore[assignment]
     module_bound_names: frozenset[str] = field(init=False, default_factory=frozenset)
     module_symtable: object = field(init=False, default=None)
+    # Bound by SourceFile after the backend materializes the Module — the sole
+    # structural authority for module-body identity. Never a second parse.
+    typed_module: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -126,6 +129,27 @@ class SourceUnit:
                 if symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
             ),
         )
+        object.__setattr__(self, "typed_module", None)
+
+    def bind_typed_module(self, module: "Module") -> None:
+        """Attach the already-materialized Module root (SourceFile only)."""
+        object.__setattr__(self, "typed_module", module)
+
+    def _require_typed_module(self, owner: str) -> "Module":
+        module = self.typed_module
+        if module is None:
+            raise SourceTreePanic(
+                owner=owner,
+                observed="typed Module is not bound on this SourceUnit",
+                requested=(
+                    "the SourceFile-materialized Module as structural authority"
+                ),
+                fix=(
+                    "construct through SourceFile so the typed tree is bound "
+                    "before module-level identity queries"
+                ),
+            )
+        return module  # type: ignore[return-value]
 
     def function_symtable(self, name: str, lineno: int):
         matches = []
@@ -153,16 +177,22 @@ class SourceUnit:
         return matches[0]
 
     def is_module_level_function(self, name: str, lineno: int) -> bool:
-        """Whether this exact definition occupies an importable module slot."""
-        import ast
+        """Whether this exact definition occupies an importable module slot.
 
-        module = ast.parse(self.source, filename=self.filename)
-        return any(
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == name
-            and node.lineno == lineno
-            for node in module.body
-        )
+        Authority is the already-materialized typed Module body (direct
+        ``FunctionDef`` / ``AsyncFunctionDef`` children only) — never a second
+        parse of the source text as semantic authority.
+        """
+        module = self._require_typed_module("SourceUnit.is_module_level_function")
+        for statement in module.body:
+            if statement.kind not in ("FunctionDef", "AsyncFunctionDef"):
+                continue
+            if (
+                statement.name == name
+                and statement.line_col_span().start_line == lineno
+            ):
+                return True
+        return False
 
     def exception_type_identity(self, node: "Name"):
         """Return the authenticated exception-class coordinate reaching ``node``.
@@ -171,27 +201,33 @@ class SourceUnit:
         an exact ``from builtins import ...`` binding, or one source class
         definition.  Ambiguous, reassigned, parameter, and computed bindings
         have no identity coordinate and therefore stay loud at the consumer.
-        """
-        import ast
 
+        Structural authority is the already-materialized typed Module plus the
+        unit's CPython ``symtable`` (function scope flags). No second parse.
+        """
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             BUILTIN_EXCEPTION_NAMES,
         )
 
-        parsed = ast.parse(self.source, filename=self.filename)
+        module = self._require_typed_module("SourceUnit.exception_type_identity")
         span = node.line_col_span()
         containing = []
-        for candidate in ast.walk(parsed):
-            if not isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for candidate in module.walk():
+            if candidate.kind not in ("FunctionDef", "AsyncFunctionDef"):
                 continue
-            start = (candidate.lineno, candidate.col_offset)
-            end = (candidate.end_lineno, candidate.end_col_offset)
+            cspan = candidate.line_col_span()
+            start = (cspan.start_line, cspan.start_col)
+            end = (cspan.end_line, cspan.end_col)
             if start <= (span.start_line, span.start_col) <= end:
                 containing.append(candidate)
         if containing:
-            owner = max(containing, key=lambda value: value.lineno)
-            table = self.function_symtable(owner.name, owner.lineno)
+            owner = max(
+                containing, key=lambda value: value.line_col_span().start_line
+            )
+            table = self.function_symtable(
+                owner.name, owner.line_col_span().start_line
+            )
             try:
                 symbol = table.lookup(node.id)
             except KeyError:
@@ -205,24 +241,25 @@ class SourceUnit:
                 return None
 
         bindings = []
-        for statement in parsed.body:
-            if isinstance(statement, ast.ImportFrom):
+        for statement in module.body:
+            kind = statement.kind
+            if kind == "ImportFrom":
                 for alias in statement.names:
                     if (alias.asname or alias.name) == node.id:
                         bindings.append(("import", statement.module, alias.name))
-            elif isinstance(statement, ast.ClassDef) and statement.name == node.id:
+            elif kind == "ClassDef" and statement.name == node.id:
                 bindings.append(("class", statement))
-            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            elif kind in ("FunctionDef", "AsyncFunctionDef"):
                 if statement.name == node.id:
                     bindings.append(("other",))
-            elif isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            elif kind in ("Assign", "AnnAssign", "AugAssign"):
                 targets = (
                     statement.targets
-                    if isinstance(statement, ast.Assign)
+                    if kind == "Assign"
                     else (statement.target,)
                 )
                 if any(
-                    isinstance(target, ast.Name) and target.id == node.id
+                    isinstance(target, Name) and target.id == node.id
                     for target in targets
                 ):
                     bindings.append(("other",))
@@ -246,9 +283,10 @@ class SourceUnit:
             )
         if binding[0] == "class":
             definition = binding[1]
+            lc = definition.line_col_span()
             coordinate = (
-                f"{self.source_cid}:{definition.lineno}:{definition.col_offset}:"
-                f"{definition.end_lineno}:{definition.end_col_offset}"
+                f"{self.source_cid}:{lc.start_line}:{lc.start_col}:"
+                f"{lc.end_line}:{lc.end_col}"
             )
             return ctor(
                 "python:exception_type_identity",
