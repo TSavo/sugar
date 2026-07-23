@@ -1,0 +1,2 @@
+from context_manager_resolution import ContextManagerContractRefV1
+WithAdmission = (ContextManagerContractRefV1,)
