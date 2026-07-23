@@ -55,9 +55,8 @@ def test_spread_keyword_args_build_method_bridge():
     assert t.name == "call:get"
     assert t.args[0].name == "z"
     spread = t.args[-1]
-    assert spread.name == "py.kwarg"
-    assert spread.args[0].value == "**"
-    assert spread.args[1].name == "d"
+    assert spread.name == "python:double_starred_kwarg"
+    assert spread.args[0].name == "d"
 
 
 if __name__ == "__main__":

@@ -69,6 +69,7 @@ from .set_literal_value import SetLiteralValue
 from .set_value import SetValue
 from .slice_value import SliceValue
 from .string_value import StringValue
+from .spread_value import SpreadValue
 from .support_value import SupportValue
 from .symbolic_value import SymbolicValue
 from .term_value import TermValue
@@ -129,6 +130,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     SetValue,
     SliceValue,
     StringValue,
+    SpreadValue,
     SupportValue,
     SymbolicValue,
     TermValue,
@@ -208,6 +210,7 @@ __all__ = [
     "SetValue",
     "SliceValue",
     "StringValue",
+    "SpreadValue",
     "SupportValue",
     "SymbolicValue",
     "TermValue",

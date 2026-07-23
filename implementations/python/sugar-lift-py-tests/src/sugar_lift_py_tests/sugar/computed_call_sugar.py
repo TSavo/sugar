@@ -10,9 +10,9 @@ unlike MethodCallSugar's attribute-callee case.
 A callee whose own node has no `.sugar()` (a Lambda called inline, for example)
 stays loud through the ordinary recursion: this sugar never masks that gap.
 
-Keyword arguments and ``**`` spreads ride as explicit ``py.kwarg`` operands,
-the same bridge vocabulary used by named and method calls. They are pointed at,
-not interpreted or silently expanded here.
+Named keywords ride as ``py.kwarg``; ``**`` spreads use the Python reference's
+``python:double_starred_kwarg`` operand. They are pointed at, not interpreted
+or silently expanded here.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class ComputedCallSugar(Sugar):
     callee: Sugar
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
-    keywords: tuple = ()  # (name or explicit "**", sugar), source order
+    keywords: tuple = ()  # (name or structural None for **, sugar), source order
 
     @classmethod
     def witnesses(cls):
@@ -73,17 +73,15 @@ class ComputedCallSugar(Sugar):
                 )
             )
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.sugar.call_arguments import keyword_term, positional_term
 
         owner = str(self.site)
-        keyword_terms = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-            for name, value in kw_values
-        ]
+        keyword_terms = [keyword_term(name, value, owner=owner) for name, value in kw_values]
         term = ctor(
             "py.call",
             [callee.to_term(owner=owner)]
-            + [value.to_term(owner=owner) for value in positional]
+            + [positional_term(value, owner=owner) for value in positional]
             + keyword_terms,
             symbol_kind="coordinate",
         )

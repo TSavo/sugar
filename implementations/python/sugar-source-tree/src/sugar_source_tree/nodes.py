@@ -3105,13 +3105,14 @@ class Dict(Expression):
 
     def _construct_sugar(self):
         """`{k: v, ...}` constructs DictSugar WITH each key and value sugar. A
-        `**d` spread (a DictItem with key None) stays loud until its own sugar."""
+        `**d` is the reference lifter's None-keyed ``python:dict_entry``."""
         from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
 
-        if any(item.key is None for item in self.items):
-            return super()._construct_sugar()
         return DictSugar(
-            keys=tuple(item.key.sugar() for item in self.items),
+            keys=tuple(
+                item.key.sugar() if item.key is not None else None
+                for item in self.items
+            ),
             values=tuple(item.value.sugar() for item in self.items),
             site=self.fragment,
         )
@@ -3126,11 +3127,9 @@ class Set(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`{e, ...}` constructs SetSugar WITH each element's sugar; `*xs` is loud."""
+        """`{e, ...}` constructs SetSugar WITH every ordinary/spread element."""
         from sugar_lift_py_tests.sugar.collection_sugar import SetSugar
 
-        if any(e.kind == "Starred" for e in self.elts):
-            return super()._construct_sugar()
         return SetSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -3641,7 +3640,7 @@ class Call(Expression):
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
         keyword_sugars = tuple(
-            (kw.arg if kw.arg is not None else "**", kw.value.sugar())
+            (kw.arg, kw.value.sugar())
             for kw in self.keywords
         )
         if isinstance(self.func, Name):
@@ -3826,6 +3825,12 @@ class Starred(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def _construct_sugar(self):
+        """Construct the spread as a typed value; its parent supplies the role."""
+        from sugar_lift_py_tests.sugar.spread_sugar import SpreadSugar
+
+        return SpreadSugar(value=self.value.sugar(), site=self.fragment)
 
 
 class Name(Expression):
@@ -4127,11 +4132,9 @@ class List(Expression):
 
     def _construct_sugar(self):
         """`[e, ...]` constructs ListSugar WITH each element's sugar. A `*xs`
-        spread is not one element -- it stays loud until its own sugar lands."""
+        spread is carried as a typed child for role-aware projection."""
         from sugar_lift_py_tests.sugar.collection_sugar import ListSugar
 
-        if any(e.kind == "Starred" for e in self.elts):
-            return super()._construct_sugar()
         return ListSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -4146,11 +4149,9 @@ class Tuple_(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`(e, ...)` constructs TupleSugar WITH each element's sugar; `*xs` is loud."""
+        """`(e, ...)` constructs TupleSugar WITH every ordinary/spread element."""
         from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
 
-        if any(e.kind == "Starred" for e in self.elts):
-            return super()._construct_sugar()
         return TupleSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )

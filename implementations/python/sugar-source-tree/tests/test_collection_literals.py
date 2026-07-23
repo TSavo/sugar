@@ -1,7 +1,8 @@
 """Collection displays: list, tuple, set, dict -- through the node.
 
 Each reduces its elements and holds them as the collection floor value; the
-value owns len/subscript/membership. Star / double-star spreads stay loud.
+value owns len/subscript/membership. Spread displays preserve the Python
+reference constructors rather than treating a spread as one ordinary element.
 """
 
 import tempfile
@@ -38,19 +39,48 @@ def test_collection_composes_with_a_call():
     assert term.args[0].name == "array" and len(term.args[0].args) == 3
 
 
-def test_star_spread_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(xs):\n    return [1, *xs]\n").sugar()
+@pytest.mark.parametrize(
+    ("expression", "outer"),
+    [
+        ("[1, *xs]", "python:list"),
+        ("(1, *xs)", "python:tuple"),
+        ("{1, *xs}", "python:set"),
+    ],
+)
+def test_star_spread_builds_reference_literal_shape(expression, outer):
+    term = _post_term(f"def A(xs):\n    return {expression}\n")
+
+    assert term.name == outer
+    spread = term.args[-1]
+    assert spread.name == "python:starred"
+    assert spread.args[0].name == "xs"
 
 
-def test_double_star_spread_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(d):\n    return {1: 2, **d}\n").sugar()
+def test_double_star_spread_builds_reference_dict_entry():
+    term = _post_term("def A(d):\n    return {1: 2, **d}\n")
+
+    assert term.name == "python:dict"
+    spread_entry = term.args[-1]
+    assert spread_entry.name == "python:dict_entry"
+    assert spread_entry.args[0].name == "None"
+    assert spread_entry.args[0].args == ()
+    assert spread_entry.args[1].name == "d"
+
+
+def test_literal_spread_discriminates_the_wrapped_value():
+    left = _post_term("def A(xs, ys):\n    return [*xs]\n")
+    right = _post_term("def A(xs, ys):\n    return [*ys]\n")
+
+    assert left.args[0].name == right.args[0].name == "python:starred"
+    assert left.args[0].args[0].name == "xs"
+    assert right.args[0].args[0].name == "ys"
+    assert left != right
 
 
 if __name__ == "__main__":
     test_list_tuple_set_dict_construct_their_terms()
     test_collection_composes_with_a_call()
-    test_star_spread_stays_loud()
-    test_double_star_spread_stays_loud()
-    print("ok: list/tuple/set/dict literals drained; spreads loud")
+    test_star_spread_builds_reference_literal_shape("[1, *xs]", "python:list")
+    test_double_star_spread_builds_reference_dict_entry()
+    test_literal_spread_discriminates_the_wrapped_value()
+    print("ok: list/tuple/set/dict literals and reference spreads build")

@@ -422,3 +422,71 @@ fn python_generator_expression_stays_lazy_after_rust_parse() {
     );
     assert_eq!(free_vars(lazy), ["xs".to_string()].into());
 }
+
+#[test]
+fn python_spread_call_and_literals_survive_rust_parse() {
+    let call = document_post_term(python_comprehension_document("f(0, *xs, **kw)", "xs, kw"));
+    let Term::Ctor {
+        name: call_name,
+        args: call_args,
+    } = call
+    else {
+        panic!("spread call must remain a constructor coordinate")
+    };
+    assert_eq!(call_name, "call:f");
+    assert!(matches!(
+        call_args.get(1),
+        Some(Term::Ctor { name, args })
+            if name == "python:starred_arg" && matches!(args.as_slice(), [Term::Var { name }] if name == "xs")
+    ));
+    assert!(matches!(
+        call_args.get(2),
+        Some(Term::Ctor { name, args })
+            if name == "python:double_starred_kwarg" && matches!(args.as_slice(), [Term::Var { name }] if name == "kw")
+    ));
+
+    for (expression, outer) in [
+        ("[0, *xs]", "python:list"),
+        ("(0, *xs)", "python:tuple"),
+        ("{0, *xs}", "python:set"),
+    ] {
+        let term = document_post_term(python_comprehension_document(expression, "xs"));
+        let Term::Ctor { name, args } = term else {
+            panic!("spread display must remain a constructor coordinate")
+        };
+        assert_eq!(name, outer);
+        assert!(matches!(
+            args.last(),
+            Some(Term::Ctor { name, args })
+                if name == "python:starred" && matches!(args.as_slice(), [Term::Var { name }] if name == "xs")
+        ));
+    }
+
+    let dict = document_post_term(python_comprehension_document("{0: 1, **kw}", "kw"));
+    let Term::Ctor { name, args } = dict else {
+        panic!("spread dict must remain a constructor coordinate")
+    };
+    assert_eq!(name, "python:dict");
+    assert!(matches!(
+        args.last(),
+        Some(Term::Ctor { name, args })
+            if name == "python:dict_entry"
+                && matches!(args.as_slice(), [Term::Ctor { name: none, args }, Term::Var { name: kw }]
+                    if none == "None" && args.is_empty() && kw == "kw")
+    ));
+}
+
+#[test]
+fn malformed_spread_spelling_remains_an_ordinary_ctor_after_rust_parse() {
+    let malformed: Term = serde_json::from_value(json!({
+        "kind": "ctor",
+        "name": "python:starred_arg",
+        "args": []
+    }))
+    .expect("generic ProofIR constructors do not fabricate spread admission");
+
+    assert!(matches!(
+        malformed,
+        Term::Ctor { name, args } if name == "python:starred_arg" && args.is_empty()
+    ));
+}

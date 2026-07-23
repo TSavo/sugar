@@ -32,6 +32,23 @@ def _reduce_all(element_sugars, ctx):
     return tuple(values), None
 
 
+def _spread_display(values, ctor_name, site):
+    from sugar_lift_py_tests.floor.spread_value import SpreadValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor
+
+    if not any(type(value) is SpreadValue for value in values):
+        return None
+    owner = str(site)
+    terms = [
+        value.literal_term(owner=owner)
+        if type(value) is SpreadValue
+        else value.to_term(owner=owner)
+        for value in values
+    ]
+    return Complete(SymbolicValue(ctor(ctor_name, terms)))
+
+
 @dataclass(frozen=True)
 class ListSugar(Sugar):
     elements: tuple
@@ -48,7 +65,10 @@ class ListSugar(Sugar):
         from sugar_lift_py_tests.floor.list_value import ListValue
 
         values, effect = _reduce_all(self.elements, ctx)
-        return effect if effect is not None else Complete(ListValue(values))
+        if effect is not None:
+            return effect
+        spread = _spread_display(values, "python:list", self.site)
+        return spread if spread is not None else Complete(ListValue(values))
 
 
 @dataclass(frozen=True)
@@ -67,7 +87,10 @@ class TupleSugar(Sugar):
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         values, effect = _reduce_all(self.elements, ctx)
-        return effect if effect is not None else Complete(TupleValue(values))
+        if effect is not None:
+            return effect
+        spread = _spread_display(values, "python:tuple", self.site)
+        return spread if spread is not None else Complete(TupleValue(values))
 
 
 @dataclass(frozen=True)
@@ -86,12 +109,15 @@ class SetSugar(Sugar):
         from sugar_lift_py_tests.floor.set_value import SetValue
 
         values, effect = _reduce_all(self.elements, ctx)
-        return effect if effect is not None else Complete(SetValue(values))
+        if effect is not None:
+            return effect
+        spread = _spread_display(values, "python:set", self.site)
+        return spread if spread is not None else Complete(SetValue(values))
 
 
 @dataclass(frozen=True)
 class DictSugar(Sugar):
-    keys: tuple  # key sugars, in source order
+    keys: tuple  # key sugars; None is the AST-authenticated ** entry
     values: tuple  # value sugars, in source order
     site: object = dataclass_field(compare=False)
 
@@ -105,6 +131,9 @@ class DictSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.dict_value import DictValue
 
+        if any(key is None for key in self.keys):
+            return self._desugar_with_spread(ctx)
+
         key_values, effect = _reduce_all(self.keys, ctx)
         if effect is not None:
             return effect
@@ -113,3 +142,29 @@ class DictSugar(Sugar):
             return effect
         entries = tuple(zip(key_values, val_values))
         return Complete(DictValue(entries))
+
+    def _desugar_with_spread(self, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        entries = []
+        owner = str(self.site)
+        for key_sugar, value_sugar in zip(self.keys, self.values, strict=True):
+            if key_sugar is None:
+                key_term = ctor("None", [])
+            else:
+                key_out = key_sugar.desugar(ctx)
+                if isinstance(key_out, Incomplete):
+                    return key_out
+                key_term = key_out.value.to_term(owner=owner)
+            value_out = value_sugar.desugar(ctx)
+            if isinstance(value_out, Incomplete):
+                return value_out
+            entries.append(
+                ctor(
+                    "python:dict_entry",
+                    [key_term, value_out.value.to_term(owner=owner)],
+                )
+            )
+        return Complete(SymbolicValue(ctor("python:dict", entries)))

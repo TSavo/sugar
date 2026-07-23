@@ -2,6 +2,8 @@
 
 import tempfile
 
+import pytest
+
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -47,6 +49,52 @@ def test_named_call_spread_builds_explicit_bridge_operand():
 
     assert t.name == "call:f"
     spread = t.args[-1]
-    assert spread.name == "py.kwarg"
-    assert spread.args[0].value == "**"
-    assert spread.args[1].name == "d"
+    assert spread.name == "python:double_starred_kwarg"
+    assert spread.args[0].name == "d"
+
+
+def test_named_call_positional_spread_builds_reference_bridge_operand():
+    t = _out("def A(xs):\n    return f(0, *xs)\n")
+
+    assert t.name == "call:f"
+    spread = t.args[-1]
+    assert spread.name == "python:starred_arg"
+    assert spread.args[0].name == "xs"
+
+
+def test_spread_call_discriminates_the_wrapped_value():
+    left = _out("def A(xs, ys):\n    return f(*xs)\n")
+    right = _out("def A(xs, ys):\n    return f(*ys)\n")
+
+    assert left.args[0].name == "python:starred_arg"
+    assert right.args[0].name == "python:starred_arg"
+    assert left.args[0].args[0].name == "xs"
+    assert right.args[0].args[0].name == "ys"
+    assert left != right
+
+
+def test_same_spelling_keyword_is_not_admitted_as_double_spread():
+    from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+    term = CallSiteSugar(
+        target_name="f",
+        args=(),
+        keywords=(("**", NameSugar(name="d", site="lying")),),
+        site="lying",
+    ).desugar().value.to_term(owner="lying")
+
+    assert term.args[0].name == "py.kwarg"
+    assert term.args[0].args[0].value == "**"
+    assert term.args[0].name != "python:double_starred_kwarg"
+
+
+def test_contextless_spread_value_stays_a_loud_floor_gap():
+    from sugar_lift_py_tests.floor.spread_value import SpreadValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.ir import make_var
+
+    lying = SpreadValue(SymbolicValue(make_var("xs")))
+    with pytest.raises(ConstructionPanic):
+        lying.to_term(owner="no enclosing spread role")

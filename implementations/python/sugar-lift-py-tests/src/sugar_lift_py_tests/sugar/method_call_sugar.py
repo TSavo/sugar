@@ -28,7 +28,7 @@ class MethodCallSugar(Sugar):
     name: str
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
-    keywords: tuple = ()  # (name, sugar) pairs, in source order
+    keywords: tuple = ()  # (name or structural None for **, sugar), source order
 
     @classmethod
     def witnesses(cls):
@@ -68,17 +68,15 @@ class MethodCallSugar(Sugar):
                 )
             )
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.sugar.call_arguments import keyword_term, positional_term
 
         owner = str(self.site)
-        kwarg_terms = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-            for name, value in kw_values
-        ]
+        kwarg_terms = [keyword_term(name, value, owner=owner) for name, value in kw_values]
         term = ctor(
             f"call:{self.name}",
             [receiver.to_term(owner=owner)]
-            + [value.to_term(owner=owner) for value in positional]
+            + [positional_term(value, owner=owner) for value in positional]
             + kwarg_terms,
             symbol_kind="method-coordinate",
         )
