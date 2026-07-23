@@ -22,11 +22,13 @@ from sugar_lift_py_tests.context_manager_contract import (
     decode_context_manager_semantics_v1,
     semantics_to_value,
     publish_context_manager_contract,
+    publish_effect_boundary_context_manager_contract,
     decode_context_manager_contract,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.signing import Signer
+from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1
 
 
 def _resource(disposition=ReturnTruthinessDispositionV1()):
@@ -122,3 +124,79 @@ def test_effect_boundary_seals_and_recomputes_payload_cid_through_existing_envel
     decoded = decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
     assert decoded.semantics == _effect_boundary()
     assert decoded.payload_cid.startswith("blake3-512:")
+
+
+def test_provider_publishes_effect_boundary_through_named_production_door():
+    sealed = publish_effect_boundary_context_manager_contract(
+        bridge_source_symbol="context-manager:fixture_provider.expect",
+        import_signature=_signature(),
+        mode=ExpectsModeV1(),
+        effect_kind=RaiseEffectKindV1(),
+        expected_type_operand=FormalArgumentProjectionV1(0),
+        message_pattern_operand=OptionalFormalArgumentProjectionV1(1),
+        binding=ExceptionInfoBindingV1(),
+        source_warrants=(),
+        signer=Signer(bytes(range(32)), "fixture-provider"),
+        declared_at="2026-07-23T00:00:00.000Z",
+    )
+    decoded = decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
+    assert decoded.bridge_source_symbol == "context-manager:fixture_provider.expect"
+    assert decoded.import_signature == _signature()
+    assert decoded.semantics == _effect_boundary()
+
+
+def test_provider_kit_effect_boundary_member_uses_the_closed_union_payload():
+    member = ContextManagerContractIrV1.effect_boundary(
+        bridge_source_symbol="context-manager:fixture_provider.expect",
+        import_signature=_signature(),
+        mode=ExpectsModeV1(),
+        effect_kind=RaiseEffectKindV1(),
+        expected_type_operand=FormalArgumentProjectionV1(0),
+        message_pattern_operand=OptionalFormalArgumentProjectionV1(1),
+        binding=ExceptionInfoBindingV1(),
+        source_warrants=(),
+    )
+    wire = member.to_rpc_with_term_table(None)
+    assert wire["payload"] == _wire(_effect_boundary())
+    assert wire["importSignature"]["parameters"][0]["sort"] == {
+        "kind": "primitive", "name": "Value",
+    }
+    assert wire["importSignature"]["parameters"][1]["sort"] == {
+        "kind": "primitive", "name": "String",
+    }
+
+
+def test_effect_boundary_selectors_are_positions_not_privileged_formal_names():
+    renamed = ImportSignatureV2((
+        CallParameterV1("arbitrary_expected", PrimitiveSort("Value"), PositionalOrKeywordV1(), True),
+        CallParameterV1("arbitrary_pattern", PrimitiveSort("String"), KeywordOnlyV1(), False),
+    ))
+    assert decode_context_manager_semantics_v1(_wire(_effect_boundary()), renamed) == _effect_boundary()
+
+
+def test_effect_boundary_lying_selector_for_an_unrelated_formal_is_loud():
+    signature = ImportSignatureV2((
+        CallParameterV1("unrelated", PrimitiveSort("String"), PositionalOrKeywordV1(), True),
+        CallParameterV1("expected", PrimitiveSort("Value"), PositionalOrKeywordV1(), True),
+        CallParameterV1("pattern", PrimitiveSort("String"), KeywordOnlyV1(), False),
+    ))
+    with pytest.raises(ContextManagerContractError, match="required Value"):
+        decode_context_manager_semantics_v1(_wire(_effect_boundary()), signature)
+
+
+def test_effect_boundary_publisher_does_not_sign_a_lying_selector():
+    with pytest.raises(ContextManagerContractError, match="required Value"):
+        publish_effect_boundary_context_manager_contract(
+            bridge_source_symbol="context-manager:fixture_provider.expect",
+            import_signature=ImportSignatureV2((
+                CallParameterV1("unrelated", PrimitiveSort("String"), PositionalOrKeywordV1(), True),
+            )),
+            mode=ExpectsModeV1(),
+            effect_kind=RaiseEffectKindV1(),
+            expected_type_operand=FormalArgumentProjectionV1(0),
+            message_pattern_operand=NoMessagePatternV1(),
+            binding=ExceptionInfoBindingV1(),
+            source_warrants=(),
+            signer=Signer(bytes(range(32)), "fixture-provider"),
+            declared_at="2026-07-23T00:00:00.000Z",
+        )

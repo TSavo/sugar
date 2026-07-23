@@ -91,7 +91,17 @@ semantics = EffectBoundarySemanticsV1(
     ExpectsModeV1(), RaiseEffectKindV1(), FormalArgumentProjectionV1(0),
     OptionalFormalArgumentProjectionV1(1), ExceptionInfoBindingV1(),
 )
-m = publish_context_manager_contract(bridge_source_symbol='context-manager:any_provider.renamed', import_signature=signature, semantics=semantics, source_warrants=(), signer=Signer(bytes(range(32)), 'fixture-provider'), declared_at='2026-07-23T00:00:00.000Z')
+m = publish_effect_boundary_context_manager_contract(
+    bridge_source_symbol='context-manager:any_provider.renamed',
+    import_signature=signature,
+    mode=semantics.mode,
+    effect_kind=semantics.effect_kind,
+    expected_type_operand=semantics.expected_type_operand,
+    message_pattern_operand=semantics.message_pattern_operand,
+    binding=semantics.binding,
+    source_warrants=(), signer=Signer(bytes(range(32)), 'fixture-provider'),
+    declared_at='2026-07-23T00:00:00.000Z',
+)
 print(json.dumps({'cid': m.cid, 'member': json.loads(m.canonical_bytes)}))
 "#;
     let output = Command::new("python3")

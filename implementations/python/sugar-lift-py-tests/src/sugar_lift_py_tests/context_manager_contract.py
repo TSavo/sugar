@@ -303,6 +303,32 @@ def publish_never_suppresses_context_manager_contract(
     )
 
 
+def publish_effect_boundary_context_manager_contract(
+    *, bridge_source_symbol: str, import_signature: ImportSignatureV2,
+    mode: ExpectsModeV1 | SuppressesModeV1,
+    effect_kind: RaiseEffectKindV1 | WarningEffectKindV1,
+    expected_type_operand: FormalArgumentProjectionV1,
+    message_pattern_operand: NoMessagePatternV1 | OptionalFormalArgumentProjectionV1,
+    binding: NoBindingV1 | ExceptionInfoBindingV1 | WarningObservationBindingV1,
+    source_warrants: Sequence[str], signer: Signer, declared_at: str,
+) -> ClaimEnvelope:
+    """Publish a provider-owned EffectBoundary through the sole CM envelope door."""
+    return publish_context_manager_contract(
+        bridge_source_symbol=bridge_source_symbol,
+        import_signature=import_signature,
+        semantics=EffectBoundarySemanticsV1(
+            mode=mode,
+            effect_kind=effect_kind,
+            expected_type_operand=expected_type_operand,
+            message_pattern_operand=message_pattern_operand,
+            binding=binding,
+        ),
+        source_warrants=source_warrants,
+        signer=signer,
+        declared_at=declared_at,
+    )
+
+
 def publish_context_manager_contract(
     *, bridge_source_symbol: str, import_signature: ImportSignatureV2,
     semantics: ContextManagerSemanticsV1, source_warrants: Sequence[str],
@@ -315,6 +341,9 @@ def publish_context_manager_contract(
     if not all(isinstance(w, str) and w.startswith("blake3-512:") for w in source_warrants):
         raise ContextManagerContractError("sourceWarrants must be CID references")
     payload = semantics_to_value(semantics)
+    decoded_payload = json.loads(encode_jcs(payload))
+    if decode_context_manager_semantics_v1(decoded_payload, import_signature) != semantics:
+        raise ContextManagerContractError("context-manager semantics failed canonical validation")
     payload_cid = blake3_512_of(encode_jcs(payload).encode())
     sorted_inputs = sorted(source_warrants)
     header = vobj([
