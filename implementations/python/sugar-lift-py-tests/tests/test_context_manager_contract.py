@@ -21,6 +21,7 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.signing import Signer
 from sugar_lift_py_tests.context_manager_contract import _json_value
+from sugar_lift_py_tests import lift_rpc
 
 
 SEED = bytes(range(32))
@@ -119,3 +120,18 @@ def test_typed_declaration_enters_closed_ir_transport():
     )
     wire = LiftReportPayloadDto(ir=[row]).to_rpc()
     assert wire["ir"] == [row.to_rpc_with_term_table(None)]
+
+
+def test_typed_declaration_is_published_on_the_live_kit_declaration(monkeypatch):
+    row = ContextManagerContractIrV1.never_suppresses(
+        bridge_source_symbol="context-manager:fixture_python.never_closing",
+        import_signature=ImportSignatureV1(formals=(), sorts=()),
+        enter_result_sort=PrimitiveSort("Value"),
+        source_warrants=(),
+    )
+    monkeypatch.setattr(lift_rpc, "_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS", ())
+    lift_rpc.publish_context_manager_declaration(row)
+    declaration = lift_rpc._kit_declaration_result()
+    assert declaration["contractDeclarations"] == [
+        row.to_rpc_with_term_table(None)
+    ]

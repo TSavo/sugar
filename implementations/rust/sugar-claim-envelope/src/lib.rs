@@ -93,6 +93,94 @@ pub struct KitDeclaration {
     pub oracle_host: Option<KitOracleHost>,
     #[serde(rename = "residueCategories")]
     pub residue_categories: Vec<KitResidueCategory>,
+    #[serde(
+        rename = "contractDeclarations",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub contract_declarations: Vec<KitContractDeclarationV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum KitContractDeclarationV1 {
+    #[serde(rename = "context-manager-contract")]
+    ContextManager {
+        #[serde(rename = "schemaVersion")]
+        schema_version: String,
+        #[serde(rename = "bridgeSourceSymbol")]
+        bridge_source_symbol: String,
+        #[serde(rename = "importSignature")]
+        import_signature: KitImportSignatureV1,
+        payload: KitContextManagerSemanticsV1,
+        #[serde(rename = "sourceWarrants")]
+        source_warrants: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitImportSignatureV1 {
+    pub formals: Vec<String>,
+    pub sorts: Vec<sugar_ir_types::Sort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitContextManagerSemanticsV1 {
+    pub kind: KitContextManagerSemanticsKindV1,
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: String,
+    pub enter: KitTotalEnterV1,
+    pub exit: KitTotalExitV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KitContextManagerSemanticsKindV1 {
+    #[serde(rename = "context-manager-semantics")]
+    ContextManagerSemantics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitTotalEnterV1 {
+    pub completion: KitTotalCompletionV1,
+    pub result: KitEnterResultV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitEnterResultV1 {
+    pub kind: KitProjectionKindV1,
+    pub projection: KitEnterProjectionV1,
+    pub sort: sugar_ir_types::Sort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KitProjectionKindV1 {
+    #[serde(rename = "projection")]
+    Projection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KitEnterProjectionV1 {
+    #[serde(rename = "enter_result")]
+    EnterResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitTotalExitV1 {
+    pub completion: KitTotalCompletionV1,
+    pub disposition: KitExitDispositionV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KitTotalCompletionV1 {
+    #[serde(rename = "total")]
+    Total,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum KitExitDispositionV1 {
+    #[serde(rename = "never-suppresses")]
+    NeverSuppresses,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +302,7 @@ mod kit_declaration_schema_tests {
             },
             oracle_host: None,
             residue_categories: vec![],
+            contract_declarations: vec![],
         }
     }
 

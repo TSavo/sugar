@@ -34,6 +34,7 @@ use sugar_proof_envelope::{
 
 use crate::kit::{Kit, KitError};
 use crate::tree::{Fact, Sourced, Universe};
+use sugar_claim_envelope::KitDeclaration;
 
 /// Deterministic kit-author seed for feed fragments (content-addressed;
 /// not a sealed production mint identity).
@@ -198,6 +199,20 @@ pub fn graph_from_context_manager_contract_ir(ir: &Json) -> Result<ProofGraph, F
     })?;
     let mut graph = ProofGraph::new();
     graph.push_context_manager_contract(ContextManagerContractMemento::new(minted.canonical_bytes));
+    Ok(graph)
+}
+
+/// Production kit-declaration intake. Every typed declaration is dispatched
+/// through its dedicated member arm before any source-tree construction.
+pub fn graph_from_kit_declaration(declaration: &KitDeclaration) -> Result<ProofGraph, FeedError> {
+    let mut graph = ProofGraph::empty();
+    for row in &declaration.contract_declarations {
+        let wire = serde_json::to_value(row).map_err(|error| FeedError::Incomplete {
+            what: "kit_contract_declaration",
+            detail: error.to_string(),
+        })?;
+        graph = graph.feed(graph_from_context_manager_contract_ir(&wire)?);
+    }
     Ok(graph)
 }
 
@@ -939,7 +954,8 @@ pub fn fold_project(
     // accepted here so the walk face types match the load door; stamping
     // happens in `pool_from_graph_with_speaker`.
     let _ = speaker;
-    fold_claim_tree(kit, workspace_root)
+    let declarations = graph_from_kit_declaration(kit.declaration())?;
+    Ok(declarations.feed(fold_claim_tree(kit, workspace_root)?))
 }
 
 #[cfg(test)]

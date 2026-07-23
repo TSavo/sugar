@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use serde_json::Value as Json;
-use sugar_compiler::feed_from_tree::graph_from_context_manager_contract_ir;
+use sugar_claim_envelope::KitDeclaration;
+use sugar_compiler::feed_from_tree::{
+    graph_from_context_manager_contract_ir, graph_from_kit_declaration,
+};
 use sugar_compiler::orchestrate::pool_from_graph_with_speaker;
 use sugar_proof_envelope::{ExitDispositionV1, Member, MemberKind, Speaker};
 
@@ -53,4 +56,32 @@ print(json.dumps(row.to_rpc_with_term_table(None)))
         pool.member_count_by_kind(MemberKind::ContextManagerContract),
         1
     );
+}
+
+#[test]
+fn live_kit_declaration_dispatches_cm_rows_through_dedicated_feed_arm() {
+    let declaration: KitDeclaration = serde_json::from_value(serde_json::json!({
+        "kit": {"id": "fixture", "language": "python", "version": "1"},
+        "rpc": {"methods": [{"name": "sugar.plugin.kit_declaration", "required": true}]},
+        "proofResolution": {"strategy": "rpc-proof-bytes"},
+        "residueCategories": [],
+        "contractDeclarations": [{
+            "kind": "context-manager-contract",
+            "schemaVersion": "1",
+            "bridgeSourceSymbol": "context-manager:fixture.manager",
+            "importSignature": {"formals": [], "sorts": []},
+            "payload": {
+                "kind": "context-manager-semantics", "schemaVersion": "1",
+                "enter": {"completion": "total", "result": {"kind": "projection", "projection": "enter_result", "sort": {"kind": "primitive", "name": "Value"}}},
+                "exit": {"completion": "total", "disposition": {"kind": "never-suppresses"}}
+            },
+            "sourceWarrants": []
+        }]
+    })).expect("typed kit declaration");
+    let graph = graph_from_kit_declaration(&declaration).expect("production declaration feed");
+    assert_eq!(graph.atoms().count(), 0);
+    assert_eq!(graph.bodies().count(), 0);
+    let views: Vec<_> = graph.members_view().collect();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].kind(), Some(MemberKind::ContextManagerContract));
 }
