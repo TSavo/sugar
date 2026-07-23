@@ -144,3 +144,17 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/no_sugar_in_desugar_law.py
+      # Permanent construction-currency floor (#6115+#6121+#6128). Dual-body
+      # residual keeps main honestly red until sugar-lift-python-source is drained;
+      # sole-path R is reported in the same instrument and must stay 0.
+      - name: R_construction_side_doors discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_construction_side_door_law.py
+          -q
+      - name: R_construction_side_doors = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/construction_side_door_law.py
