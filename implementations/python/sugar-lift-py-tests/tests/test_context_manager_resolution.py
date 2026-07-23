@@ -110,7 +110,7 @@ def test_malformed_table_cid_and_unsorted_ambiguity_are_loud():
         decode_resolved_contract_refs(ambiguous)
 
 
-def test_demand_enrollment_uses_import_coordinate_without_sugar_or_target_source(
+def test_demand_enrollment_uses_typed_with_coordinate_without_spelling_authority(
     tmp_path, monkeypatch
 ):
     consumer = tmp_path / "consumer.py"
@@ -131,8 +131,11 @@ def test_demand_enrollment_uses_import_coordinate_without_sugar_or_target_source
     )
     rows = lift_rpc._context_manager_demand_rows(tmp_path)
     assert len(rows) == 1
-    assert rows[0]["targetSymbol"] == "dependency_that_is_not_present.manager"
-    assert rows[0]["gapKind"] is None
+    # This structural pass never infers authority from the alias spelling.
+    # _preconstruction_demand_rows joins the separately authenticated lexical
+    # ImportBinding at this exact coordinate.
+    assert rows[0]["targetSymbol"] is None
+    assert rows[0]["gapKind"] == "runtime-selected"
     assert rows[0]["useSite"]["sourceCid"].startswith("blake3-512:")
 
 
