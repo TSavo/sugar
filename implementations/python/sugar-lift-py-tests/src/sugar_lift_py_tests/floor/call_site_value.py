@@ -117,6 +117,19 @@ class CallSiteValue(FloorValue):
     def exception_type_identity(self) -> Term | None:
         return self.exception_type_coordinate
 
+    def attribute(self, name, site):
+        """Retain attribute lookup on this exact constructed call result.
+
+        Construction does not execute the call or invent the attribute value;
+        downstream source construction receives the stable projection term.
+        """
+        del site
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
+
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
 
@@ -1149,9 +1162,7 @@ class CallSiteValue(FloorValue):
             self.arg_values,
             self.formal_coordinate_cids,
         )
-        return _reduce_callsite_body(
-            self.body, reduce_ctx, blame=self.target_name
-        )
+        return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
 
 
 def force_floor(

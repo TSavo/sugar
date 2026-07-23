@@ -34,6 +34,7 @@ class WithEffectBoundarySugar(Sugar):
             ExpectsModeV1,
             NoMessagePatternV1,
             RaiseEffectKindV1,
+            SuppressesModeV1,
             project_formal_selector_v1,
         )
         from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
@@ -52,7 +53,7 @@ class WithEffectBoundarySugar(Sugar):
         semantics = self.semantics
         if (
             not isinstance(semantics, EffectBoundarySemanticsV1)
-            or not isinstance(semantics.mode, ExpectsModeV1)
+            or not isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
             or not isinstance(semantics.effect_kind, RaiseEffectKindV1)
         ):
             raise SugarNotWritten(
@@ -77,7 +78,8 @@ class WithEffectBoundarySugar(Sugar):
                     fix="keep computed or opaque managers loud",
                 )
             fixed = _bind_real_actuals(
-                self.contract_ref.import_signature, manager_value
+                self.contract_ref.import_signature,
+                manager_value,
             )
             expected = project_formal_selector_v1(
                 semantics.expected_type_operand,
@@ -100,13 +102,16 @@ class WithEffectBoundarySugar(Sugar):
             exits = []
             for body_exit in body_es.exits:
                 if isinstance(body_exit, Completed):
-                    exits.append(
-                        Halted(
-                            body_exit.guard,
-                            ExpectationNotMetEffect("raise", self.site),
-                            body_exit.value,
+                    if isinstance(semantics.mode, ExpectsModeV1):
+                        exits.append(
+                            Halted(
+                                body_exit.guard,
+                                ExpectationNotMetEffect("raise", self.site),
+                                body_exit.value,
+                            )
                         )
-                    )
+                    else:
+                        exits.append(body_exit)
                 elif isinstance(body_exit.effect, RaiseEffect) and _matches_raise(
                     body_exit.effect, expected, pattern
                 ):
@@ -146,6 +151,15 @@ def _bind_real_actuals(signature, manager_value):
     keyword_count = len(manager_value.keyword_names)
     positional_count = len(manager_value.arg_values) - keyword_count
     positional = list(manager_value.arg_values[:positional_count])
+    if manager_value.runtime_dispatch_receiver is not None:
+        if (
+            not positional
+            or positional[0] is not manager_value.runtime_dispatch_receiver
+        ):
+            raise ContextManagerContractError(
+                "constructed method receiver is absent from its call coordinate"
+            )
+        positional = positional[1:]
     keywords = dict(
         zip(
             manager_value.keyword_names,

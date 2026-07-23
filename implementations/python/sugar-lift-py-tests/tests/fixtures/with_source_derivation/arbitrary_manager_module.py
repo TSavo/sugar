@@ -68,7 +68,7 @@ class SomeGuard:
             raise ExitFailure("exit failed")
         if effect_type is None:
             raise ExpectationNotMet("expected effect was absent")
-        return issubclass(effect_type, self.expected_exception)
+        return effect_type is self.expected_exception
 
 
 def some_manager(

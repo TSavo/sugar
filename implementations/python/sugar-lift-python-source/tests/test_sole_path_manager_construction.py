@@ -4,6 +4,8 @@ import csv
 import importlib.metadata
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ReturnValue, TermValue
 from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -250,9 +252,7 @@ def test_fixture_manager_class_bodies_construct_docstrings_and_class_fields():
 def test_nested_class_member_constructs_as_exact_class_field_through_same_door():
     source = SourceFile(
         (
-            "class Outer:\n"
-            "    class Inner:\n"
-            "        marker = 17\n",
+            "class Outer:\n" "    class Inner:\n" "        marker = 17\n",
             "nested-class.py",
             "blake3-512:" + ("34" * 64),
         )
@@ -488,13 +488,17 @@ def test_renamed_multistatement_implicit_none_exit_derives_never_suppresses(
 
 
 def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
-    fixture = (
-        Path(__file__).parents[2]
-        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
-        / "arbitrary_manager_module.py"
-    )
     graph, resolved, actual, call_site = _resolved(
-        tmp_path, fixture.read_text(encoding="utf-8"), exported="some_manager"
+        tmp_path,
+        "class OpaqueBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return issubclass(effect_type, self.expected)\n"
+        "def make_guard(expected):\n"
+        "    return OpaqueBoundary(expected)\n",
     )
     behavior = construct_manager_behavior(
         resolved, graph=graph, actuals=(actual,), call_site=call_site
@@ -507,6 +511,135 @@ def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
 
     assert isinstance(summary, DerivedManagerSummaryGapV1)
     assert summary.kind in {"enter-may-halt", "opaque-exit-truthiness"}
+
+
+def test_renamed_source_visible_exit_derives_expects_raise_boundary(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class ArbitraryBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n"
+        "def make_guard(expected):\n"
+        "    return ArbitraryBoundary(expected)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="renamed-effect-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol, behavior=behavior)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(summary.semantics.mode, ExpectsModeV1)
+    assert isinstance(summary.semantics.effect_kind, RaiseEffectKindV1)
+    assert summary.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
+
+
+def test_renamed_source_visible_exit_derives_suppresses_mode(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class ArbitraryBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return effect_type is self.expected\n"
+        "def make_guard(expected):\n"
+        "    return ArbitraryBoundary(expected)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="suppresses-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol, behavior=behavior)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        SuppressesModeV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(summary.semantics.mode, SuppressesModeV1)
+
+
+def test_renamed_effect_boundary_derives_message_operand_from_real_formal(tmp_path):
+    graph, resolved, expected, call_site = _resolved(
+        tmp_path,
+        "class ArbitraryBoundary:\n"
+        "    def __init__(self, expected, pattern):\n"
+        "        self.expected = expected\n"
+        "        self.pattern = pattern\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return (effect_type is self.expected) and (effect.message == self.pattern)\n"
+        "def make_guard(expected, pattern):\n"
+        "    return ArbitraryBoundary(expected, pattern)\n",
+    )
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    pattern_source = SourceFile(
+        ('"needle"\n', str(tmp_path / "pattern.py"), "blake3-512:" + ("91" * 64))
+    )
+    pattern_node = next(
+        node for node in pattern_source.nodes() if isinstance(node, Constant)
+    )
+    pattern_value = StringValue("needle")
+    pattern = ConstructedCallActualV1(
+        pattern_node,
+        pattern_value,
+        ConstructedValueTestimonyV1.mint(
+            pattern_node.fragment,
+            _term_content_cid(pattern_value.to_term(owner=resolved.cid)),
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(expected, pattern),
+        call_site=call_site,
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="message-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol, behavior=behavior)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert summary.semantics.message_pattern_operand == (
+        OptionalFormalArgumentProjectionV1(1)
+    )
 
 
 def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
@@ -556,7 +689,11 @@ def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
         span.end_col,
     )
     context.source_derived_contract_refs[coordinate] = SourceDerivedContextManagerRefV1(
-        coordinate, summary.summary_cid, summary.semantics, protocol
+        coordinate,
+        summary.summary_cid,
+        summary.semantics,
+        summary.import_signature,
+        protocol,
     )
 
     sugar = node.sugar()
@@ -614,3 +751,167 @@ def test_preconstruction_populates_resource_ref_from_authenticated_import(tmp_pa
         next(iter(context.source_derived_contract_refs.values())),
         SourceDerivedContextManagerRefV1,
     )
+
+
+def test_preconstruction_populates_renamed_effect_boundary_from_source(tmp_path):
+    implementation = (
+        "class RenamedBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n\n"
+        "def make_boundary(expected):\n"
+        "    return RenamedBoundary(expected)\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="make_boundary")
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        "    with arbitrary.make_boundary(ValueError):\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1)
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(reference.semantics.mode, ExpectsModeV1)
+    assert reference.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    boundary = with_node.sugar()
+    assert isinstance(boundary, WithEffectBoundarySugar)
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    exits = outcome_to_exitset(boundary.desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Halted)
+    assert isinstance(exits[0].effect, ExpectationNotMetEffect)
+
+
+def test_call_result_attribute_keeps_the_exact_constructed_call_coordinate():
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    call = CallSiteValue("renamed", (), (), ctor("python:call", ()), None)
+    projected = call.attribute("__name__", None)
+
+    assert isinstance(projected, Complete)
+    assert projected.value.term.args[0] is call.term
+    assert projected.value.term.args[1].value == "__name__"
+
+
+def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_path):
+    consumer = (
+        "import pytest\n"
+        "def use_boundary():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        raise ValueError('boom')\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+
+    resolution = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(resolution, ContextManagerResolutionGapV1)
+    assert resolution.kind == "no-derived-contract"
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_face", "expected_effect"),
+    [
+        ('raise ValueError("needle")', "completed", None),
+        ('raise TypeError("needle")', "halted", "RaiseEffect"),
+        ('raise ValueError("different")', "halted", "RaiseEffect"),
+        ("pass", "halted", "ExpectationNotMetEffect"),
+    ],
+)
+def test_renamed_source_boundary_routes_type_and_message_by_derived_formals(
+    tmp_path, body, expected_face, expected_effect
+):
+    implementation = (
+        "class Boundary:\n"
+        "    def __init__(self, expected, pattern):\n"
+        "        self.expected = expected\n"
+        "        self.pattern = pattern\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return (effect_type is self.expected) and (effect.message == self.pattern)\n\n"
+        "def boundary(expected, pattern):\n"
+        "    return Boundary(expected, pattern)\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="boundary")
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        '    with arbitrary.boundary(ValueError, "needle"):\n'
+        f"        {body}\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    face = outcome_to_exitset(boundary.desugar()).exits[0]
+    assert type(face).__name__.lower() == expected_face
+    if isinstance(face, Halted):
+        assert type(face.effect).__name__ == expected_effect
+    else:
+        assert isinstance(face, Completed)
