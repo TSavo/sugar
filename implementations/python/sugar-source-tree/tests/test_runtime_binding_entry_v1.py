@@ -12,6 +12,9 @@ from sugar_source_tree.binding_provenance import (
 )
 from sugar_source_tree.binding_state import (
     BindingEntryV1,
+    BindingStateWireGap,
+    LoopProjectedBinding,
+    LoopProjectedCompletedFace,
     RuntimeBindingEntryFactoryV1,
     RuntimeBindingEntryGap,
 )
@@ -101,3 +104,67 @@ def test_runtime_binding_map_has_one_carrier_not_parallel_name_to_node_state():
     assert bindings["renamed"] is entry
     assert isinstance(bindings["renamed"], BindingEntryV1)
     assert bindings["renamed"].state is live_state
+
+
+def test_loop_projection_carries_exact_completed_faces_inside_runtime_entry():
+    assignment, live_state, _entry_value = _entry()
+    target_cid = cid_of_json({"loop": assignment.fragment.seal().to_dict()})
+    first_guard = cid_of_json({"guard": "break"})
+    second_guard = cid_of_json({"guard": "exhaustion"})
+    projection = LoopProjectedBinding(
+        target_cid=target_cid,
+        completed_faces=(
+            LoopProjectedCompletedFace(
+                target_cid, "BreakExit", first_guard, live_state
+            ),
+            LoopProjectedCompletedFace(
+                target_cid, "NormalExhaustion", second_guard, live_state
+            ),
+        ),
+    )
+    factory = RuntimeBindingEntryFactoryV1(
+        cid_of_json({"scope": assignment.fragment.seal().to_dict()})
+    )
+
+    entry = factory.mint_entry(
+        binding_site=assignment.targets[0].fragment,
+        projection_path=("loop-post", 0),
+        state=projection,
+    )
+
+    assert isinstance(entry, BindingEntryV1)
+    assert entry.state is projection
+    assert tuple(face.guard_formula_cid for face in projection.completed_faces) == (
+        first_guard,
+        second_guard,
+    )
+    assert tuple(face.state for face in projection.completed_faces) == (
+        live_state,
+        live_state,
+    )
+    with pytest.raises(BindingStateWireGap, match="loop projected binding"):
+        entry.wire()
+
+
+def test_loop_projection_rejects_lying_target_and_cid_as_runtime_value():
+    _assignment, live_state, _entry_value = _entry()
+    target_cid = cid_of_json({"loop": "truthful"})
+    other_target_cid = cid_of_json({"loop": "lying"})
+    guard_cid = cid_of_json({"guard": True})
+
+    with pytest.raises(BindingStateWireGap, match="target mismatch"):
+        LoopProjectedBinding(
+            target_cid=target_cid,
+            completed_faces=(
+                LoopProjectedCompletedFace(
+                    other_target_cid, "BreakExit", guard_cid, live_state
+                ),
+            ),
+        )
+    with pytest.raises(BindingStateWireGap, match="runtime binding state"):
+        LoopProjectedCompletedFace(
+            target_cid,
+            "BreakExit",
+            guard_cid,
+            cid_of_json({"fabricated": "value"}),
+        )

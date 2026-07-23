@@ -89,8 +89,7 @@ def test_current_tree_measurement_has_nonempty_denominator() -> None:
     findings = scan_guarded_loop_recurrence(root / "sugar-source-tree" / "src")
 
     assert findings
-    assert {f.code for f in findings} >= {
+    assert {f.code for f in findings} == {
         "symbolic-loop-fold-substitution",
         "symbolic-loop-universal",
-        "missing-loop-projected-binding",
     }
