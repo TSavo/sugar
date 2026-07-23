@@ -47,6 +47,15 @@
       "requires": ["construction-occurrence-discrimination", "immutable-field-version-chain", "no-cross-object-version-collision"]
     },
     {
+      "id": "subscript-store-read",
+      "file": "subscript_store_read.py",
+      "canonical": {"truthful": "truthful", "lying": "lying"},
+      "renamed": {"truthful": "renamed_truthful", "lying": "renamed_lying"},
+      "current": "typed-loud",
+      "target": {"truthful": "sat", "lying": "unsat"},
+      "requires": ["typed-subscript-selector", "immutable-field-version-chain", "single-temporal-binding-model"]
+    },
+    {
       "id": "symbolic-receiver",
       "file": "symbolic_receiver.py",
       "canonical": "read_after_store",
