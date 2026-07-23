@@ -4,13 +4,35 @@ import ast
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 from .ast_template import function_body_template, function_param_names
 from .canonical import blake3_512_of, cid_of_json, template_cid_of_json
-from .source_tables import parsed_tree
+
+
+def _typed_tree():
+    """Lazy typed-tree imports — avoid circular import with source_oracle."""
+    _tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+    if _tree_src.is_dir() and str(_tree_src) not in sys.path:
+        sys.path.insert(0, str(_tree_src))
+    from sugar_source_tree.backend import BackendCouldNotParse
+    from sugar_source_tree.nodes import Assign, Constant, List, Name, Tuple_
+    from sugar_source_tree.nodes import ImportFrom as TypedImportFrom
+    from sugar_source_tree.tree import SourceFile
+
+    return (
+        SourceFile,
+        BackendCouldNotParse,
+        Assign,
+        Constant,
+        List,
+        Name,
+        Tuple_,
+        TypedImportFrom,
+    )
 
 Json = Any
 class UnsupportedStatementGrammar(RuntimeError):
@@ -306,30 +328,56 @@ def _module_file(root: Path, module: str) -> Path | None:
 
 
 def _literal_all_exports(root: Path, module: str) -> list[str]:
+    """Read ``__all__`` through the typed source tree — not raw ``ast.walk``.
+
+    Source enters once via SourceFile (adapter-backed). Semantic authority is
+    typed Assign/Name/Constant/List/Tuple nodes; foreign ast is not the door.
+    """
+    (
+        SourceFile,
+        BackendCouldNotParse,
+        Assign,
+        Constant,
+        List,
+        Name,
+        Tuple_,
+        _TypedImportFrom,
+    ) = _typed_tree()
     file_path = _module_file(root, module)
     if file_path is None:
         return []
     try:
         source = file_path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(file_path))
-    except (OSError, SyntaxError):
+        source_file = SourceFile(
+            (
+                source,
+                str(file_path),
+                blake3_512_of(source.encode("utf-8")),
+            )
+        )
+    except (OSError, SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
         return []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+    for node in source_file.root.walk():
+        if not isinstance(node, Assign):
             continue
         if not any(
-            isinstance(target, ast.Name) and target.id == "__all__"
-            for target in node.targets
+            isinstance(target, Name) and target.id == "__all__" for target in node.targets
         ):
             continue
-        try:
-            value = ast.literal_eval(node.value)
-        except (ValueError, SyntaxError):
+        value = node.value
+        if isinstance(value, (List, Tuple_)):
+            items: list[str] = []
+            for element in value.elts:
+                if not isinstance(element, Constant) or not isinstance(
+                    element.value, str
+                ):
+                    return []
+                items.append(element.value)
+            return items
+        if isinstance(value, Constant) and isinstance(value.value, (list, tuple)):
+            if all(isinstance(item, str) for item in value.value):
+                return list(value.value)
             return []
-        if isinstance(value, (list, tuple)) and all(
-            isinstance(item, str) for item in value
-        ):
-            return list(value)
         return []
     return []
 
@@ -472,19 +520,38 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
     mapping: dict[str, tuple[str, str]] = {}
     aliases: dict[str, str] = {}
     public_aliases: set[str] = set()
+    (
+        SourceFile,
+        BackendCouldNotParse,
+        _Assign,
+        _Constant,
+        _List,
+        _Name,
+        _Tuple_,
+        TypedImportFrom,
+    ) = _typed_tree()
+
     for current_file in sorted(root.rglob("*.py")):
         current_module = _module_name_for_package_file(root, current_file)
         if current_module is None:
             continue
         try:
             current_src = current_file.read_text(encoding="utf-8")
-            current_tree = parsed_tree(current_src, filename=str(current_file))
-        except (OSError, SyntaxError):
+            source_file = SourceFile(
+                (
+                    current_src,
+                    str(current_file),
+                    blake3_512_of(current_src.encode("utf-8")),
+                )
+            )
+        except (OSError, SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
             continue
-        for node in ast.walk(current_tree):
-            if not isinstance(node, ast.ImportFrom):
+        for node in source_file.root.walk():
+            if not isinstance(node, TypedImportFrom):
                 continue
-            target_module = _package_import_target(package, current_module, node)
+            # Typed ImportFrom exposes the same .level / .module fields the
+            # package-relative resolver reads — no foreign ast required.
+            target_module = _package_import_target(package, current_module, node)  # type: ignore[arg-type]
             if target_module is None:
                 continue
             for alias in node.names:
