@@ -252,7 +252,7 @@ def lift_source(source: str, source_path: str) -> LiftResult:
     module_path = _module_path(source_path)
     module_globals = _module_global_names(tree)
     module_imports = _module_import_aliases(tree)
-    pin_scan = scan_module_value_pins(tree)
+    pin_scan = scan_module_value_pins(tree, source=source, source_path=source_path)
     result.refusals.extend(pin_scan.boundaries)
     result.opacity_report.extend(
         mutable_global_pin_opacity_entry(pin, source_path=source_path)

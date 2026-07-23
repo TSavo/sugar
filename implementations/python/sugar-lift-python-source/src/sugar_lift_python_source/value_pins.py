@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from pathlib import Path
+import sys
 from typing import Iterator
 
+from .canonical import blake3_512_of
 from .ir import (
     Json,
     bool_const,
@@ -28,6 +31,36 @@ from .ir import (
     none_const,
     str_const,
 )
+
+
+def _typed_tree():
+    """Lazy typed-tree import — value_pins is still dual-body residual overall."""
+    tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+    if tree_src.is_dir() and str(tree_src) not in sys.path:
+        sys.path.insert(0, str(tree_src))
+    from sugar_source_tree.backend import BackendCouldNotParse
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        Attribute,
+        AugAssign,
+        Delete,
+        Global,
+        Name,
+    )
+    from sugar_source_tree.tree import SourceFile
+
+    return (
+        SourceFile,
+        BackendCouldNotParse,
+        Assign,
+        AnnAssign,
+        AugAssign,
+        Delete,
+        Attribute,
+        Name,
+        Global,
+    )
 
 VALUE_PIN_BOUNDARY_KIND = "value-pin-boundary"
 ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
@@ -146,11 +179,27 @@ class _Candidate:
     col: int = 0
 
 
-def scan_module_value_pins(tree: ast.Module) -> ValuePinScan:
+def scan_module_value_pins(
+    tree: ast.Module,
+    *,
+    source: str | None = None,
+    source_path: str = "<value-pins>",
+) -> ValuePinScan:
+    """Scan module-level value pins.
+
+    ``source`` (when provided) routes attribute-write and ``global`` puncture
+    detection through SourceFile / typed Nodes. Residual candidate/event
+    admission still walks the dual-body ``ast.Module`` until that half is
+    drained.
+    """
     scan = ValuePinScan()
     candidates = _collect_candidates(tree)
     events = list(_binding_events(tree))
-    global_decls = _global_declarations(tree)
+    global_decls = (
+        _global_declarations_typed(source, source_path)
+        if source is not None
+        else _global_declarations(tree)
+    )
     events_by_name: dict[str, list[_BindingEvent]] = {}
     for event in events:
         events_by_name.setdefault(event.name, []).append(event)
@@ -187,7 +236,7 @@ def scan_module_value_pins(tree: ast.Module) -> ValuePinScan:
             line=candidate.line,
             confession=candidate.confession,
         )
-    _scan_enum_member_pins(tree, scan)
+    _scan_enum_member_pins(tree, scan, source=source, source_path=source_path)
     assert scan.totality_holds()
     return scan
 
@@ -210,7 +259,13 @@ def _enum_base_kind(node: ast.ClassDef) -> Optional[str]:
     return None
 
 
-def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
+def _scan_enum_member_pins(
+    tree: ast.Module,
+    scan: ValuePinScan,
+    *,
+    source: str | None = None,
+    source_path: str = "<value-pins>",
+) -> None:
     """Class-attribute pins for enum members, keyed 'ClassName.MEMBER'.
 
     The == dispatch gate decides the scope: a plain Enum member is NOT
@@ -221,7 +276,11 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
     strongest pins in the language; the scan still refuses on any
     syntactic write to ClassName.MEMBER or cls.MEMBER in the module
     (belt and suspenders)."""
-    attr_writes = _class_attr_writes(tree)
+    attr_writes = (
+        _class_attr_writes_typed(source, source_path)
+        if source is not None
+        else _class_attr_writes(tree)
+    )
     for stmt in tree.body:
         if not isinstance(stmt, ast.ClassDef):
             continue
@@ -327,44 +386,74 @@ def _scan_enum_member_pins(tree: ast.Module, scan: ValuePinScan) -> None:
             )
 
 
+def _class_attr_writes_typed(source: str, source_path: str) -> dict:
+    """Typed-tree puncture scan: writes of shape ``<Name>.<attr>``.
+
+    SourceFile is the parse door; semantic authority is typed Assign /
+    AnnAssign / AugAssign / Delete nodes — not ``ast.NodeVisitor``.
+    """
+    (
+        SourceFile,
+        BackendCouldNotParse,
+        Assign,
+        AnnAssign,
+        AugAssign,
+        Delete,
+        Attribute,
+        Name,
+        _Global,
+    ) = _typed_tree()
+    try:
+        source_file = SourceFile(
+            (source, source_path, blake3_512_of(source.encode("utf-8")))
+        )
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+        return {}
+    writes: dict[str, int] = {}
+
+    def record(lineno: int, targets) -> None:
+        for target in targets:
+            if isinstance(target, Attribute) and isinstance(target.value, Name):
+                writes.setdefault(f"{target.value.id}.{target.attr}", lineno)
+
+    for node in source_file.root.walk():
+        lineno = node.line_col_span().start_line
+        if isinstance(node, Assign):
+            record(lineno, node.targets)
+        elif isinstance(node, AnnAssign):
+            record(lineno, (node.target,))
+        elif isinstance(node, AugAssign):
+            record(lineno, (node.target,))
+        elif isinstance(node, Delete):
+            record(lineno, node.targets)
+    return writes
+
+
 def _class_attr_writes(tree: ast.Module) -> dict:
-    """Every syntactic write target of the shape <Name>.<attr> anywhere in
-    the module (assignment, augmented assignment, deletion), keyed
-    'Name.attr' -> first line. Covers ClassName.MEMBER = ... and
-    cls.MEMBER = ... punctures."""
+    """Residual dual-body puncture scan (no source text available).
 
-    class WriteVisitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.writes: dict[str, int] = {}
+    Prefer ``_class_attr_writes_typed`` when the module source is in hand.
+    """
+    writes: dict[str, int] = {}
 
-        def record(self, node: ast.stmt, targets: list[ast.expr]) -> None:
-            for target in targets:
-                if isinstance(target, ast.Attribute) and isinstance(
-                    target.value, ast.Name
-                ):
-                    self.writes.setdefault(
-                        f"{target.value.id}.{target.attr}", node.lineno
-                    )
+    def record(node: ast.stmt, targets: list[ast.expr]) -> None:
+        for target in targets:
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                writes.setdefault(f"{target.value.id}.{target.attr}", node.lineno)
 
-        def visit_Assign(self, node: ast.Assign) -> None:
-            self.record(node, node.targets)
-            self.generic_visit(node)
-
-        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-            self.record(node, [node.target])
-            self.generic_visit(node)
-
-        def visit_AugAssign(self, node: ast.AugAssign) -> None:
-            self.record(node, [node.target])
-            self.generic_visit(node)
-
-        def visit_Delete(self, node: ast.Delete) -> None:
-            self.record(node, node.targets)
-            self.generic_visit(node)
-
-    visitor = WriteVisitor()
-    visitor.visit(tree)
-    return visitor.writes
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Assign):
+            record(node, list(node.targets))
+        elif isinstance(node, ast.AnnAssign):
+            record(node, [node.target])
+        elif isinstance(node, ast.AugAssign):
+            record(node, [node.target])
+        elif isinstance(node, ast.Delete):
+            record(node, list(node.targets))
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+    return writes
 
 
 def _pin_boundary(
@@ -677,12 +766,44 @@ def _target_names(target: ast.expr) -> Iterator[tuple[str, int]]:
     # Attribute/Subscript targets mutate objects, not module name bindings.
 
 
-def _global_declarations(tree: ast.Module) -> dict[str, int]:
+def _global_declarations_typed(source: str, source_path: str) -> dict[str, int]:
+    """Typed-tree ``global`` puncture scan — not ``ast.walk``."""
+    (
+        SourceFile,
+        BackendCouldNotParse,
+        _Assign,
+        _AnnAssign,
+        _AugAssign,
+        _Delete,
+        _Attribute,
+        _Name,
+        Global,
+    ) = _typed_tree()
+    try:
+        source_file = SourceFile(
+            (source, source_path, blake3_512_of(source.encode("utf-8")))
+        )
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+        return {}
     declarations: dict[str, int] = {}
-    for node in ast.walk(tree):
+    for node in source_file.root.walk():
+        if isinstance(node, Global):
+            lineno = node.line_col_span().start_line
+            for name in node.names:
+                declarations.setdefault(name, lineno)
+    return declarations
+
+
+def _global_declarations(tree: ast.Module) -> dict[str, int]:
+    """Residual dual-body ``global`` scan when source text is unavailable."""
+    declarations: dict[str, int] = {}
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
         if isinstance(node, ast.Global):
             for name in node.names:
                 declarations.setdefault(name, node.lineno)
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
     return declarations
 
 

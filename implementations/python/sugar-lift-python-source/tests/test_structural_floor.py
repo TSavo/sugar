@@ -19,7 +19,7 @@ from sugar_lift_python_source.value_pins import (
 
 
 def _scan(source: str):
-    return scan_module_value_pins(ast.parse(source))
+    return scan_module_value_pins(ast.parse(source), source=source)
 
 
 def _refusals(scan):
