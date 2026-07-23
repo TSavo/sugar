@@ -102,14 +102,38 @@ class ChainedAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 
         return self.value.desugar(ctx).and_then(
-            lambda _value: (
-                reduce_body(self.stores, ctx)
+            lambda value: (
+                reduce_body(
+                    tuple(
+                        _PreconstructedStoreSugar(store, value) for store in self.stores
+                    ),
+                    ctx,
+                )
                 if self.stores
                 else Complete(BlockValue((), can_fall_through=True))
             )
         )
+
+
+@dataclass(frozen=True)
+class _PreconstructedStoreSugar(Sugar):
+    """One chained target consuming the statement's already-reduced RHS."""
+
+    store: Sugar
+    value: object
+
+    @classmethod
+    def witnesses(cls):
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="chained store projection",
+            reason="the public ChainedAssignSugar twins own RHS-once sequencing",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        return self.store.desugar_store(ctx, self.value)

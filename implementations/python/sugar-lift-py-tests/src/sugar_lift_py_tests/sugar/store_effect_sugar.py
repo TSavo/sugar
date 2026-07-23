@@ -26,6 +26,8 @@ class AttributeStoreEffectSugar(Sugar):
     _effect_continues_control_flow) -- the block keeps reducing past it.
     """
 
+    receiver: Sugar
+    value: Sugar
     attr: str
     site: object = dataclass_field(compare=False)
 
@@ -42,20 +44,41 @@ class AttributeStoreEffectSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        # Python constructs the RHS before evaluating an assignment target.
+        return self.value.desugar(ctx).and_then(
+            lambda value: self.receiver.desugar(ctx).and_then(
+                lambda receiver: self._store(receiver, value)
+            )
+        )
+
+    def desugar_store(self, ctx: object, value) -> Outcome:
+        """Store an RHS already reduced once by a chained assignment."""
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: self._store(receiver, value)
+        )
+
+    def _store(self, receiver, value) -> Outcome:
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
-            runtime_effect_evidence,
+            runtime_effect_evidence_from_terms,
         )
-        from sugar_lift_py_tests.ir import make_var
+        from sugar_lift_py_tests.ir import ctor, str_const
 
-        operand = make_var(f"store_target.{self.attr}")
+        operation = ctor(
+            "python:attribute_store",
+            [
+                receiver.to_term(owner="AttributeStoreEffectSugar.receiver"),
+                str_const(self.attr),
+                value.to_term(owner="AttributeStoreEffectSugar.value"),
+            ],
+        )
         return Incomplete(
             AttributeStoreRuntimeEffect(
                 "attribute assignment runtime boundary: attribute store "
                 f"target `.{self.attr}` -- receiver identity belongs to "
                 "Python's runtime __setattr__/descriptor dispatch; "
                 f"attr={self.attr} site={self.site}",
-                **runtime_effect_evidence("py.setattr", operand, self.site),
+                **runtime_effect_evidence_from_terms(operation, operation, self.site),
             )
         )
 
@@ -104,3 +127,8 @@ class SubscriptStoreEffectSugar(Sugar):
                 **runtime_effect_evidence("py.setitem", operand, self.site),
             )
         )
+
+    def desugar_store(self, ctx: object, value) -> Outcome:
+        """Compatibility with chained store sequencing; subscript is separately owned."""
+        del value
+        return self.desugar(ctx)

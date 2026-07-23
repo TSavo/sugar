@@ -2277,6 +2277,8 @@ class Assign(Statement):
 
                     stores.append(
                         AttributeStoreEffectSugar(
+                            receiver=target.value.sugar(),
+                            value=value_sugar,
                             attr=target.attr,
                             site=target.fragment,
                         )
@@ -2323,6 +2325,8 @@ class Assign(Statement):
             )
 
             return AttributeStoreEffectSugar(
+                receiver=self.targets[0].value.sugar(),
+                value=self.value.sugar(),
                 attr=self.targets[0].attr,
                 site=self.fragment,
             )
@@ -2419,6 +2423,8 @@ class AugAssign(Statement):
             )
 
             return AttributeStoreEffectSugar(
+                receiver=self.target.value.sugar(),
+                value=self.value.sugar(),
                 attr=self.target.attr,
                 site=self.fragment,
             )
@@ -2496,6 +2502,8 @@ class AnnAssign(Statement):
             )
 
             return AttributeStoreEffectSugar(
+                receiver=self.target.value.sugar(),
+                value=self.value.sugar(),
                 attr=self.target.attr,
                 site=self.fragment,
             )
