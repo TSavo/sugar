@@ -1,8 +1,0 @@
-[project]
-name = "sugar-pytest-provider"
-version = "0.1.0"
-description = "Provider kit for authenticated pytest context-manager contracts"
-requires-python = ">=3.12"
-
-[project.scripts]
-sugar-pytest-provider = "sugar_pytest_provider.rpc:main"

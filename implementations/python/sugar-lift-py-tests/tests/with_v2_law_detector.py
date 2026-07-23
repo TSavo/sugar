@@ -458,6 +458,7 @@ class Interpreter:
         rpc = any(a.rpc for a in table.atoms) or any(a.rpc for a in key.atoms)
         if table.entries:
             result = result.stepped(label, rpc=rpc)
+            result = result.with_atom(Atom("AdmissionLookup", chain=(label,), rpc=rpc))
             result = result.join(AbstractValue(frozenset(a.step(label, rpc=rpc) for a in key.atoms if a.kind == "SourceSpelling")))
         elif table.has("UnknownOnAdmissionSlice"):
             result = table.join(AbstractValue(frozenset(a.step(label) for a in key.atoms if a.kind == "SourceSpelling")))
@@ -518,8 +519,12 @@ class Interpreter:
     def enrollment_rows(self) -> tuple[ReportRow, ...]:
         rows = []
         for fn in sorted(self.index.functions.values(), key=lambda f: f.identity):
-            # Consumer roots are functions that structurally seed targetSymbol and reach Sugar.
-            if not any((isinstance(n, ast.Name) and n.id == "targetSymbol") or (isinstance(n, ast.Attribute) and n.attr == "targetSymbol") for n in ast.walk(fn.node)):
+            seeded = any(
+                (isinstance(node, ast.Name) and node.id == "targetSymbol")
+                or (isinstance(node, ast.Attribute) and node.attr == "targetSymbol")
+                for node in ast.walk(fn.node)
+            )
+            if not seeded and not self._has_structural_admission_lookup(fn):
                 continue
             params = [*fn.node.args.posonlyargs, *fn.node.args.args, *fn.node.args.kwonlyargs]
             args = tuple(ORDINARY for _ in params)
@@ -528,16 +533,37 @@ class Interpreter:
                 continue
             semantics = [a for a in result.atoms if a.kind == "ConsumerSemantics"]
             spelling = [a for a in result.atoms if a.kind == "SourceSpelling"]
-            if semantics and spelling:
+            admission_lookup = [a for a in result.atoms if a.kind == "AdmissionLookup"]
+            if semantics and (spelling or admission_lookup):
                 origin = sorted(semantics, key=repr)[0]
-                reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in semantics + spelling) else "consumer-spelling-enrollment"
+                reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in semantics + spelling + admission_lookup) else "consumer-spelling-enrollment"
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, origin, reason))
-            elif result.has("UnknownOnAdmissionSlice") and spelling:
+            elif result.has("UnknownOnAdmissionSlice") and (spelling or admission_lookup):
                 atom = sorted((a for a in result.atoms if a.kind == "UnknownOnAdmissionSlice"), key=repr)[0]
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, atom, "opaque-consumer-enrollment-flow"))
         if not rows:
             rows.extend(self._structural_consumer_debt_rows())
         return _dedupe(rows)
+
+    def _has_structural_admission_lookup(self, fn: FunctionDef) -> bool:
+        """Find a lookup and successful Sugar sink without identifier policy."""
+        has_lookup = any(
+            isinstance(node, ast.Subscript)
+            or (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"get", "lookup"}
+            )
+            for node in ast.walk(fn.node)
+        )
+        if not has_lookup:
+            return False
+        return any(
+            isinstance(node, ast.Call)
+            and (callee := self.index.resolve(fn.module, node.func)) in self.index.classes
+            and self.index.is_sugar(callee)
+            for node in ast.walk(fn.node)
+        )
 
     def _fixed_call(self, fid: str, args: tuple[AbstractValue, ...], chain: tuple[str, ...]) -> AbstractValue:
         """Iterate the finite tag/summary lattice to a deterministic fixed point."""
