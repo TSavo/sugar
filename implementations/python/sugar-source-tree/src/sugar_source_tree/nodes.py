@@ -3385,6 +3385,7 @@ class With(Statement):
         from sugar_lift_py_tests.context_manager_contract import (
             EffectBoundarySemanticsV1,
             ExpectsModeV1,
+            SuppressesModeV1,
             RaiseEffectKindV1,
             NeverSuppressesDispositionV1,
             ProtocolResourceSemanticsV1,
@@ -3423,7 +3424,7 @@ class With(Statement):
         admitted_boundary = (
             isinstance(semantics, EffectBoundarySemanticsV1)
             and semantics.schema_version == "1"
-            and isinstance(semantics.mode, ExpectsModeV1)
+            and isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
             and isinstance(semantics.effect_kind, RaiseEffectKindV1)
         )
         if not (admitted_resource or admitted_boundary):
@@ -3491,7 +3492,9 @@ class With(Statement):
                 SourceDerivedContextManagerRefV1,
             )
 
-            if isinstance(resolved_ref, SourceDerivedContextManagerRefV1):
+            if isinstance(
+                resolved_ref, SourceDerivedContextManagerRefV1
+            ) and isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
                 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
                     WithSourceResourceSugar,
                 )
@@ -3536,8 +3539,12 @@ class With(Statement):
                     body=tuple(stmt.sugar() for stmt in self.body),
                     semantics=resolved_ref.semantics,
                     contract_ref=resolved_ref,
-                    context_manager_edge=ContextManagerEdgeDtoV1.from_resolved(
-                        resolved_ref, resolved_ref.use_site
+                    context_manager_edge=(
+                        None
+                        if isinstance(resolved_ref, SourceDerivedContextManagerRefV1)
+                        else ContextManagerEdgeDtoV1.from_resolved(
+                            resolved_ref, resolved_ref.use_site
+                        )
                     ),
                     site=self.fragment,
                 )
@@ -3590,12 +3597,13 @@ class With(Statement):
             AuthenticatedExceptionTypeSugar,
         )
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
         selector = reference.semantics.expected_type_operand
         if not isinstance(selector, FormalArgumentProjectionV1):
             return manager_sugar
         if not isinstance(manager, Call) or not isinstance(
-            manager_sugar, CallSiteSugar
+            manager_sugar, (CallSiteSugar, MethodCallSugar)
         ):
             return manager_sugar
         positional = list(enumerate(manager.args))

@@ -68,6 +68,19 @@ class ExitValueCoordinate(FloorValue):
 
         return ctor("python:exit_value", [str_const(self.face_id)])
 
+    def attribute(self, name, site):
+        """Project an attribute from the real parametric exception value."""
+        del site
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            SymbolicValue(
+                ctor("py.getattr", [self.to_term(owner="exit"), str_const(name)])
+            )
+        )
+
 
 @dataclass(frozen=True)
 class ExitTracebackCoordinate(FloorValue):

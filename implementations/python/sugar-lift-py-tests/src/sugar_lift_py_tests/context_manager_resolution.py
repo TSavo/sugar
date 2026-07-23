@@ -101,6 +101,7 @@ class SourceDerivedContextManagerRefV1:
     use_site: SourceFragmentCoordinateV1
     summary_cid: str
     semantics: ContextManagerSemanticsV1
+    import_signature: ImportSignatureV2
     protocol: object = field(compare=False, repr=False)
 
 
@@ -286,7 +287,9 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
         _cid(raw["useSiteCid"], "useSiteCid"),
         _cid(raw["authenticatedImportUseCid"], "authenticatedImportUseCid"),
         _cid(raw["importBindingCid"], "importBindingCid"),
-        _cid(raw["constructionContextGenerationCid"], "constructionContextGenerationCid"),
+        _cid(
+            raw["constructionContextGenerationCid"], "constructionContextGenerationCid"
+        ),
         _cid(raw["contractCid"], "contractCid"),
         _cid(raw["payloadCid"], "payloadCid"),
         _cid(raw["provenanceCid"], "provenanceCid"),

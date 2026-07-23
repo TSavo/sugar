@@ -48,6 +48,8 @@ class ConstructedManagerBehaviorV1:
     receiver_state_cid: str
     formal_actual_bindings: tuple[BindingEntryV1, ...]
     source_call_frame_cid: str
+    formal_actual_values: tuple[FloorValue, ...] = field(default=(), compare=False)
+    source_call_frame: object | None = field(default=None, compare=False, repr=False)
     factory_prefix: tuple[FloorValue, ...] = field(default=(), compare=False)
     factory_prefix_cids: tuple[str, ...] = ()
 
@@ -70,6 +72,23 @@ class ConstructedManagerBehaviorV1:
             raise ValueError("receiver state CID does not match ordinary construction")
         if cid_of_json(self.preimage) != self.manager_construction_cid:
             raise ValueError("manager construction CID does not match its preimage")
+        if self.formal_actual_values:
+            if len(self.formal_actual_values) != len(self.formal_actual_bindings):
+                raise ValueError("formal actual value/binding arity mismatch")
+            for value, entry in zip(
+                self.formal_actual_values, self.formal_actual_bindings, strict=True
+            ):
+                testimony = entry.sealed_state.testimony
+                if (
+                    testimony is None
+                    or testimony.semantic_value_cid
+                    != _term_content_cid(value.to_term(owner=self.resolved_object_cid))
+                ):
+                    raise ValueError("formal actual value lacks matching testimony")
+        if self.source_call_frame is not None and (
+            self.source_call_frame.frame_cid != self.source_call_frame_cid
+        ):
+            raise ValueError("source call frame CID mismatch")
 
 
 @dataclass(frozen=True)
@@ -149,8 +168,10 @@ def construct_manager_behavior(
         None, owner="construct_manager_behavior", project_callsite=False
     )
     factory_prefix: tuple[FloorValue, ...] = ()
-    if isinstance(result, BlockValue) and result.statements and isinstance(
-        result.statements[-1], ReturnValue
+    if (
+        isinstance(result, BlockValue)
+        and result.statements
+        and isinstance(result.statements[-1], ReturnValue)
     ):
         factory_prefix = result.statements[:-1]
         returned = result.statements[-1].value
@@ -166,8 +187,7 @@ def construct_manager_behavior(
         )
     bindings = frame.runtime_entries
     prefix_cids = tuple(
-        _term_content_cid(item.to_term(owner=resolved.cid))
-        for item in factory_prefix
+        _term_content_cid(item.to_term(owner=resolved.cid)) for item in factory_prefix
     )
     preimage = {
         "kind": "constructed-manager-behavior",
@@ -179,14 +199,16 @@ def construct_manager_behavior(
         "factoryPrefixCids": list(prefix_cids),
     }
     return ConstructedManagerBehaviorV1(
-        resolved.cid,
-        cid_of_json(preimage),
-        result,
-        result.identity,
-        bindings,
-        frame.frame_cid,
-        factory_prefix,
-        prefix_cids,
+        resolved_object_cid=resolved.cid,
+        manager_construction_cid=cid_of_json(preimage),
+        receiver_state=result,
+        receiver_state_cid=result.identity,
+        formal_actual_bindings=bindings,
+        source_call_frame_cid=frame.frame_cid,
+        formal_actual_values=values,
+        source_call_frame=frame,
+        factory_prefix=factory_prefix,
+        factory_prefix_cids=prefix_cids,
     )
 
 
