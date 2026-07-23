@@ -122,7 +122,42 @@ def test_census_fingers_exactly_the_unwritten_kinds():
         assert written not in gap_kinds, f"{written} sugar is written; not a gap"
 
 
+def test_shared_cid_at_distinct_loci_stays_distinct_and_located():
+    # Two identical `import os` statements register two ImportAlias nodes with
+    # the SAME sealed fragment CID (equal source text) at DISTINCT loci. The
+    # roll call counts both; the panic producer must too. Keying panics by CID
+    # alone collapses the second locus onto the first node -- mislocating it to
+    # line 1 AND emitting a duplicate owner identity the Rust reader rejects,
+    # which under-reports the real second-site residual.
+    with tempfile.TemporaryDirectory() as root:
+        path = Path(root, "t.py")
+        path.write_text("import os\nimport os\n")
+        leaf = lift_rpc._roll_call_audit_leaf(path, "t.py")
+
+    panics = leaf["semanticCore"]["panics"]
+    owners = [(p["demandedSource"], p["terminalGapLocus"]) for p in panics]
+    assert len(owners) == len(set(owners)), (
+        f"duplicate recovered-panic owner identity: {owners}"
+    )
+
+    alias_lines = sorted(
+        p["terminalGapLocus"]
+        for p in panics
+        if p["terminalGapLocus"].endswith("[ImportAlias]")
+    )
+    assert alias_lines == ["t.py:1:7-1:9[ImportAlias]", "t.py:2:7-2:9[ImportAlias]"], (
+        f"each import alias must keep its own locus, got {alias_lines}"
+    )
+
+    # The panic list conserves the roll-call minority exactly: one row per
+    # absent source site, no fusion, no inflation.
+    assert len(panics) == leaf["auxiliaryRows"]["sourceAudit"]["totals"][
+        "source_unresolved"
+    ], "panic count must equal R (source_unresolved)"
+
+
 if __name__ == "__main__":
     test_unwritten_sugar_makes_the_frontier_fail_loudly()
     test_census_fingers_exactly_the_unwritten_kinds()
+    test_shared_cid_at_distinct_loci_stays_distinct_and_located()
     print("ok: frontier is honest -- unwritten kinds finger, written kinds clear")
