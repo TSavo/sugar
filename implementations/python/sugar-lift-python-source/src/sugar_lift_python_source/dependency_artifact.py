@@ -21,22 +21,46 @@ from .canonical import blake3_512_of, cid_of_json
 from .source_oracle import SourceUnavailable, dependency_artifact_file
 
 
-def _source_file_cls():
-    """Lazy SourceFile — avoid circular import with source_oracle/tree."""
-    _tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
-    if _tree_src.is_dir() and str(_tree_src) not in sys.path:
-        sys.path.insert(0, str(_tree_src))
-    from sugar_source_tree.backend import BackendCouldNotParse
-    from sugar_source_tree.tree import SourceFile
-
-    return SourceFile, BackendCouldNotParse
-
-
 class DependencyArtifactAuthenticationError(Exception):
     """The selected installed artifact cannot be authenticated exactly."""
 
 
 _ARTIFACT_INTAKE_AUTHORITY = object()
+# Process-local: same distribution seat should not re-hash/re-parse.
+_AUTHENTICATE_GRAPH_CACHE: dict[tuple[str, ...], "DependencyArtifactGraph"] = {}
+
+
+def _require_parseable_module_source(
+    source: str, *, path: str, module_name: str
+) -> None:
+    """Parse gate only — not a typed tree, not retained construction.
+
+    Full ``SourceFile`` materialize (parse + bind) was used here and discarded.
+    That re-parsed every installed module on every authenticate call (~50ms each
+    × thousands of files) and dominated census child walls. Content addressing
+    already proved the bytes; this only rejects unparseable UTF-8 source.
+    """
+    try:
+        compile(source, path, "exec", dont_inherit=True)
+    except SyntaxError as exc:
+        raise DependencyArtifactAuthenticationError(
+            f"recorded Python module {module_name} is not parseable UTF-8 source"
+        ) from exc
+
+
+def _distribution_authenticate_cache_key(
+    distribution: importlib.metadata.Distribution,
+) -> tuple[str, ...]:
+    """Stable process-local key for one installed distribution seat."""
+    path = getattr(distribution, "_path", None)
+    if path is not None:
+        return ("path", str(path))
+    try:
+        name = distribution.metadata["Name"] or ""
+        version = distribution.metadata["Version"] or ""
+    except Exception:
+        name, version = "", ""
+    return ("meta", str(name), str(version), str(type(distribution)))
 
 
 @dataclass(frozen=True)
@@ -435,6 +459,10 @@ class DependencyArtifactGraph:
         cls, distribution: importlib.metadata.Distribution
     ) -> "DependencyArtifactGraph":
         """Hash every recorded installed file and publish authenticated modules."""
+        cache_key = _distribution_authenticate_cache_key(distribution)
+        cached = _AUTHENTICATE_GRAPH_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         files = distribution.files
         if files is None:
             raise DependencyArtifactAuthenticationError(
@@ -465,16 +493,15 @@ class DependencyArtifactGraph:
             module_name = _module_name(relative)
             if module_name is None:
                 continue
-            SourceFile, BackendCouldNotParse = _source_file_cls()
             try:
                 source = content.decode("utf-8")
-                # Parse gate through SourceFile (typed tree). Export resolution
-                # Export resolution delegated to dependency_export_adapter.
-                SourceFile((source, str(path), content_cid))
-            except (UnicodeError, SyntaxError, BackendCouldNotParse, ValueError) as exc:
+            except UnicodeError as exc:
                 raise DependencyArtifactAuthenticationError(
                     f"recorded Python module {module_name} is not parseable UTF-8 source"
                 ) from exc
+            _require_parseable_module_source(
+                source, path=str(path), module_name=module_name
+            )
             if module_name in modules:
                 raise DependencyArtifactAuthenticationError(
                     f"distribution contains duplicate module seat {module_name}"
@@ -511,7 +538,7 @@ class DependencyArtifactGraph:
                 for item in authenticated_files
             ],
         }
-        return cls(
+        graph = cls(
             artifact_kind="distribution",
             distribution_name=name,
             distribution_version=version,
@@ -520,6 +547,8 @@ class DependencyArtifactGraph:
             modules=MappingProxyType(modules),
             _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
+        _AUTHENTICATE_GRAPH_CACHE[cache_key] = graph
+        return graph
 
     @classmethod
     def authenticate_stdlib_module(cls, module_name: str) -> "DependencyArtifactGraph":
@@ -565,16 +594,19 @@ class DependencyArtifactGraph:
         modules: dict[str, AuthenticatedModuleSourceV1] = {}
         for candidate in paths:
             relative = PurePosixPath(candidate.relative_to(root).as_posix())
-            SourceFile, BackendCouldNotParse = _source_file_cls()
             try:
                 content, _seat, content_cid = dependency_artifact_file(str(candidate))
                 source = content.decode("utf-8")
-                SourceFile((source, str(candidate), content_cid))
-            except (SourceUnavailable, UnicodeError, SyntaxError, ValueError) as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"cannot authenticate stdlib source {relative}"
-                ) from exc
-            except BackendCouldNotParse as exc:
+                projected = _module_name(relative) or module_name
+                _require_parseable_module_source(
+                    source, path=str(candidate), module_name=projected
+                )
+            except (
+                SourceUnavailable,
+                UnicodeError,
+                DependencyArtifactAuthenticationError,
+                ValueError,
+            ) as exc:
                 raise DependencyArtifactAuthenticationError(
                     f"cannot authenticate stdlib source {relative}"
                 ) from exc
