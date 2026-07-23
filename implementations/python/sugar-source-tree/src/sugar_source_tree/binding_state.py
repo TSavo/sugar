@@ -547,6 +547,17 @@ def _canonical_constructed_value(value: object) -> Any:
 
     if value is None or isinstance(value, (bool, int, str)):
         return value
+    if isinstance(value, float):
+        from decimal import Decimal
+
+        # The one canonical float spelling the system already uses (see
+        # term_value.to_term / ir.real_lit): a fixed-point decimal string, never
+        # a Python float text form. str(float) is the shortest exact decimal
+        # that reparses to the same double; non-finite becomes Infinity / NaN.
+        return {"float": format(Decimal(str(value)), "f")}
+    if isinstance(value, bytes):
+        # Bytes canonicalize by hex, matching bytes_value / sequence_repetition.
+        return {"bytes": value.hex()}
     if isinstance(value, Enum):
         return {
             "enumType": f"{type(value).__module__}.{type(value).__qualname__}",
