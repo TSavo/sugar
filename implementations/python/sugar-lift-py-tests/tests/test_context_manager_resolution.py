@@ -125,11 +125,11 @@ def test_demand_enrollment_uses_import_coordinate_without_sugar_or_target_source
 
 def test_published_typed_declaration_is_served_only_by_declaration_pass(monkeypatch):
     from sugar_lift_py_tests.ir import PrimitiveSort
-    from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1, ImportSignatureV1
+    from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1, ImportSignatureV2
 
     declaration = ContextManagerContractIrV1.never_suppresses(
         bridge_source_symbol="context-manager:dependency.manager",
-        import_signature=ImportSignatureV1(formals=(), sorts=()),
+        import_signature=ImportSignatureV2(parameters=()),
         enter_result_sort=PrimitiveSort("Value"),
         source_warrants=(),
     )

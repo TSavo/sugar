@@ -23,13 +23,11 @@ use sugar_claim_envelope::{
     mint_context_manager_contract, mint_contract_with_body_cid, Authoring, MintBridgeArgs,
     MintContextManagerContractArgs, MintContractArgs,
 };
-use sugar_ir_types::Sort;
 use sugar_proof_envelope::Speaker;
 use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento,
-    ContextManagerContractMemento, ContextManagerSemanticsV1, ContractBody, ContractMementoRef,
-    Ed25519Seed, EnterResultContractV1, ExitContractV1, ExitDispositionV1, FlatAtom,
-    ImportSignatureV1, ProofGraph, SourceMemento,
+    ContextManagerContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FlatAtom,
+    ImportSignatureV2, ProofGraph, SourceMemento,
 };
 
 use crate::kit::{Kit, KitError};
@@ -89,50 +87,10 @@ struct ContextManagerContractIrWire {
     #[serde(rename = "bridgeSourceSymbol")]
     bridge_source_symbol: String,
     #[serde(rename = "importSignature")]
-    import_signature: ImportSignatureWire,
-    payload: ContextManagerSemanticsWire,
+    import_signature: ImportSignatureV2,
+    payload: Json,
     #[serde(rename = "sourceWarrants")]
     source_warrants: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ImportSignatureWire {
-    formals: Vec<String>,
-    sorts: Vec<Sort>,
-}
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerSemanticsWire {
-    kind: String,
-    #[serde(rename = "schemaVersion")]
-    schema_version: String,
-    enter: EnterWire,
-    exit: ExitWire,
-}
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EnterWire {
-    completion: String,
-    result: EnterResultWire,
-}
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EnterResultWire {
-    kind: String,
-    projection: String,
-    sort: Sort,
-}
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExitWire {
-    completion: String,
-    disposition: DispositionWire,
-}
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DispositionWire {
-    kind: String,
 }
 
 /// Production declaration/feed door for bodyless context-manager contracts.
@@ -149,41 +107,24 @@ pub fn graph_from_context_manager_contract_ir(ir: &Json) -> Result<ProofGraph, F
             detail: "unsupported declaration schema/kind".into(),
         });
     }
-    if row.bridge_source_symbol.is_empty()
-        || row.import_signature.formals.len() != row.import_signature.sorts.len()
-    {
+    if row.bridge_source_symbol.is_empty() {
         return Err(FeedError::Incomplete {
             what: "context_manager_contract_ir",
             detail: "invalid binding coordinate or import signature".into(),
         });
     }
-    if row.payload.kind != "context-manager-semantics"
-        || row.payload.schema_version != "1"
-        || row.payload.enter.completion != "total"
-        || row.payload.enter.result.kind != "projection"
-        || row.payload.enter.result.projection != "enter_result"
-        || row.payload.exit.completion != "total"
-        || row.payload.exit.disposition.kind != "never-suppresses"
-    {
-        return Err(FeedError::Incomplete {
-            what: "context_manager_contract_ir",
-            detail: "unsupported CM semantics".into(),
-        });
-    }
+    let semantics = sugar_proof_envelope::decode_context_manager_semantics_v1(
+        &row.payload,
+        &row.import_signature,
+    )
+    .map_err(|detail| FeedError::Incomplete {
+        what: "context_manager_contract_ir",
+        detail,
+    })?;
     let minted = mint_context_manager_contract(&MintContextManagerContractArgs {
         bridge_source_symbol: row.bridge_source_symbol,
-        import_signature: ImportSignatureV1 {
-            formals: row.import_signature.formals,
-            sorts: row.import_signature.sorts,
-        },
-        semantics: ContextManagerSemanticsV1 {
-            enter: EnterResultContractV1 {
-                sort: row.payload.enter.result.sort,
-            },
-            exit: ExitContractV1 {
-                disposition: ExitDispositionV1::NeverSuppresses,
-            },
-        },
+        import_signature: row.import_signature,
+        semantics,
         source_warrants: row.source_warrants,
         produced_by: FEED_PRODUCED_BY.into(),
         produced_at: FEED_PRODUCED_AT.into(),

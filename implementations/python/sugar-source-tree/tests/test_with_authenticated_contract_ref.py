@@ -5,7 +5,7 @@ from types import MappingProxyType
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
-    ContextManagerSemanticsV1,
+    ProtocolResourceSemanticsV1,
     EnterResultContractV1,
     ExitContractV1,
     NeverSuppressesDispositionV1,
@@ -13,7 +13,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ContextManagerResolutionGapV1,
-    ImportSignatureV1,
+    ImportSignatureV2,
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -57,7 +57,7 @@ def _source_with_resolution(source_identity, resolution):
 
 
 def _resolved(use_site) -> ContextManagerContractRefV1:
-    semantics = ContextManagerSemanticsV1(
+    semantics = ProtocolResourceSemanticsV1(
         enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
         exit=ExitContractV1(disposition=NeverSuppressesDispositionV1()),
     )
@@ -69,7 +69,7 @@ def _resolved(use_site) -> ContextManagerContractRefV1:
         member_cid=_cid("m"),
         payload_cid=_cid("p"),
         bridge_source_symbol="context-manager:dependency.manager",
-        import_signature=ImportSignatureV1((), ()),
+        import_signature=ImportSignatureV2(()),
         semantics=semantics,
         source_warrant_cids=(_cid("w"),),
     )
@@ -115,7 +115,7 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(tmp_p
     assert len(manager_constructions) == 1
     bound_return = resource.body[0]
     assert bound_return.value.slot_id == resource.enter_slot_id
-    assert bound_return.value.projection == "enter_result"
+    assert bound_return.value.projection == "enter-result"
 
 
 def test_unresolved_ref_stays_typed_loud(tmp_path, monkeypatch):

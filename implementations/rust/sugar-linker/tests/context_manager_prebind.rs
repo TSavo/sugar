@@ -12,7 +12,7 @@ use sugar_linker::{
 };
 use sugar_proof_envelope::{
     ContextManagerSemanticsV1, EnterResultContractV1, ExitContractV1, ExitDispositionV1,
-    ImportSignatureV1,
+    ImportSignatureV2, ResourceSemanticsV1, TotalCompletionV1,
 };
 
 fn cid(fill: char) -> Cid {
@@ -32,20 +32,19 @@ fn use_site() -> SourceFragmentCoordinateV1 {
 fn minted(symbol: &str, seed_byte: u8) -> (Cid, Json) {
     let m = mint_context_manager_contract(&MintContextManagerContractArgs {
         bridge_source_symbol: symbol.into(),
-        import_signature: ImportSignatureV1 {
-            formals: vec![],
-            sorts: vec![],
-        },
-        semantics: ContextManagerSemanticsV1 {
+        import_signature: ImportSignatureV2 { parameters: vec![] },
+        semantics: ContextManagerSemanticsV1::ProtocolResource(ResourceSemanticsV1 {
             enter: EnterResultContractV1 {
+                completion: TotalCompletionV1,
                 sort: Sort::Primitive {
                     name: "Value".into(),
                 },
             },
             exit: ExitContractV1 {
+                completion: TotalCompletionV1,
                 disposition: ExitDispositionV1::NeverSuppresses,
             },
-        },
+        }),
         source_warrants: vec![],
         produced_by: "fixture".into(),
         produced_at: "2026-07-22T00:00:00.000Z".into(),
@@ -66,10 +65,7 @@ fn demand(symbol: &str) -> ContextManagerContractDemandV1 {
     ContextManagerContractDemandV1::new(
         use_site(),
         symbol.into(),
-        ImportSignatureV1 {
-            formals: vec![],
-            sorts: vec![],
-        },
+        ImportSignatureV2 { parameters: vec![] },
     )
 }
 
@@ -85,7 +81,10 @@ fn truthful_member_prebinds_to_immutable_typed_ref() {
     assert_eq!(reference.member_cid(), &member.0);
     assert_eq!(reference.catalog_cid(), catalog.catalog_cid());
     assert_eq!(
-        reference.semantics().exit.disposition,
+        match reference.semantics() {
+            ContextManagerSemanticsV1::ProtocolResource(resource) => resource.exit.disposition,
+            ContextManagerSemanticsV1::EffectBoundary(_) => panic!("resource"),
+        },
         ExitDispositionV1::NeverSuppresses
     );
     final_check_context_manager_ref(&reference, &catalog)
@@ -183,10 +182,7 @@ fn runtime_selected_and_mutated_signed_member_never_construct_a_ref() {
     let empty = AuthenticatedContextManagerCatalog::freeze(vec![]).unwrap();
     let runtime = ContextManagerContractDemandV1::runtime_selected(
         use_site(),
-        ImportSignatureV1 {
-            formals: vec![],
-            sorts: vec![],
-        },
+        ImportSignatureV2 { parameters: vec![] },
     );
     let ContextManagerResolutionV1::Unresolved(gap) =
         resolve_context_manager_demand(&runtime, &empty)
@@ -231,10 +227,15 @@ fn exact_symbol_with_different_signature_stays_a_typed_gap() {
     let mismatched = ContextManagerContractDemandV1::new(
         use_site(),
         "context-manager:fixture.never_closing".into(),
-        ImportSignatureV1 {
-            formals: vec!["value".into()],
-            sorts: vec![Sort::Primitive {
-                name: "Value".into(),
+        ImportSignatureV2 {
+            parameters: vec![sugar_proof_envelope::CallParameterV1 {
+                name: "value".into(),
+                sort: Sort::Primitive {
+                    name: "Value".into(),
+                },
+                passing: sugar_proof_envelope::ParameterPassingV1::PositionalOrKeyword,
+                required: true,
+                default: sugar_proof_envelope::ParameterDefaultV1::NoDefault,
             }],
         },
     );

@@ -3,7 +3,7 @@ from types import MappingProxyType
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
-    ContextManagerSemanticsV1,
+    ProtocolResourceSemanticsV1,
     EnterResultContractV1,
     ExitContractV1,
     NeverSuppressesDispositionV1,
@@ -11,7 +11,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ContextManagerResolutionGapV1,
-    ImportSignatureV1,
+    ImportSignatureV2,
     SourceFragmentCoordinateV1,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
@@ -36,8 +36,8 @@ def _ref(warrants=None):
         member_cid=_cid("m"),
         payload_cid=_cid("p"),
         bridge_source_symbol="context-manager:dependency.manager",
-        import_signature=ImportSignatureV1((), ()),
-        semantics=ContextManagerSemanticsV1(
+        import_signature=ImportSignatureV2(()),
+        semantics=ProtocolResourceSemanticsV1(
             enter=EnterResultContractV1(PrimitiveSort("Value")),
             exit=ExitContractV1(NeverSuppressesDispositionV1()),
         ),

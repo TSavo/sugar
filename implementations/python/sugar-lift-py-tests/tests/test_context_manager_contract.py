@@ -7,6 +7,7 @@ from sugar_lift_py_tests.claim_envelope import _assemble_layered
 from sugar_lift_py_tests.context_manager_contract import (
     ContextManagerContractError,
     ContextManagerSemanticsV1,
+    ProtocolResourceSemanticsV1,
     EnterResultContractV1,
     ExitContractV1,
     NeverSuppressesDispositionV1,
@@ -16,7 +17,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.kit_rpc import (
     ContextManagerContractIrV1,
-    ImportSignatureV1,
+    ImportSignatureV2,
     LiftReportPayloadDto,
 )
 from sugar_lift_py_tests.signing import Signer
@@ -31,7 +32,7 @@ DECLARED_AT = "2026-07-22T00:00:00.000Z"
 def _publish():
     return publish_never_suppresses_context_manager_contract(
         bridge_source_symbol="context-manager:fixture_python.never_closing",
-        import_signature=ImportSignatureV1(formals=(), sorts=()),
+        import_signature=ImportSignatureV2(parameters=()),
         enter_result_sort=PrimitiveSort("Value"),
         source_warrants=("blake3-512:" + "a" * 128,),
         signer=Signer(seed=SEED, producer_id="fixture-python-kit"),
@@ -54,7 +55,7 @@ def _reseal(mutator):
 def test_publish_and_decode_retains_typed_never_suppresses_semantics():
     sealed = _publish()
     decoded = decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
-    assert decoded.semantics == ContextManagerSemanticsV1(
+    assert decoded.semantics == ProtocolResourceSemanticsV1(
         enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
         exit=ExitContractV1(disposition=NeverSuppressesDispositionV1()),
     )
@@ -72,13 +73,13 @@ def test_semantic_payload_is_provider_neutral_and_hashed_alone():
     }
     assert "name" not in header["payload"] and "kit" not in header["payload"]
     assert header["payload"] == {
-        "kind": "context-manager-semantics",
+        "kind": "protocol-resource",
         "schemaVersion": "1",
         "enter": {
-            "completion": "total",
-            "result": {"kind": "projection", "projection": "enter_result", "sort": {"kind": "primitive", "name": "Value"}},
+            "completion": {"kind": "total"},
+            "result": {"kind": "projection", "projection": "enter-result", "sort": {"kind": "primitive", "name": "Value"}},
         },
-        "exit": {"completion": "total", "disposition": {"kind": "never-suppresses"}},
+        "exit": {"completion": {"kind": "total"}, "disposition": {"kind": "never-suppresses"}},
     }
     assert header["payloadCid"] == blake3_512_of(
         encode_jcs(_json_value(header["payload"])).encode()
@@ -93,7 +94,7 @@ def test_correctly_resealed_unknown_disposition_reaches_typed_decoder():
 
 def test_correctly_resealed_missing_enter_reaches_typed_decoder():
     sealed = _reseal(lambda h: h["payload"].pop("enter"))
-    with pytest.raises(ContextManagerContractError, match="malformed context-manager semantics"):
+    with pytest.raises(ContextManagerContractError, match="malformed protocol-resource semantics"):
         decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
 
 
@@ -114,7 +115,7 @@ def test_bad_signature_is_distinct_from_stale_payload_cid():
 def test_typed_declaration_enters_closed_ir_transport():
     row = ContextManagerContractIrV1.never_suppresses(
         bridge_source_symbol="context-manager:fixture_python.never_closing",
-        import_signature=ImportSignatureV1(formals=(), sorts=()),
+        import_signature=ImportSignatureV2(parameters=()),
         enter_result_sort=PrimitiveSort("Value"),
         source_warrants=("blake3-512:" + "a" * 128,),
     )
@@ -125,7 +126,7 @@ def test_typed_declaration_enters_closed_ir_transport():
 def test_typed_declaration_is_published_on_the_live_kit_declaration(monkeypatch):
     row = ContextManagerContractIrV1.never_suppresses(
         bridge_source_symbol="context-manager:fixture_python.never_closing",
-        import_signature=ImportSignatureV1(formals=(), sorts=()),
+        import_signature=ImportSignatureV2(parameters=()),
         enter_result_sort=PrimitiveSort("Value"),
         source_warrants=(),
     )

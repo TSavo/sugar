@@ -61,7 +61,7 @@ use sugar_linker::{
     Cid, ContextManagerContractDemandV1, LinkerError, LinkerErrorKind, LinkerInputs,
     ResolvedCallContractRefsV1, ResolvedContractRefsV1, SourceFragmentCoordinateV1, Symbol,
 };
-use sugar_proof_envelope::ImportSignatureV1;
+use sugar_proof_envelope::ImportSignatureV2;
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
 use sugar_proof_envelope::{MementoPool, Speaker};
 use sugar_verifier::consistency::verify_consistency;
@@ -575,27 +575,11 @@ fn context_manager_demand_from_wire(
             .ok_or_else(|| ProveFromKitError::Preconstruction("demand missing useSite".into()))?,
     )
     .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-    let signature = row
-        .get("importSignature")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| {
+    let import_signature: ImportSignatureV2 =
+        serde_json::from_value(row.get("importSignature").cloned().ok_or_else(|| {
             ProveFromKitError::Preconstruction("demand missing importSignature".into())
-        })?;
-    let formals = serde_json::from_value(
-        signature
-            .get("formals")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([])),
-    )
-    .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-    let sorts = serde_json::from_value(
-        signature
-            .get("sorts")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([])),
-    )
-    .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-    let import_signature = ImportSignatureV1 { formals, sorts };
+        })?)
+        .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
     match row.get("targetSymbol") {
         Some(serde_json::Value::String(symbol)) => Ok(ContextManagerContractDemandV1::new(
             use_site,
