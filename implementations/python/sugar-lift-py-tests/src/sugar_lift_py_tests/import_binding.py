@@ -118,6 +118,40 @@ class _Pass:
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
 
+    def _state_only_statement(
+        self, node: ast.stmt, state: State, scope: ast.AST
+    ) -> State:
+        """Transfer one statement without enrolling any use-site testimony."""
+        transfer = _Pass(
+            source_cid=self.source_cid,
+            module_name=self.module_name,
+            module_identities=self.module_identities,
+            module_state=self.module_state,
+            analyze_nested=False,
+        )
+        return transfer.statement(node, state, scope)
+
+    def _loop_entry(
+        self,
+        node: ast.For | ast.AsyncFor | ast.While,
+        state: State,
+        scope: ast.AST,
+    ) -> State:
+        """Least fixed point for definitions that can arrive on a back-edge."""
+        entry = dict(state)
+        while True:
+            body_in = dict(entry)
+            if hasattr(node, "target"):
+                for name in _bound_names(node.target):
+                    body_in[name] = frozenset({_NON_IMPORT})
+            body_out = body_in
+            for statement in node.body:
+                body_out = self._state_only_statement(statement, body_out, scope)
+            widened = _join(state, body_out)
+            if widened == entry:
+                return entry
+            entry = widened
+
     def expression(self, node: ast.AST | None, state: State, scope: ast.AST) -> None:
         if node is None:
             return
@@ -314,17 +348,27 @@ class _Pass:
             )
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
             self.expression(getattr(node, "iter", None), state, scope)
-            self.expression(getattr(node, "test", None), state, scope)
-            body_in = dict(state)
+            body_in = self._loop_entry(node, state, scope)
+            self.expression(getattr(node, "test", None), body_in, scope)
             if hasattr(node, "target"):
                 for name in _bound_names(node.target):
                     body_in[name] = frozenset({_NON_IMPORT})
             body = self.statements(node.body, body_in, scope)
-            return _join(state, body, self.statements(node.orelse, _join(state, body), scope))
+            return _join(
+                state,
+                body,
+                self.statements(node.orelse, _join(state, body), scope),
+            )
         if isinstance(node, ast.Try):
+            exceptional_prefixes = [dict(state)]
+            prefix = dict(state)
+            for statement in node.body:
+                prefix = self._state_only_statement(statement, prefix, scope)
+                exceptional_prefixes.append(prefix)
+            handler_entry = _join(*exceptional_prefixes)
             paths = [self.statements(node.body, state, scope)]
             for handler in node.handlers:
-                handler_state = dict(state)
+                handler_state = dict(handler_entry)
                 if handler.name:
                     handler_state[handler.name] = frozenset({_NON_IMPORT})
                 paths.append(self.statements(handler.body, handler_state, scope))

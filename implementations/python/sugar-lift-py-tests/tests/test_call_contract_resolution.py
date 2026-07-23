@@ -374,6 +374,50 @@ def test_shadowed_reexport_is_not_published(tmp_path):
     assert not any(row["exportedSymbol"] == "python:public.pair" for row in rows)
 
 
+def test_try_handler_sees_exceptional_prefix_rebind_and_never_authenticates_import(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from producer import pair\n"
+        "try:\n"
+        "    pair = local\n"
+        "    raise E\n"
+        "except E:\n"
+        "    pair()\n"
+    )
+    source, _filename, source_cid = path_source(str(consumer))
+
+    rows, outcomes = authenticated_import_uses(
+        tmp_path, consumer, source, source_cid
+    )
+
+    assert rows == []
+    assert "ambiguous-lexical-binding" in outcomes.values()
+
+
+def test_loop_backedge_rebind_never_authenticates_import_use(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from producer import pair\n"
+        "while cond:\n"
+        "    pair()\n"
+        "    pair = local\n"
+    )
+    source, _filename, source_cid = path_source(str(consumer))
+
+    rows, outcomes = authenticated_import_uses(
+        tmp_path, consumer, source, source_cid
+    )
+
+    assert rows == []
+    assert "ambiguous-lexical-binding" in outcomes.values()
+
+
 def test_spelling_without_authenticated_import_use_has_no_authority(tmp_path):
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_lift_py_tests.import_binding import authenticated_import_uses
