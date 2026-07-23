@@ -29,11 +29,13 @@ from sugar_source_tree.nodes import Call, Constant
 from sugar_source_tree.tree import SourceFile
 
 
-def _distribution(root: Path, source: str) -> importlib.metadata.Distribution:
+def _distribution(
+    root: Path, source: str, *, exported: str = "make_guard"
+) -> importlib.metadata.Distribution:
     package = root / "arbitrary"
     package.mkdir()
     (package / "__init__.py").write_text(
-        "from arbitrary.manager import make_guard\n", encoding="utf-8"
+        f"from arbitrary.manager import {exported}\n", encoding="utf-8"
     )
     (package / "manager.py").write_text(source, encoding="utf-8")
     metadata = root / "arbitrary_dist-1.0.dist-info"
@@ -55,9 +57,11 @@ def _distribution(root: Path, source: str) -> importlib.metadata.Distribution:
     return importlib.metadata.Distribution.at(metadata)
 
 
-def _resolved(root: Path, source: str):
-    graph = DependencyArtifactGraph.authenticate(_distribution(root, source))
-    consumer = "import arbitrary\narbitrary.make_guard(23)\n"
+def _resolved(root: Path, source: str, *, exported: str = "make_guard"):
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(root, source, exported=exported)
+    )
+    consumer = f"import arbitrary\narbitrary.{exported}(23)\n"
     path = root / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
     source_cid = blake3_512_of(consumer.encode())
@@ -294,3 +298,27 @@ def test_source_factory_default_gets_authenticated_binding_testimony(tmp_path):
         entry.constructed_value_testimony is not None
         for entry in behavior.formal_actual_bindings
     )
+
+
+def test_merged_renamed_some_guard_factory_constructs_through_sole_door(tmp_path):
+    fixture = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
+        / "arbitrary_manager_module.py"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, fixture.read_text(encoding="utf-8"), exported="some_manager"
+    )
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert behavior.receiver_state.class_name == "SomeGuard"
+    assert behavior.receiver_state.has_method("__enter__")
+    assert behavior.receiver_state.has_method("__exit__")
+    protocol = construct_manager_protocol(behavior, exit_face_id="fixture-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+    assert protocol.enter_outcome() is not None
+    assert protocol.exit_outcome() is not None

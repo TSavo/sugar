@@ -125,6 +125,10 @@ class CallSiteSugar(Sugar):
                 ) from exc
             source_body = self.source_call_frame.body
             source_frame_cid = self.source_call_frame.frame_cid
+            # bind_actuals returned the complete formal-ordered tuple,
+            # including keyword/default actuals. They must not be appended a
+            # second time below.
+            kw_values = ()
         return Complete(
             CallSiteValue(
                 target_name=self.target_name,

@@ -40,6 +40,18 @@ def predicate_formula(value, site):
         )
     formula = getattr(truth.value, "formula", None)
     if formula is None:
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if isinstance(truth.value, TrueBoolLiteralSugar):
+            return true_guard()
+        if isinstance(truth.value, FalseBoolLiteralSugar):
+            return false_guard()
         raise NotImplementedError(
             f"condition folded without a symbolic formula: {type(value).__name__}"
         )
