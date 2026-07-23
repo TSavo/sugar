@@ -221,10 +221,10 @@ def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
     # a constructed Node arm seals to a bound value, not a guard
     assert isinstance(_seal_runtime_state(node_true), BoundBindingStateV1)
 
-    # Bad twin: a LoopProjectedBinding is a real state this projection does not
-    # yet implement -- it must stay LOUD, never silently pass.
+    # A SINGLE-face loop projection is TOTAL (a no-break loop exits only by
+    # NormalExhaustion), so it seals to that one face's state unconditionally.
     target_cid = cid_of_json({"target": "loop"})
-    projected = LoopProjectedBinding(
+    single = LoopProjectedBinding(
         target_cid,
         (
             LoopProjectedCompletedFace(
@@ -232,5 +232,21 @@ def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
             ),
         ),
     )
-    with pytest.raises(BindingStateWireGap):
-        _seal_runtime_state(projected)
+    assert _seal_runtime_state(single) == _seal_runtime_state(node_true)
+
+    # Bad twin: a MULTI-face projection (a loop that can break) is a genuine
+    # multi-way completion join whose folding is unbuilt -- it stays LOUD,
+    # never silently folds to a wrong fallthrough value.
+    multi = LoopProjectedBinding(
+        target_cid,
+        (
+            LoopProjectedCompletedFace(
+                target_cid, "BreakExit", cid_of_json({"g": "b"}), node_true
+            ),
+            LoopProjectedCompletedFace(
+                target_cid, "NormalExhaustion", cid_of_json({"g": "x"}), node_false
+            ),
+        ),
+    )
+    with pytest.raises(BindingStateWireGap, match="multi-face"):
+        _seal_runtime_state(multi)
