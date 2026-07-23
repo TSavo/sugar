@@ -386,11 +386,9 @@ def populate_source_derived_resource_refs(
     artifact_graph_cache: dict | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows."""
-    import importlib.metadata
     from pathlib import Path
 
     from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerResolutionGapV1,
         SourceDerivedContextManagerRefV1,
         SourceFragmentCoordinateV1,
     )
@@ -401,7 +399,6 @@ def populate_source_derived_resource_refs(
     from sugar_source_tree.nodes import Call, With
 
     from .dependency_artifact import (
-        DependencyArtifactGraph,
         ResolvedPythonObjectV1,
         resolve_import_binding,
     )
@@ -442,11 +439,6 @@ def populate_source_derived_resource_refs(
                 expr,
                 item._exit_face_id(),
             )
-    packages = (
-        importlib.metadata.packages_distributions()
-        if distribution_index is None
-        else {name: (name,) for name in distribution_index}
-    )
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     for receipt in receipts:
         raw_site = receipt.use["useSite"]
@@ -461,18 +453,22 @@ def populate_source_derived_resource_refs(
             continue
         coordinate, call, exit_face_id = selected
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        distributions = tuple(packages.get(top_level, ()))
-        if len(distributions) != 1:
-            _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
-            continue
-        distribution = (
-            importlib.metadata.distribution(distributions[0])
-            if distribution_index is None
-            else distribution_index[top_level]
-        )
         graph = graphs.get(top_level)
         if graph is None:
-            graph = DependencyArtifactGraph.authenticate(distribution)
+            from .dependency_artifact import (
+                DependencyArtifactAuthenticationError,
+                authenticate_dependency_top_level,
+            )
+
+            try:
+                graph = authenticate_dependency_top_level(
+                    top_level, distribution_index=distribution_index
+                )
+            except DependencyArtifactAuthenticationError:
+                _install_derivation_gap(
+                    context, coordinate, receipt, "no-derived-contract"
+                )
+                continue
             graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph)
         if not isinstance(resolved, ResolvedPythonObjectV1):

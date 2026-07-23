@@ -125,7 +125,7 @@ def test_resolved_python_object_round_trips_with_identical_cid(tmp_path: Path) -
 def test_dynamic_export_stays_a_typed_loud_gap(tmp_path: Path) -> None:
     distribution = _install_distribution(
         tmp_path,
-        package_source=("def __getattr__(name):\n" "    return object()\n"),
+        package_source=("def __getattr__(name):\n    return object()\n"),
         implementation_source="def build(value):\n    return value\n",
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
@@ -155,6 +155,47 @@ def test_real_pytest_reexport_resolves_without_manager_name_recognition(
     assert result.module_name != "pytest"
     assert result.reexport_warrants
     assert result.definition.source_cid == result.source_cid
+
+
+def test_stdlib_module_resolves_renamed_export_through_dependency_graph(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("contextlib")
+    demand = _demand(
+        tmp_path,
+        "from contextlib import suppress as RenamedBoundary\n"
+        "RenamedBoundary(ValueError)\n",
+    )
+
+    result = resolve_import_binding(demand, graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.kind == "class"
+    assert result.definition.name == "suppress"
+    assert result.module_name == "contextlib"
+    assert graph.modules["contextlib"].source_cid == result.source_cid
+
+
+def test_same_spelled_non_stdlib_module_cannot_mint_stdlib_graph(
+    tmp_path: Path,
+) -> None:
+    impostor = tmp_path / "contextlib.py"
+    impostor.write_text("class suppress:\n    pass\n", encoding="utf-8")
+
+    with pytest.raises(
+        DependencyArtifactAuthenticationError, match="authenticated stdlib root"
+    ):
+        DependencyArtifactGraph.authenticate_stdlib_path(
+            "contextlib", impostor, stdlib_root=Path(sys.base_prefix) / "lib"
+        )
+
+
+def test_any_source_visible_stdlib_module_uses_the_same_graph_intake() -> None:
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("typing")
+
+    assert graph.artifact_kind == "stdlib"
+    assert "typing" in graph.modules
+    assert graph.distribution_artifact_cid.startswith("blake3-512:")
 
 
 def test_fabricated_artifact_file_wrapper_is_loud(tmp_path: Path) -> None:
@@ -507,7 +548,9 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
     """
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
     from sugar_lift_python_source import manager_construction as mc
-    from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
+    from sugar_lift_python_source.manager_construction import (
+        resolve_source_visible_frame,
+    )
     from sugar_source_tree.tree import SourceFile
 
     distribution = _install_distribution(
@@ -540,9 +583,7 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
 
     mc.SourceFile = CountingSourceFile  # type: ignore[misc, assignment]
     try:
-        frames = [
-            resolve_source_visible_frame(item, graph=graph) for item in resolved
-        ]
+        frames = [resolve_source_visible_frame(item, graph=graph) for item in resolved]
     finally:
         mc.SourceFile = original_sf  # type: ignore[misc, assignment]
         mc.clear_source_visible_frame_cache()

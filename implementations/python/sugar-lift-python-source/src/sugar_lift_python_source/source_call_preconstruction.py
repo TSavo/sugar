@@ -7,7 +7,6 @@ never grants semantics from a local or package spelling.
 
 from __future__ import annotations
 
-import importlib.metadata
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import (
@@ -21,7 +20,6 @@ from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef, Name
 
 from .dependency_artifact import (
     DependencyArtifactAuthenticationError,
-    DependencyArtifactGraph,
     PythonObjectResolutionGapV1,
     ResolvedPythonObjectV1,
     resolve_import_binding,
@@ -56,11 +54,6 @@ def populate_source_visible_call_frames(
     calls = tuple(node for node in source_file.nodes() if isinstance(node, Call))
     calls_by_span = {_span_key(node): node for node in calls}
     constructor_targets = {}
-    packages = (
-        importlib.metadata.packages_distributions()
-        if distribution_index is None
-        else {name: (name,) for name in distribution_index}
-    )
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     for receipt in receipts:
         raw = receipt.use["useSite"]
@@ -70,22 +63,14 @@ def populate_source_visible_call_frames(
             continue
         coordinate = _coordinate(call)
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        distributions = tuple(packages.get(top_level, ()))
-        if len(distributions) != 1:
-            kind = "no-distribution" if not distributions else "ambiguous-distribution"
-            context.source_call_resolutions[coordinate] = (
-                SourceCallPreconstructionGapV1(kind, coordinate, top_level)
-            )
-            continue
-        distribution = (
-            importlib.metadata.distribution(distributions[0])
-            if distribution_index is None
-            else distribution_index[top_level]
-        )
         graph = graphs.get(top_level)
         if graph is None:
             try:
-                graph = DependencyArtifactGraph.authenticate(distribution)
+                from .dependency_artifact import authenticate_dependency_top_level
+
+                graph = authenticate_dependency_top_level(
+                    top_level, distribution_index=distribution_index
+                )
             except DependencyArtifactAuthenticationError as exc:
                 context.source_call_resolutions[coordinate] = (
                     SourceCallPreconstructionGapV1(
