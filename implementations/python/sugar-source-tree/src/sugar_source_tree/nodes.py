@@ -5870,20 +5870,27 @@ class Call(Expression):
 
             source_call_frame = None
             definition = self.unit.source_allocation_definition_for_call(self)
-            if definition is not None:
+            if (
+                definition is not None
+                and self.unit.source_class_has_authenticated_default_attribute_behavior(
+                    definition
+                )
+            ):
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
                 if any(keyword.arg is None for keyword in self.keywords):
                     raise SourceCallBindingGap(
                         "spread keyword requires typed variadic projection"
                     )
-                source_call_frame = definition.source_visible_constructor_frame().bind_node_actuals(
-                    self.args,
-                    tuple(
-                        (keyword.arg, keyword.value)
-                        for keyword in self.keywords
-                        if keyword.arg is not None
-                    ),
+                source_call_frame = (
+                    definition.source_visible_constructor_frame().bind_node_actuals(
+                        self.args,
+                        tuple(
+                            (keyword.arg, keyword.value)
+                            for keyword in self.keywords
+                            if keyword.arg is not None
+                        ),
+                    )
                 )
 
             return CallSiteSugar(

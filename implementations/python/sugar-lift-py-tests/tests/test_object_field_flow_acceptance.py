@@ -360,6 +360,23 @@ def test_custom_dispatch_stays_loud_without_constructed_behavior(tmp_path, membe
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 
 
+def test_non_admitted_class_call_keeps_ordinary_call_construction(tmp_path):
+    path = tmp_path / "decorated_class.py"
+    path.write_text(
+        "def decorate(cls):\n"
+        "    return cls\n\n"
+        "@decorate\n"
+        "class Row:\n"
+        "    pass\n\n"
+        "def boundary():\n"
+        "    return Row('path', 7)\n"
+    )
+
+    # Object identity admission must not install a constructor-binding path on
+    # an ordinary call whose allocation behavior is not constructed.
+    _outcome_or_panic(path, "boundary")
+
+
 def test_custom_setitem_receiver_stays_loud(tmp_path):
     path = tmp_path / "setitem.py"
     path.write_text(
