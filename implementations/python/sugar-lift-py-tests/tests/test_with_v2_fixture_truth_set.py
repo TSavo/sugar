@@ -30,6 +30,7 @@ ENROLLMENT_CASES = {
     "enrollment_rpc_semantics": ("enrollment_rpc_semantics.py",),
     "enrollment_opaque": ("enrollment_opaque.py",),
     "enrollment_generic_rename": ("enrollment_generic_rename.py",),
+    "enrollment_boundary_b": ("enrollment_boundary_b.py",),
     "enrollment_ordinary_dict": ("enrollment_ordinary_dict.py",),
     "enrollment_ordinary_get": ("enrollment_ordinary_get.py",),
     "enrollment_string_dict": ("enrollment_string_dict.py",),
@@ -70,6 +71,7 @@ def test_no_consumer_enrollment_planted_detector_cases():
         "enrollment_rpc_semantics",
         "enrollment_opaque",
         "enrollment_generic_rename",
+        "enrollment_boundary_b",
     ):
         rows = analyze_consumer_enrollment(graph(ENROLLMENT_CASES[case]))
         assert len(rows) == 1, (case, rows)

@@ -414,9 +414,6 @@ class Interpreter:
             args = tuple(self.eval_expr(module, arg, env, chain, sink_slice=sink_slice) for arg in expr.args)
             if callee in self.index.classes:
                 atom = Atom("Instance", callee, self.index.classes[callee].site, chain + (f"construct {callee}",))
-                kind = callee.rsplit(".", 1)[-1]
-                if kind in {"ProtocolResource", "EffectBoundary", "Expects", "Suppresses"}:
-                    atom = Atom("ConsumerSemantics", callee, self.index.classes[callee].site, atom.chain)
                 value = AbstractValue(frozenset({atom}))
                 if self.index.is_sugar(callee):
                     value = value.with_atom(Atom("SuccessSugar", callee, site, chain + (f"success {callee}",)))
@@ -432,9 +429,6 @@ class Interpreter:
                     results = results.join(self.call(atom.identity, args, chain, sink_slice=sink_slice))
                 elif atom.kind == "ClassObject" and atom.identity in self.index.classes:
                     made = Atom("Instance", atom.identity, self.index.classes[atom.identity].site, chain + (f"construct {atom.identity}",))
-                    leaf = atom.identity.rsplit(".", 1)[-1]
-                    if leaf in {"ProtocolResource", "EffectBoundary", "Expects", "Suppresses"}:
-                        made = Atom("ConsumerSemantics", atom.identity, self.index.classes[atom.identity].site, made.chain)
                     value = AbstractValue(frozenset({made}))
                     if self.index.is_sugar(atom.identity):
                         value = value.with_atom(Atom("SuccessSugar", atom.identity, site, chain + (f"success {atom.identity}",)))
@@ -442,6 +436,12 @@ class Interpreter:
                             value = value.join(arg)
                     results = results.join(value)
             if results.atoms or results.entries:
+                if callable_value.has("AdmissionLookup"):
+                    results = results.join(AbstractValue(frozenset(
+                        Atom("LookupConstructed", atom.identity, atom.origin, atom.chain, atom.rpc)
+                        for atom in results.atoms
+                        if atom.kind == "Instance" and not self.index.is_sugar(atom.identity)
+                    )))
                 provenance = AbstractValue(frozenset(a for a in callable_value.atoms if a.kind != "Callable"))
                 return results.join(provenance)
             if sink_slice:
@@ -531,12 +531,12 @@ class Interpreter:
             result = self._fixed_call(fn.identity, args, (fn.identity,))
             if not result.has("SuccessSugar"):
                 continue
-            semantics = [a for a in result.atoms if a.kind == "ConsumerSemantics"]
+            constructed = [a for a in result.atoms if a.kind == "LookupConstructed"]
             spelling = [a for a in result.atoms if a.kind == "SourceSpelling"]
             admission_lookup = [a for a in result.atoms if a.kind == "AdmissionLookup"]
-            if semantics and (spelling or admission_lookup):
-                origin = sorted(semantics, key=repr)[0]
-                reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in semantics + spelling + admission_lookup) else "consumer-spelling-enrollment"
+            if constructed and (spelling or admission_lookup):
+                origin = sorted(constructed, key=repr)[0]
+                reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in constructed + spelling + admission_lookup) else "consumer-spelling-enrollment"
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, origin, reason))
             elif result.has("UnknownOnAdmissionSlice") and (spelling or admission_lookup):
                 atom = sorted((a for a in result.atoms if a.kind == "UnknownOnAdmissionSlice"), key=repr)[0]
@@ -586,14 +586,13 @@ class Interpreter:
         is transported into a noncanonical authority lane.  This is the
         algorithm's required opaque-consumer-enrollment-flow, not a name hit.
         """
-        semantic_leaves = {"ProtocolResource", "EffectBoundary", "Expects", "Suppresses"}
         builders: set[str] = set()
         for fid, fn in self.index.functions.items():
             for ret in (node for node in ast.walk(fn.node) if isinstance(node, ast.Return) and node.value is not None):
                 calls = [ret.value] if isinstance(ret.value, ast.Call) else []
                 for call in calls:
                     callee = self.index.resolve(fn.module, call.func)
-                    if callee in self.index.classes and callee.rsplit(".", 1)[-1] in semantic_leaves:
+                    if callee in self.index.classes and not self.index.is_sugar(callee):
                         builders.add(fid)
 
         tables: dict[tuple[str, str], Site] = {}
@@ -604,7 +603,7 @@ class Interpreter:
                 semantic = False
                 for value in node.value.values:
                     resolved = self.index.resolve(module, value)
-                    if resolved in builders or (resolved in self.index.classes and resolved.rsplit(".", 1)[-1] in semantic_leaves):
+                    if resolved in builders or (resolved in self.index.classes and not self.index.is_sugar(resolved)):
                         semantic = True
                 if semantic:
                     tables[(module, node.targets[0].id)] = self.index.site(module, node)
