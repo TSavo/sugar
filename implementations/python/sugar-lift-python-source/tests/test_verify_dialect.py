@@ -632,6 +632,21 @@ def test_leaf_harvester_lifts_call_eq():
     assert inv["args"][1]["value"] == 6
 
 
+def test_leaf_harvester_uses_typed_source_tree_for_renamed_call():
+    import sugar_lift_python_source.leaf_assertions as leaf_assertions
+
+    assert not hasattr(leaf_assertions, "ast")
+    result = leaf_assertions.harvest_source(
+        "def test_arbitrary():\n"
+        "    assert renamed_operation(3) == 7\n",
+        "renamed_fixture.py",
+    )
+    assert [edge["targetSymbol"] for edge in result.call_edges] == [
+        "renamed_operation"
+    ]
+    assert result.diagnostics == []
+
+
 def test_leaf_harvester_lifts_is_none_with_substrate_guard():
     source = "def test_missing():\n    assert maybe_none() is None\n"
     result = harvest_source(source, "test_m.py")
