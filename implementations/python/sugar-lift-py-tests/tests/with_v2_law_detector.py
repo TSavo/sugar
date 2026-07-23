@@ -63,6 +63,50 @@ class AbstractValue:
         return any(a.kind == kind for a in self.atoms)
 
 
+@dataclass(frozen=True)
+class FlowResult:
+    returns: AbstractValue = AbstractValue()
+    exits: tuple[dict[str, AbstractValue], ...] = ()
+    raises: tuple[dict[str, AbstractValue], ...] = ()
+    prefixes: tuple[dict[str, AbstractValue], ...] = ()
+    breaks: tuple[dict[str, AbstractValue], ...] = ()
+    continues: tuple[dict[str, AbstractValue], ...] = ()
+
+
+CFG_STATEMENT_TYPES = frozenset(
+    {
+        ast.AnnAssign,
+        ast.Assert,
+        ast.Assign,
+        ast.AsyncFor,
+        ast.AsyncFunctionDef,
+        ast.AsyncWith,
+        ast.AugAssign,
+        ast.Break,
+        ast.ClassDef,
+        ast.Continue,
+        ast.Delete,
+        ast.Expr,
+        ast.For,
+        ast.FunctionDef,
+        ast.Global,
+        ast.If,
+        ast.Import,
+        ast.ImportFrom,
+        ast.Match,
+        ast.Nonlocal,
+        ast.Pass,
+        ast.Raise,
+        ast.Return,
+        ast.Try,
+        ast.TryStar,
+        ast.TypeAlias,
+        ast.While,
+        ast.With,
+    }
+)
+
+
 ORDINARY = AbstractValue(frozenset({Atom("Ordinary")}))
 
 
@@ -297,14 +341,12 @@ class Interpreter:
         return result.stepped(f"return <- {fid}", rpc=bool(result.entries))
 
     def exec_block(self, module: str, body: list[ast.stmt], env: dict[str, AbstractValue], chain: tuple[str, ...], *, sink_slice: bool) -> AbstractValue:
-        returns, exits, _raises, _prefixes = self._flow_block(
-            module, body, env, chain, sink_slice=sink_slice
-        )
-        if exits:
-            merged = self._join_envs(exits)
+        flow = self._flow_block(module, body, env, chain, sink_slice=sink_slice)
+        if flow.exits:
+            merged = self._join_envs(flow.exits)
             env.clear()
             env.update(merged)
-        return returns
+        return flow.returns
 
     def _flow_block(
         self,
@@ -314,12 +356,14 @@ class Interpreter:
         chain: tuple[str, ...],
         *,
         sink_slice: bool,
-    ) -> tuple[AbstractValue, tuple[dict[str, AbstractValue], ...], tuple[dict[str, AbstractValue], ...], tuple[dict[str, AbstractValue], ...]]:
+    ) -> FlowResult:
         """Solve structured CFG edges over the finite abstract environment."""
         returns = AbstractValue()
         raises: list[dict[str, AbstractValue]] = []
         prefixes: list[dict[str, AbstractValue]] = []
         exits: list[dict[str, AbstractValue]] = []
+        breaks: list[dict[str, AbstractValue]] = []
+        continues: list[dict[str, AbstractValue]] = []
         states: dict[int, dict[str, AbstractValue]] = {}
         pending: list[int] = []
 
@@ -372,90 +416,230 @@ class Interpreter:
                 if refinement:
                     name, value = refinement
                     body_env[name] = body_env.get(name, AbstractValue()).join(value)
-                body_result, body_exits, body_raises, body_prefixes = self._flow_block(
+                body_flow = self._flow_block(
                     module, stmt.body, body_env, chain, sink_slice=sink_slice
                 )
-                if refinement and body_result.has("SuccessSugar"):
-                    body_result = body_result.join(body_env[refinement[0]])
-                returns = returns.join(body_result)
-                else_result, else_exits, else_raises, else_prefixes = self._flow_block(
+                body_returns = body_flow.returns
+                if refinement and body_returns.has("SuccessSugar"):
+                    body_returns = body_returns.join(body_env[refinement[0]])
+                returns = returns.join(body_returns)
+                else_flow = self._flow_block(
                     module, stmt.orelse, current, chain, sink_slice=sink_slice
                 )
-                returns = returns.join(else_result)
-                raises.extend((*body_raises, *else_raises))
-                prefixes.extend((*body_prefixes, *else_prefixes))
-                for successor in (*body_exits, *else_exits):
+                returns = returns.join(else_flow.returns)
+                raises.extend((*body_flow.raises, *else_flow.raises))
+                prefixes.extend((*body_flow.prefixes, *else_flow.prefixes))
+                breaks.extend((*body_flow.breaks, *else_flow.breaks))
+                continues.extend((*body_flow.continues, *else_flow.continues))
+                for successor in (*body_flow.exits, *else_flow.exits):
                     enqueue(index + 1, successor)
             elif isinstance(stmt, ast.While):
                 header = dict(current)
                 loop_returns = AbstractValue()
                 loop_raises: list[dict[str, AbstractValue]] = []
                 loop_prefixes: list[dict[str, AbstractValue]] = []
+                loop_breaks: list[dict[str, AbstractValue]] = []
                 while True:
-                    body_result, body_exits, body_raises, body_prefixes = self._flow_block(
+                    body_flow = self._flow_block(
                         module, stmt.body, header, chain, sink_slice=sink_slice
                     )
-                    loop_returns = loop_returns.join(body_result)
-                    loop_raises.extend(body_raises)
-                    loop_prefixes.extend(body_prefixes)
-                    next_header = self._join_envs((header, *body_exits))
+                    loop_returns = loop_returns.join(body_flow.returns)
+                    loop_raises.extend(body_flow.raises)
+                    loop_prefixes.extend(body_flow.prefixes)
+                    loop_breaks.extend(body_flow.breaks)
+                    next_header = self._join_envs((header, *body_flow.exits, *body_flow.continues))
                     if next_header == header:
                         break
                     header = next_header
                 returns = returns.join(loop_returns)
                 raises.extend(loop_raises)
                 prefixes.extend(loop_prefixes)
-                else_result, else_exits, else_raises, else_prefixes = self._flow_block(
+                else_flow = self._flow_block(
                     module, stmt.orelse, header, chain, sink_slice=sink_slice
                 )
-                returns = returns.join(else_result)
-                raises.extend(else_raises)
-                prefixes.extend(else_prefixes)
-                for successor in else_exits:
+                returns = returns.join(else_flow.returns)
+                raises.extend(else_flow.raises)
+                prefixes.extend(else_flow.prefixes)
+                breaks.extend(else_flow.breaks)
+                continues.extend(else_flow.continues)
+                for successor in (*else_flow.exits, *loop_breaks):
                     enqueue(index + 1, successor)
-            elif isinstance(stmt, ast.Try):
-                try_result, try_exits, try_raises, try_prefixes = self._flow_block(
+            elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+                iterable = self.eval_expr(module, stmt.iter, current, chain, sink_slice=sink_slice)
+                header = dict(current)
+                loop_returns = AbstractValue()
+                loop_raises: list[dict[str, AbstractValue]] = []
+                loop_prefixes: list[dict[str, AbstractValue]] = []
+                loop_breaks: list[dict[str, AbstractValue]] = []
+                while True:
+                    iteration = dict(header)
+                    self._bind_target(iteration, stmt.target, iterable)
+                    body_flow = self._flow_block(
+                        module, stmt.body, iteration, chain, sink_slice=sink_slice
+                    )
+                    loop_returns = loop_returns.join(body_flow.returns)
+                    loop_raises.extend(body_flow.raises)
+                    loop_prefixes.extend(body_flow.prefixes)
+                    loop_breaks.extend(body_flow.breaks)
+                    next_header = self._join_envs((header, *body_flow.exits, *body_flow.continues))
+                    if next_header == header:
+                        break
+                    header = next_header
+                returns = returns.join(loop_returns)
+                raises.extend(loop_raises)
+                prefixes.extend(loop_prefixes)
+                else_flow = self._flow_block(
+                    module, stmt.orelse, header, chain, sink_slice=sink_slice
+                )
+                returns = returns.join(else_flow.returns)
+                raises.extend(else_flow.raises)
+                prefixes.extend(else_flow.prefixes)
+                breaks.extend(else_flow.breaks)
+                continues.extend(else_flow.continues)
+                for successor in (*else_flow.exits, *loop_breaks):
+                    enqueue(index + 1, successor)
+            elif isinstance(stmt, (ast.Try, ast.TryStar)):
+                try_flow = self._flow_block(
                     module, stmt.body, current, chain, sink_slice=sink_slice
                 )
-                returns = returns.join(try_result)
-                handler_entry = self._join_envs((current, *try_prefixes, *try_raises))
-                handler_exits: list[dict[str, AbstractValue]] = []
+                try_returns = try_flow.returns
+                handler_entry = self._join_envs((current, *try_flow.prefixes, *try_flow.raises))
+                handler_flows: list[FlowResult] = []
                 for handler in stmt.handlers:
-                    handler_result, caught_exits, caught_raises, caught_prefixes = self._flow_block(
+                    handler_flow = self._flow_block(
                         module, handler.body, handler_entry, chain, sink_slice=sink_slice
                     )
-                    returns = returns.join(handler_result)
-                    handler_exits.extend(caught_exits)
-                    raises.extend(caught_raises)
-                    prefixes.extend(caught_prefixes)
-                normal_result, normal_exits, normal_raises, normal_prefixes = self._flow_block(
+                    handler_flows.append(handler_flow)
+                    try_returns = try_returns.join(handler_flow.returns)
+                normal_flow = self._flow_block(
                     module,
                     stmt.orelse,
-                    self._join_envs(try_exits) if try_exits else current,
+                    self._join_envs(try_flow.exits) if try_flow.exits else current,
                     chain,
                     sink_slice=sink_slice,
                 )
-                returns = returns.join(normal_result)
-                raises.extend(normal_raises)
-                prefixes.extend((*try_prefixes, *normal_prefixes))
-                successors = (*normal_exits, *handler_exits)
-                for successor in successors:
-                    final_result, final_exits, final_raises, final_prefixes = self._flow_block(
-                        module, stmt.finalbody, successor, chain, sink_slice=sink_slice
+                try_returns = try_returns.join(normal_flow.returns)
+                returns = returns.join(try_returns)
+                handler_exits = tuple(env for flow in handler_flows for env in flow.exits)
+                uncaught_try_raises = () if handler_flows else try_flow.raises
+                abrupt_raises = (
+                    *uncaught_try_raises,
+                    *(env for flow in handler_flows for env in flow.raises),
+                    *normal_flow.raises,
+                )
+                abrupt_breaks = (*try_flow.breaks, *(env for flow in handler_flows for env in flow.breaks), *normal_flow.breaks)
+                abrupt_continues = (*try_flow.continues, *(env for flow in handler_flows for env in flow.continues), *normal_flow.continues)
+                normal_exits = (*normal_flow.exits, *handler_exits)
+                all_prefixes = (
+                    *try_flow.prefixes,
+                    *normal_flow.prefixes,
+                    *(env for flow in handler_flows for env in flow.prefixes),
+                )
+                prefixes.extend(all_prefixes)
+
+                def through_final(inputs: tuple[dict[str, AbstractValue], ...]) -> FlowResult:
+                    if not inputs:
+                        return FlowResult()
+                    return self._flow_block(
+                        module,
+                        stmt.finalbody,
+                        self._join_envs(inputs),
+                        chain,
+                        sink_slice=sink_slice,
                     )
-                    returns = returns.join(final_result)
-                    raises.extend(final_raises)
-                    prefixes.extend(final_prefixes)
-                    for final_exit in final_exits:
-                        enqueue(index + 1, final_exit)
+
+                normal_final = through_final(normal_exits)
+                raised_final = through_final(tuple(abrupt_raises))
+                break_final = through_final(tuple(abrupt_breaks))
+                continue_final = through_final(tuple(abrupt_continues))
+                return_final = through_final((current, *all_prefixes)) if try_returns.atoms else FlowResult()
+                final_flows = (normal_final, raised_final, break_final, continue_final, return_final)
+                for final_flow in final_flows:
+                    returns = returns.join(final_flow.returns)
+                    raises.extend(final_flow.raises)
+                    breaks.extend(final_flow.breaks)
+                    continues.extend(final_flow.continues)
+                    prefixes.extend(final_flow.prefixes)
+                for successor in normal_final.exits:
+                    enqueue(index + 1, successor)
+                raises.extend(raised_final.exits)
+                breaks.extend(break_final.exits)
+                continues.extend(continue_final.exits)
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                body_env = dict(current)
+                for item in stmt.items:
+                    value = self.eval_expr(module, item.context_expr, body_env, chain, sink_slice=sink_slice)
+                    if item.optional_vars is not None:
+                        self._bind_target(body_env, item.optional_vars, value)
+                body_flow = self._flow_block(
+                    module, stmt.body, body_env, chain, sink_slice=sink_slice
+                )
+                returns = returns.join(body_flow.returns)
+                raises.extend(body_flow.raises)
+                prefixes.extend(body_flow.prefixes)
+                breaks.extend(body_flow.breaks)
+                continues.extend(body_flow.continues)
+                for successor in body_flow.exits:
+                    enqueue(index + 1, successor)
+            elif isinstance(stmt, ast.Match):
+                subject = self.eval_expr(module, stmt.subject, current, chain, sink_slice=sink_slice)
+                enqueue(index + 1, current)
+                for case in stmt.cases:
+                    case_env = dict(current)
+                    self._bind_pattern(case_env, case.pattern, subject)
+                    if case.guard is not None:
+                        self.eval_expr(module, case.guard, case_env, chain, sink_slice=sink_slice)
+                    case_flow = self._flow_block(
+                        module, case.body, case_env, chain, sink_slice=sink_slice
+                    )
+                    returns = returns.join(case_flow.returns)
+                    raises.extend(case_flow.raises)
+                    prefixes.extend(case_flow.prefixes)
+                    breaks.extend(case_flow.breaks)
+                    continues.extend(case_flow.continues)
+                    for successor in case_flow.exits:
+                        enqueue(index + 1, successor)
             elif isinstance(stmt, ast.Expr):
                 self.eval_expr(module, stmt.value, current, chain, sink_slice=sink_slice)
                 enqueue(index + 1, current)
             elif isinstance(stmt, ast.Raise):
                 raises.append(current)
-            else:
+            elif isinstance(stmt, ast.Break):
+                breaks.append(current)
+            elif isinstance(stmt, ast.Continue):
+                continues.append(current)
+            elif isinstance(stmt, ast.Assert):
+                self.eval_expr(module, stmt.test, current, chain, sink_slice=sink_slice)
+                if stmt.msg is not None:
+                    self.eval_expr(module, stmt.msg, current, chain, sink_slice=sink_slice)
                 enqueue(index + 1, current)
-        return returns, tuple(exits), tuple(raises), tuple(prefixes)
+            elif isinstance(stmt, ast.AugAssign):
+                value = self.eval_expr(module, stmt.value, current, chain, sink_slice=sink_slice)
+                if isinstance(stmt.target, ast.Name):
+                    value = current.get(stmt.target.id, AbstractValue()).join(value)
+                self._bind_target(current, stmt.target, value)
+                enqueue(index + 1, current)
+            elif isinstance(stmt, ast.Delete):
+                for target in stmt.targets:
+                    if isinstance(target, ast.Name):
+                        current.pop(target.id, None)
+                enqueue(index + 1, current)
+            elif isinstance(stmt, ast.TypeAlias):
+                value = self.eval_expr(module, stmt.value, current, chain, sink_slice=sink_slice)
+                self._bind_target(current, stmt.name, value)
+                enqueue(index + 1, current)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Global, ast.Nonlocal, ast.Pass)):
+                enqueue(index + 1, current)
+            else:
+                raise AssertionError(f"unmodeled statement node: {type(stmt).__name__}")
+        return FlowResult(
+            returns,
+            tuple(exits),
+            tuple(raises),
+            tuple(prefixes),
+            tuple(breaks),
+            tuple(continues),
+        )
 
     @staticmethod
     def _join_envs(envs: Iterable[Mapping[str, AbstractValue]]) -> dict[str, AbstractValue]:
@@ -464,6 +648,27 @@ class Interpreter:
             for name, value in env.items():
                 joined[name] = joined.get(name, AbstractValue()).join(value)
         return joined
+
+    @staticmethod
+    def _bind_target(env: dict[str, AbstractValue], target: ast.expr, value: AbstractValue) -> None:
+        if isinstance(target, ast.Name):
+            env[target.id] = env.get(target.id, AbstractValue()).join(value)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                Interpreter._bind_target(env, element, value)
+        elif isinstance(target, ast.Starred):
+            Interpreter._bind_target(env, target.value, value)
+
+    @staticmethod
+    def _bind_pattern(env: dict[str, AbstractValue], pattern: ast.pattern, value: AbstractValue) -> None:
+        for node in ast.walk(pattern):
+            name = None
+            if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+                name = node.name
+            elif isinstance(node, ast.MatchMapping):
+                name = node.rest
+            if name is not None:
+                env[name] = env.get(name, AbstractValue()).join(value)
 
     def _isinstance_refinement(self, module: str, expr: ast.expr, env: Mapping[str, AbstractValue], chain: tuple[str, ...]) -> tuple[str, AbstractValue] | None:
         if not (isinstance(expr, ast.Call) and len(expr.args) >= 2):
@@ -494,6 +699,43 @@ class Interpreter:
             return ORDINARY
         if isinstance(expr, ast.Constant):
             return ORDINARY
+        if isinstance(expr, ast.NamedExpr):
+            value = self.eval_expr(module, expr.value, env, chain, sink_slice=sink_slice)
+            if isinstance(env, dict):
+                self._bind_target(env, expr.target, value)
+            return value
+        if isinstance(expr, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            comp_env = dict(env)
+            provenance = AbstractValue()
+            while True:
+                before = dict(comp_env)
+                for generator in expr.generators:
+                    iterable = self.eval_expr(module, generator.iter, comp_env, chain, sink_slice=sink_slice)
+                    provenance = provenance.join(iterable)
+                    self._bind_target(comp_env, generator.target, iterable)
+                    for condition in generator.ifs:
+                        provenance = provenance.join(
+                            self.eval_expr(module, condition, comp_env, chain, sink_slice=sink_slice)
+                        )
+                if isinstance(expr, ast.DictComp):
+                    provenance = provenance.join(
+                        self.eval_expr(module, expr.key, comp_env, chain, sink_slice=sink_slice)
+                    ).join(self.eval_expr(module, expr.value, comp_env, chain, sink_slice=sink_slice))
+                else:
+                    provenance = provenance.join(
+                        self.eval_expr(module, expr.elt, comp_env, chain, sink_slice=sink_slice)
+                    )
+                if comp_env == before:
+                    return provenance
+        if isinstance(expr, ast.IfExp):
+            return self.eval_expr(module, expr.test, env, chain, sink_slice=sink_slice).join(
+                self.eval_expr(module, expr.body, env, chain, sink_slice=sink_slice)
+            ).join(self.eval_expr(module, expr.orelse, env, chain, sink_slice=sink_slice))
+        if isinstance(expr, ast.BoolOp):
+            value = AbstractValue()
+            for operand in expr.values:
+                value = value.join(self.eval_expr(module, operand, env, chain, sink_slice=sink_slice))
+            return value
         if isinstance(expr, (ast.Tuple, ast.List, ast.Set)):
             value = AbstractValue()
             for elt in expr.elts:

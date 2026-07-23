@@ -1,6 +1,12 @@
+import ast
 from pathlib import Path
 
-from with_v2_law_detector import ModuleGraph, analyze_consumer_enrollment, analyze_single_authority
+from with_v2_law_detector import (
+    CFG_STATEMENT_TYPES,
+    ModuleGraph,
+    analyze_consumer_enrollment,
+    analyze_single_authority,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "with_v2_laws"
@@ -33,6 +39,8 @@ ENROLLMENT_CASES = {
     "enrollment_boundary_b": ("enrollment_boundary_b.py",),
     "enrollment_exceptional_prefix": ("enrollment_exceptional_prefix.py",),
     "enrollment_loop_backedge": ("enrollment_loop_backedge.py",),
+    "enrollment_for_backedge": ("enrollment_for_backedge.py",),
+    "enrollment_async_for_backedge": ("enrollment_async_for_backedge.py",),
     "enrollment_lookup_only_coexists_with_sugar": ("enrollment_lookup_only_coexists_with_sugar.py",),
     "enrollment_ordinary_dict": ("enrollment_ordinary_dict.py",),
     "enrollment_ordinary_get": ("enrollment_ordinary_get.py",),
@@ -43,6 +51,10 @@ ENROLLMENT_CASES = {
 
 def graph(names: tuple[str, ...]) -> ModuleGraph:
     return ModuleGraph.from_paths([FIXTURES / name for name in names])
+
+
+def test_cfg_transfer_enumerates_every_statement_node_type():
+    assert CFG_STATEMENT_TYPES == frozenset(ast.stmt.__subclasses__())
 
 
 def test_single_authority_planted_detector_cases():
@@ -77,6 +89,8 @@ def test_no_consumer_enrollment_planted_detector_cases():
         "enrollment_boundary_b",
         "enrollment_exceptional_prefix",
         "enrollment_loop_backedge",
+        "enrollment_for_backedge",
+        "enrollment_async_for_backedge",
     ):
         rows = analyze_consumer_enrollment(graph(ENROLLMENT_CASES[case]))
         assert len(rows) == 1, (case, rows)
