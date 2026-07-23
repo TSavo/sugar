@@ -7,11 +7,13 @@ import pytest
 
 from sugar_lift_py_tests.call_contract_resolution import (
     CallContractRefProtocolError,
+    CallContractResolutionGapKindV1,
+    CallContractResolutionGapV1,
     ResolvedCallContractRefV1,
     ResolvedCallContractRefsV1,
     decode_resolved_call_contract_refs,
 )
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
+from sugar_lift_py_tests.ir import PrimitiveSort, ctor, eq, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
@@ -66,7 +68,7 @@ def test_authenticated_structural_return_projects_from_one_bridged_contract():
     )
 
 
-def test_unresolved_or_non_structural_reference_stays_loud():
+def test_unresolved_or_non_exact_reference_stays_loud():
     unresolved = CallSiteSugar(
         target_name="missing",
         args=(),
@@ -77,16 +79,32 @@ def test_unresolved_or_non_structural_reference_stays_loud():
     with pytest.raises(SugarNotWritten, match="unresolved-symbol"):
         unresolved.desugar(None)
 
-    non_structural = _reference().__class__(
-        **{**_reference().__dict__, "return_term": ctor("call:other", [str_const("x")])}
+    non_exact = _reference().__class__(
+        **{**_reference().__dict__, "return_term": None}
     )
-    with pytest.raises(SugarNotWritten, match="structural return"):
+    with pytest.raises(SugarNotWritten, match="exact return equality"):
         CallSiteSugar(
             target_name="pair",
             args=(NameSugar("value", site="value"),),
             site="consumer.py:2",
-            contract_ref=non_structural,
+            contract_ref=non_exact,
         ).desugar(None)
+
+
+def test_exact_scalar_return_builds_contract_backed_call_value():
+    reference = replace(_reference(), return_term=make_var("x"))
+
+    outcome = CallSiteSugar(
+        target_name="identity",
+        args=(NameSugar("value", site="value"),),
+        site="consumer.py:2",
+        contract_ref=reference,
+    ).desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.to_term(owner="test") == make_var("value")
+    assert outcome.value.contract_cid == CID
+    assert outcome.value.callsites()[0].target_contract_cid == CID
 
 
 def test_fabricated_or_unauthenticated_reference_fails_decode():
@@ -233,6 +251,90 @@ def test_parser_backed_imported_call_consumes_prebound_contract_ref(tmp_path):
     assert isinstance(outcome, Complete)
     assert outcome.value.contract_cid == CID
     assert outcome.value.callsites()[0].target_contract_cid == CID
+
+
+def test_name_assignment_inherits_exact_bridged_scalar_value(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ResolvedContractRefsV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.tree import SourceFile
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from producer import identity\n"
+        "def consume(v):\n"
+        "    y = identity(v)\n"
+        "    return y\n"
+    )
+    row = lift_rpc._call_contract_demand_rows(tmp_path)[0]
+    coordinate = SourceFragmentCoordinateV1.decode(row["useSite"])
+    reference = replace(
+        _reference(),
+        use_site=coordinate,
+        import_binding_cid=row["importBindingCid"],
+        bridge_source_symbol="python:producer.identity",
+        return_term=make_var("x"),
+    )
+    table = ResolvedCallContractRefsV1(
+        CATALOG_CID, TABLE_CID, MappingProxyType({coordinate: reference})
+    )
+    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
+    tree = SourceFile(
+        path_source(str(consumer)),
+        construction_context=TreeConstructionContextV1(
+            cm_refs, call_contract_refs=table, workspace_root=str(tmp_path)
+        ),
+    )
+
+    outcome = next(tree.functions()).sugar().desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.post() == eq(make_var("out"), make_var("v"))
+    assert outcome.value.call_edges()[0]["targetContractCid"] == CID
+
+
+def test_unresolved_import_name_assignment_stays_loud(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ResolvedContractRefsV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.tree import SourceFile
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from outside import identity\n"
+        "def consume(v):\n"
+        "    y = identity(v)\n"
+        "    return y\n"
+    )
+    row = lift_rpc._call_contract_demand_rows(tmp_path)[0]
+    coordinate = SourceFragmentCoordinateV1.decode(row["useSite"])
+    gap = CallContractResolutionGapV1(
+        DEMAND_CID,
+        coordinate,
+        row["importBindingCid"],
+        row["targetSymbol"],
+        CallContractResolutionGapKindV1.TARGET_NOT_IN_CORPUS,
+        (),
+    )
+    table = ResolvedCallContractRefsV1(
+        CATALOG_CID, TABLE_CID, MappingProxyType({coordinate: gap})
+    )
+    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
+    tree = SourceFile(
+        path_source(str(consumer)),
+        construction_context=TreeConstructionContextV1(
+            cm_refs, call_contract_refs=table, workspace_root=str(tmp_path)
+        ),
+    )
+
+    with pytest.raises(SugarNotWritten, match="target-not-in-corpus"):
+        next(tree.functions()).sugar().desugar(None)
 
 
 def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):

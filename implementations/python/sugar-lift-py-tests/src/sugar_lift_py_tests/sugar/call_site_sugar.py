@@ -113,7 +113,7 @@ class CallSiteSugar(Sugar):
     def _collect_bridged(self, positional: tuple) -> Outcome:
         from sugar_lift_py_tests.floor.bridged_contract_value import BridgedContractValue
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import _Ctor, _free_vars_in_term, subst_var_in_term
+        from sugar_lift_py_tests.ir import _free_vars_in_term, subst_var_in_term
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -130,25 +130,18 @@ class CallSiteSugar(Sugar):
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
                 observed="authenticated contract has no exact return equality",
-                requested="exact structural return testimony",
+                requested="exact return testimony",
                 fix="strengthen the contract or keep the imported value loud",
             )
         if not _free_vars_in_term(term) <= set(reference.formals):
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
-                observed="authenticated structural return contains an unbound projection",
+                observed="authenticated return contains an unbound projection",
                 requested="return variables authenticated by the target formal list",
                 fix="reject the stale or lying contract reference",
             )
         for formal, actual in zip(reference.formals, positional):
             term = subst_var_in_term(term, formal, actual.to_term(owner=str(self.site)))
-        if not isinstance(term, _Ctor) or term.name not in {"tuple", "python:tuple", "python:list"}:
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                observed="authenticated contract has no exact structural return",
-                requested="structural return term carried by the target contract",
-                fix="strengthen the target contract or keep the imported value loud",
-            )
         callsite = CallSiteValue(
             target_name=self.target_name,
             arg_values=positional,
