@@ -889,15 +889,48 @@ impl StageReceiptMember {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextManagerContractMember {
+    pub contract_cid: MementoCid,
     pub payload_cid: MementoCid,
-    pub provider_kit_cid: Option<MementoCid>,
-    pub provider_export_cid: Option<MementoCid>,
-    pub signer_key_id: Option<String>,
-    pub bridge_source_symbol: String,
+    pub provenance_cid: MementoCid,
+    pub provenance: ContextManagerDerivationProvenanceV1,
     pub import_signature: ImportSignatureV2,
     pub semantics: ContextManagerSemanticsV1,
-    pub source_warrants: Vec<String>,
-    pub input_cids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextManagerDerivationProvenanceV1 {
+    pub kind: String,
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: String,
+    #[serde(rename = "distributionArtifactCid")]
+    pub distribution_artifact_cid: String,
+    #[serde(rename = "dependencyArtifactGraphCid")]
+    pub dependency_artifact_graph_cid: String,
+    #[serde(rename = "moduleIdentityCid")]
+    pub module_identity_cid: String,
+    #[serde(rename = "moduleSourceCid")]
+    pub module_source_cid: String,
+    #[serde(rename = "reExportWarrantCids")]
+    pub re_export_warrant_cids: Vec<String>,
+    #[serde(rename = "resolvedDefinition")]
+    pub resolved_definition: Json,
+    #[serde(rename = "resolvedDefinitionCid")]
+    pub resolved_definition_cid: String,
+    #[serde(rename = "managerConstructionCid")]
+    pub manager_construction_cid: String,
+    #[serde(rename = "enterTestimonyCid")]
+    pub enter_testimony_cid: String,
+    #[serde(rename = "exitTestimonyCid")]
+    pub exit_testimony_cid: String,
+    #[serde(rename = "useSite")]
+    pub use_site: Json,
+    #[serde(rename = "useSiteCid")]
+    pub use_site_cid: String,
+    #[serde(rename = "derivationAlgorithmCid")]
+    pub derivation_algorithm_cid: String,
+    #[serde(rename = "derivationCid")]
+    pub derivation_cid: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1125,23 +1158,16 @@ struct ContextManagerHeader {
     schema_version: String,
     kind: String,
     cid: String,
+    #[serde(rename = "contractCid")]
+    contract_cid: String,
     #[serde(rename = "payloadCid")]
     payload_cid: String,
-    #[serde(rename = "providerKitCid")]
-    provider_kit_cid: Option<String>,
-    #[serde(rename = "providerExportCid")]
-    provider_export_cid: Option<String>,
-    #[serde(rename = "signerKeyId")]
-    signer_key_id: Option<String>,
-    #[serde(rename = "bridgeSourceSymbol")]
-    bridge_source_symbol: String,
     #[serde(rename = "importSignature")]
     import_signature: ImportSignatureWire,
-    payload: Json,
-    #[serde(rename = "sourceWarrants")]
-    source_warrants: Vec<String>,
-    #[serde(rename = "inputCids")]
-    input_cids: Vec<String>,
+    semantics: Json,
+    provenance: ContextManagerDerivationProvenanceV1,
+    #[serde(rename = "provenanceCid")]
+    provenance_cid: String,
 }
 
 #[derive(Deserialize)]
@@ -1639,25 +1665,9 @@ impl ContextManagerContractMember {
             serde_json::from_value(raw_header.clone()).map_err(|e| {
                 MemberError::InvalidContextManagerContract(format!("malformed header: {e}"))
             })?;
-        if !matches!(header.schema_version.as_str(), "1.2" | "1.3")
-            || header.kind != "context-manager-contract"
-        {
+        if header.schema_version != "derived-1" || header.kind != "context-manager-contract" {
             return Err(MemberError::InvalidContextManagerContract(
                 "schemaVersion/kind mismatch".into(),
-            ));
-        }
-        if header.schema_version == "1.3"
-            && (header.provider_kit_cid.is_none()
-                || header.provider_export_cid.is_none()
-                || header.signer_key_id.as_deref().is_none_or(str::is_empty))
-        {
-            return Err(MemberError::InvalidContextManagerContract(
-                "provider-owned schema 1.3 requires providerKitCid, providerExportCid, and signerKeyId".into(),
-            ));
-        }
-        if header.bridge_source_symbol.is_empty() {
-            return Err(MemberError::InvalidContextManagerContract(
-                "bridgeSourceSymbol must be non-empty".into(),
             ));
         }
         let signature = ImportSignatureV2 {
@@ -1665,66 +1675,75 @@ impl ContextManagerContractMember {
         };
         validate_import_signature(&signature)
             .map_err(MemberError::InvalidContextManagerContract)?;
-        let semantics = decode_context_manager_semantics_v1(&header.payload, &signature)
+        let semantics = decode_context_manager_semantics_v1(&header.semantics, &signature)
             .map_err(|detail| MemberError::InvalidContextManagerContract(detail))?;
-        let payload = header.payload.clone();
-        let derived = blake3_512_of(
-            encode_jcs(&crate::proof_graph::json_to_canonical_value(&payload)).as_bytes(),
+        let payload_derived = blake3_512_of(
+            encode_jcs(&crate::proof_graph::json_to_canonical_value(
+                &header.semantics,
+            ))
+            .as_bytes(),
         );
-        if derived != header.cid || derived != header.payload_cid {
+        if payload_derived != header.payload_cid {
             return Err(MemberError::InvalidContextManagerContract(format!(
-                "payload CID mismatch: cid={} payloadCid={} derived={derived}",
-                header.cid, header.payload_cid
+                "payload CID mismatch: payloadCid={} derived={payload_derived}",
+                header.payload_cid
             )));
         }
-        let payload_cid = MementoCid::try_parse(header.payload_cid.clone()).map_err(|raw| {
-            MemberError::InvalidCidFormat {
-                kind: "context-manager-contract".into(),
-                field: "payloadCid".into(),
-                raw,
-            }
+        let provenance_json = serde_json::to_value(&header.provenance).map_err(|error| {
+            MemberError::InvalidContextManagerContract(format!("provenance encode failed: {error}"))
         })?;
-        let mut sorted_warrants = header.source_warrants.clone();
-        if sorted_warrants
-            .iter()
-            .any(|cid| AtomCid::try_parse(cid.clone()).is_err())
+        let provenance_derived = blake3_512_of(
+            encode_jcs(&crate::proof_graph::json_to_canonical_value(
+                &provenance_json,
+            ))
+            .as_bytes(),
+        );
+        if provenance_derived != header.provenance_cid {
+            return Err(MemberError::InvalidContextManagerContract(
+                "provenance CID mismatch".into(),
+            ));
+        }
+        if header.provenance.kind != "python-context-manager-derivation"
+            || header.provenance.schema_version != "1"
         {
             return Err(MemberError::InvalidContextManagerContract(
-                "sourceWarrants contain a malformed CID".into(),
+                "unsupported context-manager derivation provenance".into(),
             ));
         }
-        sorted_warrants.sort();
-        if header.input_cids != sorted_warrants {
+        let contract_preimage = serde_json::json!({
+            "kind": header.kind,
+            "schemaVersion": header.schema_version,
+            "importSignature": {"parameters": signature.parameters},
+            "semantics": header.semantics,
+            "payloadCid": header.payload_cid,
+            "provenance": provenance_json,
+            "provenanceCid": header.provenance_cid,
+        });
+        let contract_derived = blake3_512_of(
+            encode_jcs(&crate::proof_graph::json_to_canonical_value(
+                &contract_preimage,
+            ))
+            .as_bytes(),
+        );
+        if contract_derived != header.contract_cid || header.cid != header.contract_cid {
             return Err(MemberError::InvalidContextManagerContract(
-                "inputCids do not equal sorted sourceWarrants".into(),
+                "contract CID mismatch".into(),
             ));
         }
+        let parse = |raw: String, field: &str| {
+            MementoCid::try_parse(raw).map_err(|raw| MemberError::InvalidCidFormat {
+                kind: "context-manager-contract".into(),
+                field: field.into(),
+                raw,
+            })
+        };
         Ok(Self {
-            payload_cid,
-            provider_kit_cid: header
-                .provider_kit_cid
-                .map(MementoCid::try_parse)
-                .transpose()
-                .map_err(|raw| MemberError::InvalidCidFormat {
-                    kind: "context-manager-contract".into(),
-                    field: "providerKitCid".into(),
-                    raw,
-                })?,
-            provider_export_cid: header
-                .provider_export_cid
-                .map(MementoCid::try_parse)
-                .transpose()
-                .map_err(|raw| MemberError::InvalidCidFormat {
-                    kind: "context-manager-contract".into(),
-                    field: "providerExportCid".into(),
-                    raw,
-                })?,
-            signer_key_id: header.signer_key_id,
-            bridge_source_symbol: header.bridge_source_symbol,
+            contract_cid: parse(header.contract_cid, "contractCid")?,
+            payload_cid: parse(header.payload_cid, "payloadCid")?,
+            provenance_cid: parse(header.provenance_cid, "provenanceCid")?,
+            provenance: header.provenance,
             import_signature: signature,
             semantics,
-            source_warrants: header.source_warrants,
-            input_cids: header.input_cids,
         })
     }
 }
@@ -1741,20 +1760,17 @@ pub fn context_manager_contract_from_stored(
             "stored member has the wrong contract kind".into(),
         ));
     }
-    let mut names = vec![
+    let names = [
         "schemaVersion",
         "kind",
         "cid",
+        "contractCid",
         "payloadCid",
-        "bridgeSourceSymbol",
         "importSignature",
-        "payload",
-        "sourceWarrants",
-        "inputCids",
+        "semantics",
+        "provenance",
+        "provenanceCid",
     ];
-    if member.field("schemaVersion").and_then(Json::as_str) == Some("1.3") {
-        names.extend(["providerKitCid", "providerExportCid", "signerKeyId"]);
-    }
     let mut header = serde_json::Map::new();
     for name in names {
         let value = member.field(name).ok_or_else(|| {

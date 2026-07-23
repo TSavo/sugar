@@ -36,9 +36,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value};
 use sugar_proof_envelope::{
-    context_manager_semantics_v1_to_json, ed25519_pubkey_string, ed25519_sign_string,
-    import_signature_v2_to_json, AuthorityMementoRef, ContextManagerSemanticsV1,
-    ContractMementoRef, Ed25519Seed, ImportSignatureV2,
+    ed25519_pubkey_string, ed25519_sign_string, AuthorityMementoRef, ContractMementoRef,
+    Ed25519Seed,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -93,29 +92,6 @@ pub struct KitDeclaration {
     pub oracle_host: Option<KitOracleHost>,
     #[serde(rename = "residueCategories")]
     pub residue_categories: Vec<KitResidueCategory>,
-    #[serde(
-        rename = "contractDeclarations",
-        default,
-        skip_serializing_if = "Vec::is_empty"
-    )]
-    pub contract_declarations: Vec<KitContractDeclarationV1>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum KitContractDeclarationV1 {
-    #[serde(rename = "context-manager-contract")]
-    ContextManager {
-        #[serde(rename = "schemaVersion")]
-        schema_version: String,
-        #[serde(rename = "bridgeSourceSymbol")]
-        bridge_source_symbol: String,
-        #[serde(rename = "importSignature")]
-        import_signature: sugar_proof_envelope::ImportSignatureV2,
-        payload: KitContextManagerSemanticsV1,
-        #[serde(rename = "sourceWarrants")]
-        source_warrants: Vec<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -391,7 +367,6 @@ mod kit_declaration_schema_tests {
             },
             oracle_host: None,
             residue_categories: vec![],
-            contract_declarations: vec![],
         }
     }
 
@@ -583,77 +558,6 @@ fn authoring_to_value(a: &Authoring) -> Arc<Value> {
             Arc::new(Value::Object(entries))
         }
     }
-}
-
-// =============================================================================
-// mint_context_manager_contract
-// =============================================================================
-
-pub struct MintContextManagerContractArgs {
-    pub bridge_source_symbol: String,
-    pub import_signature: ImportSignatureV2,
-    pub semantics: ContextManagerSemanticsV1,
-    pub source_warrants: Vec<String>,
-    pub produced_by: String,
-    pub produced_at: String,
-    pub authoring: Authoring,
-    pub signer_seed: Ed25519Seed,
-}
-
-pub fn mint_context_manager_contract(
-    args: &MintContextManagerContractArgs,
-) -> Result<MintedEnvelope, ClaimEnvelopeError> {
-    if args.bridge_source_symbol.is_empty() {
-        return Err(ClaimEnvelopeError::Other(
-            "context-manager-contract bridgeSourceSymbol must not be empty".into(),
-        ));
-    }
-    let payload_json = context_manager_semantics_v1_to_json(&args.semantics);
-    let payload = json_to_value(&payload_json)
-        .map_err(|e| ClaimEnvelopeError::Other(format!("CM payload canonicalization: {e}")))?;
-    let payload_cid = hash_value(&payload);
-    let import_signature = json_to_value(&import_signature_v2_to_json(&args.import_signature))
-        .map_err(|e| ClaimEnvelopeError::Other(format!("CM signature canonicalization: {e}")))?;
-    let mut input_cids = args.source_warrants.clone();
-    input_cids.sort();
-    let header = Value::object([
-        ("schemaVersion", Value::string("1.2")),
-        ("kind", Value::string("context-manager-contract")),
-        ("cid", Value::string(payload_cid.clone())),
-        ("payloadCid", Value::string(payload_cid.clone())),
-        (
-            "bridgeSourceSymbol",
-            Value::string(args.bridge_source_symbol.clone()),
-        ),
-        ("importSignature", import_signature),
-        ("payload", payload),
-        (
-            "sourceWarrants",
-            Value::array(
-                args.source_warrants
-                    .iter()
-                    .cloned()
-                    .map(Value::string)
-                    .collect(),
-            ),
-        ),
-        (
-            "inputCids",
-            Value::array(input_cids.into_iter().map(Value::string).collect()),
-        ),
-    ]);
-    let metadata = Value::object([
-        ("authoring", authoring_to_value(&args.authoring)),
-        ("producedBy", Value::string(args.produced_by.clone())),
-        ("producedAt", Value::string(args.produced_at.clone())),
-    ]);
-    Ok(assemble_layered(
-        header,
-        metadata,
-        &args.produced_at,
-        &args.signer_seed,
-        payload_cid,
-    ))
 }
 
 // =============================================================================

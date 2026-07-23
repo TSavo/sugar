@@ -2,18 +2,14 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use sugar_claim_envelope::{
-    body_contract_cid, mint_context_manager_contract, mint_contract, mint_contract_with_body_cid,
-    Authoring, MintContextManagerContractArgs, MintContractArgs, MintedEnvelope,
+    body_contract_cid, mint_contract, mint_contract_with_body_cid, Authoring, MintContractArgs,
+    MintedEnvelope,
 };
 use sugar_ir_types::Sort;
 use sugar_linker::{
     final_check_call_contract_ref, resolve_call_contract_demand, AuthenticatedCallContractCatalog,
     AuthenticatedCallExportV1, CallContractDemandV1, CallContractResolutionGapKindV1,
     CallContractResolutionV1, Cid, ResolvedCallContractRefsV1, SourceFragmentCoordinateV1,
-};
-use sugar_proof_envelope::{
-    ContextManagerSemanticsV1, EnterResultContractV1, ExitContractV1, ExitDispositionV1,
-    ImportSignatureV1,
 };
 
 fn cid(fill: char) -> Cid {
@@ -120,7 +116,7 @@ fn ambiguous_export_and_wrong_provider_are_distinct_typed_gaps() {
 }
 
 #[test]
-fn authenticated_export_without_contract_and_wrong_contract_kind_are_distinct() {
+fn authenticated_export_without_contract_is_typed_loud() {
     let (mut missing, _, _) = catalog();
     missing.install_exports(vec![AuthenticatedCallExportV1 {
         exported_symbol: "python:public.missing".into(),
@@ -136,54 +132,6 @@ fn authenticated_export_without_contract_and_wrong_contract_kind_are_distinct() 
     );
     assert!(
         matches!(resolve_call_contract_demand(&demand, &missing), CallContractResolutionV1::Unresolved(gap) if gap.kind == CallContractResolutionGapKindV1::NoAuthenticatedContract)
-    );
-
-    let bare = mint_context_manager_contract(&MintContextManagerContractArgs {
-        bridge_source_symbol: "python:pandas.fixture.pair".into(),
-        import_signature: ImportSignatureV1 {
-            formals: vec![],
-            sorts: vec![],
-        },
-        semantics: ContextManagerSemanticsV1 {
-            enter: EnterResultContractV1 {
-                sort: Sort::Primitive {
-                    name: "Value".into(),
-                },
-            },
-            exit: ExitContractV1 {
-                disposition: ExitDispositionV1::NeverSuppresses,
-            },
-        },
-        source_warrants: vec![],
-        produced_by: "fixture".into(),
-        produced_at: "2026-07-22T00:00:00.000Z".into(),
-        authoring: Authoring::KitAuthor {
-            author: "fixture".into(),
-            note: None,
-        },
-        signer_seed: [7; 32],
-    })
-    .unwrap();
-    let member_cid = Cid::from(bare.cid.clone());
-    let envelope = serde_json::from_slice(&bare.canonical_bytes).unwrap();
-    let mut wrong_kind =
-        AuthenticatedCallContractCatalog::freeze(vec![(member_cid, envelope)]).unwrap();
-    wrong_kind.install_exports(vec![AuthenticatedCallExportV1 {
-        exported_symbol: "python:public.pair".into(),
-        target_symbol: "python:pandas.fixture.pair".into(),
-        provider_id: "fixture".into(),
-    }]);
-    let wrong_demand = CallContractDemandV1::new(
-        use_site(),
-        cid('9'),
-        "python:public.pair".into(),
-        vec![],
-        vec![Sort::Primitive {
-            name: "Value".into(),
-        }],
-    );
-    assert!(
-        matches!(resolve_call_contract_demand(&wrong_demand, &wrong_kind), CallContractResolutionV1::Unresolved(gap) if gap.kind == CallContractResolutionGapKindV1::WrongContractKind)
     );
 }
 

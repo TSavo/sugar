@@ -136,26 +136,11 @@ def test_demand_enrollment_uses_import_coordinate_without_sugar_or_target_source
     assert rows[0]["useSite"]["sourceCid"].startswith("blake3-512:")
 
 
-def test_published_typed_declaration_is_served_only_by_declaration_pass(monkeypatch):
-    from sugar_lift_py_tests.ir import PrimitiveSort
-    from sugar_lift_py_tests.kit_rpc import (
-        ContextManagerContractIrV1,
-        ImportSignatureV2,
-    )
-
-    declaration = ContextManagerContractIrV1.never_suppresses(
-        bridge_source_symbol="context-manager:dependency.manager",
-        import_signature=ImportSignatureV2(parameters=()),
-        enter_result_sort=PrimitiveSort("Value"),
-        source_warrants=(),
-    )
-    row = declaration.to_rpc_with_term_table(None)
+def test_kit_has_no_context_manager_admission_declaration_door(monkeypatch):
     sent = []
-    monkeypatch.setattr(lift_rpc, "_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS", ())
     monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
     monkeypatch.setattr(lift_rpc, "_ENUMERATION_ACTIVE", False)
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
-    lift_rpc.publish_context_manager_declaration(declaration)
     lift_rpc._handle_enumerate(
         9,
         {
@@ -163,4 +148,4 @@ def test_published_typed_declaration_is_served_only_by_declaration_pass(monkeypa
             "workspace_root": ".",
         },
     )
-    assert sent[-1] == {"jsonrpc": "2.0", "id": 9, "result": {"rows": [row]}}
+    assert sent[-1] == {"jsonrpc": "2.0", "id": 9, "result": {"rows": []}}

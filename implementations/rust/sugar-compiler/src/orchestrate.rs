@@ -53,18 +53,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_linker::{
-    canonical_json_cid, decode_context_manager_edge, final_check_context_manager_edges, link,
-    AuthenticatedCallContractCatalog, AuthenticatedContextManagerCatalog, CallContractDemandV1,
-    Cid, ContextManagerContractDemandV1, LinkerError, LinkerErrorKind, LinkerInputs,
-    ProviderKitKeyBindingV1, ResolvedCallContractRefsV1, ResolvedContractRefsV1,
-    SelectedProviderKitV1 as CatalogProviderKitV1, SelectedProviderKitsV1 as CatalogProviderKitsV1,
-    SelectedProviderMemberV1, SourceFragmentCoordinateV1, Symbol,
+    canonical_json_cid, link, AuthenticatedCallContractCatalog, CallContractDemandV1, Cid,
+    LinkerError, LinkerErrorKind, LinkerInputs, ResolvedCallContractRefsV1,
+    SourceFragmentCoordinateV1, Symbol,
 };
-use sugar_proof_envelope::ImportSignatureV2;
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
 use sugar_proof_envelope::{MementoPool, Speaker};
 use sugar_verifier::consistency::verify_consistency;
@@ -77,59 +72,6 @@ use crate::kit::Kit;
 use crate::linker_inputs::derive_linker_inputs;
 use crate::outcome::{Outcome, OutcomeClass};
 use crate::resolve::{TestimonyError, TestimonyOutcome};
-
-#[derive(Clone)]
-pub struct SelectedProviderKitV1 {
-    pub component: Arc<Kit>,
-    pub component_cid: Cid,
-    pub provider_kit_cid: Cid,
-    pub key_binding: ProviderKitKeyBindingV1,
-}
-
-#[derive(Clone)]
-pub struct SelectedProviderKitsV1 {
-    pub selection_cid: Cid,
-    pub providers: Arc<[SelectedProviderKitV1]>,
-}
-
-impl SelectedProviderKitsV1 {
-    pub fn empty() -> Self {
-        Self {
-            selection_cid: CatalogProviderKitsV1::empty().selection_cid,
-            providers: Arc::from([]),
-        }
-    }
-
-    pub fn new(mut providers: Vec<SelectedProviderKitV1>) -> Result<Self, String> {
-        providers.sort_by(|left, right| {
-            (
-                &left.provider_kit_cid,
-                &left.component_cid,
-                &left.key_binding.key_binding_cid,
-            )
-                .cmp(&(
-                    &right.provider_kit_cid,
-                    &right.component_cid,
-                    &right.key_binding.key_binding_cid,
-                ))
-        });
-        let semantic = CatalogProviderKitsV1::new(
-            providers
-                .iter()
-                .map(|provider| CatalogProviderKitV1 {
-                    component_cid: provider.component_cid.clone(),
-                    provider_kit_cid: provider.provider_kit_cid.clone(),
-                    key_binding: provider.key_binding.clone(),
-                    members: vec![],
-                })
-                .collect(),
-        )?;
-        Ok(Self {
-            selection_cid: semantic.selection_cid,
-            providers: providers.into(),
-        })
-    }
-}
 
 /// Throwaway seed for the internal graph->pool self-load round trip `solve`
 /// performs to reach beat 2. This is never a real signature over anything
@@ -430,24 +372,6 @@ pub enum ProveFromKitError {
 /// Production face: `sugar prove` routes here when a lift kit can rendezvous
 /// for the project surface (Task 9). Batch mint remains for `.proof` sealing
 /// / publish; prove no longer requires a prior mint for the local surface.
-pub fn prove_from_kit_with_providers(
-    kit: &Kit,
-    selected_providers: &SelectedProviderKitsV1,
-    workspace_root: &Path,
-    speaker: Speaker,
-    cfg: RunnerConfig,
-    compilers: CompilerRegistry,
-) -> Result<ProvenOutcome, ProveFromKitError> {
-    // LIFT front (not solve DoD): fold + testimony assemble the pool.
-    // Kit source reads / enumerate RPC live here — rendezvous front, kept.
-    let pool =
-        fold_kit_to_pool_with_providers(kit, selected_providers, workspace_root, speaker, &cfg)?;
-
-    // SOLVE half: one preloaded-pool discharge. Warmth is derived inside
-    // solve_project_with_pool (pool already resident) — no second door.
-    Ok(solve_project_with_pool(cfg, compilers, pool)?)
-}
-
 /// LIFT half of [`prove_from_kit`]: walk enumerate + optional testimony into
 /// a multi-speaker pool. May spawn the kit and (kit-side) read sources.
 /// Not the solve DoD surface — use [`solve_project_with_pool`] once the pool is fed.
@@ -458,19 +382,12 @@ pub fn prove_from_kit(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
 ) -> Result<ProvenOutcome, ProveFromKitError> {
-    prove_from_kit_with_providers(
-        kit,
-        &SelectedProviderKitsV1::empty(),
-        workspace_root,
-        speaker,
-        cfg,
-        compilers,
-    )
+    let pool = fold_kit_to_pool(kit, workspace_root, speaker, &cfg)?;
+    Ok(solve_project_with_pool(cfg, compilers, pool)?)
 }
 
-pub fn fold_kit_to_pool_with_providers(
+pub fn fold_kit_to_pool(
     kit: &Kit,
-    selected_providers: &SelectedProviderKitsV1,
     workspace_root: &Path,
     speaker: Speaker,
     cfg: &RunnerConfig,
@@ -519,67 +436,6 @@ pub fn fold_kit_to_pool_with_providers(
         load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
     }
 
-    // 3. Declaration-only enrollment and sealing. These rows never construct
-    // a body and enter the ordinary authenticated pool through the dedicated
-    // context-manager member arm.
-    let mut active_cm_preconstruction = None;
-    if kit.supports_rpc_method("sugar.plugin.bind_contract_refs") {
-        let declaration_rows = kit
-            .context_manager_declarations(workspace_root)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        if !declaration_rows.is_empty() {
-            return Err(ProveFromKitError::Preconstruction(
-                "wrong-provider: consumer context-manager declarations cannot enter the provider catalog".into(),
-            ));
-        }
-
-        let mut catalog_providers = Vec::new();
-        for selected in selected_providers.providers.iter() {
-            let rows = selected
-                .component
-                .provider_contract_members(workspace_root)
-                .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-            let members = rows
-                .iter()
-                .map(selected_provider_member_from_wire)
-                .collect::<Result<Vec<_>, _>>()?;
-            catalog_providers.push(CatalogProviderKitV1 {
-                component_cid: selected.component_cid.clone(),
-                provider_kit_cid: selected.provider_kit_cid.clone(),
-                key_binding: selected.key_binding.clone(),
-                members,
-            });
-        }
-        let catalog_selection = CatalogProviderKitsV1::new(catalog_providers)
-            .map_err(ProveFromKitError::Preconstruction)?;
-        if catalog_selection.selection_cid != selected_providers.selection_cid {
-            return Err(ProveFromKitError::Preconstruction(
-                "selected provider collection CID changed during member intake".into(),
-            ));
-        }
-
-        // 4-6. Freeze one authenticated snapshot, enroll non-constructing demands,
-        // prebind in Rust, then install the immutable typed table in the resident
-        // kit before any semantic enumeration begins.
-        let catalog = AuthenticatedContextManagerCatalog::freeze_selected(&catalog_selection)
-            .map_err(ProveFromKitError::Preconstruction)?;
-        let demand_rows = kit
-            .context_manager_demands(workspace_root)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        let demands = demand_rows
-            .iter()
-            .filter(|row| {
-                row.get("kind").and_then(serde_json::Value::as_str)
-                    == Some("context-manager-demand")
-            })
-            .map(context_manager_demand_from_wire)
-            .collect::<Result<Vec<_>, _>>()?;
-        let table = ResolvedContractRefsV1::new(&catalog, &demands);
-        kit.bind_contract_refs(&table.to_wire_value())
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        active_cm_preconstruction = Some((catalog, table));
-    }
-
     // Function contracts are ordinary body-derived contracts, so collect one
     // complete workspace pass before resolving imported call demands. This is
     // a corpus pass, never a target-file hunt: the consumer does not select or
@@ -618,7 +474,7 @@ pub fn fold_kit_to_pool_with_providers(
     }
 
     // 7-8. Local semantic construction occurs only after ref installation.
-    let local = if active_cm_preconstruction.is_some() || active_call_preconstruction.is_some() {
+    let local = if active_call_preconstruction.is_some() {
         // The declaration graph was already sealed into the preliminary pool;
         // this pass is semantic construction only.
         feed_from_tree::fold_claim_tree(kit, workspace_root)?
@@ -629,23 +485,6 @@ pub fn fold_kit_to_pool_with_providers(
         pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
     pool.merge(local_pool);
 
-    // 9. Recheck every resolved coordinate against the exact frozen snapshot
-    // after construction. Future CM edges use the same ref-owned equality
-    // check; this pass never reselects a candidate from the enlarged pool.
-    if let Some((catalog, table)) = &active_cm_preconstruction {
-        let edges = kit
-            .context_manager_edges(workspace_root)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?
-            .iter()
-            .map(decode_context_manager_edge)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        final_check_context_manager_edges(&edges, table, catalog)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        table
-            .final_check(catalog)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.into()))?;
-    }
     if let Some((catalog, table)) = &active_call_preconstruction {
         table.final_check(catalog).map_err(|error| {
             ProveFromKitError::Preconstruction(format!("stale call-contract ref: {error:?}"))
@@ -653,140 +492,6 @@ pub fn fold_kit_to_pool_with_providers(
     }
 
     Ok(pool)
-}
-
-pub fn fold_kit_to_pool(
-    kit: &Kit,
-    workspace_root: &Path,
-    speaker: Speaker,
-    cfg: &RunnerConfig,
-) -> Result<MementoPool, ProveFromKitError> {
-    fold_kit_to_pool_with_providers(
-        kit,
-        &SelectedProviderKitsV1::empty(),
-        workspace_root,
-        speaker,
-        cfg,
-    )
-}
-
-fn context_manager_demand_from_wire(
-    row: &serde_json::Value,
-) -> Result<ContextManagerContractDemandV1, ProveFromKitError> {
-    let schema = row.get("schemaVersion").and_then(serde_json::Value::as_str);
-    let kind = row.get("kind").and_then(serde_json::Value::as_str);
-    let expected = row.get("expectedKind").and_then(serde_json::Value::as_str);
-    if schema != Some("1")
-        || kind != Some("context-manager-demand")
-        || expected != Some("context-manager-contract")
-    {
-        return Err(ProveFromKitError::Preconstruction(
-            "unsupported context-manager demand row".into(),
-        ));
-    }
-    let use_site: SourceFragmentCoordinateV1 = serde_json::from_value(
-        row.get("useSite")
-            .cloned()
-            .ok_or_else(|| ProveFromKitError::Preconstruction("demand missing useSite".into()))?,
-    )
-    .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-    let import_signature: ImportSignatureV2 =
-        serde_json::from_value(row.get("importSignature").cloned().ok_or_else(|| {
-            ProveFromKitError::Preconstruction("demand missing importSignature".into())
-        })?)
-        .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-    match row.get("targetSymbol") {
-        Some(serde_json::Value::String(symbol)) => {
-            let import_binding_cid = row
-                .get("importBindingCid")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    ProveFromKitError::Preconstruction(
-                        "CM demand missing authenticated importBindingCid".into(),
-                    )
-                })?;
-            let import_binding = row.get("importBinding").ok_or_else(|| {
-                ProveFromKitError::Preconstruction("CM demand missing ImportBindingV1".into())
-            })?;
-            if canonical_json_cid(import_binding).as_str() != import_binding_cid {
-                return Err(ProveFromKitError::Preconstruction(
-                    "CM demand ImportBindingV1 CID mismatch".into(),
-                ));
-            }
-            let demand = ContextManagerContractDemandV1::new(
-                use_site,
-                Cid::from(import_binding_cid),
-                None,
-                Symbol::from(symbol.as_str()),
-                import_signature,
-            );
-            let authenticated_use = row.get("authenticatedImportUse").ok_or_else(|| {
-                ProveFromKitError::Preconstruction(
-                    "CM demand missing AuthenticatedImportUseV1".into(),
-                )
-            })?;
-            let supplied = authenticated_use
-                .get("cid")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| {
-                    ProveFromKitError::Preconstruction(
-                        "CM authenticated import use missing cid".into(),
-                    )
-                })?;
-            if demand
-                .authenticated_import_use_cid
-                .as_ref()
-                .map(Cid::as_str)
-                != Some(supplied)
-            {
-                return Err(ProveFromKitError::Preconstruction(
-                    "CM AuthenticatedImportUseV1 CID mismatch".into(),
-                ));
-            }
-            Ok(demand)
-        }
-        Some(serde_json::Value::Null)
-            if row.get("gapKind").and_then(serde_json::Value::as_str)
-                == Some("runtime-selected") =>
-        {
-            Ok(ContextManagerContractDemandV1::runtime_selected(
-                use_site,
-                import_signature,
-            ))
-        }
-        _ => Err(ProveFromKitError::Preconstruction(
-            "demand target is neither an authenticated symbol nor runtime-selected".into(),
-        )),
-    }
-}
-
-fn selected_provider_member_from_wire(
-    row: &serde_json::Value,
-) -> Result<SelectedProviderMemberV1, ProveFromKitError> {
-    let object = row.as_object().ok_or_else(|| {
-        ProveFromKitError::Preconstruction("provider contract member row must be an object".into())
-    })?;
-    if object.len() != 2
-        || !object.contains_key("memberCid")
-        || !object.contains_key("canonicalMember")
-    {
-        return Err(ProveFromKitError::Preconstruction(
-            "provider contract member row requires exactly memberCid and canonicalMember".into(),
-        ));
-    }
-    let member_cid = object
-        .get("memberCid")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            ProveFromKitError::Preconstruction("provider member missing memberCid".into())
-        })?;
-    let canonical_member = object.get("canonicalMember").cloned().ok_or_else(|| {
-        ProveFromKitError::Preconstruction("provider member missing canonicalMember".into())
-    })?;
-    Ok(SelectedProviderMemberV1 {
-        member_cid: Cid::from(member_cid),
-        canonical_member,
-    })
 }
 
 fn call_contract_demand_from_wire(
