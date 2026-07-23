@@ -132,6 +132,24 @@ def test_opaque_source_call_stays_typed_loud(tmp_path):
     assert result.kind == "opaque-call-target"
 
 
+def test_malformed_nested_source_call_binding_stays_typed_loud(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "def pass_through(value):\n"
+        "    return value\n\n"
+        "def make_guard(expected):\n"
+        "    return pass_through(expected, expected)\n",
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(result, ManagerConstructionGapV1)
+    assert result.kind == "call-binding"
+    assert result.detail == "unconsumed call actual"
+
+
 def test_renamed_manager_protocol_retains_ordinary_method_call_frames(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,

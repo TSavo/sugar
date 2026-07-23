@@ -288,7 +288,14 @@ def resolve_source_visible_frame(
                     "opaque-call-target", resolved.cid, opaque[0]
                 ),
             )
-    frame_result = _construct_source_target_frame(definition_graph, target)
+    try:
+        frame_result = _construct_source_target_frame(definition_graph, target)
+    except SourceCallBindingGap as exc:
+        return _remember_frame_result(
+            frame_cache,
+            resolved.cid,
+            ManagerConstructionGapV1("call-binding", resolved.cid, str(exc)),
+        )
     if isinstance(frame_result, tuple) and frame_result[0] == "gap":
         _tag, kind, detail = frame_result
         return _remember_frame_result(
