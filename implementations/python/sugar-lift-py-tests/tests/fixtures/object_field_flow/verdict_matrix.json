@@ -1,0 +1,59 @@
+{
+  "schema": "object-field-flow-acceptance-v1",
+  "cases": [
+    {
+      "id": "store-then-read",
+      "file": "store_then_read.py",
+      "canonical": {"truthful": "truthful", "lying": "lying"},
+      "renamed": {"truthful": "renamed_truthful", "lying": "renamed_lying"},
+      "current": "typed-loud",
+      "target": {"truthful": "sat", "lying": "unsat"},
+      "requires": ["content-addressed-object-identity", "field-version-threading"]
+    },
+    {
+      "id": "distinct-objects",
+      "file": "distinct_objects.py",
+      "canonical": {"truthful": "truthful", "lying": "lying"},
+      "renamed": {"truthful": "renamed_truthful", "lying": "renamed_lying"},
+      "current": "typed-loud",
+      "target": {"truthful": "sat", "lying": "unsat"},
+      "requires": ["construction-occurrence-discrimination", "no-spelling-identity"]
+    },
+    {
+      "id": "authenticated-alias",
+      "file": "authenticated_alias.py",
+      "canonical": {"truthful": "truthful", "lying": "lying"},
+      "renamed": {"truthful": "renamed_truthful", "lying": "renamed_lying"},
+      "current": "typed-loud",
+      "target": {"truthful": "sat", "lying": "unsat"},
+      "requires": ["authenticated-alias-equivalence", "single-temporal-binding-model"]
+    },
+    {
+      "id": "symbolic-receiver",
+      "file": "symbolic_receiver.py",
+      "canonical": "read_after_store",
+      "renamed": "renamed_read_after_store",
+      "current": "typed-loud",
+      "target": "typed-loud",
+      "requires": ["no-symbolic-receiver-identity", "no-fabricated-state"]
+    },
+    {
+      "id": "opaque-mutation",
+      "file": "opaque_mutation.py",
+      "canonical": "read_after_opaque_mutation",
+      "renamed": "renamed_read_after_opaque_mutation",
+      "current": "typed-loud",
+      "target": "typed-loud",
+      "requires": ["opaque-call-invalidates-field-knowledge", "no-fabricated-state"]
+    },
+    {
+      "id": "opaque-alias",
+      "file": "opaque_alias.py",
+      "canonical": "read_through_opaque_alias",
+      "renamed": "renamed_read_through_opaque_alias",
+      "current": "typed-loud",
+      "target": "typed-loud",
+      "requires": ["alias-requires-construction-testimony", "no-fabricated-state"]
+    }
+  ]
+}
