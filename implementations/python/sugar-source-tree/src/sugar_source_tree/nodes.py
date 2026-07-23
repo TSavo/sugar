@@ -3662,10 +3662,12 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
-        # ``**`` already has a lawful bridge on all three call coordinates.
-        # Switch vocabulary only for the direct residue: positional ``*``.
-        # A sibling ``**`` then receives the reference wrapper in the same call.
-        has_spread = any(isinstance(arg, Starred) for arg in self.args)
+        # Either spread form selects the reference call coordinate. In
+        # particular, a lone ``**d`` must not fall through to the legacy
+        # keyword bridge as ``py.kwarg("**", d)``.
+        has_spread = any(isinstance(arg, Starred) for arg in self.args) or any(
+            keyword.arg is None for keyword in self.keywords
+        )
         if has_spread:
             from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
 

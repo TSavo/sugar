@@ -41,6 +41,15 @@ def test_call_star_and_double_star_use_reference_wrappers() -> None:
     assert term.args[3].args[0].name == "d"
 
 
+def test_call_with_only_double_star_uses_reference_shape() -> None:
+    term = _returned_term("make(**d)")
+    assert term.name == "python:call"
+    assert len(term.args) == 2
+    assert term.args[0].value == "make"
+    assert term.args[1].name == "python:double_starred_kwarg"
+    assert term.args[1].args[0].name == "d"
+
+
 @pytest.mark.parametrize(
     ("expression", "outer"),
     [

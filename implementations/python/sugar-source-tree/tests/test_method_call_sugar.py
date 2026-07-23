@@ -49,15 +49,14 @@ def test_keyword_args_lift():
     assert kwarg.args[0].value == "default"
 
 
-def test_spread_keyword_args_build_method_bridge():
+def test_spread_keyword_args_build_reference_method_call():
     t = _out("def A(z, d):\n    return z.get(1, **d)\n")
 
-    assert t.name == "call:get"
-    assert t.args[0].name == "z"
+    assert t.name == "python:call"
+    assert t.args[0].value == "z.get"
     spread = t.args[-1]
-    assert spread.name == "py.kwarg"
-    assert spread.args[0].value == "**"
-    assert spread.args[1].name == "d"
+    assert spread.name == "python:double_starred_kwarg"
+    assert spread.args[0].name == "d"
 
 
 if __name__ == "__main__":
