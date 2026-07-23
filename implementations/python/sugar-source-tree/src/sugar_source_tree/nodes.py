@@ -329,7 +329,9 @@ class SourceUnit:
         return bindings[0]
 
     @staticmethod
-    def source_class_has_plain_attribute_behavior(definition: "ClassDef") -> bool:
+    def source_class_has_authenticated_default_attribute_behavior(
+        definition: "ClassDef",
+    ) -> bool:
         """Whether ordinary attribute storage/lookup is source-constructed."""
         forbidden_methods = {
             "__new__",
@@ -2541,7 +2543,9 @@ class Assign(Statement):
                 ),
                 self.reporter,
             )
-        if not self.unit.source_class_has_plain_attribute_behavior(definition):
+        if not self.unit.source_class_has_authenticated_default_attribute_behavior(
+            definition
+        ):
             return None
         constructed = self._constructed_floor_value(self.value)
         if constructed is None:

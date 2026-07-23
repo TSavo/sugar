@@ -349,7 +349,7 @@ def test_unknown_place_selector_kind_is_typed_loud():
     ],
     ids=("dynamic-setattr", "descriptor"),
 )
-def test_custom_dispatch_never_acquires_plain_place_authority(tmp_path, member):
+def test_custom_dispatch_stays_loud_without_constructed_behavior(tmp_path, member):
     path = tmp_path / "dispatch.py"
     path.write_text(
         "class Vessel:\n    "
