@@ -16,11 +16,22 @@ class ConstructedClassMethodV1:
 
 
 @dataclass(frozen=True)
+class ConstructedClassFieldV1:
+    name: str
+    definition_fragment_cid: str
+    value_sugar: object = field(compare=False)
+
+
+@dataclass(frozen=True)
 class ClassDefinitionValue(FloorValue):
     class_name: str
     class_definition_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
     initializer: ConstructedClassMethodV1 | None
+    class_fields: tuple[object, ...] = ()
+    docstring_cid: str | None = None
+    annotation_cids: tuple[str, ...] = ()
+    decorator_cids: tuple[str, ...] = ()
 
     def to_term(self, *, owner: str):
         del owner
@@ -45,6 +56,7 @@ class ClassDefinitionValue(FloorValue):
             self.class_name,
             (),
             methods=self._object_methods(),
+            class_fields=self.class_fields,
             identity=receiver_coordinate_cid or self.class_definition_cid,
         )
         if block is None:
@@ -84,6 +96,7 @@ class ClassDefinitionValue(FloorValue):
             self.class_name,
             ordered,
             methods=self._object_methods(),
+            class_fields=self.class_fields,
             identity=_term_content_cid(identity_term),
         )
 

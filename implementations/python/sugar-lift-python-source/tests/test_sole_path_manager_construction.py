@@ -207,3 +207,33 @@ def test_renamed_enter_and_exit_halts_remain_method_exitsets(tmp_path):
     assert isinstance(exit_, ExitSet)
     assert all(isinstance(face, Halted) for face in enter.exits)
     assert all(isinstance(face, Halted) for face in exit_.exits)
+
+
+def test_fixture_manager_class_bodies_construct_docstrings_and_class_fields():
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.nodes import ClassDef
+
+    fixture = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
+        / "arbitrary_manager_module.py"
+    )
+    source = SourceFile(path_source(str(fixture)))
+    classes = {
+        item.name: item
+        for item in source.root.body
+        if isinstance(item, ClassDef)
+    }
+
+    some_guard = classes["SomeGuard"].sugar().desugar().value
+    some_resource = classes["SomeResource"].sugar().desugar().value
+    lying_guard = classes["LyingGuard"].sugar().desugar().value
+    observation = classes["ObservationSlot"].sugar().desugar().value
+
+    assert some_guard.docstring_cid.startswith("blake3-512:")
+    assert some_resource.docstring_cid.startswith("blake3-512:")
+    assert lying_guard.docstring_cid.startswith("blake3-512:")
+    fields = {field.name: field.value for field in lying_guard.class_fields}
+    assert type(fields["claimed_suppression"]).__name__ == "TrueBoolLiteralSugar"
+    assert observation.annotation_cids
+    assert observation.decorator_cids
