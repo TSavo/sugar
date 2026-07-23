@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -59,6 +59,93 @@ class _ImportDef:
 class _ModuleFunctionDef:
     target_symbol: str
     definition_site: tuple[int, int, int, int]
+
+
+_IMPORT_AUTHORITY = object()
+
+
+@dataclass(frozen=True)
+class ImportBindingV1:
+    """A final-checked #6090 import binding, never a caller-owned mapping."""
+
+    value: dict[str, Any]
+    cid: str
+    _authority: object = dataclass_field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._authority is not _IMPORT_AUTHORITY:
+            raise ValueError("ImportBindingV1 was not minted by the lexical pass")
+        if self.value.get("kind") != "python-import-binding":
+            raise ValueError("ImportBindingV1 requires a python-import-binding")
+        if _hash(self.value) != self.cid:
+            raise ValueError("ImportBindingV1 CID does not match its preimage")
+
+    def to_value(self) -> dict[str, Any]:
+        return json.loads(encode_jcs(_json_value(self.value)))
+
+
+@dataclass(frozen=True)
+class AuthenticatedImportUseV1:
+    """The final lexical-pass receipt consumed by source-artifact resolution."""
+
+    import_binding: ImportBindingV1
+    target_symbol: str
+    use: dict[str, Any]
+    demand: dict[str, Any]
+    root: Path = dataclass_field(repr=False, compare=False)
+    path: Path = dataclass_field(repr=False, compare=False)
+    source: str = dataclass_field(repr=False, compare=False)
+    source_cid: str = dataclass_field(repr=False, compare=False)
+    module_identities: dict[str, dict[str, Any]] = dataclass_field(
+        repr=False, compare=False
+    )
+    _authority: object = dataclass_field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._authority is not _IMPORT_AUTHORITY:
+            raise ValueError(
+                "AuthenticatedImportUseV1 was not minted by the lexical pass"
+            )
+        if blake3_512_of(self.source.encode("utf-8")) != self.source_cid:
+            raise ValueError("authenticated import-use source CID is stale")
+        if self.use.get("kind") != "authenticated-import-use":
+            raise ValueError("authenticated import use has the wrong kind")
+        use_without_cid = {
+            key: value for key, value in self.use.items() if key != "cid"
+        }
+        if self.use.get("cid") != _hash(use_without_cid):
+            raise ValueError("authenticated import-use CID does not match its preimage")
+        if self.use.get("importBindingCid") != self.import_binding.cid:
+            raise ValueError("authenticated import use cites another binding")
+        for key, value in (
+            ("authenticatedImportUse", self.use),
+            ("importBinding", self.import_binding.to_value()),
+            ("targetSymbol", self.target_symbol),
+            ("importBindingCid", self.import_binding.cid),
+        ):
+            if self.demand.get(key) != value:
+                raise ValueError(f"authenticated demand has stale {key}")
+
+    def revalidate(self) -> None:
+        """Re-run #6090 and demand byte identity at the resolution door."""
+        rows, outcomes = authenticated_import_uses(
+            self.root,
+            self.path,
+            self.source,
+            self.source_cid,
+            module_identities=self.module_identities,
+        )
+        site = self.use["useSite"]
+        key = (
+            site["startLine"],
+            site["startCol"],
+            site["endLine"],
+            site["endCol"],
+        )
+        if outcomes.get(key) != "authenticated-import-use" or self.demand not in rows:
+            raise ValueError(
+                "authenticated import use is not byte-identical to lexical revalidation"
+            )
 
 
 _NON_IMPORT = "non-import"
@@ -572,6 +659,40 @@ def authenticated_import_uses(
     )
     runner.statements(module.body, {}, module)
     return runner.rows, runner.outcomes
+
+
+def authenticated_import_use_receipts(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
+    """Return typed, final-checked receipts from the sole lexical pass."""
+    rows, outcomes = authenticated_import_uses(
+        root, path, source, source_cid, module_identities=module_identities
+    )
+    receipts: list[AuthenticatedImportUseV1] = []
+    for row in rows:
+        binding_value = row["importBinding"]
+        binding = ImportBindingV1(
+            binding_value, row["importBindingCid"], _IMPORT_AUTHORITY
+        )
+        receipts.append(
+            AuthenticatedImportUseV1(
+                import_binding=binding,
+                target_symbol=row["targetSymbol"],
+                use=row["authenticatedImportUse"],
+                demand=row,
+                root=root,
+                path=path,
+                source=source,
+                source_cid=source_cid,
+                module_identities=dict(module_identities or {}),
+                _authority=_IMPORT_AUTHORITY,
+            )
+        )
+    return receipts, outcomes
 
 
 def authenticated_module_exports(
