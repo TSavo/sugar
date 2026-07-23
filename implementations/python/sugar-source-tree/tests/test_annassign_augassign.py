@@ -14,6 +14,8 @@ from sugar_lift_py_tests.effect import (
 )
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
+from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
+from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_source_tree.tree import SourceFile
 
@@ -41,6 +43,34 @@ def test_aug_assign_rebinds_and_is_inert():
     v = _fn("def A():\n    t = 0\n    t += 2\n    return t\n").sugar().desugar().value
     assert v.invs() == ()
     assert v.post().args[1].value == 2
+
+
+def test_name_augassign_constructs_explicit_read_op_store_child():
+    function = _fn("def arbitrary():\n    renamed = 1\n    renamed += 2\n")
+    substituted = function.substitute({})
+    sugar = substituted.body[1].sugar()
+    assert isinstance(sugar, AugAssignSugar)
+    assert isinstance(sugar.operation, BinOpSugar)
+    assert sugar.operation.op_kind == "Add"
+
+
+def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
+    function = _fn(
+        "def arbitrary(condition):\n"
+        "    renamed = 1\n"
+        "    if condition:\n"
+        "        renamed = 2\n"
+        "    renamed += 3\n"
+        "    return renamed\n"
+    )
+    substituted = function.substitute({})
+    sugar = next(
+        statement.sugar()
+        for statement in substituted.body
+        if statement.kind == "AugAssign"
+    )
+    assert isinstance(sugar, AugAssignSugar)
+    assert type(sugar.operation.left).__name__ == "IfExpSugar"
 
 
 def _red_effects(source):
