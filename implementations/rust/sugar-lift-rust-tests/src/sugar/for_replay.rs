@@ -2166,11 +2166,39 @@ fn term_ground_expr(term: &Rc<Term>) -> Option<Expr> {
             ConstValue::Int(n) if is_primitive_int_sort(&sort.name) => {
                 syn::parse_str::<Expr>(&format!("{n}{}", sort.name)).ok()
             }
-            ConstValue::Bool(value) => syn::parse_str::<Expr>(&value.to_string()).ok(),
-            ConstValue::String(value) => syn::parse_str::<Expr>(&format!("{value:?}")).ok(),
-            _ => None,
+            ConstValue::Bool(value) if sort.name == "Bool" => {
+                syn::parse_str::<Expr>(&value.to_string()).ok()
+            }
+            ConstValue::String(value) if sort.name == "String" => {
+                syn::parse_str::<Expr>(&format!("{value:?}")).ok()
+            }
+            ConstValue::Null if sort.name == "Unit" => syn::parse_str::<Expr>("()").ok(),
+            ConstValue::Int(_) => None,
+            ConstValue::Real(_) => None,
+            ConstValue::String(_) => None,
+            ConstValue::Bool(_) => None,
+            ConstValue::Null => None,
         },
-        _ => None,
+        Term::Var { .. } | Term::Ctor { .. } | Term::Lambda { .. } | Term::Let { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod term_ground_expr_tests {
+    use super::*;
+
+    #[test]
+    fn unit_null_projects_to_unit_expression() {
+        let term = Rc::new(Term::Const {
+            value: ConstValue::Null,
+            sort: sugar_ir_symbolic::Sort {
+                name: "Unit".into(),
+            },
+        });
+
+        let projected = term_ground_expr(&term).expect("Unit null projects");
+
+        assert_eq!(quote::quote!(#projected).to_string(), "()");
     }
 }
 

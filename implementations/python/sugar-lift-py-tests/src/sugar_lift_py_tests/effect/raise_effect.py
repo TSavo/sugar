@@ -17,8 +17,11 @@ class RaiseEffect:
     occurrence: str | None = None
     # The value built from ``raise <exc>``.  A Name is a coordinate pointing
     # at the existing binding; a constructor call is its ordinary callsite.
-    # Bare re-raise has no child and therefore leaves this absent.
+    # Some runtime-generated RaiseEffects have no source exception child.
     raised_value: object | None = None
+    # The constructed expression after an explicit ``from``. Host ``None``
+    # means the clause was absent; explicit Python ``None`` is a NoneValue.
+    cause_value: object | None = None
 
     @property
     def occurrence_id(self) -> str | None:

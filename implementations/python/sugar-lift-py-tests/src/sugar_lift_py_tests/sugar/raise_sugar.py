@@ -25,7 +25,8 @@ class RaiseSugar(Sugar):
     or authenticates an exception value.
     """
 
-    exception: object | None
+    exception: object
+    cause: object | None
     exception_name: str | None
     site: object = dataclass_field(compare=False)
 
@@ -53,7 +54,7 @@ class RaiseSugar(Sugar):
         )
         blame = f"{self.site.filename}:{self.site.line}:{self.site.col}"
 
-        def halt(raised_value=None):
+        def halt(raised_value, cause_value=None):
             return Incomplete(
                 RaiseEffect(
                     exception_name=self.exception_name,
@@ -62,9 +63,15 @@ class RaiseSugar(Sugar):
                     # Occurrence is the raise site — not a type-level identity.
                     occurrence=blame,
                     raised_value=raised_value,
+                    cause_value=cause_value,
                 )
             )
 
-        if self.exception is None:
-            return halt()
-        return self.exception.desugar(ctx).and_then(halt)
+        def after_exception(raised_value):
+            if self.cause is None:
+                return halt(raised_value)
+            return self.cause.desugar(ctx).and_then(
+                lambda cause_value: halt(raised_value, cause_value)
+            )
+
+        return self.exception.desugar(ctx).and_then(after_exception)

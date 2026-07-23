@@ -4,8 +4,8 @@ A raise never states a fact and never returns a value -- it exits. So its
 `.sugar().desugar()` is an `Incomplete(RaiseEffect)`, the halt arm of
 `match(Sugar) { Some => cite_or_effect, None => panic }`, not a `Complete`
 floor value. The exception child builds normally and rides on the effect; its
-structural name is routing provenance only. `raise X from Y` is loud until
-cause-carrying is written -- a MISSING never becomes a silent success.
+structural name is routing provenance only. Explicit causes are covered by the
+binary raise contract tests; bare re-raise remains an active-context gap.
 """
 
 import tempfile
@@ -51,12 +51,9 @@ def test_exception_name_is_read_structurally():
     assert _effect("def A():\n    raise a.b.E(1)\n").exception_name == "a.b.E"
 
 
-def test_bare_reraise_is_still_a_real_halt_with_no_name():
-    # def A(): raise -- a re-raise: exc is None, so the name is None, but the
-    # halt is no less real. The effect is the fact; the name is only its label.
-    eff = _effect("def A():\n    raise\n")
-    assert eff.exception_name is None
-    assert "unknown exception" in eff.reason
+def test_bare_reraise_stays_loud_until_active_exception_context_exists():
+    with pytest.raises(SugarNotWritten):
+        _raise("def A():\n    raise\n").sugar()
 
 
 def test_the_lift_discriminates_the_exception_name():
@@ -70,17 +67,16 @@ def test_the_lift_discriminates_the_exception_name():
     )
 
 
-def test_raise_from_is_loud_until_cause_carrying_is_written():
-    # def A(): raise X from Y -- the cause is chaining provenance we do not carry
-    # yet. Rather than silently drop it, the sugar is LOUD: SugarNotWritten.
-    with pytest.raises(SugarNotWritten):
-        _raise("def A():\n    raise ValueError from KeyError\n").sugar()
+def test_raise_from_carries_both_constructed_values():
+    effect = _effect("def A():\n    raise ValueError from KeyError\n")
+    assert effect.raised_value is not None
+    assert effect.cause_value is not None
 
 
 if __name__ == "__main__":
     test_raise_is_the_halt_arm_not_a_value()
     test_exception_name_is_read_structurally()
-    test_bare_reraise_is_still_a_real_halt_with_no_name()
+    test_bare_reraise_stays_loud_until_active_exception_context_exists()
     test_the_lift_discriminates_the_exception_name()
-    test_raise_from_is_loud_until_cause_carrying_is_written()
-    print("ok: raise -> Incomplete(RaiseEffect); name structural; from is loud")
+    test_raise_from_carries_both_constructed_values()
+    print("ok: raise -> Incomplete(RaiseEffect); explicit cause carried")

@@ -21000,6 +21000,7 @@ pub(crate) fn canonical_term_sig(term: &Term) -> String {
             ConstValue::Real(value) => format!("r:{value}"),
             ConstValue::String(value) => format!("s:{value:?}"),
             ConstValue::Bool(value) => format!("b:{value}"),
+            ConstValue::Null => format!("null:{}", sort.name),
         },
         Term::Ctor { name, args } => {
             let inner = args
@@ -21030,6 +21031,7 @@ fn canonical_method_arg_sig(term: &Term, local_scope: &str) -> String {
             ConstValue::Real(value) => format!("r:{value}"),
             ConstValue::String(value) => format!("s:{value:?}"),
             ConstValue::Bool(value) => format!("b:{value}"),
+            ConstValue::Null => format!("null:{}", sort.name),
         },
         Term::Ctor { name, args } => {
             let inner = args
@@ -21798,6 +21800,19 @@ pub(crate) fn token_key<T: ToTokens>(node: T) -> String {
 #[cfg(test)]
 mod lifter_key_tests {
     use super::*;
+
+    #[test]
+    fn unit_null_has_truthful_distinct_canonical_keys() {
+        let term = Term::Const {
+            value: ConstValue::Null,
+            sort: sugar_ir_symbolic::Sort {
+                name: "Unit".into(),
+            },
+        };
+
+        assert_eq!(canonical_term_sig(&term), "null:Unit");
+        assert_eq!(canonical_method_arg_sig(&term, "scope"), "null:Unit");
+    }
 
     fn lift_src(src: &str) -> AdapterOutput {
         let file: syn::File = syn::parse_str(src).expect("test src must parse");

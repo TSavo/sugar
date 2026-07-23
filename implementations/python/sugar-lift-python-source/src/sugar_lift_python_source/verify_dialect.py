@@ -482,10 +482,21 @@ def _is_flat_guard_term(term: Json) -> bool:
 
 
 def _is_python_raise(term: Json) -> bool:
-    return (
+    if not (
         isinstance(term, dict)
         and term.get("kind") == "ctor"
         and term.get("name") == "python:raise"
+    ):
+        return False
+    args = term.get("args")
+    if not isinstance(args, list) or len(args) != 2:
+        return False
+    cause = args[1]
+    return not (
+        isinstance(cause, dict)
+        and cause.get("kind") == "ctor"
+        and cause.get("name") == "python:no_value"
+        and cause.get("args") != []
     )
 
 

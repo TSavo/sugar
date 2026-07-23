@@ -262,8 +262,17 @@ def _stmt(term: Json) -> ast.stmt:
     if name == "python:continue":
         return ast.Continue()
     if name == "python:raise":
+        if len(args) != 2:
+            raise ValueError(
+                f"python:raise requires exactly exception and cause: {term!r}"
+            )
+        if _name(args[0]) == "python:no_value":
+            raise ValueError(
+                f"python:raise exception operand cannot be python:no_value: {term!r}"
+            )
         return ast.Raise(
-            exc=None if _is_none_const(args[0]) else _expr(args[0]), cause=None
+            exc=_expr(args[0]),
+            cause=None if _is_no_value(args[1]) else _expr(args[1]),
         )
     if name == "python:assert":
         return ast.Assert(
@@ -697,6 +706,7 @@ def _is_no_value(term: Any) -> bool:
         isinstance(term, dict)
         and term.get("kind") == "ctor"
         and term.get("name") == "python:no_value"
+        and term.get("args") == []
     )
 
 

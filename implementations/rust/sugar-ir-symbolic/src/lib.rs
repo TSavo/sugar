@@ -100,6 +100,7 @@ pub enum ConstValue {
     Real(String),
     String(String),
     Bool(bool),
+    Null,
 }
 
 #[derive(Debug, Clone)]
