@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from email.parser import BytesParser
 import importlib.machinery
 import importlib.metadata
+import os
 from pathlib import Path, PurePosixPath
 import sys
 import sysconfig
@@ -54,13 +55,98 @@ def _distribution_authenticate_cache_key(
     """Stable process-local key for one installed distribution seat."""
     path = getattr(distribution, "_path", None)
     if path is not None:
-        return ("path", str(path))
+        return ("path", str(Path(path).resolve()))
     try:
         name = distribution.metadata["Name"] or ""
         version = distribution.metadata["Version"] or ""
     except Exception:
         name, version = "", ""
     return ("meta", str(name), str(version), str(type(distribution)))
+
+
+def _distribution_disk_cache_path(
+    distribution: importlib.metadata.Distribution,
+) -> Path | None:
+    """Content-stable on-disk seat for one installed distribution graph."""
+    path = getattr(distribution, "_path", None)
+    if path is None:
+        return None
+    seat = Path(path).resolve()
+    record = seat / "RECORD" if seat.is_dir() else seat
+    try:
+        st = record.stat()
+    except OSError:
+        return None
+    digest = blake3_512_of(
+        f"{seat}\0{st.st_mtime_ns}\0{st.st_size}".encode("utf-8")
+    ).removeprefix("blake3-512:")[:32]
+    root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return root / "sugar" / "dependency-artifact-graphs" / f"{digest}.pkl"
+
+
+def _load_authenticate_disk_cache(
+    distribution: importlib.metadata.Distribution,
+) -> "DependencyArtifactGraph | None":
+    path = _distribution_disk_cache_path(distribution)
+    if path is None or not path.is_file():
+        return None
+    try:
+        import pickle
+
+        with path.open("rb") as stream:
+            payload = pickle.load(stream)
+        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v1":
+            return None
+        return DependencyArtifactGraph(
+            artifact_kind=payload["artifact_kind"],
+            distribution_name=payload["distribution_name"],
+            distribution_version=payload["distribution_version"],
+            distribution_artifact_cid=payload["distribution_artifact_cid"],
+            files=tuple(payload["files"]),
+            modules=MappingProxyType(dict(payload["modules"])),
+            _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
+        )
+    except Exception:
+        return None
+
+
+def _store_authenticate_disk_cache(
+    distribution: importlib.metadata.Distribution,
+    graph: "DependencyArtifactGraph",
+) -> None:
+    path = _distribution_disk_cache_path(distribution)
+    if path is None:
+        return
+    try:
+        import pickle
+        import tempfile
+
+        # MappingProxyType is not pickleable; store plain dict modules.
+        payload = {
+            "schema": "dep-graph-v1",
+            "artifact_kind": graph.artifact_kind,
+            "distribution_name": graph.distribution_name,
+            "distribution_version": graph.distribution_version,
+            "distribution_artifact_cid": graph.distribution_artifact_cid,
+            "files": graph.files,
+            "modules": dict(graph.modules),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".auth-", suffix=".pkl"
+        )
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
+            Path(tmp_name).replace(path)
+        except Exception:
+            try:
+                Path(tmp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        return
 
 
 @dataclass(frozen=True)
@@ -463,6 +549,10 @@ class DependencyArtifactGraph:
         cached = _AUTHENTICATE_GRAPH_CACHE.get(cache_key)
         if cached is not None:
             return cached
+        disk = _load_authenticate_disk_cache(distribution)
+        if disk is not None:
+            _AUTHENTICATE_GRAPH_CACHE[cache_key] = disk
+            return disk
         files = distribution.files
         if files is None:
             raise DependencyArtifactAuthenticationError(
@@ -548,6 +638,7 @@ class DependencyArtifactGraph:
             _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
         _AUTHENTICATE_GRAPH_CACHE[cache_key] = graph
+        _store_authenticate_disk_cache(distribution, graph)
         return graph
 
     @classmethod

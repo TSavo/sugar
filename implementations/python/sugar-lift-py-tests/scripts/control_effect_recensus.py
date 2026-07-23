@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import ast
 from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 from pathlib import Path
+import multiprocessing as mp
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -285,6 +288,57 @@ def _parse_child(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def _pool_init() -> None:
+    """Warm dependency-auth in each long-lived worker (once per process)."""
+    try:
+        import importlib.metadata
+
+        from sugar_lift_python_source.dependency_artifact import (
+            DependencyArtifactGraph,
+        )
+
+        DependencyArtifactGraph.authenticate(
+            importlib.metadata.distribution("pandas")
+        )
+    except Exception:
+        # Warm is best-effort; first real file will authenticate if needed.
+        pass
+
+
+def _pool_measure(
+    item: tuple[str, str, str, int],
+) -> tuple[str, dict[str, Any]]:
+    """Measure one file inside a reused worker process under a hard alarm."""
+    file_key, path_s, root_s, timeout_s = item
+    path = Path(path_s)
+    root = Path(root_s)
+    relative = path.relative_to(root).as_posix()
+
+    def _on_alarm(_signum, _frame) -> None:
+        raise TimeoutError("control-effect file timeout")
+
+    previous = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.setitimer(signal.ITIMER_REAL, float(timeout_s))
+    try:
+        try:
+            row = _measure_file(path, root=root, relative=relative)
+        except TimeoutError:
+            row = {"category": "timeout", "timeoutSeconds": timeout_s}
+        except Exception as error:
+            row = {
+                "category": "backend-defect",
+                "defect": {
+                    "file": relative,
+                    "type": type(error).__name__,
+                    "message": str(error),
+                },
+            }
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous)
+    return file_key, row
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("corpus", type=Path, nargs="?")
@@ -329,7 +383,8 @@ def main() -> int:
         for path in files
     }
 
-    def run_file(file: str) -> dict[str, Any]:
+    def run_file_subprocess(file: str) -> dict[str, Any]:
+        """Legacy one-shot child (isolation). Prefer the process pool below."""
         path = by_file[file]
         relative = path.relative_to(args.corpus).as_posix()
         env = dict(os.environ)
@@ -372,20 +427,75 @@ def main() -> int:
             }
         return testimony
 
+    def run_pending_process_pool(
+        *,
+        files: tuple[str, ...],
+        workers: int,
+        on_result: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Reuse long-lived workers so dependency auth is paid once per worker."""
+        if not files:
+            return []
+        ctx = mp.get_context("spawn")
+        items = [
+            (
+                file,
+                str(by_file[file]),
+                str(args.corpus),
+                int(args.timeout),
+            )
+            for file in files
+        ]
+        measured: list[tuple[str, dict[str, Any]]] = []
+        with ProcessPoolExecutor(
+            max_workers=max(1, workers),
+            mp_context=ctx,
+            initializer=_pool_init,
+        ) as pool:
+            futures = {
+                pool.submit(_pool_measure, item): item[0] for item in items
+            }
+            for future in as_completed(futures):
+                file = futures[future]
+                try:
+                    key, row = future.result()
+                except Exception as error:
+                    key = file
+                    row = {
+                        "category": "backend-defect",
+                        "defect": {
+                            "file": file,
+                            "type": type(error).__name__,
+                            "message": str(error),
+                        },
+                    }
+                if on_result is not None:
+                    on_result(key, row)
+                measured.append((key, row))
+        return measured
+
     if args.checkpoint_jsonl is not None:
-        from pandas_census_checkpoint import Checkpoint, run_pending
+        from pandas_census_checkpoint import Checkpoint
 
         checkpoint = Checkpoint(
             floor="control-effect",
             files=tuple(by_file),
             path=args.checkpoint_jsonl,
         )
-        journal_rows = run_pending(
-            checkpoint, run_file, workers=max(1, args.workers)
+        pending = checkpoint.pending_files()
+
+        def _append(file: str, row: dict[str, Any]) -> None:
+            checkpoint.append(file, row)
+
+        run_pending_process_pool(
+            files=pending, workers=max(1, args.workers), on_result=_append
         )
+        journal_rows = checkpoint.rows()
         measured_rows = [(row["file"], row["result"]) for row in journal_rows]
     else:
-        measured_rows = [(file, run_file(file)) for file in sorted(by_file)]
+        measured_rows = run_pending_process_pool(
+            files=tuple(sorted(by_file)), workers=max(1, args.workers)
+        )
 
     for index, (file, raw) in enumerate(measured_rows, start=1):
         row = dict(raw)
