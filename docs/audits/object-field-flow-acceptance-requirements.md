@@ -74,6 +74,11 @@ generic fallback value.
   distinct identities and do not collide.
 - `authenticated-alias`: a plain assignment alias shares the authenticated
   identity, so a store through one name is visible through the other.
+- `version-flow`: a read before a later alias mutation remains the earlier
+  immutable value while a read after the mutation observes the new version,
+  including through a second authenticated alias.
+- `distinct-version-flow`: alternating stores through aliases of two distinct
+  construction occurrences never cross-link their version chains.
 - `symbolic-receiver`: no identity can be minted from a formal/symbolic
   receiver; the flow remains typed-loud.
 - `opaque-mutation`: a call without an authenticated frame contract may mutate

@@ -18,7 +18,13 @@ from sugar_source_tree.tree import SourceFile
 
 FIXTURES = Path(__file__).parent / "fixtures" / "object_field_flow"
 MATRIX = json.loads((FIXTURES / "verdict_matrix.json").read_text())
-POSITIVE_IDS = {"store-then-read", "distinct-objects", "authenticated-alias"}
+POSITIVE_IDS = {
+    "store-then-read",
+    "distinct-objects",
+    "authenticated-alias",
+    "version-flow",
+    "distinct-version-flow",
+}
 LOUD_IDS = {"symbolic-receiver", "opaque-mutation", "opaque-alias"}
 FORBIDDEN_MECHANISM_CALLS = {"getattr", "setattr", "hasattr", "id", "type", "isinstance"}
 
@@ -89,13 +95,16 @@ def test_verdict_matrix_is_closed_and_names_every_required_invariant():
     assert MATRIX["schema"] == "object-field-flow-acceptance-v1"
     cases = MATRIX["cases"]
     assert {case["id"] for case in cases} == POSITIVE_IDS | LOUD_IDS
-    assert len(cases) == 6
+    assert len(cases) == 8
     requirements = {item for case in cases for item in case["requires"]}
     assert {
         "content-addressed-object-identity",
         "construction-occurrence-discrimination",
         "no-spelling-identity",
         "authenticated-alias-equivalence",
+        "immutable-field-version-chain",
+        "read-snapshot-stability",
+        "no-cross-object-version-collision",
         "single-temporal-binding-model",
         "no-symbolic-receiver-identity",
         "opaque-call-invalidates-field-knowledge",
