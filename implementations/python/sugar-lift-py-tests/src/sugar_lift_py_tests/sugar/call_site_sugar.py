@@ -35,6 +35,7 @@ class CallSiteSugar(Sugar):
     contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
+    source_call_frame: Any = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -96,16 +97,58 @@ class CallSiteSugar(Sugar):
         )
         if self.contract_ref is not None:
             return self._collect_bridged(positional)
+        source_body = None
+        source_frame_cid = None
+        if self.source_call_frame is not None:
+            from sugar_lift_py_tests.source_call_frame import (
+                AwaitingBindingCoordinateCallFrameV1,
+                SourceVisibleCallFrameV1,
+            )
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if isinstance(self.source_call_frame, AwaitingBindingCoordinateCallFrameV1):
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    observed=self.source_call_frame.kind,
+                    requested="the shared BindingCoordinateV1 formal frame",
+                    fix=(
+                        "wire the shared formal binding coordinate into this "
+                        "already-constructed source body; never bind by name"
+                    ),
+                )
+            if not isinstance(self.source_call_frame, SourceVisibleCallFrameV1):
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    observed=type(self.source_call_frame).__name__,
+                    requested="a closed SourceCallFrameV1 variant",
+                    fix="construct a typed source frame or keep the call loud",
+                )
+            if self.keywords or len(positional) != len(
+                self.source_call_frame.parameters
+            ):
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    observed="source call-frame signature mismatch",
+                    requested="actuals matching the constructed source frame",
+                    fix="bind through the ordinary formal frame or keep the call loud",
+                )
+            source_body = self.source_call_frame.body
+            source_frame_cid = self.source_call_frame.frame_cid
         return Complete(
             CallSiteValue(
                 target_name=self.target_name,
                 arg_values=positional + tuple(value for _, value in kw_values),
-                parameters=(),
+                parameters=(
+                    self.source_call_frame.parameters
+                    if self.source_call_frame is not None
+                    else ()
+                ),
                 term=term,
-                body=None,  # the dig is CUED, not inlined here
+                body=source_body,
                 keyword_names=tuple(name for name, _ in kw_values),
                 site=self.site,
                 exception_type_coordinate=self.exception_type_coordinate,
+                source_call_frame_cid=source_frame_cid,
             )
         )
 
