@@ -973,12 +973,6 @@ pub enum ParameterDefaultV1 {
     NoDefault,
     #[serde(rename = "literal-default")]
     LiteralDefault { value: Json },
-    #[serde(rename = "provider-value-ref")]
-    ProviderValueRef {
-        #[serde(rename = "valueRefCid")]
-        value_ref_cid: String,
-        sort: Sort,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1401,16 +1395,6 @@ fn validate_import_signature(signature: &ImportSignatureV2) -> Result<(), String
                     if literal_sort != parameter.sort {
                         return Err("literal default sort must equal parameter sort".into());
                     }
-                }
-            }
-            ParameterDefaultV1::ProviderValueRef {
-                value_ref_cid,
-                sort,
-            } => {
-                MementoCid::try_parse(value_ref_cid.clone())
-                    .map_err(|_| "provider default valueRefCid must be a CID".to_string())?;
-                if sort != &parameter.sort {
-                    return Err("provider default sort must equal parameter sort".into());
                 }
             }
             ParameterDefaultV1::NoDefault => {}

@@ -545,6 +545,29 @@ def test_optional_parameter_without_authenticated_default_is_loud():
         )
 
 
+def test_provider_value_ref_default_is_not_a_derivation_provenance_value():
+    wire = {
+        "parameters": [
+            {
+                "name": "match",
+                "sort": {"kind": "primitive", "name": "String"},
+                "passing": {"kind": "keyword-only"},
+                "required": False,
+                "default": {
+                    "kind": "provider-value-ref",
+                    "valueRefCid": "blake3-512:" + "1" * 128,
+                    "sort": {"kind": "primitive", "name": "String"},
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(
+        ContextManagerContractError, match="unknown or malformed authenticated default"
+    ):
+        decode_import_signature_v2(wire)
+
+
 def test_mutated_literal_default_cannot_be_signed_as_authenticated_testimony():
     value = {
         "kind": "const",

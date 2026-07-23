@@ -837,14 +837,6 @@ def import_signature_to_value(signature: ImportSignatureV2):
                     ("value", _json_value(parameter.default.value)),
                 ]
             )
-        elif isinstance(parameter.default, ProviderValueRefV1):
-            default = vobj(
-                [
-                    ("kind", vstr("provider-value-ref")),
-                    ("valueRefCid", vstr(parameter.default.value_ref_cid)),
-                    ("sort", sort_to_value(parameter.default.sort)),
-                ]
-            )
         else:
             raise ContextManagerContractError("unknown authenticated default")
         rows.append(
@@ -902,14 +894,6 @@ def decode_import_signature_v2(raw: Any) -> ImportSignatureV2:
             "value",
         }:
             default = LiteralDefaultV1(raw_default["value"])
-        elif raw_default.get("kind") == "provider-value-ref" and set(raw_default) == {
-            "kind",
-            "valueRefCid",
-            "sort",
-        }:
-            default = ProviderValueRefV1(
-                raw_default["valueRefCid"], _decode_sort(raw_default["sort"])
-            )
         else:
             raise ContextManagerContractError(
                 "unknown or malformed authenticated default"
