@@ -10,7 +10,9 @@ from .canonicalizer import blake3_512_of, encode_jcs
 from .context_manager_contract import (
     ContextManagerContractError,
     ContextManagerSemanticsV1,
-    _decode_semantics,
+    ImportSignatureV2,
+    decode_context_manager_semantics_v1,
+    decode_import_signature_v2,
     _json_value,
 )
 from .ir import Sort
@@ -52,12 +54,6 @@ class SourceFragmentCoordinateV1:
 
 
 @dataclass(frozen=True)
-class ImportSignatureV1:
-    formals: tuple[str, ...]
-    sorts: tuple[Sort, ...]
-
-
-@dataclass(frozen=True)
 class ContextManagerContractRefV1:
     resolution_cid: str
     demand_cid: str
@@ -66,7 +62,7 @@ class ContextManagerContractRefV1:
     member_cid: str
     payload_cid: str
     bridge_source_symbol: str
-    import_signature: ImportSignatureV1
+    import_signature: ImportSignatureV2
     semantics: ContextManagerSemanticsV1
     source_warrant_cids: tuple[str, ...]
 
@@ -118,19 +114,11 @@ def _cid(value: Any, field: str) -> str:
     return value
 
 
-def _decode_signature(raw: Any) -> ImportSignatureV1:
-    if not isinstance(raw, dict) or set(raw) != {"formals", "sorts"}:
-        raise ContractRefProtocolError("malformed import signature")
-    if not isinstance(raw["formals"], list) or not all(isinstance(v, str) for v in raw["formals"]):
-        raise ContractRefProtocolError("malformed import formals")
+def _decode_signature(raw: Any) -> ImportSignatureV2:
     try:
-        from .context_manager_contract import _decode_sort
-        sorts = tuple(_decode_sort(value) for value in raw["sorts"])
-    except (KeyError, TypeError, ContextManagerContractError) as exc:
-        raise ContractRefProtocolError("malformed import sorts") from exc
-    if len(sorts) != len(raw["formals"]):
-        raise ContractRefProtocolError("import signature arity mismatch")
-    return ImportSignatureV1(tuple(raw["formals"]), sorts)
+        return decode_import_signature_v2(raw)
+    except ContextManagerContractError as exc:
+        raise ContractRefProtocolError("malformed ImportSignatureV2") from exc
 
 
 def _resolution_cid_preimage(raw: dict[str, Any]) -> dict[str, Any]:
@@ -159,7 +147,8 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
     if _hash_json(_resolution_cid_preimage(raw)) != resolution_cid:
         raise ContractRefProtocolError("resolution CID mismatch")
     try:
-        semantics = _decode_semantics(raw["semantics"])
+        signature = _decode_signature(raw["importSignature"])
+        semantics = decode_context_manager_semantics_v1(raw["semantics"], signature)
     except ContextManagerContractError as exc:
         raise ContractRefProtocolError("unsupported context-manager semantics") from exc
     warrants = raw["sourceWarrantCids"]
@@ -170,7 +159,7 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
         SourceFragmentCoordinateV1.decode(raw["useSite"]),
         _cid(raw["catalogCid"], "catalogCid"), _cid(raw["memberCid"], "memberCid"),
         _cid(raw["payloadCid"], "payloadCid"), raw["bridgeSourceSymbol"],
-        _decode_signature(raw["importSignature"]), semantics,
+        signature, semantics,
         tuple(_cid(value, "sourceWarrantCid") for value in warrants),
     )
 

@@ -7,7 +7,9 @@ use sugar_compiler::feed_from_tree::{
     graph_from_context_manager_contract_ir, graph_from_kit_declaration,
 };
 use sugar_compiler::orchestrate::pool_from_graph_with_speaker;
-use sugar_proof_envelope::{ExitDispositionV1, Member, MemberKind, Speaker};
+use sugar_proof_envelope::{
+    ContextManagerSemanticsV1, ExitDispositionV1, Member, MemberKind, Speaker,
+};
 
 #[test]
 fn production_kit_declaration_becomes_bodyless_signed_graph_member() {
@@ -20,8 +22,8 @@ fn production_kit_declaration_becomes_bodyless_signed_graph_member() {
     let program = r#"
 import json
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1, ImportSignatureV1
-row = ContextManagerContractIrV1.never_suppresses(bridge_source_symbol='context-manager:fixture_python.never_closing', import_signature=ImportSignatureV1(formals=(), sorts=()), enter_result_sort=PrimitiveSort('Value'), source_warrants=('blake3-512:' + 'a' * 128,))
+from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1, ImportSignatureV2
+row = ContextManagerContractIrV1.never_suppresses(bridge_source_symbol='context-manager:fixture_python.never_closing', import_signature=ImportSignatureV2(parameters=()), enter_result_sort=PrimitiveSort('Value'), source_warrants=('blake3-512:' + 'a' * 128,))
 print(json.dumps(row.to_rpc_with_term_table(None)))
 "#;
     let output = Command::new("python3")
@@ -46,8 +48,11 @@ print(json.dumps(row.to_rpc_with_term_table(None)))
     let Member::ContextManagerContract(cm) = Member::parse(views[0].bytes()).unwrap() else {
         panic!("dedicated CM member")
     };
+    let ContextManagerSemanticsV1::ProtocolResource(resource) = cm.semantics else {
+        panic!("resource")
+    };
     assert_eq!(
-        cm.semantics.exit.disposition,
+        resource.exit.disposition,
         ExitDispositionV1::NeverSuppresses
     );
     let pool = pool_from_graph_with_speaker(&graph, Speaker::consumer("fixture-consumer"))
@@ -69,11 +74,11 @@ fn live_kit_declaration_dispatches_cm_rows_through_dedicated_feed_arm() {
             "kind": "context-manager-contract",
             "schemaVersion": "1",
             "bridgeSourceSymbol": "context-manager:fixture.manager",
-            "importSignature": {"formals": [], "sorts": []},
+            "importSignature": {"parameters": []},
             "payload": {
-                "kind": "context-manager-semantics", "schemaVersion": "1",
-                "enter": {"completion": "total", "result": {"kind": "projection", "projection": "enter_result", "sort": {"kind": "primitive", "name": "Value"}}},
-                "exit": {"completion": "total", "disposition": {"kind": "never-suppresses"}}
+                "kind": "protocol-resource", "schemaVersion": "1",
+                "enter": {"completion": {"kind":"total"}, "result": {"kind": "projection", "projection": "enter-result", "sort": {"kind": "primitive", "name": "Value"}}},
+                "exit": {"completion": {"kind":"total"}, "disposition": {"kind": "never-suppresses"}}
             },
             "sourceWarrants": []
         }]

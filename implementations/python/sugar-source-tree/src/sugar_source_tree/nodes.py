@@ -2180,6 +2180,8 @@ class With(Statement):
             return None
         from sugar_lift_py_tests.context_manager_contract import (
             NeverSuppressesDispositionV1,
+            ProtocolResourceSemanticsV1,
+            TotalCompletionV1,
         )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
@@ -2199,13 +2201,13 @@ class With(Statement):
             )
         semantics = resolution.semantics
         admitted = (
-            semantics.kind == "context-manager-semantics"
+            isinstance(semantics, ProtocolResourceSemanticsV1)
             and semantics.schema_version == "1"
-            and semantics.enter.completion == "total"
-            and semantics.enter.projection == "enter_result"
+            and isinstance(semantics.enter.completion, TotalCompletionV1)
+            and semantics.enter.projection == "enter-result"
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
-            and semantics.exit.completion == "total"
+            and isinstance(semantics.exit.completion, TotalCompletionV1)
             and isinstance(
                 semantics.exit.disposition, NeverSuppressesDispositionV1
             )
@@ -2264,8 +2266,17 @@ class With(Statement):
 
         resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
+            from sugar_lift_py_tests.context_manager_contract import ProtocolResourceSemanticsV1
             from sugar_lift_py_tests.kit_rpc import ContextManagerEdgeDtoV1
             from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+
+            if not isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
+                backend_defect(
+                    owner="With._construct_sugar",
+                    observed="narrow resource resolver returned EffectBoundary semantics",
+                    requested="ProtocolResourceSemanticsV1",
+                    fix="route EffectBoundary through its separately implemented Sugar arm",
+                )
 
             manager_slot = item._manager_slot_id()
             enter_slot = (

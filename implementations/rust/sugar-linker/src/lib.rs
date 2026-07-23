@@ -50,7 +50,7 @@ use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
 use sugar_ir_types::{IrFormula, Sort};
 use sugar_proof_envelope::{
     context_manager_contract_from_stored, AnchoredMember, ContextManagerSemanticsV1,
-    ImportSignatureV1, MemberKind, MementoCid, MementoPool, StoredMember,
+    ImportSignatureV2, MemberKind, MementoCid, MementoPool, StoredMember,
 };
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
@@ -1010,22 +1010,19 @@ pub struct ContextManagerContractDemandV1 {
     pub demand_cid: Cid,
     pub use_site: SourceFragmentCoordinateV1,
     pub target_symbol: Option<Symbol>,
-    pub import_signature: ImportSignatureV1,
+    pub import_signature: ImportSignatureV2,
 }
 
 impl ContextManagerContractDemandV1 {
     pub fn new(
         use_site: SourceFragmentCoordinateV1,
         target_symbol: Symbol,
-        import_signature: ImportSignatureV1,
+        import_signature: ImportSignatureV2,
     ) -> Self {
         let preimage = serde_json::json!({
             "useSite": use_site,
             "targetSymbol": target_symbol,
-            "importSignature": {
-                "formals": import_signature.formals,
-                "sorts": import_signature.sorts,
-            },
+            "importSignature": sugar_proof_envelope::import_signature_v2_to_json(&import_signature),
             "expectedKind": "context-manager-contract",
         });
         let demand_cid = Cid::from(jcs_cid(&preimage));
@@ -1039,7 +1036,7 @@ impl ContextManagerContractDemandV1 {
 
     pub fn runtime_selected(
         use_site: SourceFragmentCoordinateV1,
-        import_signature: ImportSignatureV1,
+        import_signature: ImportSignatureV2,
     ) -> Self {
         let preimage = serde_json::json!({
             "useSite": use_site,
@@ -1154,7 +1151,7 @@ pub struct ContextManagerContractRefV1 {
     member_cid: Cid,
     payload_cid: Cid,
     bridge_source_symbol: Symbol,
-    import_signature: ImportSignatureV1,
+    import_signature: ImportSignatureV2,
     semantics: ContextManagerSemanticsV1,
     source_warrant_cids: Vec<Cid>,
 }
@@ -1181,7 +1178,7 @@ impl ContextManagerContractRefV1 {
     pub fn bridge_source_symbol(&self) -> &Symbol {
         &self.bridge_source_symbol
     }
-    pub fn import_signature(&self) -> &ImportSignatureV1 {
+    pub fn import_signature(&self) -> &ImportSignatureV2 {
         &self.import_signature
     }
     pub fn semantics(&self) -> &ContextManagerSemanticsV1 {
@@ -1287,8 +1284,8 @@ impl ResolvedContractRefsV1 {
     }
 }
 
-fn import_signature_to_json(value: &ImportSignatureV1) -> Json {
-    serde_json::json!({"formals": value.formals, "sorts": value.sorts})
+fn import_signature_to_json(value: &ImportSignatureV2) -> Json {
+    sugar_proof_envelope::import_signature_v2_to_json(value)
 }
 
 fn reference_to_json(value: &ContextManagerContractRefV1) -> Json {
@@ -1400,9 +1397,7 @@ pub fn resolve_context_manager_demand(
             )
         }
     };
-    if demand.import_signature.formals != cm.import_signature.formals
-        || demand.import_signature.sorts != cm.import_signature.sorts
-    {
+    if demand.import_signature != cm.import_signature {
         return cm_gap(
             demand,
             ContextManagerResolutionGapKindV1::SignatureMismatch,
@@ -1426,7 +1421,7 @@ pub fn resolve_context_manager_demand(
         "useSite": demand.use_site, "catalogCid": catalog.catalog_cid,
         "memberCid": member_cid, "payloadCid": payload_cid,
         "bridgeSourceSymbol": target_symbol,
-        "importSignature": {"formals": cm.import_signature.formals, "sorts": cm.import_signature.sorts},
+        "importSignature": sugar_proof_envelope::import_signature_v2_to_json(&cm.import_signature),
         "semantics": sugar_proof_envelope::context_manager_semantics_v1_to_json(&cm.semantics),
         "sourceWarrantCids": source_warrant_cids,
     });
@@ -1476,7 +1471,7 @@ pub struct ContextManagerEdgeV1 {
     edge_cid: Cid,
     use_site: SourceFragmentCoordinateV1,
     bridge_source_symbol: Symbol,
-    import_signature: ImportSignatureV1,
+    import_signature: ImportSignatureV2,
     target_contract_cid: Cid,
     payload_cid: Cid,
     demand_cid: Cid,
@@ -1583,7 +1578,7 @@ struct ContextManagerEdgeWireV1 {
     catalog_cid: Cid,
     #[serde(rename = "sourceWarrantCids")]
     source_warrant_cids: Vec<Cid>,
-    semantics: ContextManagerEdgeSemanticsWireV1,
+    semantics: Json,
 }
 
 #[derive(Deserialize)]
@@ -1592,52 +1587,7 @@ struct ContextManagerIdentityWireV1 {
     #[serde(rename = "bridgeSourceSymbol")]
     bridge_source_symbol: Symbol,
     #[serde(rename = "importSignature")]
-    import_signature: ContextManagerImportSignatureWireV1,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerImportSignatureWireV1 {
-    formals: Vec<String>,
-    sorts: Vec<Sort>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerEdgeSemanticsWireV1 {
-    kind: String,
-    #[serde(rename = "schemaVersion")]
-    schema_version: String,
-    enter: ContextManagerEnterWireV1,
-    exit: ContextManagerExitWireV1,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerEnterWireV1 {
-    completion: String,
-    result: ContextManagerEnterResultWireV1,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerEnterResultWireV1 {
-    kind: String,
-    projection: String,
-    sort: Sort,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerExitWireV1 {
-    completion: String,
-    disposition: ContextManagerDispositionWireV1,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerDispositionWireV1 {
-    kind: String,
+    import_signature: ImportSignatureV2,
 }
 
 pub fn decode_context_manager_edge(
@@ -1645,20 +1595,7 @@ pub fn decode_context_manager_edge(
 ) -> Result<ContextManagerEdgeV1, ContextManagerEdgeTransportErrorV1> {
     let wire: ContextManagerEdgeWireV1 = serde_json::from_value(value.clone())
         .map_err(|error| ContextManagerEdgeTransportErrorV1::Malformed(error.to_string()))?;
-    if wire.kind != "context-manager-edge"
-        || wire.schema_version != "1"
-        || wire.semantics.kind != "context-manager-semantics"
-        || wire.semantics.schema_version != "1"
-        || wire.semantics.enter.completion != "total"
-        || wire.semantics.enter.result.kind != "projection"
-        || wire.semantics.enter.result.projection != "enter_result"
-        || wire.semantics.enter.result.sort
-            != (Sort::Primitive {
-                name: "Value".into(),
-            })
-        || wire.semantics.exit.completion != "total"
-        || wire.semantics.exit.disposition.kind != "never-suppresses"
-    {
+    if wire.kind != "context-manager-edge" || wire.schema_version != "1" {
         return Err(ContextManagerEdgeTransportErrorV1::Malformed(
             "unsupported kind, schema, or semantics".into(),
         ));
@@ -1672,30 +1609,37 @@ pub fn decode_context_manager_edge(
             "sourceWarrantCids must be sorted and unique".into(),
         ));
     }
+    let signature = wire.manager_identity.import_signature;
+    let semantics =
+        sugar_proof_envelope::decode_context_manager_semantics_v1(&wire.semantics, &signature)
+            .map_err(ContextManagerEdgeTransportErrorV1::Malformed)?;
+    match &semantics {
+        ContextManagerSemanticsV1::ProtocolResource(resource)
+            if resource.enter.sort
+                == (Sort::Primitive {
+                    name: "Value".into(),
+                })
+                && resource.exit.disposition
+                    == sugar_proof_envelope::ExitDispositionV1::NeverSuppresses => {}
+        ContextManagerSemanticsV1::ProtocolResource(_)
+        | ContextManagerSemanticsV1::EffectBoundary(_) => {
+            return Err(ContextManagerEdgeTransportErrorV1::Malformed(
+                "unsupported context-manager edge semantics".into(),
+            ));
+        }
+    }
     let edge = ContextManagerEdgeV1 {
         edge_cid: wire.edge_cid,
         use_site: wire.use_site,
         bridge_source_symbol: wire.manager_identity.bridge_source_symbol,
-        import_signature: ImportSignatureV1 {
-            formals: wire.manager_identity.import_signature.formals,
-            sorts: wire.manager_identity.import_signature.sorts,
-        },
+        import_signature: signature,
         target_contract_cid: wire.target_contract_cid,
         payload_cid: wire.payload_cid,
         demand_cid: wire.demand_cid,
         resolution_cid: wire.resolution_cid,
         catalog_cid: wire.catalog_cid,
         source_warrant_cids: wire.source_warrant_cids,
-        semantics: ContextManagerSemanticsV1 {
-            enter: sugar_proof_envelope::EnterResultContractV1 {
-                sort: Sort::Primitive {
-                    name: "Value".into(),
-                },
-            },
-            exit: sugar_proof_envelope::ExitContractV1 {
-                disposition: sugar_proof_envelope::ExitDispositionV1::NeverSuppresses,
-            },
-        },
+        semantics,
     };
     if Cid::from(jcs_cid(&edge.preimage())) != edge.edge_cid {
         return Err(ContextManagerEdgeTransportErrorV1::EdgeCidMismatch);

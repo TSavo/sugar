@@ -14,7 +14,7 @@ from .factory_walk_row_dto import (
 )
 from .implication_dto import ImplicationDto
 from .lift_report_payload_dto import LiftReportPayloadDto
-from .context_manager_contract_dto import ContextManagerContractIrV1, ImportSignatureV1
+from .context_manager_contract_dto import ContextManagerContractIrV1, ImportSignatureV2
 from .context_manager_edge_dto import (
     ContextManagerEdgeDtoV1,
     ContextManagerEdgeTransportError,
@@ -63,7 +63,7 @@ __all__ = [
     "ContextManagerContractIrV1",
     "ContextManagerEdgeDtoV1",
     "ContextManagerEdgeTransportError",
-    "ImportSignatureV1",
+    "ImportSignatureV2",
     "PlanAtomDto",
     "RecoveredAuditDto",
     "RecoveredEffectDto",

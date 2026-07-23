@@ -170,7 +170,7 @@ impl<'a> NormalizedBody<'a> {
         for layer in &self.layers {
             if let Some(v) = layer.get(name) {
                 return Some(v);
-            }
+            };
         }
         None
     }
@@ -891,60 +891,145 @@ impl StageReceiptMember {
 pub struct ContextManagerContractMember {
     pub payload_cid: MementoCid,
     pub bridge_source_symbol: String,
-    pub import_signature: ImportSignatureV1,
+    pub import_signature: ImportSignatureV2,
     pub semantics: ContextManagerSemanticsV1,
     pub source_warrants: Vec<String>,
     pub input_cids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImportSignatureV1 {
-    pub formals: Vec<String>,
-    pub sorts: Vec<Sort>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSignatureV2 {
+    pub parameters: Vec<CallParameterV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallParameterV1 {
+    pub name: String,
+    pub sort: Sort,
+    pub passing: ParameterPassingV1,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum ParameterPassingV1 {
+    #[serde(rename = "positional-only")]
+    PositionalOnly,
+    #[serde(rename = "positional-or-keyword")]
+    PositionalOrKeyword,
+    #[serde(rename = "keyword-only")]
+    KeywordOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContextManagerSemanticsV1 {
+pub enum ContextManagerSemanticsV1 {
+    ProtocolResource(ResourceSemanticsV1),
+    EffectBoundary(EffectBoundarySemanticsV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSemanticsV1 {
     pub enter: EnterResultContractV1,
     pub exit: ExitContractV1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TotalCompletionV1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnterResultContractV1 {
+    pub completion: TotalCompletionV1,
     pub sort: Sort,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExitContractV1 {
+    pub completion: TotalCompletionV1,
     pub disposition: ExitDispositionV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitDispositionV1 {
     NeverSuppresses,
+    ReturnTruthiness,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectBoundaryModeV1 {
+    Expects,
+    Suppresses,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectKindV1 {
+    Raise,
+    Warning,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormalArgumentProjectionV1 {
+    pub index: u32,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessagePatternProjectionV1 {
+    None,
+    OptionalFormalArgument { index: u32 },
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectBoundaryBindingV1 {
+    None,
+    ExceptionInfo,
+    WarningObservation,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectBoundarySemanticsV1 {
+    pub mode: EffectBoundaryModeV1,
+    pub effect_kind: EffectKindV1,
+    pub expected_type_operand: FormalArgumentProjectionV1,
+    pub message_pattern_operand: MessagePatternProjectionV1,
+    pub binding: EffectBoundaryBindingV1,
 }
 
 pub fn context_manager_semantics_v1_to_json(value: &ContextManagerSemanticsV1) -> Json {
-    serde_json::json!({
-        "kind": "context-manager-semantics",
-        "schemaVersion": "1",
-        "enter": {
-            "completion": "total",
-            "result": {
-                "kind": "projection",
-                "projection": "enter_result",
-                "sort": value.enter.sort,
+    match value {
+        ContextManagerSemanticsV1::ProtocolResource(value) => serde_json::json!({
+            "kind": "protocol-resource",
+            "schemaVersion": "1",
+            "enter": {
+                "completion": {"kind": "total"},
+                "result": {
+                    "kind": "projection",
+                    "projection": "enter-result",
+                    "sort": value.enter.sort,
+                },
             },
-        },
-        "exit": {
-            "completion": "total",
-            "disposition": {"kind": "never-suppresses"},
-        },
-    })
+            "exit": {
+                "completion": {"kind": "total"},
+                "disposition": {"kind": match value.exit.disposition {
+                    ExitDispositionV1::NeverSuppresses => "never-suppresses",
+                    ExitDispositionV1::ReturnTruthiness => "return-truthiness",
+                }},
+            },
+        }),
+        ContextManagerSemanticsV1::EffectBoundary(value) => serde_json::json!({
+            "kind": "effect-boundary", "schemaVersion": "1",
+            "mode": {"kind": match value.mode { EffectBoundaryModeV1::Expects => "expects", EffectBoundaryModeV1::Suppresses => "suppresses" }},
+            "matcher": {
+                "effectKind": {"kind": match value.effect_kind { EffectKindV1::Raise => "raise", EffectKindV1::Warning => "warning" }},
+                "expectedTypeOperand": {"kind": "formal-argument", "index": value.expected_type_operand.index},
+                "messagePatternOperand": match value.message_pattern_operand {
+                    MessagePatternProjectionV1::None => serde_json::json!({"kind":"none"}),
+                    MessagePatternProjectionV1::OptionalFormalArgument { index } => serde_json::json!({"kind":"optional-formal-argument", "index":index}),
+                },
+            },
+            "binding": {"kind": match value.binding { EffectBoundaryBindingV1::None => "none", EffectBoundaryBindingV1::ExceptionInfo => "exception-info", EffectBoundaryBindingV1::WarningObservation => "warning-observation" }},
+        }),
+    }
 }
 
-pub fn import_signature_v1_to_json(value: &ImportSignatureV1) -> Json {
-    serde_json::json!({"formals": value.formals, "sorts": value.sorts})
+pub fn import_signature_v2_to_json(value: &ImportSignatureV2) -> Json {
+    serde_json::json!({"parameters": value.parameters})
 }
 
 #[derive(Deserialize)]
@@ -960,7 +1045,7 @@ struct ContextManagerHeader {
     bridge_source_symbol: String,
     #[serde(rename = "importSignature")]
     import_signature: ImportSignatureWire,
-    payload: ContextManagerSemanticsWire,
+    payload: Json,
     #[serde(rename = "sourceWarrants")]
     source_warrants: Vec<String>,
     #[serde(rename = "inputCids")]
@@ -970,41 +1055,244 @@ struct ContextManagerHeader {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ImportSignatureWire {
-    formals: Vec<String>,
-    sorts: Vec<Sort>,
+    parameters: Vec<CallParameterV1>,
 }
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerSemanticsWire {
-    kind: String,
-    #[serde(rename = "schemaVersion")]
-    schema_version: String,
-    enter: EnterContractWire,
-    exit: ExitContractWire,
+fn exact_object<'a>(
+    value: &'a Json,
+    keys: &[&str],
+    owner: &str,
+) -> Result<&'a serde_json::Map<String, Json>, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{owner} must be an object"))?;
+    let actual = object
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected = keys
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if actual != expected {
+        return Err(format!("malformed {owner}: exact fields required"));
+    }
+    Ok(object)
 }
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct EnterContractWire {
-    completion: String,
-    result: EnterResultWire,
+
+fn closed_tag(value: &Json, allowed: &[&str], owner: &str) -> Result<String, String> {
+    let object = exact_object(value, &["kind"], owner)?;
+    let kind = object["kind"]
+        .as_str()
+        .ok_or_else(|| format!("{owner} kind must be a string"))?;
+    if !allowed.contains(&kind) {
+        return Err(format!("unknown {owner}: {kind}"));
+    }
+    Ok(kind.to_string())
 }
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct EnterResultWire {
-    kind: String,
-    projection: String,
-    sort: Sort,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExitContractWire {
-    completion: String,
-    disposition: ExitDispositionWire,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExitDispositionWire {
-    kind: String,
+
+pub fn decode_context_manager_semantics_v1(
+    value: &Json,
+    signature: &ImportSignatureV2,
+) -> Result<ContextManagerSemanticsV1, String> {
+    let root = value
+        .as_object()
+        .ok_or_else(|| "context-manager semantics must be an object".to_string())?;
+    match root.get("kind").and_then(Json::as_str) {
+        Some("protocol-resource") => {
+            let root = exact_object(
+                value,
+                &["kind", "schemaVersion", "enter", "exit"],
+                "protocol-resource semantics",
+            )?;
+            if root["schemaVersion"] != "1" {
+                return Err("unknown protocol-resource schema".into());
+            }
+            let enter = exact_object(
+                &root["enter"],
+                &["completion", "result"],
+                "protocol-resource enter",
+            )?;
+            closed_tag(&enter["completion"], &["total"], "enter completion")?;
+            let result = exact_object(
+                &enter["result"],
+                &["kind", "projection", "sort"],
+                "enter result",
+            )?;
+            if result["kind"] != "projection" || result["projection"] != "enter-result" {
+                return Err("unknown enter projection".into());
+            }
+            let sort: Sort = serde_json::from_value(result["sort"].clone())
+                .map_err(|e| format!("malformed enter sort: {e}"))?;
+            let exit = exact_object(
+                &root["exit"],
+                &["completion", "disposition"],
+                "protocol-resource exit",
+            )?;
+            closed_tag(&exit["completion"], &["total"], "exit completion")?;
+            let disposition = match closed_tag(
+                &exit["disposition"],
+                &["never-suppresses", "return-truthiness"],
+                "exit disposition",
+            )?
+            .as_str()
+            {
+                "never-suppresses" => ExitDispositionV1::NeverSuppresses,
+                "return-truthiness" => ExitDispositionV1::ReturnTruthiness,
+                unexpected => return Err(format!("unknown exit disposition: {unexpected}")),
+            };
+            Ok(ContextManagerSemanticsV1::ProtocolResource(
+                ResourceSemanticsV1 {
+                    enter: EnterResultContractV1 {
+                        completion: TotalCompletionV1,
+                        sort,
+                    },
+                    exit: ExitContractV1 {
+                        completion: TotalCompletionV1,
+                        disposition,
+                    },
+                },
+            ))
+        }
+        Some("effect-boundary") => {
+            let root = exact_object(
+                value,
+                &["kind", "schemaVersion", "mode", "matcher", "binding"],
+                "effect-boundary semantics",
+            )?;
+            if root["schemaVersion"] != "1" {
+                return Err("unknown effect-boundary schema".into());
+            }
+            let mode = match closed_tag(
+                &root["mode"],
+                &["expects", "suppresses"],
+                "effect-boundary mode",
+            )?
+            .as_str()
+            {
+                "expects" => EffectBoundaryModeV1::Expects,
+                "suppresses" => EffectBoundaryModeV1::Suppresses,
+                other => return Err(format!("unknown effect-boundary mode: {other}")),
+            };
+            let binding = match closed_tag(
+                &root["binding"],
+                &["none", "exception-info", "warning-observation"],
+                "effect-boundary binding",
+            )?
+            .as_str()
+            {
+                "none" => EffectBoundaryBindingV1::None,
+                "exception-info" => EffectBoundaryBindingV1::ExceptionInfo,
+                "warning-observation" => EffectBoundaryBindingV1::WarningObservation,
+                other => return Err(format!("unknown effect-boundary binding: {other}")),
+            };
+            let matcher = exact_object(
+                &root["matcher"],
+                &["effectKind", "expectedTypeOperand", "messagePatternOperand"],
+                "effect-boundary matcher",
+            )?;
+            let effect_kind =
+                match closed_tag(&matcher["effectKind"], &["raise", "warning"], "effect kind")?
+                    .as_str()
+                {
+                    "raise" => EffectKindV1::Raise,
+                    "warning" => EffectKindV1::Warning,
+                    other => return Err(format!("unknown effect kind: {other}")),
+                };
+            let expected = exact_object(
+                &matcher["expectedTypeOperand"],
+                &["kind", "index"],
+                "expected type operand",
+            )?;
+            let expected_index = expected["index"]
+                .as_u64()
+                .filter(|v| *v <= u32::MAX as u64)
+                .ok_or_else(|| "formal argument index must be a nonnegative u32".to_string())?
+                as usize;
+            if expected["kind"] != "formal-argument" {
+                return Err("expected type operand must be a formal argument".into());
+            }
+            let expected_parameter = signature
+                .parameters
+                .get(expected_index)
+                .ok_or_else(|| "expected-type selector is outside ImportSignatureV2".to_string())?;
+            if !expected_parameter.required
+                || expected_parameter.sort
+                    != (Sort::Primitive {
+                        name: "Value".into(),
+                    })
+            {
+                return Err("expected-type selector requires a required Value formal".into());
+            }
+            let message = matcher["messagePatternOperand"]
+                .as_object()
+                .ok_or_else(|| "message pattern operand must be an object".to_string())?;
+            let message_pattern_operand = match message.get("kind").and_then(Json::as_str) {
+                Some("none") => {
+                    exact_object(
+                        &matcher["messagePatternOperand"],
+                        &["kind"],
+                        "message pattern operand",
+                    )?;
+                    MessagePatternProjectionV1::None
+                }
+                Some("optional-formal-argument") => {
+                    let m = exact_object(
+                        &matcher["messagePatternOperand"],
+                        &["kind", "index"],
+                        "message pattern operand",
+                    )?;
+                    let index = m["index"]
+                        .as_u64()
+                        .filter(|v| *v <= u32::MAX as u64)
+                        .ok_or_else(|| {
+                            "optional formal argument index must be a nonnegative u32".to_string()
+                        })? as usize;
+                    if index == expected_index {
+                        return Err("effect-boundary selectors must be distinct".into());
+                    }
+                    let parameter = signature.parameters.get(index).ok_or_else(|| {
+                        "message selector is outside ImportSignatureV2".to_string()
+                    })?;
+                    if parameter.required
+                        || !matches!(
+                            parameter.passing,
+                            ParameterPassingV1::PositionalOrKeyword
+                                | ParameterPassingV1::KeywordOnly
+                        )
+                        || parameter.sort
+                            != (Sort::Primitive {
+                                name: "String".into(),
+                            })
+                    {
+                        return Err(
+                            "message selector requires an optional keyword-bindable String formal"
+                                .into(),
+                        );
+                    }
+                    MessagePatternProjectionV1::OptionalFormalArgument {
+                        index: index as u32,
+                    }
+                }
+                Some(other) => return Err(format!("unknown message pattern operand: {other}")),
+                None => return Err("message pattern operand kind must be a string".into()),
+            };
+            Ok(ContextManagerSemanticsV1::EffectBoundary(
+                EffectBoundarySemanticsV1 {
+                    mode,
+                    effect_kind,
+                    expected_type_operand: FormalArgumentProjectionV1 {
+                        index: expected_index as u32,
+                    },
+                    message_pattern_operand,
+                    binding,
+                },
+            ))
+        }
+        Some(other) => Err(format!(
+            "unknown context-manager semantics variant: {other}"
+        )),
+        None => Err("context-manager semantics kind must be a string".into()),
+    }
 }
 
 impl ContextManagerContractMember {
@@ -1045,29 +1333,22 @@ impl ContextManagerContractMember {
                 "bridgeSourceSymbol must be non-empty".into(),
             ));
         }
-        if header.import_signature.formals.len() != header.import_signature.sorts.len() {
-            return Err(MemberError::InvalidContextManagerContract(
-                "import signature formals/sorts length mismatch".into(),
-            ));
-        }
-        if header.payload.kind != "context-manager-semantics"
-            || header.payload.schema_version != "1"
-            || header.payload.enter.completion != "total"
-            || header.payload.enter.result.kind != "projection"
-            || header.payload.enter.result.projection != "enter_result"
+        let signature = ImportSignatureV2 {
+            parameters: header.import_signature.parameters,
+        };
+        let mut names = std::collections::BTreeSet::new();
+        if signature
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name.is_empty() || !names.insert(parameter.name.clone()))
         {
             return Err(MemberError::InvalidContextManagerContract(
-                "unsupported context-manager semantics or enter testimony".into(),
+                "ImportSignatureV2 parameter names must be nonempty and unique".into(),
             ));
         }
-        if header.payload.exit.completion != "total"
-            || header.payload.exit.disposition.kind != "never-suppresses"
-        {
-            return Err(MemberError::InvalidContextManagerContract(
-                "unknown exit disposition or non-total exit testimony".into(),
-            ));
-        }
-        let payload = serde_json::to_value(&header.payload).expect("typed payload serializes");
+        let semantics = decode_context_manager_semantics_v1(&header.payload, &signature)
+            .map_err(|detail| MemberError::InvalidContextManagerContract(detail))?;
+        let payload = header.payload.clone();
         let derived = blake3_512_of(
             encode_jcs(&crate::proof_graph::json_to_canonical_value(&payload)).as_bytes(),
         );
@@ -1102,18 +1383,8 @@ impl ContextManagerContractMember {
         Ok(Self {
             payload_cid,
             bridge_source_symbol: header.bridge_source_symbol,
-            import_signature: ImportSignatureV1 {
-                formals: header.import_signature.formals,
-                sorts: header.import_signature.sorts,
-            },
-            semantics: ContextManagerSemanticsV1 {
-                enter: EnterResultContractV1 {
-                    sort: header.payload.enter.result.sort,
-                },
-                exit: ExitContractV1 {
-                    disposition: ExitDispositionV1::NeverSuppresses,
-                },
-            },
+            import_signature: signature,
+            semantics,
             source_warrants: header.source_warrants,
             input_cids: header.input_cids,
         })

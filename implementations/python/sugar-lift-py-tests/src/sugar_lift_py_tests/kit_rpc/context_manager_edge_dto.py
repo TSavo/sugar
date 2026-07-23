@@ -7,12 +7,15 @@ import json
 from typing import Any
 
 from sugar_lift_py_tests.context_manager_contract import (
+    ImportSignatureV2,
     NeverSuppressesDispositionV1,
+    ProtocolResourceSemanticsV1,
+    TotalCompletionV1,
+    import_signature_to_value,
     semantics_to_value,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
-    ImportSignatureV1,
     SourceFragmentCoordinateV1,
     _hash_json,
 )
@@ -29,23 +32,20 @@ def _json(value) -> Any:
     return json.loads(encode_jcs(value))
 
 
-def _signature_wire(signature: ImportSignatureV1) -> dict[str, Any]:
-    return {
-        "formals": list(signature.formals),
-        "sorts": [_json(sort_to_value(sort)) for sort in signature.sorts],
-    }
+def _signature_wire(signature: ImportSignatureV2) -> dict[str, Any]:
+    return _json(import_signature_to_value(signature))
 
 
 def _admitted(reference: ContextManagerContractRefV1) -> bool:
     semantics = reference.semantics
     return (
-        semantics.kind == "context-manager-semantics"
+        isinstance(semantics, ProtocolResourceSemanticsV1)
         and semantics.schema_version == "1"
-        and semantics.enter.completion == "total"
-        and semantics.enter.projection == "enter_result"
+        and isinstance(semantics.enter.completion, TotalCompletionV1)
+        and semantics.enter.projection == "enter-result"
         and isinstance(semantics.enter.sort, PrimitiveSort)
         and semantics.enter.sort.name == "Value"
-        and semantics.exit.completion == "total"
+        and isinstance(semantics.exit.completion, TotalCompletionV1)
         and isinstance(semantics.exit.disposition, NeverSuppressesDispositionV1)
     )
 
@@ -55,7 +55,7 @@ class ContextManagerEdgeDtoV1:
     edge_cid: str
     use_site: SourceFragmentCoordinateV1
     bridge_source_symbol: str
-    import_signature: ImportSignatureV1
+    import_signature: ImportSignatureV2
     target_contract_cid: str
     payload_cid: str
     demand_cid: str

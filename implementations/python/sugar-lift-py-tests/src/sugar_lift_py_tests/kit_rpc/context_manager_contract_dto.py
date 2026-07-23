@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from sugar_lift_py_tests.context_manager_contract import (
@@ -9,25 +9,18 @@ from sugar_lift_py_tests.context_manager_contract import (
     EnterResultContractV1,
     ExitContractV1,
     NeverSuppressesDispositionV1,
+    ProtocolResourceSemanticsV1,
+    ImportSignatureV2,
+    import_signature_to_value,
     semantics_to_value,
 )
-from sugar_lift_py_tests.ir import Sort, sort_to_value
-
-
-@dataclass(frozen=True)
-class ImportSignatureV1:
-    formals: tuple[str, ...]
-    sorts: tuple[Sort, ...]
-
-    def __post_init__(self) -> None:
-        if len(self.formals) != len(self.sorts):
-            raise ValueError("import signature formals/sorts length mismatch")
+from sugar_lift_py_tests.ir import Sort
 
 
 @dataclass(frozen=True)
 class ContextManagerContractIrV1:
     bridge_source_symbol: str
-    import_signature: ImportSignatureV1
+    import_signature: ImportSignatureV2
     payload: ContextManagerSemanticsV1
     source_warrants: tuple[str, ...]
     kind: str = "context-manager-contract"
@@ -35,13 +28,13 @@ class ContextManagerContractIrV1:
 
     @classmethod
     def never_suppresses(
-        cls, *, bridge_source_symbol: str, import_signature: ImportSignatureV1,
+        cls, *, bridge_source_symbol: str, import_signature: ImportSignatureV2,
         enter_result_sort: Sort, source_warrants: tuple[str, ...],
     ) -> "ContextManagerContractIrV1":
         return cls(
             bridge_source_symbol=bridge_source_symbol,
             import_signature=import_signature,
-            payload=ContextManagerSemanticsV1(
+            payload=ProtocolResourceSemanticsV1(
                 enter=EnterResultContractV1(sort=enter_result_sort),
                 exit=ExitContractV1(disposition=NeverSuppressesDispositionV1()),
             ),
@@ -57,10 +50,7 @@ class ContextManagerContractIrV1:
             "kind": self.kind,
             "schemaVersion": self.schema_version,
             "bridgeSourceSymbol": self.bridge_source_symbol,
-            "importSignature": {
-                "formals": list(self.import_signature.formals),
-                "sorts": [json.loads(_encode(sort_to_value(v))) for v in self.import_signature.sorts],
-            },
+            "importSignature": json.loads(_encode(import_signature_to_value(self.import_signature))),
             "payload": json.loads(_encode(semantics_to_value(self.payload))),
             "sourceWarrants": list(self.source_warrants),
         }

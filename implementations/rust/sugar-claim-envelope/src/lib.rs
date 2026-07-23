@@ -37,8 +37,8 @@ use serde_json::Value as JsonValue;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value};
 use sugar_proof_envelope::{
     context_manager_semantics_v1_to_json, ed25519_pubkey_string, ed25519_sign_string,
-    import_signature_v1_to_json, AuthorityMementoRef, ContextManagerSemanticsV1,
-    ContractMementoRef, Ed25519Seed, ImportSignatureV1,
+    import_signature_v2_to_json, AuthorityMementoRef, ContextManagerSemanticsV1,
+    ContractMementoRef, Ed25519Seed, ImportSignatureV2,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -111,7 +111,7 @@ pub enum KitContractDeclarationV1 {
         #[serde(rename = "bridgeSourceSymbol")]
         bridge_source_symbol: String,
         #[serde(rename = "importSignature")]
-        import_signature: KitImportSignatureV1,
+        import_signature: sugar_proof_envelope::ImportSignatureV2,
         payload: KitContextManagerSemanticsV1,
         #[serde(rename = "sourceWarrants")]
         source_warrants: Vec<String>,
@@ -119,24 +119,79 @@ pub enum KitContractDeclarationV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KitImportSignatureV1 {
-    pub formals: Vec<String>,
-    pub sorts: Vec<sugar_ir_types::Sort>,
+#[serde(tag = "kind")]
+pub enum KitContextManagerSemanticsV1 {
+    #[serde(rename = "protocol-resource")]
+    ProtocolResource {
+        #[serde(rename = "schemaVersion")]
+        schema_version: String,
+        enter: KitTotalEnterV1,
+        exit: KitTotalExitV1,
+    },
+    #[serde(rename = "effect-boundary")]
+    EffectBoundary {
+        #[serde(rename = "schemaVersion")]
+        schema_version: String,
+        mode: KitEffectBoundaryModeV1,
+        matcher: KitEffectMatcherV1,
+        binding: KitEffectBoundaryBindingV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KitContextManagerSemanticsV1 {
-    pub kind: KitContextManagerSemanticsKindV1,
-    #[serde(rename = "schemaVersion")]
-    pub schema_version: String,
-    pub enter: KitTotalEnterV1,
-    pub exit: KitTotalExitV1,
+#[serde(deny_unknown_fields)]
+pub struct KitEffectMatcherV1 {
+    #[serde(rename = "effectKind")]
+    pub effect_kind: KitEffectKindV1,
+    #[serde(rename = "expectedTypeOperand")]
+    pub expected_type_operand: KitFormalArgumentV1,
+    #[serde(rename = "messagePatternOperand")]
+    pub message_pattern_operand: KitMessagePatternOperandV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KitContextManagerSemanticsKindV1 {
-    #[serde(rename = "context-manager-semantics")]
-    ContextManagerSemantics,
+#[serde(tag = "kind")]
+pub enum KitEffectBoundaryModeV1 {
+    #[serde(rename = "expects")]
+    Expects,
+    #[serde(rename = "suppresses")]
+    Suppresses,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum KitEffectKindV1 {
+    #[serde(rename = "raise")]
+    Raise,
+    #[serde(rename = "warning")]
+    Warning,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum KitEffectBoundaryBindingV1 {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "exception-info")]
+    ExceptionInfo,
+    #[serde(rename = "warning-observation")]
+    WarningObservation,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitFormalArgumentV1 {
+    pub kind: KitFormalArgumentKindV1,
+    pub index: u32,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KitFormalArgumentKindV1 {
+    #[serde(rename = "formal-argument")]
+    FormalArgument,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum KitMessagePatternOperandV1 {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "optional-formal-argument")]
+    OptionalFormalArgument { index: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,7 +215,7 @@ pub enum KitProjectionKindV1 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KitEnterProjectionV1 {
-    #[serde(rename = "enter_result")]
+    #[serde(rename = "enter-result")]
     EnterResult,
 }
 
@@ -171,6 +226,7 @@ pub struct KitTotalExitV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
 pub enum KitTotalCompletionV1 {
     #[serde(rename = "total")]
     Total,
@@ -181,6 +237,8 @@ pub enum KitTotalCompletionV1 {
 pub enum KitExitDispositionV1 {
     #[serde(rename = "never-suppresses")]
     NeverSuppresses,
+    #[serde(rename = "return-truthiness")]
+    ReturnTruthiness,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -502,7 +560,7 @@ fn authoring_to_value(a: &Authoring) -> Arc<Value> {
 
 pub struct MintContextManagerContractArgs {
     pub bridge_source_symbol: String,
-    pub import_signature: ImportSignatureV1,
+    pub import_signature: ImportSignatureV2,
     pub semantics: ContextManagerSemanticsV1,
     pub source_warrants: Vec<String>,
     pub produced_by: String,
@@ -519,16 +577,11 @@ pub fn mint_context_manager_contract(
             "context-manager-contract bridgeSourceSymbol must not be empty".into(),
         ));
     }
-    if args.import_signature.formals.len() != args.import_signature.sorts.len() {
-        return Err(ClaimEnvelopeError::Other(
-            "context-manager-contract import signature length mismatch".into(),
-        ));
-    }
     let payload_json = context_manager_semantics_v1_to_json(&args.semantics);
     let payload = json_to_value(&payload_json)
         .map_err(|e| ClaimEnvelopeError::Other(format!("CM payload canonicalization: {e}")))?;
     let payload_cid = hash_value(&payload);
-    let import_signature = json_to_value(&import_signature_v1_to_json(&args.import_signature))
+    let import_signature = json_to_value(&import_signature_v2_to_json(&args.import_signature))
         .map_err(|e| ClaimEnvelopeError::Other(format!("CM signature canonicalization: {e}")))?;
     let mut input_cids = args.source_warrants.clone();
     input_cids.sort();
