@@ -286,6 +286,48 @@ print(encode_jcs(declarations_to_value([ContractDecl("A", post=post)])))
     serde_json::from_slice(&output.stdout).expect("parse complete Python ProofIR document")
 }
 
+fn python_bare_attribute_annotation_document() -> Document {
+    let repo = crate_root()
+        .ancestors()
+        .nth(3)
+        .expect("sugar-ir-types lives below the repository root");
+    let python_path = [
+        repo.join("implementations/python/sugar-source-tree/src"),
+        repo.join("implementations/python/sugar-lift-py-tests/src"),
+        repo.join("implementations/python/sugar-lift-python-source/src"),
+    ]
+    .iter()
+    .map(|path| path.display().to_string())
+    .collect::<Vec<_>>()
+    .join(":");
+    let script = r#"
+import tempfile
+from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.ir import ContractDecl, atomic, declarations_to_value, encode_jcs, make_var
+from sugar_source_tree.tree import SourceFile
+with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as source:
+    source.write("def record_shape(receiver):\n    receiver.payload: MissingType\n    return receiver\n")
+    path = source.name
+function = next(SourceFile(path_source(path)).functions())
+term = function.sugar().desugar().value.post().args[1]
+post = atomic("=", [make_var("out"), term])
+print(encode_jcs(declarations_to_value([ContractDecl("record_shape", post=post)])))
+"#;
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .env("PYTHONPATH", python_path)
+        .current_dir(repo)
+        .output()
+        .expect("run Python bare attribute annotation construction");
+    assert!(
+        output.status.success(),
+        "Python construction failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("parse complete Python ProofIR document")
+}
+
 fn document_post_term(document: Document) -> Term {
     let Declaration::Contract {
         post: Some(Formula::Atomic { mut args, .. }),
@@ -305,6 +347,18 @@ fn free_vars(term: Term) -> std::collections::BTreeSet<String> {
     };
     let open = OpenFormula::from_ir_formula_with_sorts(formula, BTreeMap::new());
     open.free_vars()
+}
+
+#[test]
+fn python_bare_attribute_annotation_receiver_survives_rust_membership() {
+    let term = document_post_term(python_bare_attribute_annotation_document());
+    assert_eq!(
+        term,
+        Term::Var {
+            name: "receiver".into()
+        }
+    );
+    assert_eq!(free_vars(term), ["receiver".to_string()].into());
 }
 
 #[test]
