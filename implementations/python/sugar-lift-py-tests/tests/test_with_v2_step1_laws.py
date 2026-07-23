@@ -2,6 +2,7 @@
 from pathlib import Path
 import ast
 import pytest
+from sugar_lift_py_tests.construction_context import ConstructionContextV1
 
 ROOT = Path(__file__).parents[1] / "src" / "sugar_lift_py_tests"
 AUTH = ROOT / "with_manager_authority.py"
@@ -35,3 +36,12 @@ def test_no_consumer_enrollment_law_is_red_and_detects_renamed_manifest_provenan
     assert not _consumer_manifest_refs()
     planted = "def bind():\n    renamed_manifest = default_community_manifest()\n    return renamed_manifest.row_for_spelling('x')\n"
     assert any(name in planted for name in ("default_community_manifest", "row_for_spelling"))
+
+def test_construction_context_generation_is_workspace_scoped():
+    """Law 10 scaffold: a context cannot be rebound across generations."""
+    class Refs:
+        table_cid = "blake3-512:a"
+    class Authorities:
+        table_cid = "blake3-512:b"
+    with pytest.raises(ValueError, match="generation mismatch"):
+        ConstructionContextV1.bind(Refs(), Authorities())
