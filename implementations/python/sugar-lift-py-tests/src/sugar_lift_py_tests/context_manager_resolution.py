@@ -95,6 +95,16 @@ ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolut
 
 
 @dataclass(frozen=True)
+class SourceDerivedContextManagerRefV1:
+    """Live protocol testimony plus its immutable h=h(p) summary coordinate."""
+
+    use_site: SourceFragmentCoordinateV1
+    summary_cid: str
+    semantics: ContextManagerSemanticsV1
+    protocol: object = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
 class ResolvedContractRefsV1:
     catalog_cid: str
     table_cid: str
@@ -143,6 +153,7 @@ class TreeConstructionContextV1:
     workspace_root: str | None = None
     # Mutable frame table held by reference; the context object itself is frozen.
     source_call_frames: dict = field(default_factory=dict)
+    source_derived_contract_refs: dict = field(default_factory=dict)
 
     @classmethod
     def for_source_call_construction(
