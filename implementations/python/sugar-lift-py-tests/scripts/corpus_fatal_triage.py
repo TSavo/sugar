@@ -14,19 +14,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from sugar_lift_py_tests.idd.construction_panic_fronts import (
-    fingerprint_from_gap,
-    rank_construction_panic_fronts,
-)
-from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (
-    project_unclassified_loci,
-    shape_split_unclassified,
-)
-
 PACKAGES = ("numpy", "pandas")
 DEFAULT_FILE_TIMEOUT_SECONDS = 30
-# Cap retained loci in --compact parent reports; full emission stays default.
-COMPACT_LOCUS_LIMIT = 200
 TRANSPORT_MARKERS = (
     "closed stdout",
     "transport",
@@ -71,45 +60,12 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
 
         configure_live_log()
     try:
-        from sugar_lift_py_tests.audit_only import collect_construction_panic
-        from sugar_lift_py_tests.effect import effect_reason, effect_status
-        from sugar_lift_py_tests.lift_rpc import lift_file_payload
-        from sugar_lift_py_tests.kit_manifest import (
-            load_kit_manifest_from_env,
-        )
-
-        # #5907: load a declared kit/bridge contract into THIS process before
-        # lift, so a real corpus row can authenticate under it. With no
-        # SUGAR_KIT_MANIFEST set, this loads nothing — protocol tables stay
-        # empty by construction and rows stay loud (the law, not a bug).
-        kit_provenance = load_kit_manifest_from_env()
-        try:
-            source = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            source = path.read_text(encoding="utf-8", errors="replace")
+        from _production_lift_child import production_lift_testimony
         if progress:
-            with reduction_span(sugar="lift_file_payload", role="file", site=rel):
-                payload, panic_gap = collect_construction_panic(
-                    rel,
-                    lambda: lift_file_payload(source, rel),
-                )
+            with reduction_span(sugar="production_lift", role="file", site=rel):
+                terminal = production_lift_testimony(path, rel)
         else:
-            payload, panic_gap = collect_construction_panic(
-                rel,
-                lambda: lift_file_payload(source, rel),
-            )
-        if panic_gap is not None:
-            return {
-                "outcome": "factory-panic",
-                "file": rel,
-                "exception_type": "ConstructionPanic",
-                "reason": panic_gap.message.splitlines()[-1][:1000],
-                "gap": panic_gap.info,
-                "kit_manifest": (
-                    kit_provenance.to_json() if kit_provenance is not None else None
-                ),
-            }, 3
-        assert payload is not None
+            terminal = production_lift_testimony(path, rel)
     except KeyboardInterrupt:
         raise
     except Exception as error:
@@ -120,31 +76,7 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
             "reason": (str(error).splitlines() or [repr(error)])[-1][:1000],
         }
         return terminal, 3
-    # Row-addressable unclassified evidence (#5252): completed files dump
-    # every unclassified walk locus so next recensus is shape-split capable.
-    unclassified_rows = project_unclassified_loci(payload.factory_walk)
-    return {
-        "outcome": "completed",
-        "file": rel,
-        "facts": len(payload.ir),
-        "factory_walk_rows": len(payload.factory_walk),
-        "R_factory_walk_unclassified": len(unclassified_rows),
-        "unclassified_rows": unclassified_rows,
-        # #5907: which kit manifest (if any) was loaded into this child
-        # process before lift — provenance, not silent ambient state.
-        "kit_manifest": (
-            kit_provenance.to_json() if kit_provenance is not None else None
-        ),
-        "effects": [
-            {
-                "effect": type(row.effect).__name__,
-                "name": row.name,
-                "status": effect_status(row.effect),
-                "reason": effect_reason(row.effect),
-            }
-            for row in payload.effects
-        ],
-    }, 0
+    return terminal, 0
 
 
 def _run_child(args: argparse.Namespace) -> int:
@@ -200,10 +132,10 @@ def _classify_child(
     testimony = _parse_child_stdout(result.stdout)
     if testimony is not None and testimony.get("outcome") == "completed":
         return {"file": rel, "category": "completed", "testimony": testimony}
-    if testimony is not None and testimony.get("outcome") == "factory-panic":
+    if testimony is not None and testimony.get("outcome") == "typed-gap":
         return {
             "file": rel,
-            "category": "factory-construction-panic",
+            "category": "typed-gap",
             "testimony": testimony,
         }
     reason = ""
@@ -222,11 +154,8 @@ def _classify_child(
     }
 
 
-def _factory_fingerprint(row: dict[str, Any]) -> tuple[str, ...]:
-    """Exact-front identity; shared with live isolation ranking."""
-    testimony = row.get("testimony") or {}
-    gap = testimony.get("gap") or {}
-    return fingerprint_from_gap(gap if isinstance(gap, dict) else {})
+def _is_fatal_category(category: str) -> bool:
+    return category not in {"completed", "typed-gap"}
 
 
 def _run_parent(args: argparse.Namespace) -> int:
@@ -248,12 +177,8 @@ def _run_parent(args: argparse.Namespace) -> int:
     terminal_rows: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
     representatives: dict[str, list[str]] = defaultdict(list)
-    construction_panic_rows: list[dict[str, Any]] = []
-    effect_occurrence_counts: Counter[str] = Counter()
-    effect_file_counts: Counter[str] = Counter()
-    effect_examples: dict[str, list[str]] = defaultdict(list)
-    effect_reason_examples: dict[str, list[str]] = defaultdict(list)
-    factory_walk_unclassified_rows: list[dict[str, Any]] = []
+    typed_gap_classes: Counter[str] = Counter()
+    typed_gap_owners: Counter[str] = Counter()
     script = Path(__file__).resolve()
 
     for index, (package, root, path) in enumerate(paths, start=1):
@@ -266,11 +191,9 @@ def _run_parent(args: argparse.Namespace) -> int:
         assertion_count = sum(isinstance(node, ast.Assert) for node in ast.walk(tree))
         assertion_counts["files_total"] += 1
         assertion_counts["assertions_total"] += assertion_count
-        if assertion_count == 0:
-            assertion_counts["files_without_assertions"] += 1
-            floor_rows.append({"file": rel, "category": "completed-no-assertions"})
-            continue
-        assertion_counts["files_with_assertions"] += 1
+        assertion_counts[
+            "files_with_assertions" if assertion_count else "files_without_assertions"
+        ] += 1
         command = [
             sys.executable,
             str(script),
@@ -281,11 +204,6 @@ def _run_parent(args: argparse.Namespace) -> int:
         ]
         env = dict(os.environ)
         env["PYTHONFAULTHANDLER"] = "1"
-        if args.kit_manifest:
-            # #5907: propagate the declared kit manifest to the child process
-            # that actually mints this file. Absolute path so the child's cwd
-            # cannot silently change which contract loads.
-            env["SUGAR_KIT_MANIFEST"] = str(Path(args.kit_manifest).resolve())
         try:
             result = subprocess.run(
                 command,
@@ -314,104 +232,31 @@ def _run_parent(args: argparse.Namespace) -> int:
         categories[category] += 1
         if len(representatives[category]) < 10:
             representatives[category].append(rel)
-        if category != "completed":
+        if _is_fatal_category(category):
             terminal_rows.append(row)
-        if category == "factory-construction-panic":
-            fingerprint = _factory_fingerprint(row)
+        if category == "typed-gap":
             testimony = row.get("testimony") or {}
-            gap = testimony.get("gap") if isinstance(testimony, dict) else {}
-            construction_panic_rows.append(
-                {
-                    "file": rel,
-                    "owner": fingerprint[0] or "unknown",
-                    "gap": gap if isinstance(gap, dict) else {},
-                    "fingerprint": list(fingerprint),
-                }
-            )
-        if category == "completed":
-            testimony = row.get("testimony") or {}
-            effects = testimony.get("effects") or []
-            seen_effects: set[str] = set()
-            for effect in effects:
-                effect_class = str(effect.get("effect") or "")
-                if not effect_class:
+            for typed in testimony.get("typed_gaps") or []:
+                if not isinstance(typed, dict):
                     continue
-                effect_occurrence_counts[effect_class] += 1
-                reason = str(effect.get("reason") or "")
-                if (
-                    reason
-                    and reason not in effect_reason_examples[effect_class]
-                    and len(effect_reason_examples[effect_class]) < 5
-                ):
-                    effect_reason_examples[effect_class].append(reason)
-                seen_effects.add(effect_class)
-            for effect_class in seen_effects:
-                effect_file_counts[effect_class] += 1
-                if len(effect_examples[effect_class]) < 5:
-                    effect_examples[effect_class].append(rel)
-            # Collect row-addressable unclassified loci from completed files.
-            loci = testimony.get("unclassified_rows") or []
-            if isinstance(loci, list):
-                for locus in loci:
-                    if isinstance(locus, dict):
-                        factory_walk_unclassified_rows.append(locus)
+                typed_gap_classes[str(typed.get("exception_type") or "unknown")] += 1
+                gap = typed.get("gap") or {}
+                if isinstance(gap, dict):
+                    typed_gap_owners[str(gap.get("owner") or "unknown")] += 1
         if index % 25 == 0:
             print(f"triaged {index}/{len(paths)} files", file=sys.stderr)
 
-    ranking = rank_construction_panic_fronts(construction_panic_rows)
-    factory_fronts = ranking["exact_fronts"]
-    owner_families = ranking["owner_families"]
-    completed_effect_fronts = [
-        {
-            "effect": effect_class,
-            "file_count": effect_file_counts[effect_class],
-            "occurrence_count": occurrence_count,
-            "representative_files": effect_examples[effect_class],
-            "reason_examples": effect_reason_examples[effect_class],
-        }
-        for effect_class, occurrence_count in sorted(
-            effect_occurrence_counts.items(), key=lambda item: (-item[1], item[0])
-        )
-    ]
-    r_unclassified = len(factory_walk_unclassified_rows)
-    shape_split = shape_split_unclassified(factory_walk_unclassified_rows)
-    retained_loci = factory_walk_unclassified_rows
-    if args.compact and len(retained_loci) > COMPACT_LOCUS_LIMIT:
-        retained_loci = retained_loci[:COMPACT_LOCUS_LIMIT]
     report: dict[str, Any] = {
         "package_versions": versions,
-        # #5907: which kit manifest (path only — the child recomputes and
-        # records its own sha256) governed this run. null means every child
-        # minted with no contract: empty-by-construction, rows stay loud.
-        "kit_manifest": (
-            str(Path(args.kit_manifest).resolve()) if args.kit_manifest else None
-        ),
         "shard": {"index": args.shard_index, "count": args.shard_count},
         "census": dict(sorted(assertion_counts.items())),
         "terminal_categories": dict(sorted(categories.items())),
         "category_representatives": dict(sorted(representatives.items())),
-        "construction_panic_front_count": len(factory_fronts),
-        "construction_panic_fronts": (
-            factory_fronts[: args.front_limit] if args.compact else factory_fronts
+        "R_live_construction_panic_files": 0,
+        "typed_gap_classes": dict(sorted(typed_gap_classes.items())),
+        "typed_gap_owners": dict(
+            sorted(typed_gap_owners.items(), key=lambda item: (-item[1], item[0]))
         ),
-        # Structured owner ranking — same payload live isolation emits so
-        # fatal recensus (#4775) can merge isolation + triage without re-parsing.
-        "R_live_construction_panic_files": ranking["R_live_construction_panic_files"],
-        "owner_family_count": ranking["owner_family_count"],
-        "owner_families": (
-            owner_families[: args.front_limit] if args.compact else owner_families
-        ),
-        "owners": ranking["owners"],
-        "completed_effect_front_count": len(completed_effect_fronts),
-        "completed_effect_fronts": completed_effect_fronts,
-        # Permanent baseline-free floor + row-addressable evidence (#5252).
-        # Conserves: R == len(factory_walk_unclassified_rows) == statuses map.
-        "R_factory_walk_unclassified": r_unclassified,
-        "factory_walk_statuses": {
-            "unclassified": r_unclassified,
-        },
-        "factory_walk_unclassified_shape_split": shape_split,
-        "factory_walk_unclassified_rows": retained_loci,
     }
     from pandas_floor_summary import floor_summary
 
@@ -420,7 +265,7 @@ def _run_parent(args: argparse.Namespace) -> int:
         for package, root, path in paths
     )
     fatal_r = sum(
-        count for category, count in categories.items() if category != "completed"
+        count for category, count in categories.items() if _is_fatal_category(category)
     )
     report["floorSummary"] = floor_summary(
         floor="fatal-triage",
@@ -430,9 +275,6 @@ def _run_parent(args: argparse.Namespace) -> int:
         measured=len(floor_rows) == len(all_files),
         unmeasurable_reasons=(),
     )
-    if args.compact and r_unclassified > COMPACT_LOCUS_LIMIT:
-        report["factory_walk_unclassified_rows_truncated"] = True
-        report["factory_walk_unclassified_rows_retained"] = COMPACT_LOCUS_LIMIT
     if not args.compact:
         report["terminal_rows"] = terminal_rows
     rendered = json.dumps(report, indent=2)
@@ -457,15 +299,6 @@ def main() -> int:
     parser.add_argument("--output")
     parser.add_argument("--child-file")
     parser.add_argument("--child-rel")
-    parser.add_argument(
-        "--kit-manifest",
-        help=(
-            "Path to a kit/bridge contract manifest (#5907) whose declared "
-            "coordinates load into every mint child process before lift. "
-            "Omit to mint with no contract — the empty-by-construction "
-            "default; rows without a matching recognizer stay loud."
-        ),
-    )
     args = parser.parse_args()
     if args.child_file or args.child_rel:
         if not args.child_file or not args.child_rel:

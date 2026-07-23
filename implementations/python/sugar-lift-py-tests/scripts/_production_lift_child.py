@@ -34,6 +34,73 @@ OUTCOME_COMPLETED = "completed"
 OUTCOME_TYPED_GAP = "typed-gap"
 
 
+def _source_tree_gap_row(error) -> dict[str, object]:
+    return {
+        "exception_type": type(error).__name__,
+        "gap": {
+            "owner": error.owner,
+            "observed": error.observed,
+            "requested": error.requested,
+            "fix": error.fix,
+        },
+    }
+
+
+def _construction_panic_row(error) -> dict[str, object]:
+    return {
+        "exception_type": type(error).__name__,
+        "gap": error.info.to_json(),
+    }
+
+
+def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
+    """Construct once and return closed terminal testimony for every scanner."""
+    from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from _production_source_file import (
+        corpus_root_from_relative,
+        production_source_file,
+    )
+
+    gaps: list[dict[str, object]] = []
+    reporter = CollectingReporter()
+    try:
+        sf = production_source_file(
+            path,
+            root=corpus_root_from_relative(path, rel),
+            reporter=reporter,
+        )
+    except SugarNotWritten as error:
+        gaps.append(_source_tree_gap_row(error))
+        sf = None
+    except ConstructionPanic as error:
+        gaps.append(_construction_panic_row(error))
+        sf = None
+    if sf is None:
+        return {
+            "kind": _TERMINAL_KIND,
+            "outcome": OUTCOME_TYPED_GAP,
+            "file": rel,
+            "typed_gap_count": len(gaps),
+            "typed_gaps": gaps,
+        }
+    for fn in sf.functions():
+        try:
+            fn.sugar()
+        except SugarNotWritten as error:
+            gaps.append(_source_tree_gap_row(error))
+        except ConstructionPanic as error:
+            gaps.append(_construction_panic_row(error))
+    return {
+        "kind": _TERMINAL_KIND,
+        "outcome": OUTCOME_TYPED_GAP if gaps else OUTCOME_COMPLETED,
+        "file": rel,
+        "typed_gap_count": len(gaps),
+        "typed_gaps": gaps,
+    }
+
+
 def production_lift_bootstrap_error() -> str | None:
     """Import the production construction door once. Returns an error string if
     the scanner infrastructure itself cannot bootstrap (so the parent reports it
@@ -57,31 +124,7 @@ def run_production_lift_child(path: Path, rel: str) -> int:
     (intentional) but does not stop scanning the rest. Any other exception is
     left to propagate -- that is the bare-exception signal.
     """
-    from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.panic import SugarNotWritten
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from _production_source_file import (
-        corpus_root_from_relative,
-        production_source_file,
-    )
-
-    reporter = CollectingReporter()
-    sf = production_source_file(
-        path,
-        root=corpus_root_from_relative(path, rel),
-        reporter=reporter,
-    )
-    typed_gap = False
-    for fn in sf.functions():
-        try:
-            fn.sugar()  # ONE construction; nested gaps self-report
-        except (SugarNotWritten, ConstructionPanic):
-            typed_gap = True  # sanctioned typed loud gap -- keep scanning
-    outcome = OUTCOME_TYPED_GAP if typed_gap else OUTCOME_COMPLETED
-    print(
-        json.dumps({"kind": _TERMINAL_KIND, "outcome": outcome, "file": rel}),
-        flush=True,
-    )
+    print(json.dumps(production_lift_testimony(path, rel)), flush=True)
     return 0
 
 

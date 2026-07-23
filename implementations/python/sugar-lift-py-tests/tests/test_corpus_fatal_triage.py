@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import json
+import subprocess
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from corpus_fatal_triage import _child_payload  # noqa: E402
+import corpus_fatal_triage  # noqa: E402
+from corpus_fatal_triage import (  # noqa: E402
+    _child_payload,
+    _classify_child,
+    _is_fatal_category,
+)
 from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (  # noqa: E402
     LOCUS_FIELD_NAMES,
     locus_is_addressable,
@@ -15,7 +22,7 @@ from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (  # noqa: E
 )
 
 
-def test_construction_panic_routes_through_audit_membrane_as_loud_child_row(
+def test_unwritten_construction_is_counted_typed_gap_not_fatal_crash(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "unsupported.py"
@@ -23,44 +30,108 @@ def test_construction_panic_routes_through_audit_membrane_as_loud_child_row(
 
     testimony, returncode = _child_payload(source, "demo/unsupported.py")
 
-    assert returncode == 3
-    assert testimony["outcome"] == "factory-panic"
-    assert testimony["exception_type"] == "ConstructionPanic"
+    assert returncode == 0
+    assert testimony["outcome"] == "typed-gap"
     assert testimony["file"] == "demo/unsupported.py"
-    assert testimony["gap"]["owner"] == "python.factory"
-    assert testimony["gap"]["observed"] == "TypeAlias"
+    assert testimony["typed_gap_count"] == 1
+    typed = testimony["typed_gaps"][0]
+    assert typed["exception_type"] == "SugarNotWritten"
+    assert typed["gap"]["owner"] == "TypeAlias.sugar"
+    assert "TypeAlias" in typed["gap"]["observed"]
 
 
-def test_completed_child_preserves_typed_effect_testimony() -> None:
-    import pandas
+def test_renamed_unwritten_manager_is_counted_typed_gap_not_bare_exception(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "renamed.py"
+    source.write_text(
+        "class ArbitraryDoor:\n"
+        "    pass\n"
+        "def exercise():\n"
+        "    with ArbitraryDoor():\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
 
-    root = Path(pandas.__file__).resolve().parent
-    relative = "tests/arrays/masked/test_arithmetic.py"
-    testimony, returncode = _child_payload(root / relative, f"pandas/{relative}")
+    testimony, returncode = _child_payload(source, "demo/renamed.py")
+
+    assert returncode == 0
+    assert testimony["outcome"] == "typed-gap"
+    assert testimony["typed_gap_count"] == 1
+    typed = testimony["typed_gaps"][0]
+    assert typed["exception_type"] == "ContextManagerResolutionConstructionGap"
+    assert typed["gap"]["owner"] == "With._construct_sugar"
+
+
+def test_typed_gap_child_testimony_classifies_nonfatal() -> None:
+    result = subprocess.CompletedProcess(
+        args=["child"],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "outcome": "typed-gap",
+                "file": "demo/renamed.py",
+                "exception_type": "SugarNotWritten",
+                "gap": {"owner": "ArbitraryNode"},
+            }
+        ),
+        stderr="",
+    )
+
+    row = _classify_child(
+        rel="demo/renamed.py",
+        result=result,
+        timed_out=False,
+        timeout_seconds=30,
+    )
+
+    assert row["category"] == "typed-gap"
+    assert not _is_fatal_category(row["category"])
+
+
+def test_genuine_python_bug_remains_bare_exception(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "bug.py"
+    source.write_text("def exercise():\n    return 1\n", encoding="utf-8")
+
+    def broken_lift(*_args, **_kwargs):
+        raise RuntimeError("planted construction bug")
+
+    import _production_lift_child as production_child
+
+    monkeypatch.setattr(production_child, "production_lift_testimony", broken_lift)
+    testimony, returncode = corpus_fatal_triage._child_payload(
+        source, "demo/bug.py"
+    )
+
+    assert returncode == 3
+    assert testimony["outcome"] == "exception"
+    assert testimony["exception_type"] == "RuntimeError"
+    result = subprocess.CompletedProcess(
+        args=["child"],
+        returncode=returncode,
+        stdout=json.dumps(testimony),
+        stderr="",
+    )
+    row = _classify_child(
+        rel="demo/bug.py",
+        result=result,
+        timed_out=False,
+        timeout_seconds=30,
+    )
+    assert row["category"] == "bare-exception"
+
+
+def test_completed_child_uses_the_same_production_terminal_shape(tmp_path: Path) -> None:
+    source = tmp_path / "clean.py"
+    source.write_text("def identity(value):\n    return value\n", encoding="utf-8")
+    testimony, returncode = _child_payload(source, "demo/clean.py")
 
     assert returncode == 0
     assert testimony["outcome"] == "completed"
-    effects = testimony["effects"]
-    assert effects
-    assert all(
-        set(effect) == {"effect", "name", "status", "reason"} for effect in effects
-    )
-    assert any(
-        effect["effect"] == "SequenceRepetitionRuntimeEffect"
-        and effect["status"] == "runtime-effect"
-        and "runtime __index__/length semantics" in effect["reason"]
-        for effect in effects
-    )
-    # Completed testimony always carries the #5252 locus list key (may be empty).
-    assert "unclassified_rows" in testimony
-    assert "R_factory_walk_unclassified" in testimony
-    assert testimony["R_factory_walk_unclassified"] == len(
-        testimony["unclassified_rows"]
-    )
-    for locus in testimony["unclassified_rows"]:
-        assert set(LOCUS_FIELD_NAMES) <= set(locus)
-        assert locus["status"] == "unclassified"
-        assert isinstance(locus["line"], int)
+    assert testimony["typed_gap_count"] == 0
+    assert testimony["typed_gaps"] == []
 
 
 def test_project_unclassified_locus_schema() -> None:
@@ -83,6 +154,7 @@ def test_project_unclassified_locus_schema() -> None:
         "reason": "source-to-factory conservation owner disappeared",
         "file": "numpy/core/numeric.py",
         "line": 12,
+        "resolution_kind": "",
     }
     assert locus_is_addressable(locus)
 
