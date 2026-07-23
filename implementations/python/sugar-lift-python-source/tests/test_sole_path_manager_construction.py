@@ -455,6 +455,38 @@ def test_renamed_resource_derives_never_suppresses_from_constructed_protocol(tmp
     assert summary.summary_cid.startswith("blake3-512:")
 
 
+def test_renamed_multistatement_implicit_none_exit_derives_never_suppresses(
+    tmp_path,
+):
+    fixture = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
+        / "arbitrary_manager_module.py"
+    )
+    graph, resolved, _actual, call_site = _resolved(
+        tmp_path,
+        fixture.read_text(encoding="utf-8"),
+        exported="implicit_none_resource",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="implicit-none-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+        ProtocolResourceSemanticsV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(summary.semantics.exit.disposition, NeverSuppressesDispositionV1)
+
+
 def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
     fixture = (
         Path(__file__).parents[2]

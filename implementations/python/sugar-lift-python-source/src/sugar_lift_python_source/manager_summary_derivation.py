@@ -105,12 +105,23 @@ def derive_manager_summary(
 
 
 def _exact_never_suppresses(value: object) -> bool:
+    from sugar_lift_py_tests.floor import GuardedReturn
+    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
         FalseBoolLiteralSugar,
     )
     from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
 
     if isinstance(value, BlockValue):
+        if value.can_fall_through and not any(
+            isinstance(entry, (ReturnValue, GuardedReturn, Incomplete))
+            for entry in value.statements
+        ):
+            # A source-visible Python function that reaches the end returns
+            # exact None.  The completed block is ordinary construction
+            # testimony; rejecting embedded return/effect faces prevents a
+            # fall-through face from speaking for a different guarded result.
+            return True
         if not value.statements or not isinstance(value.statements[-1], ReturnValue):
             return False
         value = value.statements[-1].value
