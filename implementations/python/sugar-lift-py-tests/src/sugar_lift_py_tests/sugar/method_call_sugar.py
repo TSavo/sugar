@@ -67,6 +67,25 @@ class MethodCallSugar(Sugar):
                     receiver, tuple(rest), kw_values + ((name, value),), positional, ctx
                 )
             )
+        from sugar_lift_py_tests.floor import ObjectValue
+
+        if isinstance(receiver, ObjectValue):
+            if kw_values:
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="MethodCallSugar._collect_kwargs",
+                    observed="source-visible object method called with keywords",
+                    requested="keyword binding through its SourceVisibleCallFrameV1",
+                    fix="extend the sole method call frame binder; never drop keywords",
+                )
+            return receiver.call_method_value(
+                self.name,
+                positional,
+                owner="MethodCallSugar",
+                blame=self.site,
+                ctx=ctx,
+            )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
