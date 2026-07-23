@@ -161,37 +161,39 @@ def decode_object_coordinate_v1(raw: object) -> ObjectCoordinateV1:
 @dataclass(frozen=True)
 class AttributeFieldCoordinateV1:
     object_coordinate: ObjectCoordinateV1
-    selector_occurrence: dict[str, Any]
-    generation: int
+    attribute_name: str
     cid: str
 
     @property
     def preimage(self) -> dict[str, Any]:
         return {"kind": "attribute-field-coordinate", "schemaVersion": "1",
                 "objectCoordinate": self.object_coordinate.wire(),
-                "selectorOccurrence": self.selector_occurrence, "generation": self.generation}
+                "attributeName": self.attribute_name}
 
     def wire(self) -> dict[str, Any]:
         return {**self.preimage, "fieldCoordinateCid": self.cid}
 
     @classmethod
-    def mint(cls, owner: ObjectCoordinateV1, selector_occurrence: SourceFragment, *, generation: int) -> "AttributeFieldCoordinateV1":
+    def mint(cls, owner: ObjectCoordinateV1, attribute_name: str) -> "AttributeFieldCoordinateV1":
         decode_object_coordinate_v1(owner.wire())
+        if not isinstance(attribute_name, str) or not attribute_name.isidentifier():
+            raise BindingProvenanceGap("attributeName must be one Python identifier")
         preimage = {"kind": "attribute-field-coordinate", "schemaVersion": "1", "objectCoordinate": owner.wire(),
-                    "selectorOccurrence": selector_occurrence.seal().to_dict(), "generation": _generation(generation)}
-        return cls(owner, preimage["selectorOccurrence"], generation, cid_of_json(preimage))
+                    "attributeName": attribute_name}
+        return cls(owner, attribute_name, cid_of_json(preimage))
 
     @classmethod
     def decode(cls, raw: object) -> "AttributeFieldCoordinateV1":
-        raw = _exact(raw, {"kind", "schemaVersion", "objectCoordinate", "selectorOccurrence", "generation", "fieldCoordinateCid"}, cls.__name__)
+        raw = _exact(raw, {"kind", "schemaVersion", "objectCoordinate", "attributeName", "fieldCoordinateCid"}, cls.__name__)
         if raw["kind"] != "attribute-field-coordinate" or raw["schemaVersion"] != "1":
             raise BindingProvenanceGap("unsupported AttributeFieldCoordinateV1")
         owner = decode_object_coordinate_v1(raw["objectCoordinate"])
-        selector = _memento(raw["selectorOccurrence"], "selectorOccurrence")
-        generation = _generation(raw["generation"])
+        attribute_name = raw["attributeName"]
+        if not isinstance(attribute_name, str) or not attribute_name.isidentifier():
+            raise BindingProvenanceGap("malformed attributeName")
         preimage = {key: value for key, value in raw.items() if key != "fieldCoordinateCid"}
         cid = _checked(preimage, raw["fieldCoordinateCid"], "field coordinate CID")
-        return cls(owner, selector, generation, cid)
+        return cls(owner, attribute_name, cid)
 
 
 @dataclass(frozen=True)

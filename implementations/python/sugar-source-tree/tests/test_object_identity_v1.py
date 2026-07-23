@@ -60,7 +60,7 @@ def test_opaque_result_proves_only_occurrence_identity_and_aliasing():
 def test_attribute_versions_are_immutable_prior_linked_and_closed():
     site, _ = _calls()
     owner = _source(site)
-    field = AttributeFieldCoordinateV1.mint(owner, site, generation=0)
+    field = AttributeFieldCoordinateV1.mint(owner, "payload")
     first = AttributeFieldVersionV1.mint(
         owner=owner,
         field=field,

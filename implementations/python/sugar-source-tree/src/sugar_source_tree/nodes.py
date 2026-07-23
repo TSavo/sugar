@@ -32,7 +32,7 @@ carries the rewritten shape, then memoized like any other ref.
 from __future__ import annotations
 
 import symtable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -153,6 +153,8 @@ class SourceUnit:
     typed_module: object = field(init=False, default=None)
     # Field-data memo for materialize (see construction_cache.py).
     construction_cache: object = field(init=False, default=None)
+    module_direct_bindings: object = field(init=False, default=None)
+    function_nodes: Tuple[object, ...] = field(init=False, default=())
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -170,10 +172,30 @@ class SourceUnit:
         )
         object.__setattr__(self, "typed_module", None)
         object.__setattr__(self, "construction_cache", None)
+        object.__setattr__(self, "module_direct_bindings", None)
+        object.__setattr__(self, "function_nodes", ())
 
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
         object.__setattr__(self, "typed_module", module)
+        bindings = {}
+        for statement in module.body:
+            for name in self._module_statement_bound_names(statement):
+                bindings.setdefault(name, []).append(statement)
+        object.__setattr__(
+            self,
+            "module_direct_bindings",
+            {name: tuple(items) for name, items in bindings.items()},
+        )
+        object.__setattr__(
+            self,
+            "function_nodes",
+            tuple(
+                node
+                for node in module.walk()
+                if isinstance(node, (FunctionDef, AsyncFunctionDef))
+            ),
+        )
 
     def loop_target_coordinate_for_loop(self, owner: "Node"):
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -253,6 +275,128 @@ class SourceUnit:
             ):
                 return True
         return False
+
+    def source_allocation_definition_for_call(self, call: "Call") -> "ClassDef | None":
+        """Resolve one source allocation definition at an exact call use-site.
+
+        Spelling is only the lexical lookup key.  Authority is the unique typed
+        module binding plus the use-site's CPython scope classification. A
+        local/free/nonlocal shadow or competing module binding keeps the
+        allocation definition unauthenticated. Behavior is checked separately;
+        it never participates in identity admission.
+        """
+        if not isinstance(call.func, Name):
+            return None
+        # A directly materialized Call/Assign still owns its ordinary sugar.
+        # Absence of the SourceFile-bound module means only that class identity
+        # cannot be authenticated here; it must not revoke the existing call
+        # construction path.
+        module = self.typed_module
+        if module is None:
+            return None
+        span = call.line_col_span()
+        containing = []
+        for candidate in self.function_nodes:
+            owner_span = candidate.line_col_span()
+            if (
+                (owner_span.start_line, owner_span.start_col)
+                <= (span.start_line, span.start_col)
+                <= (owner_span.end_line, owner_span.end_col)
+            ):
+                containing.append(candidate)
+        if containing:
+            owner = max(
+                containing, key=lambda item: item.line_col_span().start_line
+            )
+            table = self.function_symtable(
+                owner.name, owner.line_col_span().start_line
+            )
+            try:
+                symbol = table.lookup(call.func.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_parameter()
+                or symbol.is_local()
+                or symbol.is_free()
+                or symbol.is_nonlocal()
+            ):
+                return None
+
+        bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
+        if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+            return None
+        return bindings[0]
+
+    @staticmethod
+    def source_class_has_plain_attribute_behavior(definition: "ClassDef") -> bool:
+        """Whether ordinary attribute storage/lookup is source-constructed."""
+        forbidden_methods = {
+            "__new__",
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+            "__getitem__",
+            "__setitem__",
+            "__delitem__",
+        }
+        return not (
+            definition.bases
+            or definition.keywords
+            or definition.decorators
+            or definition.type_params
+            or any(
+                not isinstance(member, (Pass, FunctionDef))
+                for member in definition.body
+            )
+            or any(
+                isinstance(member, FunctionDef)
+                and (member.name in forbidden_methods or member.decorators)
+                for member in definition.body
+            )
+        )
+
+    def construction_generation(self, node: "Node") -> int:
+        """The deterministic occurrence ordinal in this construction graph."""
+        module = self._require_typed_module("SourceUnit.construction_generation")
+        occurrences = tuple(candidate for candidate in module.walk() if isinstance(candidate, Call))
+        matches = tuple(
+            generation
+            for generation, candidate in enumerate(occurrences)
+            if candidate.fragment == node.fragment
+        )
+        if len(matches) == 1:
+            return matches[0]
+        raise SourceTreePanic(
+            owner="SourceUnit.construction_generation",
+            observed="call occurrence absent from the bound typed module",
+            requested="the exact call occurrence in the sole construction graph",
+            fix="mint object identity only from a SourceFile-enumerated Call",
+        )
+
+    @staticmethod
+    def _module_statement_bound_names(statement: "Node") -> set[str]:
+        if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            return {statement.name}
+        if isinstance(statement, (Assign, AnnAssign, AugAssign)):
+            targets = (
+                statement.targets
+                if isinstance(statement, Assign)
+                else (statement.target,)
+            )
+            return {
+                node.id
+                for target in targets
+                for node in target.walk()
+                if isinstance(node, Name)
+            }
+        if statement.kind in ("Import", "ImportFrom"):
+            return {
+                alias.asname or alias.name.split(".", 1)[0]
+                for alias in statement.names
+            }
+        return set()
 
     def exception_type_identity(self, node: "Name"):
         """Return the authenticated exception-class coordinate reaching ``node``.
@@ -667,6 +811,41 @@ class Node(Typed):
         so its value is already rewritten against the scope that stood before it."""
         return None
 
+    def refine_binding_entries(
+        self, binding: BindingMap, scope: BindingMap
+    ) -> BindingMap:
+        """Refine freshly minted entries without creating another binding map."""
+        del scope
+        return binding
+
+    def post_binding_statement(self, binding: BindingMap) -> "Node":
+        """Project a store's post-version into its substituted target."""
+        del binding
+        return self
+
+    def post_binding_scope(self, scope: BindingMap) -> BindingMap:
+        """Apply statement-owned invalidations to the one temporal map."""
+        exposed = {
+            state.object_identity_cid
+            for call in self.walk()
+            if isinstance(call, Call)
+            for state in call.exposed_object_places()
+        }
+        if not exposed:
+            return scope
+        replacements = {}
+        for name, entry in scope.items():
+            if (
+                isinstance(name, str)
+                and isinstance(entry, BindingEntryV1)
+                and isinstance(entry.state, ObjectPlaceStateV1)
+                and entry.state.object_identity_cid in exposed
+            ):
+                replacements[name] = replace(
+                    entry, state=entry.state.invalidate(self.fragment)
+                )
+        return {**scope, **replacements}
+
     def _make_binop(self, left: "Node", op, right: "Node") -> "Node":
         """Construct a fresh BinOp node ``<left> <op> <right>`` as a shadow that
         borrows this node's span (so it still addresses this source site). Used
@@ -893,6 +1072,12 @@ class Node(Typed):
                 binding = produced_stmt.substitution_binding(scope)
                 if binding:
                     binding = produced_stmt._binding_entries(binding, scope)
+                    binding = produced_stmt.refine_binding_entries(binding, scope)
+                    post_binding = produced_stmt.post_binding_statement(binding)
+                    if post_binding is not produced_stmt:
+                        produced_stmt = post_binding
+                        new_items[-1] = produced_stmt
+                        changed = True
                     scope = {**scope, **binding}
                 # walrus bindings nested in the statement's expressions leak out
                 # to the enclosing block (their scope is the containing function).
@@ -902,6 +1087,7 @@ class Node(Typed):
                         if wb:
                             wb = node._binding_entries(wb, scope)
                             scope = {**scope, **wb}
+                scope = produced_stmt.post_binding_scope(scope)
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
                 projected = stmt._binding_entries(new_stmt.bindings, scope)
                 scope = {**scope, **projected}
@@ -2160,7 +2346,9 @@ class Assign(Statement):
 
         new_value, changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if changed else {}
-        if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
+        if len(self.targets) == 1 and isinstance(
+            self.targets[0], (Attribute, Subscript)
+        ):
             target = self.targets[0]
             receiver, receiver_changed = self._substitute_field(target.value, scope)
             if receiver_changed:
@@ -2274,12 +2462,199 @@ class Assign(Statement):
             target = self.targets[0]
             if isinstance(target, Name):
                 return {target.id: self.value}
+            if isinstance(target, Attribute) and isinstance(
+                target.value, ObjectPlaceStateV1
+            ):
+                updated = target.value.with_attribute_store(
+                    target.attr, self.value, self.fragment
+                )
+                if updated is None:
+                    return None
+                return {
+                    name: replace(entry, state=updated)
+                    for name, entry in scope.items()
+                    if isinstance(name, str)
+                    and isinstance(entry, BindingEntryV1)
+                    and isinstance(entry.state, ObjectPlaceStateV1)
+                    and entry.state.object_identity_cid
+                    == target.value.object_identity_cid
+                }
             return self._destructured_binding()
         if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             # Store targets do not bind lexical names, but they also do not
             # erase the Name targets in the same left-to-right assignment.
             return {t.id: self.value for t in self.targets if isinstance(t, Name)}
         return None
+
+    def refine_binding_entries(self, binding, scope):
+        del scope
+        if len(self.targets) != 1 or not isinstance(self.targets[0], Name):
+            return binding
+        entry = binding.get(self.targets[0].id)
+        if not isinstance(entry, BindingEntryV1):
+            return binding
+        if isinstance(entry.state, ObjectPlaceStateV1):
+            return {
+                **binding,
+                self.targets[0].id: replace(
+                    entry.with_testimony(entry.state.construction_testimony),
+                    state=entry.state,
+                ),
+            }
+        if isinstance(entry.state, OpaqueObjectStateV1):
+            return binding
+        state = self._object_place_state(entry)
+        if state is None:
+            return binding
+        if isinstance(state, OpaqueObjectStateV1):
+            return {**binding, self.targets[0].id: replace(entry, state=state)}
+        return {
+            **binding,
+            self.targets[0].id: replace(
+                entry.with_testimony(state.construction_testimony), state=state
+            ),
+        }
+
+    def _object_place_state(self, entry: BindingEntryV1):
+        del entry
+        if not isinstance(self.value, Call):
+            return None
+        definition = self.unit.source_allocation_definition_for_call(self.value)
+        if definition is None:
+            from .backend import Child, Leaf, materialize
+            from .object_identity import OpaqueObjectCoordinateV1
+            from .shadow import ShadowNode, _handle_of
+
+            coordinate = OpaqueObjectCoordinateV1.mint(
+                call_occurrence=self.value.fragment,
+                construction_generation=self.unit.construction_generation(self.value),
+                source_cid=self.unit.source_cid,
+                artifact_cid=self.unit.source_cid,
+            )
+            return materialize(
+                self.unit,
+                ShadowNode(
+                    "OpaqueObjectStateV1",
+                    self.targets[0].span,
+                    (
+                        ("object_coordinate", Leaf(coordinate)),
+                        ("base", Child(_handle_of(self.value))),
+                    ),
+                ),
+                self.reporter,
+            )
+        if not self.unit.source_class_has_plain_attribute_behavior(definition):
+            return None
+        constructed = self._constructed_floor_value(self.value)
+        if constructed is None:
+            return None
+        floor_value, testimony = constructed
+        from sugar_lift_py_tests.floor import ObjectValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        if not isinstance(floor_value, ObjectValue):
+            return None
+        class_outcome = definition.sugar().desugar()
+        if not isinstance(class_outcome, Complete):
+            return None
+        class_definition_cid = class_outcome.value.class_definition_cid
+        from .object_identity import SourceObjectCoordinateV1
+
+        object_coordinate = SourceObjectCoordinateV1.mint(
+            allocation_definition=definition.fragment,
+            call_occurrence=self.value.fragment,
+            construction_generation=self.unit.construction_generation(self.value),
+            source_cid=self.unit.source_cid,
+            artifact_cid=self.unit.source_cid,
+        )
+        from .backend import Child, Children, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "ObjectPlaceStateV1",
+                self.targets[0].span,
+                (
+                    ("object_coordinate", Leaf(object_coordinate)),
+                    ("class_definition_cid", Leaf(class_definition_cid)),
+                    ("construction_testimony", Leaf(testimony)),
+                    ("constructed_value", Leaf(floor_value)),
+                    ("object_identity_cid", Leaf(object_coordinate.cid)),
+                    ("base", Child(_handle_of(self.value))),
+                    ("selectors", Leaf(())),
+                    ("values", Children(())),
+                    ("value_testimonies", Leaf(())),
+                    ("version_cids", Leaf(())),
+                    ("version_records", Leaf(())),
+                    ("prior_version_cids", Leaf(())),
+                    ("store_occurrence_cids", Leaf(())),
+                    ("invalidated_by_opaque_call", Leaf(False)),
+                ),
+            ),
+            self.reporter,
+        )
+
+    @staticmethod
+    def _constructed_floor_value(value):
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.ir import _term_content_cid
+        from sugar_lift_py_tests.outcome import Complete
+        from .binding_provenance import ConstructedValueTestimonyV1
+
+        outcome = value.sugar().desugar()
+        if not isinstance(outcome, Complete):
+            return None
+        constructed = outcome.value
+        if isinstance(constructed, CallSiteValue):
+            constructed = constructed.force_floor(
+                None,
+                owner="Assign._constructed_floor_value",
+                project_callsite=False,
+            )
+        term = constructed.to_term(owner="Assign._constructed_floor_value")
+        testimony = ConstructedValueTestimonyV1.mint(
+            value.fragment, _term_content_cid(term)
+        )
+        return constructed, testimony
+
+    def post_binding_statement(self, binding):
+        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
+            entry = binding.get(self.targets[0].id)
+            if isinstance(entry, BindingEntryV1) and isinstance(
+                entry.state, ObjectPlaceStateV1
+            ):
+                from .shadow import rewrite
+
+                return rewrite(self, value=entry.state)
+        if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
+            return self
+        prior = self.targets[0].value
+        if not isinstance(prior, ObjectPlaceStateV1):
+            return self
+        updated = next(
+            (
+                entry.state
+                for entry in binding.values()
+                if isinstance(entry, BindingEntryV1)
+                and isinstance(entry.state, ObjectPlaceStateV1)
+                and entry.state.object_identity_cid == prior.object_identity_cid
+            ),
+            None,
+        )
+        if updated is None:
+            return self
+        from .shadow import rewrite
+
+        target = self.targets[0]
+        projected = updated.attribute_field(target.attr)
+        if projected is None:
+            return self
+        return rewrite(
+            self,
+            targets=(rewrite(target, value=updated),),
+            value=projected,
+        )
 
     def _construct_sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
@@ -2364,6 +2739,18 @@ class Assign(Statement):
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
+            if isinstance(self.targets[0].value, ObjectPlaceStateV1):
+                from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                    PlaceAssignSugar,
+                )
+
+                return PlaceAssignSugar(
+                    receiver=self.targets[0].value.sugar(),
+                    selector_kind="attribute",
+                    selector=self.targets[0].attr,
+                    value=self.value.sugar(),
+                    site=self.fragment,
+                )
             if isinstance(
                 self.targets[0].value,
                 (BindingCoordinateRef, ConstructedReceiverRef),
@@ -2390,6 +2777,8 @@ class Assign(Statement):
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
+            if isinstance(self.targets[0].value, ObjectPlaceStateV1):
+                return super()._construct_sugar()
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 SubscriptStoreEffectSugar,
             )
@@ -5250,6 +5639,19 @@ class Call(Expression):
             return func.value
         return None
 
+    def exposed_object_places(self) -> tuple["ObjectPlaceStateV1", ...]:
+        """Object states crossing this call without a frame-condition proof."""
+        roots = list(self.args) + [keyword.value for keyword in self.keywords]
+        receiver = self.receiver()
+        if receiver is not None:
+            roots.append(receiver)
+        seen = {}
+        for root in roots:
+            for node in root.walk():
+                if isinstance(node, ObjectPlaceStateV1):
+                    seen[node.object_identity_cid] = node
+        return tuple(seen.values())
+
     def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
         `<name>(<args>)` -> CallSiteSugar, the call-site coordinate (THE DIG
@@ -5424,6 +5826,10 @@ class Call(Expression):
 
             contract_ref = None
             contract_resolution_gap = None
+            resolution = None
+            from sugar_lift_py_tests.call_contract_resolution import (
+                CallContractResolutionGapV1,
+            )
             call_refs = getattr(context, "call_contract_refs", None)
             if call_refs is not None:
                 from sugar_lift_py_tests.call_contract_resolution import (
@@ -5455,10 +5861,28 @@ class Call(Expression):
                             requested="one typed resolution row for every enrolled imported call",
                             fix="repair call-contract preconstruction; never fall through to an ordinary call",
                         ) from exc
-                if isinstance(resolution, CallContractResolutionGapV1):
-                    contract_resolution_gap = resolution.kind.value
-                elif resolution is not None:
-                    contract_ref = resolution
+            if isinstance(resolution, CallContractResolutionGapV1):
+                contract_resolution_gap = resolution.kind.value
+            elif resolution is not None:
+                contract_ref = resolution
+
+            source_call_frame = None
+            definition = self.unit.source_allocation_definition_for_call(self)
+            if definition is not None:
+                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+                if any(keyword.arg is None for keyword in self.keywords):
+                    raise SourceCallBindingGap(
+                        "spread keyword requires typed variadic projection"
+                    )
+                source_call_frame = definition.source_visible_constructor_frame().bind_node_actuals(
+                    self.args,
+                    tuple(
+                        (keyword.arg, keyword.value)
+                        for keyword in self.keywords
+                        if keyword.arg is not None
+                    ),
+                )
 
             return CallSiteSugar(
                 target_name=self.func.id,
@@ -5467,7 +5891,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
-                source_call_frame=None,
+                source_call_frame=source_call_frame,
             )
         if isinstance(self.func, Attribute):
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -5654,6 +6078,296 @@ class Constant(Expression):
         return super()._construct_sugar()  # every literal kind is now converted
 
 
+class OpaqueObjectStateV1(Expression):
+    """Authenticated opaque call-result identity with no field testimony."""
+
+    object_coordinate: object
+    base: Expression
+    _child_fields = ("base",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+
+class ObjectPlaceStateV1(Expression):
+    """Immutable field versions carried only inside runtime BindingEntryV1.
+
+    This is a constructed Node value, not a binding resolver or heap.  Its sole
+    identity source is the owning entry's BindingCoordinateV1.  If it escapes
+    the attribute store/read projections, its base value constructs normally.
+    """
+
+    object_coordinate: object
+    class_definition_cid: str
+    construction_testimony: object
+    constructed_value: object
+    object_identity_cid: str
+    base: Expression
+    selectors: Tuple[object, ...]
+    values: Tuple[Expression, ...]
+    value_testimonies: Tuple[object, ...]
+    version_cids: Tuple[str, ...]
+    version_records: Tuple[object, ...]
+    prior_version_cids: Tuple[Optional[str], ...]
+    store_occurrence_cids: Tuple[str, ...]
+    invalidated_by_opaque_call: bool
+    _child_fields = ("base", "values")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        self.validate_identity()
+        from sugar_lift_py_tests.sugar.constructed_object_place_sugar import (
+            ConstructedObjectPlaceSugar,
+        )
+
+        return ConstructedObjectPlaceSugar(
+            self.constructed_value,
+            self.construction_testimony,
+            self.fragment,
+        )
+
+    def validate_identity(self) -> None:
+        from .binding_provenance import (
+            BindingProvenanceGap,
+            ConstructedValueTestimonyV1,
+        )
+        from .object_identity import decode_object_coordinate_v1
+
+        coordinate = decode_object_coordinate_v1(self.object_coordinate.wire())
+        ConstructedValueTestimonyV1.decode(self.construction_testimony.wire())
+        from sugar_lift_py_tests.ir import _term_content_cid
+
+        observed = _term_content_cid(
+            self.constructed_value.to_term(owner="ObjectPlaceStateV1")
+        )
+        if observed != self.construction_testimony.semantic_value_cid:
+            raise BindingProvenanceGap("object construction testimony mismatch")
+        if coordinate.cid != self.object_identity_cid:
+            raise BindingProvenanceGap("object place identity CID mismatch")
+
+    def version(self, selector) -> Optional[str]:
+        try:
+            return self.version_cids[self.selectors.index(selector)]
+        except ValueError:
+            return None
+
+    def with_attribute_store(self, name, value, occurrence):
+        from .object_identity import AttributeFieldCoordinateV1
+
+        return self._with_store(AttributeFieldCoordinateV1.mint(self.object_coordinate, name), value, occurrence)
+
+    def _with_store(self, selector, value, occurrence, *, constructed=None):
+        self.validate_identity()
+        constructed = constructed or Assign._constructed_floor_value(value)
+        if constructed is None:
+            return None
+        floor_value, testimony = constructed
+        projected = ConstructedValueProjectionV1.create(
+            value, floor_value, testimony
+        )
+        from .object_identity import AttributeFieldVersionV1
+
+        prior = self.version(selector)
+        version = AttributeFieldVersionV1.mint(
+            owner=self.object_coordinate,
+            field=selector,
+            store_occurrence=occurrence,
+            construction_generation=self.object_coordinate.construction_generation + len(self.version_cids) + 1,
+            stored_value_testimony_cid=testimony.cid,
+            prior_version_cid=prior,
+        )
+        occurrence_memento = occurrence.seal().to_dict()
+        selectors = list(self.selectors)
+        values = list(self.values)
+        testimonies = list(self.value_testimonies)
+        versions = list(self.version_cids)
+        records = list(self.version_records)
+        priors = list(self.prior_version_cids)
+        occurrences = list(self.store_occurrence_cids)
+        if selector in selectors:
+            index = selectors.index(selector)
+            values[index] = projected
+            testimonies[index] = testimony
+            versions[index] = version.cid
+            records[index] = version
+            priors[index] = prior
+            occurrences[index] = occurrence_memento
+        else:
+            selectors.append(selector)
+            values.append(projected)
+            testimonies.append(testimony)
+            versions.append(version.cid)
+            records.append(version)
+            priors.append(prior)
+            occurrences.append(occurrence_memento)
+        return self._replace_state(
+            span=occurrence.node.span,
+            selectors=tuple(selectors),
+            values=tuple(values),
+            value_testimonies=tuple(testimonies),
+            version_cids=tuple(versions),
+            version_records=tuple(records),
+            prior_version_cids=tuple(priors),
+            store_occurrence_cids=tuple(occurrences),
+            invalidated=False,
+        )
+
+    def attribute_field(self, name: str):
+        from .object_identity import AttributeFieldCoordinateV1
+
+        return self.field(AttributeFieldCoordinateV1.mint(self.object_coordinate, name))
+
+    def field(self, selector):
+        self.validate_identity()
+        if self.invalidated_by_opaque_call:
+            return None
+        try:
+            index = self.selectors.index(selector)
+        except ValueError:
+            return None
+        from .binding_provenance import (
+            BindingProvenanceGap,
+            ConstructedValueTestimonyV1,
+        )
+        from .object_identity import AttributeFieldVersionV1
+
+        testimony = self.value_testimonies[index]
+        ConstructedValueTestimonyV1.decode(testimony.wire())
+        projected = self.values[index]
+        if not isinstance(projected, ConstructedValueProjectionV1):
+            raise BindingProvenanceGap("field value lacks constructed projection")
+        projected.validate_testimony()
+        if projected.construction_testimony != testimony:
+            raise BindingProvenanceGap("field value testimony mismatch")
+        version = AttributeFieldVersionV1.decode(self.version_records[index].wire())
+        if (
+            version.cid != self.version_cids[index]
+            or version.owner.cid != self.object_coordinate.cid
+            or version.field != selector
+            or version.stored_value_testimony_cid != testimony.cid
+            or version.prior_version_cid != self.prior_version_cids[index]
+        ):
+            raise BindingProvenanceGap("field version CID mismatch")
+        return projected
+
+    def invalidate(self, occurrence):
+        self.validate_identity()
+        return self._replace_state(
+            span=occurrence.node.span,
+            selectors=self.selectors,
+            values=self.values,
+            value_testimonies=self.value_testimonies,
+            version_cids=self.version_cids,
+            version_records=self.version_records,
+            prior_version_cids=self.prior_version_cids,
+            store_occurrence_cids=self.store_occurrence_cids,
+            invalidated=True,
+        )
+
+    def _replace_state(
+        self,
+        *,
+        span,
+        selectors,
+        values,
+        value_testimonies,
+        version_cids,
+        version_records,
+        prior_version_cids,
+        store_occurrence_cids,
+        invalidated,
+    ):
+        from .backend import Child, Children, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "ObjectPlaceStateV1",
+                span,
+                (
+                    ("object_coordinate", Leaf(self.object_coordinate)),
+                    ("class_definition_cid", Leaf(self.class_definition_cid)),
+                    ("construction_testimony", Leaf(self.construction_testimony)),
+                    ("constructed_value", Leaf(self.constructed_value)),
+                    ("object_identity_cid", Leaf(self.object_identity_cid)),
+                    ("base", Child(_handle_of(self.base))),
+                    ("selectors", Leaf(selectors)),
+                    ("values", Children(tuple(_handle_of(item) for item in values))),
+                    ("value_testimonies", Leaf(value_testimonies)),
+                    ("version_cids", Leaf(version_cids)),
+                    ("version_records", Leaf(version_records)),
+                    ("prior_version_cids", Leaf(prior_version_cids)),
+                    ("store_occurrence_cids", Leaf(store_occurrence_cids)),
+                    ("invalidated_by_opaque_call", Leaf(invalidated)),
+                ),
+            ),
+            self.reporter,
+        )
+
+
+class ConstructedValueProjectionV1(Expression):
+    """A source value already constructed once and sealed by its testimony."""
+
+    constructed_value: object
+    construction_testimony: object
+    base: Expression
+    _child_fields = ("base",)
+
+    @classmethod
+    def create(cls, base, constructed_value, testimony):
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            base.unit,
+            ShadowNode(
+                "ConstructedValueProjectionV1",
+                base.span,
+                (
+                    ("constructed_value", Leaf(constructed_value)),
+                    ("construction_testimony", Leaf(testimony)),
+                    ("base", Child(_handle_of(base))),
+                ),
+            ),
+            base.reporter,
+        )
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def validate_testimony(self):
+        from .binding_provenance import (
+            BindingProvenanceGap,
+            ConstructedValueTestimonyV1,
+        )
+        from sugar_lift_py_tests.ir import _term_content_cid
+
+        ConstructedValueTestimonyV1.decode(self.construction_testimony.wire())
+        observed = _term_content_cid(
+            self.constructed_value.to_term(owner="ConstructedValueProjectionV1")
+        )
+        if observed != self.construction_testimony.semantic_value_cid:
+            raise BindingProvenanceGap("constructed field testimony mismatch")
+
+    def _construct_sugar(self):
+        self.validate_testimony()
+        from sugar_lift_py_tests.sugar.constructed_object_place_sugar import (
+            ConstructedObjectPlaceSugar,
+        )
+
+        return ConstructedObjectPlaceSugar(
+            self.constructed_value,
+            self.construction_testimony,
+            self.fragment,
+        )
+
+
 class Attribute(Expression):
     value: Expression
     attr: str
@@ -5669,8 +6383,28 @@ class Attribute(Expression):
         )
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """Project only from a construction-authenticated object place."""
+        from .shadow import rewrite
+
+        receiver, changed = self._substitute_field(self.value, scope)
+        if (
+            isinstance(receiver, IfExp)
+            and isinstance(receiver.body, ObjectPlaceStateV1)
+            and isinstance(receiver.orelse, ObjectPlaceStateV1)
+            and receiver.body.object_identity_cid
+            == receiver.orelse.object_identity_cid
+        ):
+            when_true = receiver.body.attribute_field(self.attr)
+            when_false = receiver.orelse.attribute_field(self.attr)
+            if when_true is not None and when_false is not None:
+                return rewrite(
+                    receiver, body=when_true, orelse=when_false
+                )
+        if isinstance(receiver, ObjectPlaceStateV1):
+            projected = receiver.attribute_field(self.attr)
+            if projected is not None:
+                return projected
+        return self if not changed else rewrite(self, value=receiver)
 
 
 class Subscript(Expression):
@@ -5680,7 +6414,13 @@ class Subscript(Expression):
 
     def substitute(self, scope):
         """`<value>[<slice>]` binds nothing: recurse into receiver and index."""
-        return self._substitute_children(scope)
+        from .shadow import rewrite
+
+        receiver, receiver_changed = self._substitute_field(self.value, scope)
+        index, index_changed = self._substitute_field(self.slice_, scope)
+        if not receiver_changed and not index_changed:
+            return self
+        return rewrite(self, value=receiver, slice_=index)
 
     def _construct_sugar(self):
         """`<value>[<slice_>]` constructs SubscriptSugar WITH the receiver's and
