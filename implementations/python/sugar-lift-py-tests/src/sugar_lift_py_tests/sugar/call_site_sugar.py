@@ -34,6 +34,7 @@ class CallSiteSugar(Sugar):
     keywords: tuple = ()  # (name, sugar) pairs, in source order
     contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
+    exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -102,7 +103,9 @@ class CallSiteSugar(Sugar):
                 parameters=(),
                 term=term,
                 body=None,  # the dig is CUED, not inlined here
+                keyword_names=tuple(name for name, _ in kw_values),
                 site=self.site,
+                exception_type_coordinate=self.exception_type_coordinate,
             )
         )
 

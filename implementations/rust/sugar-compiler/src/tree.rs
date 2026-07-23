@@ -105,6 +105,7 @@ pub enum Level {
     Implications,
     Exports,
     ContractDeclarations,
+    ProviderContractMembers,
     ContractDemands,
     ContextManagerEdges,
 }
@@ -121,6 +122,7 @@ impl Level {
             Level::Implications => "implications",
             Level::Exports => "exports",
             Level::ContractDeclarations => "contract-declarations",
+            Level::ProviderContractMembers => "provider-contract-members",
             Level::ContractDemands => "contract-demands",
             Level::ContextManagerEdges => "context-manager-edges",
         }
@@ -942,12 +944,28 @@ fn context_manager_edges_rpc(conn: &KitConn) -> Result<Vec<Value>, EnumerateErro
             reason: "context-manager edge enumeration requires frozen contract refs".into(),
         });
     };
+    let mut options = json!({
+        "contractRefs": {"catalogCid": catalog_cid, "tableCid": table_cid},
+    });
+    if let Some((call_catalog_cid, call_table_cid)) = conn
+        .transport
+        .call_contract_ref_generation()
+        .map_err(|error| EnumerateError::Unavailable {
+            plugin: plugin.clone(),
+            reason: error.to_string(),
+        })?
+    {
+        options["callContractRefs"] = json!({
+            "catalogCid": call_catalog_cid,
+            "tableCid": call_table_cid,
+        });
+    }
     let response = conn
         .transport
         .request(&json!({
             "level": Level::ContextManagerEdges.wire(),
             "workspace_root": conn.workspace_root.display().to_string(),
-            "options": {"contractRefs": {"catalogCid": catalog_cid, "tableCid": table_cid}},
+            "options": options,
         }))
         .map_err(|error| EnumerateError::Unavailable {
             plugin: plugin.clone(),
@@ -1461,6 +1479,13 @@ impl Kit {
         Ok(preconstruction_rows_rpc(
             &self.enumerate_conn(workspace_root),
             Level::ContractDeclarations,
+        )?)
+    }
+
+    pub fn provider_contract_members(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
+        Ok(preconstruction_rows_rpc(
+            &self.enumerate_conn(workspace_root),
+            Level::ProviderContractMembers,
         )?)
     }
 

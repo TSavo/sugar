@@ -173,9 +173,10 @@ class _Pass:
             for keyword in node.keywords:
                 self.expression(keyword.value, state, scope)
             if (
-                isinstance(node.func, ast.Name)
-                and not node.keywords
+                isinstance(node.func, (ast.Name, ast.Attribute))
+                and (isinstance(node.func, ast.Attribute) or not node.keywords)
                 and not any(isinstance(arg, ast.Starred) for arg in node.args)
+                and not any(keyword.arg is None for keyword in node.keywords)
             ):
                 self._call(node, state, scope)
             return
@@ -209,7 +210,17 @@ class _Pass:
             self.expression(child, state, scope)
 
     def _call(self, node: ast.Call, state: State, scope: ast.AST) -> None:
-        reaching = state.get(node.func.id, frozenset({_UNBOUND}))
+        if isinstance(node.func, ast.Name):
+            local_name = node.func.id
+            exported_path: tuple[str, ...] = ()
+        elif isinstance(node.func, ast.Attribute) and isinstance(
+            node.func.value, ast.Name
+        ):
+            local_name = node.func.value.id
+            exported_path = (node.func.attr,)
+        else:
+            return
+        reaching = state.get(local_name, frozenset({_UNBOUND}))
         imports = {value for value in reaching if isinstance(value, _ImportDef)}
         nonimports = reaching - imports
         key = (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
@@ -229,7 +240,8 @@ class _Pass:
                     "kind": "call-contract-demand",
                     "authenticatedImportUse": {**use, "cid": _hash(use)},
                     "importBinding": json.loads(binding.payload_jcs),
-                    "targetSymbol": binding.target_symbol,
+                    "targetSymbol": binding.target_symbol
+                    + "".join(f".{part}" for part in exported_path),
                     "importBindingCid": binding.cid,
                     "importSignature": {
                         "formals": [],

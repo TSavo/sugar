@@ -528,9 +528,9 @@ impl Kit {
             .get("tableCid")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                crate::kit_path::LiftPluginKitError::Failed(
-                    "contract-ref bind response missing tableCid".into(),
-                )
+                crate::kit_path::LiftPluginKitError::Failed(format!(
+                    "contract-ref bind response missing tableCid: {response}"
+                ))
             })?;
         if acknowledged != table_cid {
             return Err(crate::kit_path::LiftPluginKitError::Failed(
@@ -577,7 +577,9 @@ impl Kit {
             })?;
         if acknowledged != table_cid {
             return Err(crate::kit_path::LiftPluginKitError::Failed(
-                "call-contract-ref bind acknowledged a different table CID".into(),
+                format!(
+                    "call-contract-ref bind acknowledged a different table CID: expected {table_cid}, got {acknowledged}"
+                ),
             ));
         }
         self.connection

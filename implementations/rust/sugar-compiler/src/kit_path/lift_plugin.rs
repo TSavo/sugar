@@ -257,7 +257,15 @@ impl LiftPluginKit {
             .question_cache
             .lock()
             .map_err(|_| LiftPluginKitError::Failed("RPC question cache poisoned".to_string()))?;
-        cache.ask(params, || {
+        // The same payload is lawful for different protocol methods (notably
+        // the context-manager and call-contract bind doors).  Method is part
+        // of the question identity; keying only by params can replay one
+        // authority table as the acknowledgement for another.
+        let question = serde_json::json!({
+            "method": self.lift_method,
+            "params": params,
+        });
+        cache.ask(&question, || {
             self.dispatch(params).map(|(_, response)| response)
         })
     }

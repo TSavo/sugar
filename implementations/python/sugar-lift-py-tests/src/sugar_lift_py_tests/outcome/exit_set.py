@@ -74,6 +74,7 @@ class Completed(Generic[T]):
 class Halted:
     guard: Formula
     effect: Effect
+    state: object | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
@@ -93,12 +94,16 @@ class ExitSet(Generic[T]):
         return cls((Completed(guard or true_guard(), value),)).normalize()
 
     @classmethod
-    def halted(cls, effect: Effect, guard: Formula | None = None) -> "ExitSet[T]":
-        return cls((Halted(guard or true_guard(), effect),)).normalize()
+    def halted(
+        cls, effect: Effect, guard: Formula | None = None, state=None
+    ) -> "ExitSet[T]":
+        return cls((Halted(guard or true_guard(), effect, state),)).normalize()
 
     @classmethod
     def conditional_halt(cls, guard: Formula, effect: Effect, state: T) -> "ExitSet[T]":
-        return cls((Halted(guard, effect), Completed(not_(guard), state))).normalize()
+        return cls(
+            (Halted(guard, effect, state), Completed(not_(guard), state))
+        ).normalize()
 
     def union(self, other: "ExitSet[T]") -> "ExitSet[T]":
         return ExitSet((*self.exits, *other.exits)).normalize()
@@ -111,7 +116,7 @@ class ExitSet(Generic[T]):
             if isinstance(exit_, Completed):
                 exits.append(Completed(combined, exit_.value))
             else:
-                exits.append(Halted(combined, exit_.effect))
+                exits.append(Halted(combined, exit_.effect, exit_.state))
         return ExitSet(tuple(exits)).normalize()
 
     def normalize(self) -> "ExitSet[T]":
@@ -130,6 +135,7 @@ class ExitSet(Generic[T]):
                     isinstance(exit_, Halted)
                     and isinstance(prior, Halted)
                     and exit_.effect == prior.effect
+                    and exit_.state == prior.state
                 )
                 if same_completed:
                     merged[index] = Completed(
@@ -138,7 +144,7 @@ class ExitSet(Generic[T]):
                     break
                 if same_halted:
                     merged[index] = Halted(
-                        _or_guards(prior.guard, exit_.guard), prior.effect
+                        _or_guards(prior.guard, exit_.guard), prior.effect, prior.state
                     )
                     break
             else:
@@ -157,7 +163,7 @@ class ExitSet(Generic[T]):
                 if isinstance(following, Completed):
                     exits.append(Completed(guard, following.value))
                 else:
-                    exits.append(Halted(guard, following.effect))
+                    exits.append(Halted(guard, following.effect, following.state))
         return ExitSet(tuple(exits)).normalize()
 
     def and_then(self, step):
@@ -191,13 +197,13 @@ class ExitSet(Generic[T]):
             for clean in cleanup_exits:
                 guard = _and_guards(incoming.guard, clean.guard)
                 if isinstance(clean, Halted):
-                    exits.append(Halted(guard, clean.effect))
+                    exits.append(Halted(guard, clean.effect, clean.state))
                     continue
                 if restores(clean.value):
                     if isinstance(incoming, Completed):
                         exits.append(Completed(guard, incoming.value))
                     else:
-                        exits.append(Halted(guard, incoming.effect))
+                        exits.append(Halted(guard, incoming.effect, incoming.state))
                 else:
                     # Terminal cleanup completion supersedes (return in finally).
                     exits.append(Completed(guard, clean.value))
@@ -236,7 +242,7 @@ class ExitSet(Generic[T]):
             for ex in exit_exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect))
+                    exits.append(Halted(guard, ex.effect, ex.state))
                     continue
                 if isinstance(incoming, Completed):
                     exits.append(Completed(guard, incoming.value))
@@ -244,12 +250,12 @@ class ExitSet(Generic[T]):
                 # Incoming Halted + exit completed → typed disposition.
                 verdict = disposition_verdict(disposition, incoming.effect)
                 if verdict == "suppress":
-                    exits.append(Completed(guard, None))
+                    exits.append(Completed(guard, incoming.state))
                 elif verdict == "open":
-                    exits.append(Halted(guard, incoming.effect))
+                    exits.append(Halted(guard, incoming.effect, incoming.state))
                 else:
                     # restore
-                    exits.append(Halted(guard, incoming.effect))
+                    exits.append(Halted(guard, incoming.effect, incoming.state))
         return ExitSet(tuple(exits)).normalize()
 
     def collapse(self):
