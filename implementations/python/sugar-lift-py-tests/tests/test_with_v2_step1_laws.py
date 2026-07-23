@@ -9,6 +9,8 @@ def authority_inventory(files):
     rows=[]
     for path, text in files.items():
         tree=ast.parse(text)
+        if any(isinstance(n, ast.Name) and n.id == "AlternateRef" for n in ast.walk(tree)):
+            rows.append((path, 1, "secondary-variant-reachable"))
         for n in ast.walk(tree):
             if isinstance(n, ast.AnnAssign) and isinstance(n.annotation, (ast.BinOp, ast.Subscript)):
                 wire=ast.unparse(n.annotation)
