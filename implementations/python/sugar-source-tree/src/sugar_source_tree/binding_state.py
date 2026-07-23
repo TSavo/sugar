@@ -72,7 +72,65 @@ class GuardedBinding:
     when_false: BindingState
 
 
-BindingState: TypeAlias = "Node | UnboundBinding | GuardedBinding"
+def _require_runtime_cid(value: str, field: str) -> None:
+    if not isinstance(value, str) or not value.startswith("blake3-512:"):
+        raise BindingStateWireGap(f"{field} must be an authenticated CID")
+
+
+@dataclass(frozen=True)
+class LoopProjectedCompletedFace:
+    """One exact completed face retained by a loop post-binding projection."""
+
+    target_cid: str
+    completion_kind: str
+    guard_formula_cid: str
+    state: BindingState
+
+    def __post_init__(self) -> None:
+        _require_runtime_cid(self.target_cid, "targetCid")
+        _require_runtime_cid(self.guard_formula_cid, "guardFormulaCid")
+        if self.completion_kind not in {
+            "BodyFallthrough",
+            "BreakExit",
+            "NormalExhaustion",
+        }:
+            raise BindingStateWireGap("unknown loop completion kind")
+        from sugar_source_tree.nodes import Node
+
+        if not isinstance(
+            self.state,
+            (Node, UnboundBinding, GuardedBinding, LoopProjectedBinding),
+        ):
+            raise BindingStateWireGap(
+                "loop completed face requires an exact runtime binding state"
+            )
+
+
+@dataclass(frozen=True)
+class LoopProjectedBinding:
+    """Guarded completed post-state for one authenticated loop target.
+
+    This is a runtime state of the sole ``BindingEntryV1`` carrier. CIDs remain
+    identities/testimony; the live face states are what downstream substitution
+    consumes.
+    """
+
+    target_cid: str
+    completed_faces: tuple[LoopProjectedCompletedFace, ...]
+
+    def __post_init__(self) -> None:
+        _require_runtime_cid(self.target_cid, "targetCid")
+        if not self.completed_faces:
+            raise BindingStateWireGap(
+                "loop projected binding requires completed faces"
+            )
+        if any(face.target_cid != self.target_cid for face in self.completed_faces):
+            raise BindingStateWireGap("loop projected binding target mismatch")
+
+
+BindingState: TypeAlias = (
+    "Node | UnboundBinding | GuardedBinding | LoopProjectedBinding"
+)
 
 
 @dataclass(frozen=True)
@@ -112,6 +170,10 @@ class BindingEntryV1:
 
     def wire(self) -> dict[str, Any]:
         if self.sealed_state is None:
+            if isinstance(self.state, LoopProjectedBinding):
+                raise BindingStateWireGap(
+                    "loop projected binding requires authenticated face projection"
+                )
             raise BindingStateWireGap(
                 "runtime binding state has no authenticated sealed projection"
             )
@@ -407,6 +469,8 @@ def _initial_sealed_state(state: BindingState) -> SealedBindingStateV1:
     if isinstance(state, UnboundBinding):
         return UnboundBindingStateV1(state.cause.seal().cid)
     if isinstance(state, GuardedBinding):
+        return None
+    if isinstance(state, LoopProjectedBinding):
         return None
     raise BindingStateWireGap(f"unknown runtime binding state {type(state).__name__}")
 

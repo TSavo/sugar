@@ -103,7 +103,11 @@ def scan_guarded_loop_recurrence(
                     _REPLACEMENT,
                 )
             )
-        elif not re.search(r"BindingState[^\n]*LoopProjectedBinding", text):
+        elif not re.search(
+            r"BindingState(?:\s*:[^=]*)?\s*=.*?LoopProjectedBinding",
+            text,
+            re.DOTALL,
+        ):
             findings.append(
                 _finding(
                     binding_state,
