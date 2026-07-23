@@ -8,6 +8,7 @@ from typing import Any
 from .assertion_surface_audit_dto import AssertionSurfaceAuditDto
 from .body_universe_dto import BodyUniverseDto
 from .component_plan_memento_dto import ComponentPlanMementoDto
+from .context_manager_contract_dto import ContextManagerContractIrV1
 from .effect_dto import EffectDto
 from .factory_audit_summary_dto import FactoryAuditSummaryDto
 from .factory_walk_row_dto import FactoryWalkRowDto
@@ -32,8 +33,8 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 class LiftReportPayloadDto:
     # Closed lanes: a DTO already exists for every row, so no raw-dict side
     # door is left for callers to bypass construction law (#3661).
-    ir: list[BodyUniverseDto | SourceFunctionContractDto] = field(
-        default_factory=list[BodyUniverseDto | SourceFunctionContractDto]
+    ir: list[BodyUniverseDto | SourceFunctionContractDto | ContextManagerContractIrV1] = field(
+        default_factory=list[BodyUniverseDto | SourceFunctionContractDto | ContextManagerContractIrV1]
     )
     source_mementos: list[SourceMementoDto] = field(
         default_factory=list[SourceMementoDto]

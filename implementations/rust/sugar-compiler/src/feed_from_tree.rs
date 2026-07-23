@@ -20,16 +20,21 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{encode_jcs, json_to_value, Value as CValue};
 use sugar_claim_envelope::{
     body_discharge_default_for_kind, body_discharge_policy_from_fields_with_default, mint_bridge,
-    mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
+    mint_context_manager_contract, mint_contract_with_body_cid, Authoring, MintBridgeArgs,
+    MintContextManagerContractArgs, MintContractArgs,
 };
+use sugar_ir_types::Sort;
 use sugar_proof_envelope::Speaker;
 use sugar_proof_envelope::{
-    ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
-    ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph, SourceMemento,
+    ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento,
+    ContextManagerContractMemento, ContextManagerSemanticsV1, ContractBody, ContractMementoRef,
+    Ed25519Seed, EnterResultContractV1, ExitContractV1, ExitDispositionV1, FlatAtom,
+    ImportSignatureV1, ProofGraph, SourceMemento,
 };
 
 use crate::kit::{Kit, KitError};
 use crate::tree::{Fact, Sourced, Universe};
+use sugar_claim_envelope::KitDeclaration;
 
 /// Deterministic kit-author seed for feed fragments (content-addressed;
 /// not a sealed production mint identity).
@@ -73,6 +78,142 @@ fn json_to_cvalue(j: &Json) -> Result<Arc<CValue>, FeedError> {
 
 fn true_formula() -> Json {
     json!({"kind": "atomic", "name": "true", "args": []})
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerContractIrWire {
+    kind: String,
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    #[serde(rename = "bridgeSourceSymbol")]
+    bridge_source_symbol: String,
+    #[serde(rename = "importSignature")]
+    import_signature: ImportSignatureWire,
+    payload: ContextManagerSemanticsWire,
+    #[serde(rename = "sourceWarrants")]
+    source_warrants: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportSignatureWire {
+    formals: Vec<String>,
+    sorts: Vec<Sort>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerSemanticsWire {
+    kind: String,
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    enter: EnterWire,
+    exit: ExitWire,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnterWire {
+    completion: String,
+    result: EnterResultWire,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnterResultWire {
+    kind: String,
+    projection: String,
+    sort: Sort,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExitWire {
+    completion: String,
+    disposition: DispositionWire,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DispositionWire {
+    kind: String,
+}
+
+/// Production declaration/feed door for bodyless context-manager contracts.
+/// Registers exactly one signed member and no formula atom or ContractBody.
+pub fn graph_from_context_manager_contract_ir(ir: &Json) -> Result<ProofGraph, FeedError> {
+    let row: ContextManagerContractIrWire =
+        serde_json::from_value(ir.clone()).map_err(|e| FeedError::Incomplete {
+            what: "context_manager_contract_ir",
+            detail: e.to_string(),
+        })?;
+    if row.kind != "context-manager-contract" || row.schema_version != "1" {
+        return Err(FeedError::Incomplete {
+            what: "context_manager_contract_ir",
+            detail: "unsupported declaration schema/kind".into(),
+        });
+    }
+    if row.bridge_source_symbol.is_empty()
+        || row.import_signature.formals.len() != row.import_signature.sorts.len()
+    {
+        return Err(FeedError::Incomplete {
+            what: "context_manager_contract_ir",
+            detail: "invalid binding coordinate or import signature".into(),
+        });
+    }
+    if row.payload.kind != "context-manager-semantics"
+        || row.payload.schema_version != "1"
+        || row.payload.enter.completion != "total"
+        || row.payload.enter.result.kind != "projection"
+        || row.payload.enter.result.projection != "enter_result"
+        || row.payload.exit.completion != "total"
+        || row.payload.exit.disposition.kind != "never-suppresses"
+    {
+        return Err(FeedError::Incomplete {
+            what: "context_manager_contract_ir",
+            detail: "unsupported CM semantics".into(),
+        });
+    }
+    let minted = mint_context_manager_contract(&MintContextManagerContractArgs {
+        bridge_source_symbol: row.bridge_source_symbol,
+        import_signature: ImportSignatureV1 {
+            formals: row.import_signature.formals,
+            sorts: row.import_signature.sorts,
+        },
+        semantics: ContextManagerSemanticsV1 {
+            enter: EnterResultContractV1 {
+                sort: row.payload.enter.result.sort,
+            },
+            exit: ExitContractV1 {
+                disposition: ExitDispositionV1::NeverSuppresses,
+            },
+        },
+        source_warrants: row.source_warrants,
+        produced_by: FEED_PRODUCED_BY.into(),
+        produced_at: FEED_PRODUCED_AT.into(),
+        authoring: Authoring::KitAuthor {
+            author: FEED_PRODUCED_BY.into(),
+            note: Some("bodyless CM declaration feed".into()),
+        },
+        signer_seed: FEED_SIGNER_SEED,
+    })
+    .map_err(|e| FeedError::Mint {
+        what: "mint_context_manager_contract",
+        detail: e.to_string(),
+    })?;
+    let mut graph = ProofGraph::new();
+    graph.push_context_manager_contract(ContextManagerContractMemento::new(minted.canonical_bytes));
+    Ok(graph)
+}
+
+/// Production kit-declaration intake. Every typed declaration is dispatched
+/// through its dedicated member arm before any source-tree construction.
+pub fn graph_from_kit_declaration(declaration: &KitDeclaration) -> Result<ProofGraph, FeedError> {
+    let mut graph = ProofGraph::empty();
+    for row in &declaration.contract_declarations {
+        let wire = serde_json::to_value(row).map_err(|error| FeedError::Incomplete {
+            what: "kit_contract_declaration",
+            detail: error.to_string(),
+        })?;
+        graph = graph.feed(graph_from_context_manager_contract_ir(&wire)?);
+    }
+    Ok(graph)
 }
 
 /// Optional IR fields that mint threads onto function-contract / claim members.
@@ -813,7 +954,8 @@ pub fn fold_project(
     // accepted here so the walk face types match the load door; stamping
     // happens in `pool_from_graph_with_speaker`.
     let _ = speaker;
-    fold_claim_tree(kit, workspace_root)
+    let declarations = graph_from_kit_declaration(kit.declaration())?;
+    Ok(declarations.feed(fold_claim_tree(kit, workspace_root)?))
 }
 
 #[cfg(test)]

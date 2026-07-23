@@ -14,7 +14,10 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
+use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_ir_types::Sort;
 
 use crate::proof_graph::{AtomCid, ContractBodyCid, MementoCid};
 
@@ -49,13 +52,16 @@ pub enum MemberError {
         raw: String,
     },
 
+    #[error("context-manager-contract: {0}")]
+    InvalidContextManagerContract(String),
+
     #[error("CID not present in graph: {0}")]
     UnknownCid(String),
 }
 
 // ─── Member kind ────────────────────────────────────────────────────────────
 
-pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, witness, witness-memento";
+pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, context-manager-contract, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, witness, witness-memento";
 
 /// Wire member kind. Strings enter and leave only at serde/display boundaries;
 /// production branching should match this enum exhaustively.
@@ -67,6 +73,7 @@ pub enum MemberKind {
     Bridge,
     ClosureBinding,
     Contract,
+    ContextManagerContract,
     EffectSiteAnnotation,
     FactoryWalkMemento,
     Implication,
@@ -91,6 +98,7 @@ impl MemberKind {
             MemberKind::Bridge => "bridge",
             MemberKind::ClosureBinding => "closure-binding",
             MemberKind::Contract => "contract",
+            MemberKind::ContextManagerContract => "context-manager-contract",
             MemberKind::EffectSiteAnnotation => "effect-site-annotation",
             MemberKind::FactoryWalkMemento => "factory-walk-memento",
             MemberKind::Implication => "implication",
@@ -125,6 +133,7 @@ impl FromStr for MemberKind {
             "bridge" => Ok(MemberKind::Bridge),
             "closure-binding" => Ok(MemberKind::ClosureBinding),
             "contract" => Ok(MemberKind::Contract),
+            "context-manager-contract" => Ok(MemberKind::ContextManagerContract),
             "effect-site-annotation" => Ok(MemberKind::EffectSiteAnnotation),
             "factory-walk-memento" => Ok(MemberKind::FactoryWalkMemento),
             "implication" => Ok(MemberKind::Implication),
@@ -878,10 +887,244 @@ impl StageReceiptMember {
 
 // ─── Member enum + parse entrypoint ──────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerContractMember {
+    pub payload_cid: MementoCid,
+    pub bridge_source_symbol: String,
+    pub import_signature: ImportSignatureV1,
+    pub semantics: ContextManagerSemanticsV1,
+    pub source_warrants: Vec<String>,
+    pub input_cids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSignatureV1 {
+    pub formals: Vec<String>,
+    pub sorts: Vec<Sort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerSemanticsV1 {
+    pub enter: EnterResultContractV1,
+    pub exit: ExitContractV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnterResultContractV1 {
+    pub sort: Sort,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitContractV1 {
+    pub disposition: ExitDispositionV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitDispositionV1 {
+    NeverSuppresses,
+}
+
+pub fn context_manager_semantics_v1_to_json(value: &ContextManagerSemanticsV1) -> Json {
+    serde_json::json!({
+        "kind": "context-manager-semantics",
+        "schemaVersion": "1",
+        "enter": {
+            "completion": "total",
+            "result": {
+                "kind": "projection",
+                "projection": "enter_result",
+                "sort": value.enter.sort,
+            },
+        },
+        "exit": {
+            "completion": "total",
+            "disposition": {"kind": "never-suppresses"},
+        },
+    })
+}
+
+pub fn import_signature_v1_to_json(value: &ImportSignatureV1) -> Json {
+    serde_json::json!({"formals": value.formals, "sorts": value.sorts})
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerHeader {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    kind: String,
+    cid: String,
+    #[serde(rename = "payloadCid")]
+    payload_cid: String,
+    #[serde(rename = "bridgeSourceSymbol")]
+    bridge_source_symbol: String,
+    #[serde(rename = "importSignature")]
+    import_signature: ImportSignatureWire,
+    payload: ContextManagerSemanticsWire,
+    #[serde(rename = "sourceWarrants")]
+    source_warrants: Vec<String>,
+    #[serde(rename = "inputCids")]
+    input_cids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportSignatureWire {
+    formals: Vec<String>,
+    sorts: Vec<Sort>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerSemanticsWire {
+    kind: String,
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    enter: EnterContractWire,
+    exit: ExitContractWire,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EnterContractWire {
+    completion: String,
+    result: EnterResultWire,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EnterResultWire {
+    kind: String,
+    projection: String,
+    sort: Sort,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExitContractWire {
+    completion: String,
+    disposition: ExitDispositionWire,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExitDispositionWire {
+    kind: String,
+}
+
+impl ContextManagerContractMember {
+    fn from_value(value: &Json) -> Result<Self, MemberError> {
+        let root = value.as_object().ok_or_else(|| {
+            MemberError::InvalidContextManagerContract("layered member must be an object".into())
+        })?;
+        if root.len() != 3
+            || !root.contains_key("envelope")
+            || !root.contains_key("header")
+            || !root.contains_key("metadata")
+            || !root.get("envelope").is_some_and(Json::is_object)
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "expected only envelope, header, and metadata layers".into(),
+            ));
+        }
+        let _metadata = value
+            .get("metadata")
+            .and_then(Json::as_object)
+            .ok_or_else(|| {
+                MemberError::InvalidContextManagerContract("layered metadata is missing".into())
+            })?;
+        let raw_header = value.get("header").cloned().ok_or_else(|| {
+            MemberError::InvalidContextManagerContract("layered header is missing".into())
+        })?;
+        let header: ContextManagerHeader =
+            serde_json::from_value(raw_header.clone()).map_err(|e| {
+                MemberError::InvalidContextManagerContract(format!("malformed header: {e}"))
+            })?;
+        if header.schema_version != "1.2" || header.kind != "context-manager-contract" {
+            return Err(MemberError::InvalidContextManagerContract(
+                "schemaVersion/kind mismatch".into(),
+            ));
+        }
+        if header.bridge_source_symbol.is_empty() {
+            return Err(MemberError::InvalidContextManagerContract(
+                "bridgeSourceSymbol must be non-empty".into(),
+            ));
+        }
+        if header.import_signature.formals.len() != header.import_signature.sorts.len() {
+            return Err(MemberError::InvalidContextManagerContract(
+                "import signature formals/sorts length mismatch".into(),
+            ));
+        }
+        if header.payload.kind != "context-manager-semantics"
+            || header.payload.schema_version != "1"
+            || header.payload.enter.completion != "total"
+            || header.payload.enter.result.kind != "projection"
+            || header.payload.enter.result.projection != "enter_result"
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "unsupported context-manager semantics or enter testimony".into(),
+            ));
+        }
+        if header.payload.exit.completion != "total"
+            || header.payload.exit.disposition.kind != "never-suppresses"
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "unknown exit disposition or non-total exit testimony".into(),
+            ));
+        }
+        let payload = serde_json::to_value(&header.payload).expect("typed payload serializes");
+        let derived = blake3_512_of(
+            encode_jcs(&crate::proof_graph::json_to_canonical_value(&payload)).as_bytes(),
+        );
+        if derived != header.cid || derived != header.payload_cid {
+            return Err(MemberError::InvalidContextManagerContract(format!(
+                "payload CID mismatch: cid={} payloadCid={} derived={derived}",
+                header.cid, header.payload_cid
+            )));
+        }
+        let payload_cid = MementoCid::try_parse(header.payload_cid.clone()).map_err(|raw| {
+            MemberError::InvalidCidFormat {
+                kind: "context-manager-contract".into(),
+                field: "payloadCid".into(),
+                raw,
+            }
+        })?;
+        let mut sorted_warrants = header.source_warrants.clone();
+        if sorted_warrants
+            .iter()
+            .any(|cid| AtomCid::try_parse(cid.clone()).is_err())
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "sourceWarrants contain a malformed CID".into(),
+            ));
+        }
+        sorted_warrants.sort();
+        if header.input_cids != sorted_warrants {
+            return Err(MemberError::InvalidContextManagerContract(
+                "inputCids do not equal sorted sourceWarrants".into(),
+            ));
+        }
+        Ok(Self {
+            payload_cid,
+            bridge_source_symbol: header.bridge_source_symbol,
+            import_signature: ImportSignatureV1 {
+                formals: header.import_signature.formals,
+                sorts: header.import_signature.sorts,
+            },
+            semantics: ContextManagerSemanticsV1 {
+                enter: EnterResultContractV1 {
+                    sort: header.payload.enter.result.sort,
+                },
+                exit: ExitContractV1 {
+                    disposition: ExitDispositionV1::NeverSuppresses,
+                },
+            },
+            source_warrants: header.source_warrants,
+            input_cids: header.input_cids,
+        })
+    }
+}
+
 /// Typed, parsed member. One variant per known kind.
 #[derive(Debug, Clone)]
 pub enum Member {
     Contract(ContractMember),
+    ContextManagerContract(ContextManagerContractMember),
     Bridge(BridgeMember),
     Implication(ImplicationMember),
     Authority(AuthorityMember),
@@ -918,6 +1161,9 @@ impl Member {
         let nb = normalize(value)?;
         match nb.kind {
             MemberKind::Contract => Ok(Member::Contract(ContractMember::from_normalized(&nb)?)),
+            MemberKind::ContextManagerContract => Ok(Member::ContextManagerContract(
+                ContextManagerContractMember::from_value(value)?,
+            )),
             MemberKind::Bridge => Ok(Member::Bridge(BridgeMember::from_normalized(&nb)?)),
             MemberKind::Implication => Ok(Member::Implication(ImplicationMember::from_normalized(
                 &nb,
@@ -981,6 +1227,7 @@ impl Member {
     pub fn kind(&self) -> MemberKind {
         match self {
             Member::Contract(_) => MemberKind::Contract,
+            Member::ContextManagerContract(_) => MemberKind::ContextManagerContract,
             Member::Bridge(_) => MemberKind::Bridge,
             Member::Implication(_) => MemberKind::Implication,
             Member::Authority(_) => MemberKind::Authority,
@@ -1370,6 +1617,10 @@ mod tests {
             ("bridge", MemberKind::Bridge),
             ("closure-binding", MemberKind::ClosureBinding),
             ("contract", MemberKind::Contract),
+            (
+                "context-manager-contract",
+                MemberKind::ContextManagerContract,
+            ),
             ("effect-site-annotation", MemberKind::EffectSiteAnnotation),
             ("factory-walk-memento", MemberKind::FactoryWalkMemento),
             ("implication", MemberKind::Implication),

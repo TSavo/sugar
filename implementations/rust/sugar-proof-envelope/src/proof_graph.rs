@@ -553,6 +553,7 @@ macro_rules! layered_memento {
 layered_memento!(AuthorityMemento, ["authority"]);
 layered_memento!(BridgeMemento, ["bridge"]);
 layered_memento!(ClaimContractMemento, ["contract"]);
+layered_memento!(ContextManagerContractMemento, ["context-manager-contract"]);
 layered_memento!(EffectSiteAnnotationMemento, ["effect-site-annotation"]);
 layered_memento!(ImplicationMemento, ["implication"]);
 layered_memento!(ProofRunMemento, ["proof-run"]);
@@ -1132,6 +1133,7 @@ fn layered_signature_header(envelope: &Json, header: &Json) -> Result<Json, Stri
         | Ok(MemberKind::Bridge)
         | Ok(MemberKind::ClosureBinding)
         | Ok(MemberKind::Contract)
+        | Ok(MemberKind::ContextManagerContract)
         | Ok(MemberKind::EffectSiteAnnotation)
         | Ok(MemberKind::FactoryWalkMemento)
         | Ok(MemberKind::Implication)
@@ -1600,6 +1602,10 @@ impl ProofGraph {
     }
 
     pub fn push_claim_contract(&mut self, memento: ClaimContractMemento) {
+        self.insert_member(memento.record);
+    }
+
+    pub fn push_context_manager_contract(&mut self, memento: ContextManagerContractMemento) {
         self.insert_member(memento.record);
     }
 

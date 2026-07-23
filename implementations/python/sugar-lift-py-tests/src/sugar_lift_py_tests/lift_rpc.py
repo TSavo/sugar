@@ -38,6 +38,7 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import (
+    ContextManagerContractIrV1,
     EffectDto,
     LiftReportPayloadDto,
     RecoveredEffectDto,
@@ -66,6 +67,17 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 _ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
 _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
+_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS: tuple[ContextManagerContractIrV1, ...] = ()
+
+
+def publish_context_manager_declaration(
+    declaration: ContextManagerContractIrV1,
+) -> None:
+    """Publish a typed bodyless member on the live kit declaration."""
+    global _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
+    if not isinstance(declaration, ContextManagerContractIrV1):
+        raise ValueError("typed context-manager declaration required")
+    _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS += (declaration,)
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -553,6 +565,10 @@ def _kit_declaration_result() -> Dict[str, Any]:
             "rpcMethod": "sugar.plugin.resolve_dependency_proofs",
         },
         "residueCategories": [],
+        "contractDeclarations": [
+            row.to_rpc_with_term_table(None)
+            for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
+        ],
     }
 
 
