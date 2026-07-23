@@ -11,6 +11,7 @@
 // JCS-sorted order at hash time. Both are tested.
 
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+use sugar_ir_symbolic::parse::parse_term;
 use sugar_ir_symbolic::serialize::{
     formula_to_value, marshal_declarations, sort_to_value, term_to_value,
 };
@@ -125,6 +126,17 @@ fn term_ctor_emits_kind_name_args() {
     assert!(s.starts_with("{\"args\":["));
     assert!(s.contains("\"kind\":\"ctor\""));
     assert!(s.contains("\"name\":\"parseInt\""));
+}
+
+#[test]
+fn python_double_starred_call_round_trips_reference_shape() {
+    let raw = r#"{"kind":"ctor","name":"python:call","args":[{"kind":"const","value":"f","sort":{"kind":"primitive","name":"String"}},{"kind":"ctor","name":"python:double_starred_kwarg","args":[{"kind":"var","name":"kwargs"}]}]}"#;
+    let json: serde_json::Value = serde_json::from_str(raw).expect("valid ProofIR");
+    let term = parse_term(&json).expect("Rust accepts Python reference call term");
+
+    let round_tripped: serde_json::Value =
+        serde_json::from_str(&encode_jcs(&term_to_value(&term))).expect("Rust emits ProofIR");
+    assert_eq!(round_tripped, json);
 }
 
 // ---------------------------------------------------------------------------

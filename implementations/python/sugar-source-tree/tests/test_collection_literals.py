@@ -1,15 +1,12 @@
 """Collection displays: list, tuple, set, dict -- through the node.
 
 Each reduces its elements and holds them as the collection floor value; the
-value owns len/subscript/membership. Star / double-star spreads stay loud.
+value owns len/subscript/membership. Spread displays use the reference terms.
 """
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -38,19 +35,22 @@ def test_collection_composes_with_a_call():
     assert term.args[0].name == "array" and len(term.args[0].args) == 3
 
 
-def test_star_spread_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(xs):\n    return [1, *xs]\n").sugar()
+def test_star_spread_builds_reference_list_shape():
+    term = _post_term("def A(xs):\n    return [1, *xs]\n")
+    assert term.name == "python:list"
+    assert term.args[1].name == "python:starred"
 
 
-def test_double_star_spread_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(d):\n    return {1: 2, **d}\n").sugar()
+def test_double_star_spread_builds_reference_dict_shape():
+    term = _post_term("def A(d):\n    return {1: 2, **d}\n")
+    assert term.name == "python:dict"
+    assert term.args[1].name == "python:dict_entry"
+    assert term.args[1].args[0].name == "None"
 
 
 if __name__ == "__main__":
     test_list_tuple_set_dict_construct_their_terms()
     test_collection_composes_with_a_call()
-    test_star_spread_stays_loud()
-    test_double_star_spread_stays_loud()
+    test_star_spread_builds_reference_list_shape()
+    test_double_star_spread_builds_reference_dict_shape()
     print("ok: list/tuple/set/dict literals drained; spreads loud")

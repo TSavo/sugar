@@ -42,11 +42,11 @@ def test_kwarg_value_discriminates():
     assert t1 != t2
 
 
-def test_named_call_spread_builds_explicit_bridge_operand():
+def test_named_call_spread_builds_reference_call_operand():
     t = _out("def A(x, d):\n    return f(x, **d)\n")
 
-    assert t.name == "call:f"
+    assert t.name == "python:call"
+    assert t.args[0].value == "f"
     spread = t.args[-1]
-    assert spread.name == "py.kwarg"
-    assert spread.args[0].value == "**"
-    assert spread.args[1].name == "d"
+    assert spread.name == "python:double_starred_kwarg"
+    assert spread.args[0].name == "d"

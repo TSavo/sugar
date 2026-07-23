@@ -3105,12 +3105,23 @@ class Dict(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`{k: v, ...}` constructs DictSugar WITH each key and value sugar. A
-        `**d` spread (a DictItem with key None) stays loud until its own sugar."""
+        """`{k: v, ...}` constructs DictSugar WITH each key and value sugar.
+        A `**d` entry uses the reference lifter's None-key spread shape."""
         from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
 
         if any(item.key is None for item in self.items):
-            return super()._construct_sugar()
+            from sugar_lift_py_tests.sugar.spread_sugar import SpreadDictSugar
+
+            return SpreadDictSugar(
+                entries=tuple(
+                    (
+                        item.key.sugar() if item.key is not None else None,
+                        item.value.sugar(),
+                    )
+                    for item in self.items
+                ),
+                site=self.fragment,
+            )
         return DictSugar(
             keys=tuple(item.key.sugar() for item in self.items),
             values=tuple(item.value.sugar() for item in self.items),
@@ -3127,11 +3138,22 @@ class Set(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`{e, ...}` constructs SetSugar WITH each element's sugar; `*xs` is loud."""
+        """`{e, ...}` constructs SetSugar; a spread uses its reference term."""
         from sugar_lift_py_tests.sugar.collection_sugar import SetSugar
 
-        if any(e.kind == "Starred" for e in self.elts):
-            return super()._construct_sugar()
+        if any(isinstance(e, Starred) for e in self.elts):
+            from sugar_lift_py_tests.sugar.spread_sugar import SpreadCollectionSugar
+
+            return SpreadCollectionSugar(
+                kind="set",
+                elements=tuple(
+                    ("python:starred", e.value.sugar())
+                    if isinstance(e, Starred)
+                    else (None, e.sugar())
+                    for e in self.elts
+                ),
+                site=self.fragment,
+            )
         return SetSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -3651,6 +3673,40 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
+        # Either spread form selects the reference call coordinate. In
+        # particular, a lone ``**d`` must not fall through to the legacy
+        # keyword bridge as ``py.kwarg("**", d)``.
+        has_spread = any(isinstance(arg, Starred) for arg in self.args) or any(
+            keyword.arg is None for keyword in self.keywords
+        )
+        if has_spread:
+            from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
+
+            arguments = tuple(
+                ("star", None, arg.value.sugar())
+                if isinstance(arg, Starred)
+                else ("positional", None, arg.sugar())
+                for arg in self.args
+            ) + tuple(
+                (
+                    "double-star" if kw.arg is None else "keyword",
+                    kw.arg,
+                    kw.value.sugar(),
+                )
+                for kw in self.keywords
+            )
+            callee_name = self._spread_callee_name(self.func)
+            return SpreadCallSugar(
+                callee_name=callee_name,
+                callee=(
+                    None
+                    if isinstance(self.func, Name)
+                    else self.func.sugar()
+                ),
+                arguments=arguments,
+                site=self.fragment,
+            )
+
         keyword_sugars = tuple(
             (kw.arg if kw.arg is not None else "**", kw.value.sugar())
             for kw in self.keywords
@@ -3682,6 +3738,20 @@ class Call(Expression):
             site=self.fragment,
             keywords=keyword_sugars,
         )
+
+    @staticmethod
+    def _spread_callee_name(callee: Expression) -> Optional[str]:
+        """The reference lifter spells Name/Attribute chains as one callee.
+
+        A computed callee has no spelling and is carried by its constructed
+        child sugar instead.
+        """
+        if isinstance(callee, Name):
+            return callee.id
+        if isinstance(callee, Attribute):
+            base = Call._spread_callee_name(callee.value)
+            return f"{base}.{callee.attr}" if base is not None else None
+        return None
 
 
 class FormattedValue(Expression):
@@ -4165,12 +4235,22 @@ class List(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`[e, ...]` constructs ListSugar WITH each element's sugar. A `*xs`
-        spread is not one element -- it stays loud until its own sugar lands."""
+        """`[e, ...]` constructs ListSugar; a spread uses its reference term."""
         from sugar_lift_py_tests.sugar.collection_sugar import ListSugar
 
-        if any(e.kind == "Starred" for e in self.elts):
-            return super()._construct_sugar()
+        if any(isinstance(e, Starred) for e in self.elts):
+            from sugar_lift_py_tests.sugar.spread_sugar import SpreadCollectionSugar
+
+            return SpreadCollectionSugar(
+                kind="list",
+                elements=tuple(
+                    ("python:starred", e.value.sugar())
+                    if isinstance(e, Starred)
+                    else (None, e.sugar())
+                    for e in self.elts
+                ),
+                site=self.fragment,
+            )
         return ListSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -4185,11 +4265,22 @@ class Tuple_(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`(e, ...)` constructs TupleSugar WITH each element's sugar; `*xs` is loud."""
+        """`(e, ...)` constructs TupleSugar; a spread uses its reference term."""
         from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
 
-        if any(e.kind == "Starred" for e in self.elts):
-            return super()._construct_sugar()
+        if any(isinstance(e, Starred) for e in self.elts):
+            from sugar_lift_py_tests.sugar.spread_sugar import SpreadCollectionSugar
+
+            return SpreadCollectionSugar(
+                kind="tuple",
+                elements=tuple(
+                    ("python:starred", e.value.sugar())
+                    if isinstance(e, Starred)
+                    else (None, e.sugar())
+                    for e in self.elts
+                ),
+                site=self.fragment,
+            )
         return TupleSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
