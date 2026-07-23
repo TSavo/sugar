@@ -66,13 +66,13 @@ pub use sign::{
     SignatureParseError, ED25519_KEY_PREFIX, ED25519_SIG_PREFIX,
 };
 pub use typed_member::{
-    context_manager_semantics_v1_to_json, import_signature_v1_to_json,
-    AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContextManagerContractMember,
-    ContextManagerSemanticsV1, ContractMember, EffectSiteAnnotationMember, EnterResultContractV1,
-    ExitContractV1, ExitDispositionV1, FactoryWalkMementoMember, ImplicationMember,
-    ImportSignatureV1, LibrarySugarBindingEntryMember, Member, MemberError, MemberKind,
-    PlanMementoMember, ProofRunMember, SourceMementoMember, StageReceiptMember, WitnessClaimMember,
-    WitnessMementoMember,
+    context_manager_contract_from_stored, context_manager_semantics_v1_to_json,
+    import_signature_v1_to_json, AssertionSurfaceMementoMember, AuthorityMember, BridgeMember,
+    ContextManagerContractMember, ContextManagerSemanticsV1, ContractMember,
+    EffectSiteAnnotationMember, EnterResultContractV1, ExitContractV1, ExitDispositionV1,
+    FactoryWalkMementoMember, ImplicationMember, ImportSignatureV1, LibrarySugarBindingEntryMember,
+    Member, MemberError, MemberKind, PlanMementoMember, ProofRunMember, SourceMementoMember,
+    StageReceiptMember, WitnessClaimMember, WitnessMementoMember,
 };
 
 #[derive(Debug, thiserror::Error)]

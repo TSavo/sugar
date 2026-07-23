@@ -75,10 +75,14 @@ class SourceFile:
         identity: Tuple[str, str, str],
         backend: Optional[Backend] = None,
         reporter: AuditReporter = NULL_REPORTER,
+        construction_context: object | None = None,
     ) -> None:
         source, filename, source_cid = identity
         self.unit = SourceUnit(
-            filename=filename, source=source, source_cid=source_cid
+            filename=filename,
+            source=source,
+            source_cid=source_cid,
+            construction_context=construction_context,
         )
         self.backend = backend if backend is not None else _default_backend()
         # The reporter enters the whole tree here: the root carries it and

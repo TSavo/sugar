@@ -56,6 +56,7 @@ KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
 RESOLVE_SOURCE_MEMENTO_RPC_METHOD = "sugar.plugin.resolve_source_memento"
 ENUMERATE_RPC_METHOD = "sugar.enumerate"
+BIND_CONTRACT_REFS_RPC_METHOD = "sugar.plugin.bind_contract_refs"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
 LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
@@ -67,6 +68,7 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 _ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
 _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
+_BOUND_CONTRACT_REFS = None
 _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS: tuple[ContextManagerContractIrV1, ...] = ()
 
 
@@ -75,9 +77,64 @@ def publish_context_manager_declaration(
 ) -> None:
     """Publish a typed bodyless member on the live kit declaration."""
     global _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
+    if _BOUND_CONTRACT_REFS is not None:
+        raise RuntimeError("context-manager declarations are frozen for this generation")
     if not isinstance(declaration, ContextManagerContractIrV1):
         raise ValueError("typed context-manager declaration required")
     _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS += (declaration,)
+
+
+def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
+    """Enroll with-site import coordinates without constructing any Sugar."""
+    from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
+    from sugar_source_tree.tree import SourceTree
+
+    rows: List[Dict[str, Any]] = []
+    for path in SourceTree(root).paths():
+        try:
+            source, _filename, source_cid = path_source(str(path))
+        except SourceUnavailable:
+            continue
+        module = ast.parse(source, filename=str(path))
+        imports: Dict[str, str] = {}
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports[alias.asname or alias.name.split(".")[0]] = alias.name
+        for node in ast.walk(module):
+            if not isinstance(node, (ast.With, ast.AsyncWith)):
+                continue
+            for item in node.items:
+                expression = item.context_expr
+                target = None
+                if isinstance(expression, ast.Call) and not expression.args and not expression.keywords:
+                    callee = expression.func
+                    if isinstance(callee, ast.Name):
+                        target = imports.get(callee.id)
+                    elif isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+                        base = imports.get(callee.value.id)
+                        if base:
+                            target = f"{base}.{callee.attr}"
+                coordinate = {
+                    "sourceCid": source_cid,
+                    "startLine": expression.lineno,
+                    "startCol": expression.col_offset,
+                    "endLine": expression.end_lineno,
+                    "endCol": expression.end_col_offset,
+                }
+                rows.append({
+                    "schemaVersion": "1",
+                    "kind": "context-manager-demand",
+                    "useSite": coordinate,
+                    "targetSymbol": f"context-manager:{target}" if target else None,
+                    "importSignature": {"formals": [], "sorts": []},
+                    "expectedKind": "context-manager-contract",
+                    "gapKind": None if target else "runtime-selected",
+                })
+    return rows
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -548,6 +605,7 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
                 {"name": ENUMERATE_RPC_METHOD, "required": False},
+                {"name": BIND_CONTRACT_REFS_RPC_METHOD, "required": False},
                 {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
                 {"name": "sugar.plugin.resolve_dependency_proofs", "required": False},
@@ -1330,6 +1388,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     at = params.get("at") if isinstance(params.get("at"), dict) else None
     seek = bool(params.get("seek", False))
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
+    if _BOUND_CONTRACT_REFS is not None:
+        generation = options.get("contractRefs")
+        if generation != {
+            "catalogCid": _BOUND_CONTRACT_REFS.catalog_cid,
+            "tableCid": _BOUND_CONTRACT_REFS.table_cid,
+        }:
+            raise ValueError("semantic construction request has a stale contract-ref generation")
     # The audit frontier's factory census is deleted; auditFrontier now short-
     # circuits to an empty frontier (its R census re-homes onto the source
     # tree's reporter channel, not yet wired). allowedBrokenComponents was the
@@ -1347,6 +1412,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     )
 
     try:
+        if level == "contract-declarations":
+            _send({"jsonrpc": "2.0", "id": msg_id, "result": {
+                "rows": [
+                    row.to_rpc_with_term_table(None)
+                    for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
+                ]
+            }})
+            return
+        if level == "contract-demands":
+            _send({"jsonrpc": "2.0", "id": msg_id, "result": {
+                "rows": _context_manager_demand_rows(root)
+            }})
+            return
         if level == "source_files":
             # The source_files level IS SourceTree.fragments(): whole-file
             # fragments minted through the SourceOracle — identity without
@@ -1538,7 +1616,16 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                tree_file = _TreeSourceFile(identity)
+                from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+                construction_context = (
+                    TreeConstructionContextV1(_BOUND_CONTRACT_REFS)
+                    if _BOUND_CONTRACT_REFS is not None
+                    else None
+                )
+                tree_file = _TreeSourceFile(
+                    identity, construction_context=construction_context
+                )
                 nodes = []
                 for fn in tree_file.functions():
                     lc = fn.line_col_span()
@@ -1971,6 +2058,13 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
     msg_id = msg.get("id")
     method = msg.get("method")
     params = msg.get("params", {})
+    sequence_path = os.environ.get("SUGAR_RPC_SEQUENCE_LOG")
+    if sequence_path:
+        suffix = ""
+        if method == ENUMERATE_RPC_METHOD and isinstance(params, dict):
+            suffix = f":{params.get('level', '')}"
+        with Path(sequence_path).open("a", encoding="utf-8") as sequence_log:
+            sequence_log.write(f"{method}{suffix}\n")
 
     if method == "initialize":
         _handle_initialize(msg_id)
@@ -2000,6 +2094,15 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
         _handle_resolve_dependency_proofs(
             msg_id, params if isinstance(params, dict) else {}
         )
+    elif method == BIND_CONTRACT_REFS_RPC_METHOD:
+        from sugar_lift_py_tests.context_manager_resolution import decode_resolved_contract_refs
+
+        global _BOUND_CONTRACT_REFS
+        installed = decode_resolved_contract_refs(params)
+        if _BOUND_CONTRACT_REFS is not None and _BOUND_CONTRACT_REFS.table_cid != installed.table_cid:
+            raise ValueError("contract-ref generation is already frozen")
+        _BOUND_CONTRACT_REFS = installed
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": {"tableCid": installed.table_cid}})
     elif method == ENUMERATE_RPC_METHOD:
         global _ENUMERATION_ACTIVE, _ENUMERATION_REQUEST_COUNT
         enumerate_started = time.monotonic()

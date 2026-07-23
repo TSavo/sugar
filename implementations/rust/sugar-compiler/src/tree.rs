@@ -104,6 +104,8 @@ pub enum Level {
     Universe,
     Implications,
     Exports,
+    ContractDeclarations,
+    ContractDemands,
 }
 
 impl Level {
@@ -117,6 +119,8 @@ impl Level {
             Level::Universe => "universe",
             Level::Implications => "implications",
             Level::Exports => "exports",
+            Level::ContractDeclarations => "contract-declarations",
+            Level::ContractDemands => "contract-demands",
         }
     }
 }
@@ -805,6 +809,19 @@ fn enumerate_rpc(
     if !conn.allowed_broken_components.is_empty() {
         options["allowedBrokenComponents"] = json!(conn.allowed_broken_components);
     }
+    if let Some((catalog_cid, table_cid)) =
+        conn.transport
+            .contract_ref_generation()
+            .map_err(|error| EnumerateError::Unavailable {
+                plugin: plugin.clone(),
+                reason: error.to_string(),
+            })?
+    {
+        options["contractRefs"] = json!({
+            "catalogCid": catalog_cid,
+            "tableCid": table_cid,
+        });
+    }
     let response = conn
         .transport
         .request(&json!({
@@ -863,6 +880,36 @@ fn enumerate_rpc(
         .map(|arr| arr.iter().map(decode_gap).collect())
         .unwrap_or_default();
     Ok((nodes, gaps))
+}
+
+fn preconstruction_rows_rpc(conn: &KitConn, level: Level) -> Result<Vec<Value>, EnumerateError> {
+    let plugin = conn.surface.clone();
+    let response = conn
+        .transport
+        .request(&json!({
+            "level": level.wire(),
+            "workspace_root": conn.workspace_root.display().to_string(),
+        }))
+        .map_err(|error| EnumerateError::Unavailable {
+            plugin: plugin.clone(),
+            reason: error.to_string(),
+        })?;
+    let result = response
+        .get("result")
+        .unwrap_or(&response)
+        .as_object()
+        .ok_or_else(|| EnumerateError::Malformed {
+            plugin: plugin.clone(),
+            reason: "preconstruction response result must be an object".into(),
+        })?;
+    result
+        .get("rows")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| EnumerateError::Malformed {
+            plugin,
+            reason: "preconstruction response missing rows array".into(),
+        })
 }
 
 /// `LiftPluginKit::request` has already checked and removed the JSON-RPC
@@ -1342,6 +1389,23 @@ fn merge_recovered_audit_leaf(
 }
 
 impl Kit {
+    pub fn context_manager_declarations(
+        &self,
+        workspace_root: &Path,
+    ) -> Result<Vec<Value>, KitError> {
+        Ok(preconstruction_rows_rpc(
+            &self.enumerate_conn(workspace_root),
+            Level::ContractDeclarations,
+        )?)
+    }
+
+    pub fn context_manager_demands(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
+        Ok(preconstruction_rows_rpc(
+            &self.enumerate_conn(workspace_root),
+            Level::ContractDemands,
+        )?)
+    }
+
     /// Scan the producer surface. Export answers reuse the existing linker
     /// contract type; malformed or identity-mismatched answers are loud wire
     /// errors, never silently omitted exports.

@@ -104,6 +104,7 @@ class SourceUnit:
     filename: str
     source: str
     source_cid: str
+    construction_context: object | None = None
 
     # populated in __post_init__, never by callers
     line_table: LineTable = field(init=False, default=None)  # type: ignore[assignment]
