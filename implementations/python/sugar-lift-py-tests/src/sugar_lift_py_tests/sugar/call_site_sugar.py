@@ -144,6 +144,19 @@ class CallSiteSugar(Sugar):
             # including keyword/default actuals. They must not be appended a
             # second time below.
             kw_values = ()
+            if self.source_call_frame.generator_steps is not None:
+                from sugar_lift_py_tests.generator_construction import (
+                    GeneratorConstructionV1,
+                )
+
+                return Complete(
+                    GeneratorConstructionV1.allocate(
+                        allocation_coordinate=str(self.site),
+                        frame_coordinate=self.source_call_frame.frame_cid,
+                        binding_state=self.source_call_frame.runtime_entries,
+                        steps=self.source_call_frame.generator_steps,
+                    )
+                )
         return Complete(
             CallSiteValue(
                 target_name=self.target_name,

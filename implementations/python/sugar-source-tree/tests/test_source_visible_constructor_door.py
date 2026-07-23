@@ -16,6 +16,11 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.generator_construction import (
+    GeneratorConstructionV1,
+    GeneratorTerminationV1,
+    YieldEffect,
+)
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -66,6 +71,31 @@ def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
     assert len(constructed.statements) == 1
     assert isinstance(constructed.statements[0], ReturnValue)
     assert constructed.statements[0].value == TermValue(7)
+
+
+def test_renamed_generator_call_allocates_without_eager_body_reduction() -> None:
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "def arbitrarily_renamed():\n"
+        "    yield 7\n"
+        "    return 9\n\n"
+        "arbitrarily_renamed()\n",
+        context=context,
+    )
+    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
+
+    outcome = call.sugar().desugar()
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GeneratorConstructionV1)
+    yielded = outcome.value.resume()
+    assert isinstance(yielded, YieldEffect)
+    assert yielded.value == TermValue(7)
+    terminated = yielded.machine.resume()
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(9)
 
 
 def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() -> None:

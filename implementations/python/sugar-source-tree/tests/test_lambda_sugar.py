@@ -145,10 +145,11 @@ def test_lambda_signature_roles_bind_through_the_shared_frame(expression, expect
 def test_lambda_preserves_child_panic_role():
     expression = _return_expression("def A():\n    return lambda x: (yield x)\n")
 
+    suspension = expression.sugar()
     with pytest.raises(SugarNotWritten) as caught:
-        expression.sugar()
+        suspension.body.desugar()
 
-    assert caught.value.owner == "Yield.sugar"
+    assert caught.value.owner == "YieldSuspensionSugar.desugar"
 
 
 def test_inline_lambda_call_constructs_callable_then_ordinary_computed_call():

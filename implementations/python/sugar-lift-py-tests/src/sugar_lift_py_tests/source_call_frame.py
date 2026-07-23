@@ -28,6 +28,8 @@ class SourceVisibleCallFrameV1:
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
+    generator_steps: tuple | None = field(default=None, compare=False, repr=False)
+    generator_step_fragment_cids: tuple[str, ...] = ()
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -41,6 +43,7 @@ class SourceVisibleCallFrameV1:
             "formalCoordinates": [item.wire() for item in self.formal_coordinates],
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
+            "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
         }
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
 
@@ -158,7 +161,16 @@ class SourceVisibleCallFrameV1:
             )
         )
         scope = dict(zip(self.parameters, entries, strict=True))
-        return replace(self, runtime_entries=entries)
+        generator_steps = (
+            None
+            if self.generator_steps is None
+            else self.owner._source_visible_generator_steps(scope)
+        )
+        return replace(
+            self,
+            runtime_entries=entries,
+            generator_steps=generator_steps,
+        )
 
     def _tuple_node(self, values: tuple):
         from sugar_source_tree.backend import Children, materialize
