@@ -83,7 +83,7 @@ def test_unresolved_imported_constant_constructs_symbolic_repetition(
         raise AssertionError(f"construction opened a module: {args!r} {kwargs!r}")
 
     monkeypatch.setattr(importlib, "import_module", no_import)
-    monkeypatch.setattr(ImportAliasValue, "resolve_value", no_import)
+    assert not hasattr(ImportAliasValue, "resolve_value")
     imported = ImportAliasValue(
         "somevendor.MAXDIMS",
         "MAXDIMS",

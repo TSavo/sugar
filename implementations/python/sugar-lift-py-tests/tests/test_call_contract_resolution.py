@@ -41,6 +41,7 @@ def _reference() -> ResolvedCallContractRefV1:
         sorts=(PrimitiveSort("Value"),),
         return_term=ctor("python:tuple", [make_var("x"), make_var("x")]),
         source_warrant_cids=(),
+        contract_decl=MappingProxyType({"kind": "contract"}),
     )
 
 
@@ -133,6 +134,7 @@ def test_fabricated_or_unauthenticated_reference_fails_decode():
                             "args": [{"kind": "var", "name": "x"}],
                         },
                         "sourceWarrantCids": [],
+                        "contractDecl": {"kind": "contract"},
                     },
                 },
             }
@@ -140,6 +142,24 @@ def test_fabricated_or_unauthenticated_reference_fails_decode():
     }
     with pytest.raises(CallContractRefProtocolError, match="memberCid must be a CID"):
         decode_resolved_call_contract_refs(wire)
+
+
+def test_python_intake_rejects_stale_semantic_contract_cid():
+    from sugar_lift_py_tests.call_contract_resolution import _decode_ref
+
+    raw = {
+        "kind": "resolved-call-contract-ref", "schemaVersion": "1",
+        "resolutionCid": RESOLUTION_CID, "demandCid": DEMAND_CID,
+        "useSite": {"sourceCid": CID, "startLine": 2, "startCol": 0, "endLine": 2, "endCol": 7},
+        "importBindingCid": CATALOG_CID, "catalogCid": CATALOG_CID,
+        "memberCid": MEMBER_CID, "contractCid": CID,
+        "bridgeSourceSymbol": "python:producer.pair",
+        "importSignature": {"formals": [], "sorts": []},
+        "returnTerm": None, "sourceWarrantCids": [],
+        "contractDecl": {"kind": "contract", "name": "changed"},
+    }
+    with pytest.raises(CallContractRefProtocolError, match="stale semantic contract CID"):
+        _decode_ref(raw)
 
 
 def test_return_projection_with_unauthenticated_free_name_stays_loud():
@@ -166,7 +186,8 @@ def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_p
         "not_enrolled = pair(x=1)\n"
     )
 
-    rows = lift_rpc._call_contract_demand_rows(tmp_path)
+    rows = [row for row in lift_rpc._call_contract_demand_rows(tmp_path)
+            if row["kind"] == "call-contract-demand"]
 
     assert len(rows) == 1
     assert rows[0]["targetSymbol"] == "python:producer.pair"
@@ -187,12 +208,99 @@ def test_import_binding_authenticates_alias_and_module_identity(tmp_path):
         "c = pair()\n"
     )
 
-    rows = lift_rpc._call_contract_demand_rows(tmp_path)
+    rows = [row for row in lift_rpc._call_contract_demand_rows(tmp_path)
+            if row["kind"] == "call-contract-demand"]
 
     assert [row["targetSymbol"] for row in rows] == [
         "python:first.pair", "python:second.pair"
     ]
     assert rows[0]["importBindingCid"] != rows[1]["importBindingCid"]
+
+
+def test_import_binding_is_lexical_and_shadowing_never_inherits_import(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from producer import pair as renamed\n"
+        "direct = renamed(0)\n"
+        "def parameter(renamed):\n    return renamed(1)\n"
+        "def assigned():\n    renamed(2)\n    renamed = local\n"
+        "def nested():\n    def renamed(x): return x\n    return renamed(3)\n"
+        "def branch(flag):\n"
+        "    if flag:\n        from producer import pair as maybe\n"
+        "    else:\n        maybe = local\n"
+        "    return maybe(4)\n"
+    )
+    source, _filename, source_cid = path_source(str(consumer))
+    rows, outcomes = authenticated_import_uses(tmp_path, consumer, source, source_cid)
+
+    assert [row["targetSymbol"] for row in rows] == ["python:producer.pair"]
+    assert "shadowed-non-import" in outcomes.values()
+    assert "no-lexical-binding" in outcomes.values()
+    assert "ambiguous-lexical-binding" in outcomes.values()
+
+
+def test_spelling_without_authenticated_import_use_has_no_authority(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "def use(pair, pandas_magic):\n"
+        "    pair(1)\n"
+        "    pandas_magic(2)\n"
+    )
+    source, _filename, source_cid = path_source(str(consumer))
+    rows, outcomes = authenticated_import_uses(
+        tmp_path, consumer, source, source_cid
+    )
+
+    assert rows == []
+    assert set(outcomes.values()) == {"shadowed-non-import"}
+
+
+def test_relative_import_is_package_qualified_and_binding_coordinate_is_typed(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    consumer = package / "consumer.py"
+    consumer.write_text("from .producer import pair as renamed\nrenamed(1)\n")
+    source, _filename, source_cid = path_source(str(consumer))
+    rows, _ = authenticated_import_uses(tmp_path, consumer, source, source_cid)
+
+    assert rows[0]["targetSymbol"] == "python:pkg.producer.pair"
+    use = rows[0]["authenticatedImportUse"]
+    assert use["kind"] == "authenticated-import-use"
+    assert use["importBindingCid"] == rows[0]["importBindingCid"]
+    assert use["cid"].startswith("blake3-512:")
+
+
+def test_reexport_declaration_is_static_and_source_authenticated(tmp_path):
+    (tmp_path / "provider.py").write_text("def pair(x):\n    return (x, x)\n")
+    (tmp_path / "public.py").write_text("from provider import pair\n")
+    (tmp_path / "consumer.py").write_text("from public import pair as renamed\nrenamed(1)\n")
+
+    rows = lift_rpc._call_contract_demand_rows(tmp_path)
+    export = next(row for row in rows if row.get("exportedSymbol") == "python:public.pair")
+    demand = next(row for row in rows if row["kind"] == "call-contract-demand")
+
+    assert export["targetSymbol"] == "python:provider.pair"
+    assert export["sourceCid"].startswith("blake3-512:")
+    assert demand["targetSymbol"] == "python:public.pair"
+    assert demand["authenticatedImportUse"]["kind"] == "authenticated-import-use"
+
+
+def test_import_alias_has_no_parallel_install_source_resolver(monkeypatch):
+    from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+    del monkeypatch
+    value = ImportAliasValue("producer.pair", "pair", import_target="producer.pair")
+
+    assert not hasattr(value, "resolve_value")
 
 
 def test_parser_backed_imported_call_consumes_prebound_contract_ref(tmp_path):
@@ -207,7 +315,8 @@ def test_parser_backed_imported_call_consumes_prebound_contract_ref(tmp_path):
 
     consumer = tmp_path / "consumer.py"
     consumer.write_text("from producer import pair\nvalue = pair(v)\n")
-    row = lift_rpc._call_contract_demand_rows(tmp_path)[0]
+    row = next(row for row in lift_rpc._call_contract_demand_rows(tmp_path)
+               if row["kind"] == "call-contract-demand")
     coordinate = SourceFragmentCoordinateV1.decode(row["useSite"])
     reference = replace(
         _reference(),
@@ -259,3 +368,29 @@ def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
 
     assert rows is not None
     assert rows[0].bridge_source_symbol == "python:producer.pair"
+
+
+def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.context_manager_resolution import ResolvedContractRefsV1, TreeConstructionContextV1
+    from sugar_source_tree.tree import SourceFile
+
+    producer = tmp_path / "producer.py"
+    producer.write_text(
+        "def pair():\n    return 1\n"
+        "class C:\n    def pair(self):\n        return 2\n"
+        "def outer():\n    def pair():\n        return 3\n    return pair()\n"
+    )
+    tree = SourceFile(
+        path_source(str(producer)),
+        construction_context=TreeConstructionContextV1(
+            ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({})),
+            workspace_root=str(tmp_path),
+        ),
+    )
+    functions = list(tree.functions())
+
+    assert functions[0].sugar().bridge_source_symbol == "python:producer.pair"
+    assert functions[1].sugar().bridge_source_symbol is None
+    assert functions[2].sugar().bridge_source_symbol == "python:producer.outer"
+    assert functions[3].sugar().bridge_source_symbol is None

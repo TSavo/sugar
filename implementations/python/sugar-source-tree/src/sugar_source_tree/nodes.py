@@ -155,6 +155,18 @@ class SourceUnit:
             )
         return matches[0]
 
+    def is_module_level_function(self, name: str, lineno: int) -> bool:
+        """Whether this exact definition occupies an importable module slot."""
+        import ast
+
+        module = ast.parse(self.source, filename=self.filename)
+        return any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+            and node.lineno == lineno
+            for node in module.body
+        )
+
 
 class Typeable:
     """The interface: you may ask me for my node type.
@@ -1071,7 +1083,9 @@ class FunctionDef(Statement):
                 bridge_source_symbol = None
                 context = self.unit.construction_context
                 workspace_root = getattr(context, "workspace_root", None)
-                if workspace_root is not None:
+                if workspace_root is not None and self.unit.is_module_level_function(
+                    self.name, self.line_col_span().start_line
+                ):
                     from pathlib import Path
 
                     relative = Path(self.unit.filename).resolve().relative_to(

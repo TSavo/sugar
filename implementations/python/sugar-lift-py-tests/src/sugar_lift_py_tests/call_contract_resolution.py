@@ -77,14 +77,19 @@ class ResolvedCallContractRefV1:
     sorts: tuple[Sort, ...]
     return_term: Term | None
     source_warrant_cids: tuple[str, ...]
+    contract_decl: Mapping[str, Any]
 
 
 class CallContractResolutionGapKindV1(str, Enum):
+    NO_LEXICAL_BINDING = "no-lexical-binding"
+    SHADOWED_NON_IMPORT = "shadowed-non-import"
+    AMBIGUOUS_LEXICAL_BINDING = "ambiguous-lexical-binding"
     TARGET_NOT_IN_CORPUS = "target-not-in-corpus"
     NO_AUTHENTICATED_CONTRACT = "no-authenticated-contract"
     AMBIGUOUS_TARGET = "ambiguous-target"
     IMPORT_SIGNATURE_MISMATCH = "import-signature-mismatch"
     WRONG_CONTRACT_KIND = "wrong-contract-kind"
+    WRONG_PROVIDER = "wrong-provider"
     STALE_OR_MALFORMED_CONTRACT_REF = "stale-or-malformed-contract-ref"
 
 
@@ -120,7 +125,7 @@ def _decode_ref(raw: Any) -> ResolvedCallContractRefV1:
     expected = {
         "kind", "schemaVersion", "resolutionCid", "demandCid", "useSite",
         "importBindingCid", "catalogCid", "memberCid", "contractCid", "bridgeSourceSymbol",
-        "importSignature", "returnTerm", "sourceWarrantCids",
+        "importSignature", "returnTerm", "sourceWarrantCids", "contractDecl",
     }
     if not isinstance(raw, dict) or set(raw) != expected:
         raise CallContractRefProtocolError("malformed resolved-call contract ref")
@@ -142,7 +147,32 @@ def _decode_ref(raw: Any) -> ResolvedCallContractRefV1:
     warrants = raw["sourceWarrantCids"]
     if not isinstance(warrants, list):
         raise CallContractRefProtocolError("sourceWarrantCids must be a list")
+    resolution_cid = _cid(raw["resolutionCid"], "resolutionCid")
+    demand_cid = _cid(raw["demandCid"], "demandCid")
+    import_binding_cid = _cid(raw["importBindingCid"], "importBindingCid")
+    catalog_cid = _cid(raw["catalogCid"], "catalogCid")
+    member_cid = _cid(raw["memberCid"], "memberCid")
+    contract_cid = _cid(raw["contractCid"], "contractCid")
     return_term = None if raw["returnTerm"] is None else _term(raw["returnTerm"])
+    contract_decl = raw["contractDecl"]
+    if not isinstance(contract_decl, dict) or _hash_json(contract_decl) != raw["contractCid"]:
+        raise CallContractRefProtocolError("stale semantic contract CID")
+    resolution_preimage = {
+        "schemaVersion": "1",
+        "demandCid": raw["demandCid"],
+        "useSite": raw["useSite"],
+        "importBindingCid": raw["importBindingCid"],
+        "catalogCid": raw["catalogCid"],
+        "memberCid": raw["memberCid"],
+        "contractCid": raw["contractCid"],
+        "bridgeSourceSymbol": raw["bridgeSourceSymbol"],
+        "importSignature": raw["importSignature"],
+        "returnTerm": raw["returnTerm"],
+        "sourceWarrantCids": raw["sourceWarrantCids"],
+        "contractDecl": raw["contractDecl"],
+    }
+    if _hash_json(resolution_preimage) != raw["resolutionCid"]:
+        raise CallContractRefProtocolError("resolution CID mismatch")
     if return_term is not None:
         from .ir import _free_vars_in_term
 
@@ -151,16 +181,13 @@ def _decode_ref(raw: Any) -> ResolvedCallContractRefV1:
                 "returnTerm contains a variable not authenticated as a formal"
             )
     return ResolvedCallContractRefV1(
-        _cid(raw["resolutionCid"], "resolutionCid"),
-        _cid(raw["demandCid"], "demandCid"),
+        resolution_cid, demand_cid,
         SourceFragmentCoordinateV1.decode(raw["useSite"]),
-        _cid(raw["importBindingCid"], "importBindingCid"),
-        _cid(raw["catalogCid"], "catalogCid"),
-        _cid(raw["memberCid"], "memberCid"),
-        _cid(raw["contractCid"], "contractCid"),
+        import_binding_cid, catalog_cid, member_cid, contract_cid,
         raw["bridgeSourceSymbol"],
         tuple(signature["formals"]), sorts, return_term,
         tuple(_cid(value, "sourceWarrantCid") for value in warrants),
+        MappingProxyType(dict(contract_decl)),
     )
 
 

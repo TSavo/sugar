@@ -248,69 +248,35 @@ def _legacy_membrane_token_rows(root: Path) -> List[Dict[str, Any]]:
 
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll imported plain calls by their source-authenticated use sites."""
-    from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
-    from sugar_lift_py_tests.context_manager_contract import _json_value
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_uses, authenticated_module_exports,
+        module_name_for_path,
+    )
     from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
     from sugar_source_tree.tree import SourceTree
 
     rows: List[Dict[str, Any]] = []
+    units = []
     for path in SourceTree(root).paths():
         try:
             source, _filename, source_cid = path_source(str(path))
         except SourceUnavailable:
             continue
-        module = ast.parse(source, filename=str(path))
-        imports: Dict[str, tuple[str, str]] = {}
-        for node in ast.walk(module):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                for alias in node.names:
-                    binding = {
-                        "kind": "import-binding",
-                        "schemaVersion": "1",
-                        "sourceCid": source_cid,
-                        "module": node.module,
-                        "exportedName": alias.name,
-                        "localName": alias.asname or alias.name,
-                        "startLine": node.lineno,
-                        "startCol": node.col_offset,
-                        "endLine": node.end_lineno,
-                        "endCol": node.end_col_offset,
-                    }
-                    binding_cid = blake3_512_of(
-                        encode_jcs(_json_value(binding)).encode("utf-8")
-                    )
-                    imports[alias.asname or alias.name] = (
-                        f"{node.module}.{alias.name}", binding_cid
-                    )
-        for node in ast.walk(module):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-                continue
-            if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args):
-                continue
-            binding = imports.get(node.func.id)
-            if binding is None:
-                continue
-            target, import_binding_cid = binding
-            rows.append({
-                "schemaVersion": "1",
-                "kind": "call-contract-demand",
-                "targetSymbol": f"python:{target}",
-                "importBindingCid": import_binding_cid,
-                "importSignature": {
-                    "formals": [],
-                    "sorts": [
-                        {"kind": "primitive", "name": "Value"}
-                        for _ in node.args
-                    ],
-                },
-                "useSite": {
-                    "sourceCid": source_cid,
-                    "startLine": node.lineno,
-                    "startCol": node.col_offset,
-                    "endLine": node.end_lineno,
-                    "endCol": node.end_col_offset,
-                },
-            })
+        units.append((path, source, source_cid))
+    module_identities = {
+        module_name_for_path(root, path): {
+            "kind": "authenticated-python-module", "schemaVersion": "1",
+            "moduleName": module_name_for_path(root, path),
+            "sourceCid": source_cid,
+        }
+        for path, _source, source_cid in units
+    }
+    for path, source, source_cid in units:
+        enrolled, _outcomes = authenticated_import_uses(
+            root, path, source, source_cid, module_identities
+        )
+        rows.extend(authenticated_module_exports(root, path, source, source_cid))
+        rows.extend(enrolled)
     return rows
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because

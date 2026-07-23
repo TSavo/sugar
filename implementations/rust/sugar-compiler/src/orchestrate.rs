@@ -56,7 +56,7 @@ use std::path::Path;
 
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_linker::{
-    decode_context_manager_edge, final_check_context_manager_edges, link,
+    canonical_json_cid, decode_context_manager_edge, final_check_context_manager_edges, link,
     AuthenticatedCallContractCatalog, AuthenticatedContextManagerCatalog, CallContractDemandV1,
     Cid, ContextManagerContractDemandV1, LinkerError, LinkerErrorKind, LinkerInputs,
     ResolvedCallContractRefsV1, ResolvedContractRefsV1, SourceFragmentCoordinateV1, Symbol,
@@ -494,7 +494,7 @@ pub fn fold_kit_to_pool(
             .map_err(ProveFromKitError::LocalLoad)?;
         pool.merge(preliminary_pool);
 
-        let catalog = AuthenticatedCallContractCatalog::freeze_from_pool(&pool)
+        let mut catalog = AuthenticatedCallContractCatalog::freeze_from_pool(&pool)
             .map_err(ProveFromKitError::Preconstruction)?;
         let demand_rows = kit
             .context_manager_demands(workspace_root)
@@ -506,6 +506,14 @@ pub fn fold_kit_to_pool(
             })
             .map(call_contract_demand_from_wire)
             .collect::<Result<Vec<_>, _>>()?;
+        let exports = demand_rows
+            .iter()
+            .filter(|row| {
+                row.get("kind").and_then(serde_json::Value::as_str) == Some("call-contract-export")
+            })
+            .map(|row| call_contract_export_from_wire(row, &speaker.id))
+            .collect::<Result<Vec<_>, _>>()?;
+        catalog.install_exports(exports);
         let table = ResolvedCallContractRefsV1::new(&catalog, &demands);
         kit.bind_call_contract_refs(&table.to_wire_value())
             .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
@@ -641,6 +649,14 @@ fn call_contract_demand_from_wire(
                 "call demand missing authenticated importBindingCid".into(),
             )
         })?;
+    let import_binding = row.get("importBinding").ok_or_else(|| {
+        ProveFromKitError::Preconstruction("call demand missing ImportBindingV1".into())
+    })?;
+    if canonical_json_cid(import_binding).as_str() != import_binding_cid {
+        return Err(ProveFromKitError::Preconstruction(
+            "call demand ImportBindingV1 CID mismatch".into(),
+        ));
+    }
     let signature = row.get("importSignature").ok_or_else(|| {
         ProveFromKitError::Preconstruction("call demand missing importSignature".into())
     })?;
@@ -658,13 +674,63 @@ fn call_contract_demand_from_wire(
             .unwrap_or_else(|| serde_json::json!([])),
     )
     .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-    Ok(CallContractDemandV1::new(
+    let demand = CallContractDemandV1::new(
         use_site,
         Cid::from(import_binding_cid),
         Symbol::from(target),
         formals,
         sorts,
-    ))
+    );
+    let authenticated_use = row.get("authenticatedImportUse").ok_or_else(|| {
+        ProveFromKitError::Preconstruction("call demand missing AuthenticatedImportUseV1".into())
+    })?;
+    let supplied_use_cid = authenticated_use
+        .get("cid")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ProveFromKitError::Preconstruction("authenticated import use missing cid".into())
+        })?;
+    let mut use_preimage = authenticated_use.clone();
+    use_preimage
+        .as_object_mut()
+        .expect("checked object")
+        .remove("cid");
+    if canonical_json_cid(&use_preimage).as_str() != supplied_use_cid
+        || demand.authenticated_import_use_cid.as_str() != supplied_use_cid
+    {
+        return Err(ProveFromKitError::Preconstruction(
+            "AuthenticatedImportUseV1 CID mismatch".into(),
+        ));
+    }
+    Ok(demand)
+}
+
+fn call_contract_export_from_wire(
+    row: &serde_json::Value,
+    provider_id: &str,
+) -> Result<sugar_linker::AuthenticatedCallExportV1, ProveFromKitError> {
+    if row.get("schemaVersion").and_then(serde_json::Value::as_str) != Some("1") {
+        return Err(ProveFromKitError::Preconstruction(
+            "unsupported call export row".into(),
+        ));
+    }
+    let exported = row
+        .get("exportedSymbol")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ProveFromKitError::Preconstruction("call export missing exportedSymbol".into())
+        })?;
+    let target = row
+        .get("targetSymbol")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ProveFromKitError::Preconstruction("call export missing targetSymbol".into())
+        })?;
+    Ok(sugar_linker::AuthenticatedCallExportV1 {
+        exported_symbol: Symbol::from(exported),
+        target_symbol: Symbol::from(target),
+        provider_id: provider_id.to_string(),
+    })
 }
 
 impl From<ProofRunArtifactError> for SolveError {

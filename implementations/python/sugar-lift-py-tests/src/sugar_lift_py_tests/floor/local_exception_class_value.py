@@ -14,7 +14,6 @@ def module_class_value(*, name: str, base_names: tuple[str, ...], temporal, reco
     """Seed a module class without losing exact exception ancestry."""
     from .builtin_exception_class_value import BuiltinExceptionClassValue
     from .exception_class_value import ExceptionClassValue
-    from .import_alias_value import ImportAliasValue
 
     for base_name in base_names:
         bound = temporal.value_if_bound(base_name)
@@ -22,9 +21,6 @@ def module_class_value(*, name: str, base_names: tuple[str, ...], temporal, reco
             BuiltinExceptionClassValue,
             ExceptionClassValue,
             LocalExceptionClassValue,
-        ) or (
-            isinstance(bound, ImportAliasValue)
-            and isinstance(bound.resolve_value(), ExceptionClassValue)
         ):
             return LocalExceptionClassValue(name=name, bases=(), record=record)
     return ClassValue(name=name, bases=(), record=record)
