@@ -314,6 +314,7 @@ class PythonObjectResolutionGapV1:
         "artifact-module-absent",
         "target-outside-binding",
         "dynamic-export",
+        "unsupported-statement",
         "ambiguous-static-export",
         "static-export-absent",
         "opaque-source",
@@ -585,57 +586,12 @@ def _resolve_export(
             "artifact-module-absent", binding_cid, graph, module_name, exported_name
         )
     tree = parsed_tree(module.source, module.source_seat)
-    binding: tuple[str, Any] | None = None
-    dynamic_getattr = False
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name == "__getattr__":
-                dynamic_getattr = True
-            if node.name == exported_name:
-                binding = (
-                    ("definition", node)
-                    if not node.decorator_list
-                    else ("dynamic", node)
-                )
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if (alias.asname or alias.name) == exported_name:
-                    binding = ("import", (node, alias))
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if (alias.asname or alias.name.split(".")[0]) == exported_name:
-                    binding = ("dynamic", node)
-        elif isinstance(node, ast.Assign) and any(
-            _target_binds(target, exported_name) for target in node.targets
-        ):
-            binding = (
-                ("alias", node.value)
-                if len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and isinstance(node.value, ast.Name)
-                else ("dynamic", node)
-            )
-        elif isinstance(node, ast.AnnAssign) and _target_binds(
-            node.target, exported_name
-        ):
-            if node.value is not None:
-                binding = (
-                    ("alias", node.value)
-                    if isinstance(node.target, ast.Name)
-                    and isinstance(node.value, ast.Name)
-                    else ("dynamic", node)
-                )
-        elif isinstance(node, ast.AugAssign) and _target_binds(
-            node.target, exported_name
-        ):
-            binding = ("dynamic", node)
-        elif isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try)):
-            if _compound_binds(node, exported_name):
-                binding = ("dynamic", node)
-        elif isinstance(node, ast.Delete) and any(
-            _target_binds(target, exported_name) for target in node.targets
-        ):
-            binding = None
+    binding = _export_block(tree.body, exported_name, None)
+    dynamic_getattr = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "__getattr__"
+        for node in tree.body
+    )
     if binding is not None and binding[0] == "definition":
         definition = _definition(module, binding[1])
         return ResolvedPythonObjectV1(
@@ -685,6 +641,14 @@ def _resolve_export(
             binding[1].id,
             warrants,
             seen | {key},
+        )
+    if binding is not None and binding[0] == "unsupported":
+        return _gap(
+            "unsupported-statement",
+            binding_cid,
+            graph,
+            module_name,
+            exported_name,
         )
     return _gap(
         (
@@ -794,47 +758,248 @@ def _target_binds(target: ast.AST, name: str) -> bool:
     return False
 
 
-def _compound_binds(statement: ast.stmt, name: str) -> bool:
-    """Conservatively identify a conditional/runtime-selected rebinding."""
+_TYPE_ALIAS = getattr(ast, "TypeAlias", None)
+_TRY_TYPES = tuple(
+    kind for kind in (ast.Try, getattr(ast, "TryStar", None)) if kind is not None
+)
 
-    class BindingVisitor(ast.NodeVisitor):
-        found = False
+_EXPORT_SIMPLE_STATEMENTS = frozenset(
+    kind
+    for kind in (
+        ast.Assign,
+        ast.AnnAssign,
+        ast.AugAssign,
+        ast.Delete,
+        ast.Import,
+        ast.ImportFrom,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Expr,
+        ast.Return,
+        ast.Raise,
+        ast.Assert,
+        ast.Pass,
+        ast.Break,
+        ast.Continue,
+        ast.Global,
+        ast.Nonlocal,
+        _TYPE_ALIAS,
+    )
+    if kind is not None
+)
+_EXPORT_COMPOUND_STATEMENTS = frozenset(
+    kind
+    for kind in (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.With,
+        ast.AsyncWith,
+        ast.Try,
+        getattr(ast, "TryStar", None),
+        ast.Match,
+    )
+    if kind is not None
+)
 
-        def visit_Name(self, node: ast.Name) -> None:
-            if isinstance(node.ctx, (ast.Store, ast.Del)) and node.id == name:
-                self.found = True
 
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            if node.name == name:
-                self.found = True
+def export_statement_coverage() -> tuple[list[str], list[str]]:
+    """Audit that every running-interpreter statement has one transfer arm."""
+    grammar = frozenset(ast.stmt.__subclasses__())
+    declared = _EXPORT_SIMPLE_STATEMENTS | _EXPORT_COMPOUND_STATEMENTS
+    return (
+        sorted(kind.__name__ for kind in grammar - declared),
+        sorted(kind.__name__ for kind in declared - grammar),
+    )
 
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            if node.name == name:
-                self.found = True
 
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            if node.name == name:
-                self.found = True
+def _export_block(statements, name, initial):
+    state = initial
+    for statement in statements:
+        state = _export_statement(statement, name, state)
+    return state
 
-        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-            if any((alias.asname or alias.name) == name for alias in node.names):
-                self.found = True
 
-        def visit_Import(self, node: ast.Import) -> None:
+def _export_statement(statement: ast.stmt, name: str, state):
+    if type(statement) not in (_EXPORT_SIMPLE_STATEMENTS | _EXPORT_COMPOUND_STATEMENTS):
+        return ("unsupported", type(statement).__name__)
+    if _statement_walrus_binds(statement, name):
+        state = ("dynamic", statement)
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if statement.name != name:
+            return state
+        return (
+            ("definition", statement)
+            if not statement.decorator_list
+            else ("dynamic", statement)
+        )
+    if isinstance(statement, ast.ImportFrom):
+        for alias in statement.names:
+            if (alias.asname or alias.name) == name:
+                state = ("import", (statement, alias))
+        return state
+    if isinstance(statement, ast.Import):
+        return (
+            ("dynamic", statement)
             if any(
                 (alias.asname or alias.name.split(".")[0]) == name
-                for alias in node.names
+                for alias in statement.names
+            )
+            else state
+        )
+    if isinstance(statement, ast.Assign):
+        if not any(_target_binds(target, name) for target in statement.targets):
+            return state
+        if (
+            len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and isinstance(statement.value, ast.Name)
+        ):
+            return ("alias", statement.value)
+        return ("dynamic", statement)
+    if isinstance(statement, ast.AnnAssign):
+        if statement.value is None or not _target_binds(statement.target, name):
+            return state
+        if isinstance(statement.target, ast.Name) and isinstance(
+            statement.value, ast.Name
+        ):
+            return ("alias", statement.value)
+        return ("dynamic", statement)
+    if isinstance(statement, ast.AugAssign):
+        return (
+            ("dynamic", statement) if _target_binds(statement.target, name) else state
+        )
+    if isinstance(statement, ast.Delete):
+        return (
+            None
+            if any(_target_binds(target, name) for target in statement.targets)
+            else state
+        )
+    if _TYPE_ALIAS is not None and isinstance(statement, _TYPE_ALIAS):
+        return (
+            ("dynamic", statement)
+            if isinstance(statement.name, ast.Name) and statement.name.id == name
+            else state
+        )
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        for item in statement.items:
+            if item.optional_vars is not None and _target_binds(
+                item.optional_vars, name
             ):
-                self.found = True
+                state = ("dynamic", statement)
+        return _export_block(statement.body, name, state)
+    if isinstance(statement, ast.Match):
+        outputs = [
+            _export_block(
+                case.body,
+                name,
+                ("dynamic", statement) if _pattern_binds(case.pattern, name) else state,
+            )
+            for case in statement.cases
+        ]
+        exhaustive = (
+            bool(statement.cases)
+            and isinstance(statement.cases[-1].pattern, ast.MatchAs)
+            and statement.cases[-1].pattern.pattern is None
+            and statement.cases[-1].guard is None
+        )
+        if not exhaustive:
+            outputs.append(state)
+        return _join_export_states(outputs, statement)
+    if isinstance(statement, _TRY_TYPES):
+        completed = _export_block(statement.body, name, state)
+        completed = _export_block(statement.orelse, name, completed)
+        # A suite containing only definition/pass statements cannot raise while
+        # binding the export; its handlers are unreachable on successful module
+        # construction. Other try bodies retain every handler edge.
+        outputs = [completed]
+        if not all(_cannot_raise_during_module_init(item) for item in statement.body):
+            for handler in statement.handlers:
+                handler_state = (
+                    ("dynamic", statement) if handler.name == name else state
+                )
+                outputs.append(_export_block(handler.body, name, handler_state))
+        joined = _join_export_states(outputs, statement)
+        return _export_block(statement.finalbody, name, joined)
+    if isinstance(statement, ast.If):
+        return _join_export_states(
+            (
+                _export_block(statement.body, name, state),
+                _export_block(statement.orelse, name, state),
+            ),
+            statement,
+        )
+    if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+        iterated = state
+        if isinstance(statement, (ast.For, ast.AsyncFor)) and _target_binds(
+            statement.target, name
+        ):
+            iterated = ("dynamic", statement)
+        iterated = _export_block(statement.body, name, iterated)
+        iterated = _export_block(statement.orelse, name, iterated)
+        return _join_export_states((state, iterated), statement)
+    return state
 
-        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-            if node.name == name:
-                self.found = True
-            self.generic_visit(node)
 
-    visitor = BindingVisitor()
-    visitor.visit(statement)
-    return visitor.found
+def _join_export_states(states, locus):
+    states = tuple(states)
+    if states and all(state == states[0] for state in states[1:]):
+        return states[0]
+    return ("dynamic", locus)
+
+
+def _pattern_binds(pattern: ast.pattern, name: str) -> bool:
+    if isinstance(pattern, (ast.MatchAs, ast.MatchStar)) and pattern.name == name:
+        return True
+    if isinstance(pattern, ast.MatchMapping) and pattern.rest == name:
+        return True
+    return any(
+        _pattern_binds(child, name)
+        for child in ast.iter_child_nodes(pattern)
+        if isinstance(child, ast.pattern)
+    )
+
+
+def _statement_walrus_binds(statement: ast.stmt, name: str) -> bool:
+    """Find module-scope named expressions without entering nested scopes/suites."""
+    stack = list(ast.iter_child_nodes(statement))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.stmt):
+            continue
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(node, ast.NamedExpr) and _target_binds(node.target, name):
+            return True
+        stack.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _cannot_raise_during_module_init(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.Pass):
+        return True
+    if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    arguments = statement.args
+    parameters = (
+        *arguments.posonlyargs,
+        *arguments.args,
+        *arguments.kwonlyargs,
+        *(() if arguments.vararg is None else (arguments.vararg,)),
+        *(() if arguments.kwarg is None else (arguments.kwarg,)),
+    )
+    return not (
+        statement.decorator_list
+        or arguments.defaults
+        or any(default is not None for default in arguments.kw_defaults)
+        or statement.returns is not None
+        or any(parameter.annotation is not None for parameter in parameters)
+        or getattr(statement, "type_params", ())
+    )
 
 
 def _module_name(path: PurePosixPath) -> str | None:

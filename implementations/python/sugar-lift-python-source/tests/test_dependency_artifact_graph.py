@@ -19,6 +19,7 @@ from sugar_lift_python_source.dependency_artifact import (
     PythonObjectResolutionGapV1,
     ResolvedPythonObjectV1,
     resolve_import_binding,
+    export_statement_coverage,
 )
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
 
@@ -308,3 +309,54 @@ def test_later_non_name_assignment_makes_export_dynamic(tmp_path: Path) -> None:
 
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "dynamic-export"
+
+
+@pytest.mark.parametrize(
+    ("implementation", "expected_line"),
+    (
+        (
+            "def build(value):\n    return 'old'\n"
+            "with object():\n"
+            "    def build(value):\n        return value\n",
+            4,
+        ),
+        (
+            "def build(value):\n    return 'old'\n"
+            "match 1:\n"
+            "    case _:\n"
+            "        def build(value):\n            return value\n",
+            5,
+        ),
+        (
+            "def build(value):\n    return 'old'\n"
+            "try:\n"
+            "    def build(value):\n        return value\n"
+            "except* Exception:\n    pass\n",
+            4,
+        ),
+    ),
+    ids=("with", "match", "try-star"),
+)
+def test_compound_statement_later_definition_is_the_authenticated_export(
+    tmp_path: Path, implementation: str, expected_line: int
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source=implementation,
+        )
+    )
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.start_line == expected_line
+    assert result.definition.start_line != 1
+
+
+def test_export_transfer_exhaustively_classifies_running_ast_statement_grammar() -> (
+    None
+):
+    missing, extra = export_statement_coverage()
+    assert missing == []
+    assert extra == []
