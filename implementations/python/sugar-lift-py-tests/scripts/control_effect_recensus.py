@@ -138,7 +138,14 @@ def _collect_file_construction(
     }
 
 
-def _production_source_file(path, *, root, reporter, distribution_index=None):
+def _production_source_file(
+    path,
+    *,
+    root,
+    reporter,
+    distribution_index=None,
+    artifact_graph_cache=None,
+):
     from _production_source_file import production_source_file
 
     return production_source_file(
@@ -146,6 +153,7 @@ def _production_source_file(path, *, root, reporter, distribution_index=None):
         root=root,
         reporter=reporter,
         distribution_index=distribution_index,
+        artifact_graph_cache=artifact_graph_cache,
     )
 
 
@@ -168,6 +176,7 @@ def main() -> int:
         for package, distributions in package_distributions.items()
         if len(distributions) == 1
     }
+    artifact_graph_cache = {}
 
     files = sorted(args.corpus.rglob("*.py"))
     signal.signal(signal.SIGALRM, _timeout)
@@ -180,6 +189,8 @@ def main() -> int:
     files_completed = 0
     functions_total = 0
     functions_clean = 0
+    source_calls_total = 0
+    source_call_preconstruction = Counter()
     started = time.time()
 
     for index, path in enumerate(files, 1):
@@ -196,14 +207,35 @@ def main() -> int:
                     syntax[(type(node).__name__, node.lineno, node.col_offset)] = labels
 
             def construct_file():
-                nonlocal functions_total, functions_clean
+                nonlocal functions_total, functions_clean, source_calls_total
                 reporter = CollectingReporter()
                 source_file = _production_source_file(
                     path,
                     root=args.corpus,
                     reporter=reporter,
                     distribution_index=distribution_index,
+                    artifact_graph_cache=artifact_graph_cache,
                 )
+                from sugar_lift_py_tests.source_call_resolution import (
+                    SourceCallPreconstructionRefV1,
+                )
+                from sugar_source_tree.nodes import Call
+
+                source_calls_total += sum(
+                    1 for node in source_file.nodes() if isinstance(node, Call)
+                )
+                for (
+                    row
+                ) in (
+                    source_file.unit.construction_context.source_call_resolutions.values()
+                ):
+                    source_call_preconstruction[
+                        (
+                            "source-visible"
+                            if isinstance(row, SourceCallPreconstructionRefV1)
+                            else row.kind
+                        )
+                    ] += 1
                 for function in source_file.functions():
                     functions_total += 1
                     try:
@@ -296,6 +328,12 @@ def main() -> int:
         "R_construction_panics": len(construction_panics),
         "functionsTotal": functions_total,
         "functionsConstructClean": functions_clean,
+        "sourceCallsTotal": source_calls_total,
+        "sourceCallPreconstruction": {
+            **dict(sorted(source_call_preconstruction.items())),
+            "unclassifiedLocalOrDynamic": source_calls_total
+            - sum(source_call_preconstruction.values()),
+        },
         "constructs": {
             label: dict(sorted(statuses.items()))
             for label, statuses in sorted(counts.items())
@@ -326,9 +364,7 @@ def main() -> int:
             "unmeasurable": len(defects),
         },
         measured=(
-            not defects
-            and not construction_panics
-            and files_completed == len(files)
+            not defects and not construction_panics and files_completed == len(files)
         ),
         unmeasurable_reasons=(
             (["construction-panic"] if construction_panics else [])

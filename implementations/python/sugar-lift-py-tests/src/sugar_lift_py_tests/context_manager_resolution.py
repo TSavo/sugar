@@ -153,6 +153,10 @@ class TreeConstructionContextV1:
     workspace_root: str | None = None
     # Mutable frame table held by reference; the context object itself is frozen.
     source_call_frames: dict = field(default_factory=dict)
+    # Closed source-call preconstruction rows at exact use sites.  A frame is
+    # installed only beside a successful authenticated row; every other row is
+    # a typed loud classification consumed by census/linking.
+    source_call_resolutions: dict = field(default_factory=dict)
     source_derived_contract_refs: dict = field(default_factory=dict)
     # Runtime-only, prebound class-base Sugar children keyed by the exact
     # subclass definition coordinate.  These are never serialized; the class
