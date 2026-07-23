@@ -99,6 +99,10 @@ class SourceFile:
             )
             raise AssertionError("unreachable")
         self.root: Module = root
+        # Identity queries on SourceUnit (module-level function slots,
+        # exception-type lexical bindings) read this already-materialized
+        # Module — never a second source parse as semantic authority.
+        self.unit.bind_typed_module(root)
 
     @classmethod
     def from_path(
