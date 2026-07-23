@@ -13,7 +13,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
     _hash_json,
 )
-from sugar_lift_py_tests.lift_rpc import _context_manager_demand_rows
+from sugar_lift_py_tests.lift_rpc import _preconstruction_demand_rows
 from sugar_source_tree.tree import SourceFile
 
 
@@ -26,7 +26,9 @@ def source_file_with_preconstruction(path):
     shutil.copyfile(path, isolated)
     path = isolated
     resolutions = {}
-    for row in _context_manager_demand_rows(path.parent):
+    for row in _preconstruction_demand_rows(path.parent):
+        if row.get("kind") != "context-manager-demand":
+            continue
         site = SourceFragmentCoordinateV1.decode(row["useSite"])
         preimage = {
             key: row[key]

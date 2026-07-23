@@ -420,3 +420,19 @@ class CPythonAstBackend(Backend):
                 backend=self.name, file=unit.filename, reason=str(err)
             ) from err
         return _Handle(unit, tree)
+
+    def expression(self, unit: SourceUnit) -> BackendNode:
+        """Parse one expression through the same backend vocabulary.
+
+        This is the adapter boundary for embedded Python expression surfaces.
+        The caller still materializes the returned handle into the ordinary
+        typed ``Expression`` graph before substitution or construction; raw
+        CPython nodes never cross this method.
+        """
+        try:
+            tree = ast.parse(unit.source, filename=unit.filename, mode="eval")
+        except (SyntaxError, ValueError) as err:
+            raise BackendCouldNotParse(
+                backend=self.name, file=unit.filename, reason=str(err)
+            ) from err
+        return _Handle(unit, tree.body)

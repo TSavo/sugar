@@ -70,22 +70,14 @@ _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
-    """Enroll with-site import coordinates without constructing any Sugar.
+    """Enroll typed With occurrences without constructing any Sugar.
 
-    Enumeration is SourceOracle → SourceFile → typed Nodes only
-    (Import / ImportFrom / With / AsyncWith / Call / Name / Attribute).
-    No raw ``ast.parse`` / ``ast.walk`` side door.
+    Import authority is joined later from ``_call_contract_demand_rows`` at the
+    identical source coordinate.  This pass owns only the structural fact that
+    a typed WithItem exists; it never reconstructs imports from spellings.
     """
     from sugar_lift_python_source.source_oracle import SourceUnavailable
-    from sugar_source_tree.nodes import (
-        AsyncWith,
-        Attribute,
-        Call,
-        Import,
-        ImportFrom,
-        Name,
-        With,
-    )
+    from sugar_source_tree.nodes import AsyncWith, With
     from sugar_source_tree.tree import SourceFile, SourceTree
 
     rows: List[Dict[str, Any]] = []
@@ -94,35 +86,14 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
             source_file = SourceFile.from_path(path)
         except SourceUnavailable:
             continue
-        imports: Dict[str, str] = {}
-        with_nodes: List[With | AsyncWith] = []
         for node in source_file.nodes():
-            if isinstance(node, ImportFrom) and node.module:
-                for alias in node.names:
-                    imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-            elif isinstance(node, Import):
-                for alias in node.names:
-                    imports[alias.asname or alias.name.split(".")[0]] = alias.name
-            elif isinstance(node, (With, AsyncWith)):
-                with_nodes.append(node)
-        source_cid = source_file.unit.source_cid
-        for node in with_nodes:
+            if not isinstance(node, (With, AsyncWith)):
+                continue
             for item in node.items:
                 expression = item.context_expr
-                target = None
-                if isinstance(expression, Call):
-                    callee = expression.func
-                    if isinstance(callee, Name):
-                        target = imports.get(callee.id)
-                    elif isinstance(callee, Attribute) and isinstance(
-                        callee.value, Name
-                    ):
-                        base = imports.get(callee.value.id)
-                        if base:
-                            target = f"{base}.{callee.attr}"
                 span = expression.line_col_span()
                 coordinate = {
-                    "sourceCid": source_cid,
+                    "sourceCid": source_file.unit.source_cid,
                     "startLine": span.start_line,
                     "startCol": span.start_col,
                     "endLine": span.end_line,
@@ -133,10 +104,10 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
                         "schemaVersion": "1",
                         "kind": "context-manager-demand",
                         "useSite": coordinate,
-                        "targetSymbol": target,
+                        "targetSymbol": None,
                         "importSignature": {"parameters": []},
                         "expectedKind": "context-manager-contract",
-                        "gapKind": None if target else "runtime-selected",
+                        "gapKind": "runtime-selected",
                     }
                 )
     return rows
