@@ -81,6 +81,20 @@ class CallSiteSugar(Sugar):
                     tuple(rest), kw_values + ((name, value),), positional, ctx
                 )
             )
+        if ctx is not None:
+            from sugar_lift_py_tests.callable_application import CallableApplication
+            from sugar_lift_py_tests.floor import BuiltinSemanticCallable
+
+            receiver = ctx.temporal.value_for(self.target_name)
+            if isinstance(receiver, BuiltinSemanticCallable):
+                return receiver.callable_application_with(
+                    CallableApplication(
+                        positional + tuple(value for _, value in kw_values),
+                        tuple(name for name, _ in kw_values),
+                        self.site,
+                    ),
+                    ctx,
+                )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
