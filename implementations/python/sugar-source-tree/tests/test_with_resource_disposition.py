@@ -30,7 +30,7 @@ def test_errstate_without_published_cm_contract_stays_loud():
             "    return z\n"
         ).sugar()
     assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
-    assert caught.value.kind == "runtime-selected"
+    assert caught.value.kind == "unresolved-symbol"
 
 
 def test_option_context_without_provider_contract_is_typed_loud():

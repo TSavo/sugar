@@ -116,13 +116,19 @@ impl QuestionCache {
         question: &Value,
         wire: impl FnOnce() -> Result<Value, E>,
     ) -> Result<Value, E> {
-        let identity = json!({
-            "workspace_root": question.get("workspace_root").cloned().unwrap_or(Value::Null),
-            "level": question.get("level").cloned().unwrap_or(Value::Null),
-            "at": question.get("at").cloned().unwrap_or(Value::Null),
-            "seek": question.get("seek").cloned().unwrap_or(Value::Bool(false)),
-            "options": question.get("options").cloned().unwrap_or_else(|| json!({})),
-        });
+        let identity = match (question.get("method"), question.get("params")) {
+            (Some(method), Some(params)) => json!({
+                "method": method,
+                "params": params,
+            }),
+            _ => json!({
+                "workspace_root": question.get("workspace_root").cloned().unwrap_or(Value::Null),
+                "level": question.get("level").cloned().unwrap_or(Value::Null),
+                "at": question.get("at").cloned().unwrap_or(Value::Null),
+                "seek": question.get("seek").cloned().unwrap_or(Value::Bool(false)),
+                "options": question.get("options").cloned().unwrap_or_else(|| json!({})),
+            }),
+        };
         let question_cid = MementoCid::try_parse(compute_formula_cid(&identity))
             .expect("canonical question hash is a valid memento CID");
         if let Some(answer) = self.answers.get(&question_cid) {
@@ -548,6 +554,30 @@ fn read_response<R: BufRead>(reader: &mut R, expect_id: i64) -> Result<Value, Rp
 mod tests {
     use super::QuestionCache;
     use serde_json::json;
+
+    #[test]
+    fn rpc_method_is_part_of_a_question_identity() {
+        let mut cache = QuestionCache::default();
+        let params = json!({"kind": "authority-table"});
+        let context_manager = json!({
+            "method": "sugar.plugin.bind_contract_refs",
+            "params": params,
+        });
+        let call_contract = json!({
+            "method": "sugar.plugin.bind_call_contract_refs",
+            "params": params,
+        });
+        let first = cache
+            .ask(&context_manager, || Ok::<_, ()>(json!({"tableCid": "cm"})))
+            .unwrap();
+        let second = cache
+            .ask(&call_contract, || Ok::<_, ()>(json!({"tableCid": "call"})))
+            .unwrap();
+
+        assert_eq!(first["tableCid"], "cm");
+        assert_eq!(second["tableCid"], "call");
+        assert_eq!(cache.misses(), 2);
+    }
 
     #[test]
     fn bounded_question_cache_spills_exact_answers_without_rewiring() {

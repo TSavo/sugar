@@ -492,6 +492,43 @@ def test_reexport_declaration_is_static_and_source_authenticated(tmp_path):
     assert demand["authenticatedImportUse"]["kind"] == "authenticated-import-use"
 
 
+def test_with_manager_call_is_owned_only_by_context_manager_preconstruction(tmp_path):
+    (tmp_path / "consumer.py").write_text(
+        "import pytest\n"
+        "with pytest.raises(ValueError, match='bad'):\n"
+        "    raise ValueError('bad')\n"
+    )
+
+    rows = lift_rpc._preconstruction_demand_rows(tmp_path)
+    cm_rows = [row for row in rows if row["kind"] == "context-manager-demand"]
+    call_rows = [row for row in rows if row["kind"] == "call-contract-demand"]
+
+    assert len(cm_rows) == 1
+    assert cm_rows[0]["targetSymbol"] == "pytest.raises"
+    assert cm_rows[0]["authenticatedImportUse"]["kind"] == "authenticated-import-use"
+    assert call_rows == []
+
+
+def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_path):
+    (tmp_path / "consumer.py").write_text(
+        "from pytest import raises\n"
+        "def checked():\n"
+        "    raises = lambda *args, **kwargs: object()\n"
+        "    with raises(ValueError):\n"
+        "        pass\n"
+    )
+
+    row = next(
+        row
+        for row in lift_rpc._preconstruction_demand_rows(tmp_path)
+        if row["kind"] == "context-manager-demand"
+    )
+
+    assert row["targetSymbol"] is None
+    assert row["gapKind"] == "runtime-selected"
+    assert "importBindingCid" not in row
+
+
 def test_import_alias_has_no_parallel_install_source_resolver(monkeypatch):
     from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
 

@@ -131,9 +131,7 @@ def test_demand_enrollment_uses_import_coordinate_without_sugar_or_target_source
     )
     rows = lift_rpc._context_manager_demand_rows(tmp_path)
     assert len(rows) == 1
-    assert rows[0]["targetSymbol"] == (
-        "context-manager:dependency_that_is_not_present.manager"
-    )
+    assert rows[0]["targetSymbol"] == "dependency_that_is_not_present.manager"
     assert rows[0]["gapKind"] is None
     assert rows[0]["useSite"]["sourceCid"].startswith("blake3-512:")
 

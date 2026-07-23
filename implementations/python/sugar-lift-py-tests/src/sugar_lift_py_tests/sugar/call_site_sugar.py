@@ -102,6 +102,7 @@ class CallSiteSugar(Sugar):
                 parameters=(),
                 term=term,
                 body=None,  # the dig is CUED, not inlined here
+                keyword_names=tuple(name for name, _ in kw_values),
                 site=self.site,
             )
         )

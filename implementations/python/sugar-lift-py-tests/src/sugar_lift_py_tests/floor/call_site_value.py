@@ -77,6 +77,7 @@ class CallSiteValue(FloorValue):
     # ObjectMethodValue.body: a callsite's factory-built body varies in
     # reduction shape with the SugarRole it was built under.
     body: SugarBody[Any] | FunctionBodyUniverse | None
+    keyword_names: tuple[str, ...] = dataclass_field(default=(), compare=False)
     site: object = dataclass_field(default=None, compare=False)
     # A callee contract may cite the Python type object returned by this call.
     # Absent that citation, Python must execute the call to know whether its

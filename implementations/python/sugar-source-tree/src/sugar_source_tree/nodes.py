@@ -2179,6 +2179,9 @@ class With(Statement):
         if resolution is None:
             return None
         from sugar_lift_py_tests.context_manager_contract import (
+            EffectBoundarySemanticsV1,
+            ExpectsModeV1,
+            RaiseEffectKindV1,
             NeverSuppressesDispositionV1,
             ProtocolResourceSemanticsV1,
             TotalCompletionV1,
@@ -2200,7 +2203,7 @@ class With(Statement):
                 fix="keep the injected table closed and typed",
             )
         semantics = resolution.semantics
-        admitted = (
+        admitted_resource = (
             isinstance(semantics, ProtocolResourceSemanticsV1)
             and semantics.schema_version == "1"
             and isinstance(semantics.enter.completion, TotalCompletionV1)
@@ -2210,7 +2213,13 @@ class With(Statement):
             and isinstance(semantics.exit.completion, TotalCompletionV1)
             and isinstance(semantics.exit.disposition, NeverSuppressesDispositionV1)
         )
-        if not admitted:
+        admitted_boundary = (
+            isinstance(semantics, EffectBoundarySemanticsV1)
+            and semantics.schema_version == "1"
+            and isinstance(semantics.mode, ExpectsModeV1)
+            and isinstance(semantics.effect_kind, RaiseEffectKindV1)
+        )
+        if not (admitted_resource or admitted_boundary):
             panic = UnsupportedContextManagerSemantics(
                 demand_cid=resolution.demand_cid,
                 member_cid=resolution.member_cid,
@@ -2219,7 +2228,7 @@ class With(Statement):
                     "authenticated CM member carries unsupported enter/exit semantics "
                     f"at {resolution.member_cid}"
                 ),
-                requested="total Value enter testimony and typed NeverSuppresses exit",
+                requested="total Value/NeverSuppresses resource or typed Expects/Raise boundary",
                 fix="leave unsupported authenticated semantics loud; never upgrade testimony",
             )
             self.reporter.report_gap(self, panic)
@@ -2265,17 +2274,45 @@ class With(Statement):
         resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
             from sugar_lift_py_tests.context_manager_contract import (
+                EffectBoundarySemanticsV1,
                 ProtocolResourceSemanticsV1,
             )
             from sugar_lift_py_tests.kit_rpc import ContextManagerEdgeDtoV1
             from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
+            if isinstance(resolved_ref.semantics, EffectBoundarySemanticsV1):
+                from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+                    WithEffectBoundarySugar,
+                )
+
+                if as_name is not None:
+                    from .panic import UnsupportedWithBindingTarget
+
+                    panic = UnsupportedWithBindingTarget(
+                        owner="With._construct_sugar",
+                        observed="EffectBoundary as-binding projection is not yet authenticated",
+                        requested="an EffectBoundary manager without optional_vars",
+                        fix="keep exception-info/warning observation binding loud until its projection slot is authenticated",
+                    )
+                    self.reporter.report_gap(self, panic)
+                    raise panic
+                return WithEffectBoundarySugar(
+                    manager=item.context_expr.sugar(),
+                    body=tuple(stmt.sugar() for stmt in self.body),
+                    semantics=resolved_ref.semantics,
+                    contract_ref=resolved_ref,
+                    context_manager_edge=ContextManagerEdgeDtoV1.from_resolved(
+                        resolved_ref, resolved_ref.use_site
+                    ),
+                    site=self.fragment,
+                )
+
             if not isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
                 backend_defect(
                     owner="With._construct_sugar",
-                    observed="narrow resource resolver returned EffectBoundary semantics",
-                    requested="ProtocolResourceSemanticsV1",
-                    fix="route EffectBoundary through its separately implemented Sugar arm",
+                    observed="closed CM resolver returned an unknown semantics variant",
+                    requested="ProtocolResourceSemanticsV1 or EffectBoundarySemanticsV1",
+                    fix="keep the semantics union exhaustive",
                 )
 
             manager_slot = item._manager_slot_id()

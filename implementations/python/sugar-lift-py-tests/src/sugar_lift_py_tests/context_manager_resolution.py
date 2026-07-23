@@ -64,6 +64,10 @@ class ContextManagerContractRefV1:
     resolution_cid: str
     demand_cid: str
     use_site: SourceFragmentCoordinateV1
+    authenticated_import_use_cid: str
+    import_binding_cid: str
+    provider_kit_cid: str
+    provider_export_cid: str
     catalog_cid: str
     member_cid: str
     payload_cid: str
@@ -119,6 +123,8 @@ _GAP_KINDS = frozenset(
         "unauthenticated-member",
         "payload-cid-mismatch",
         "unsupported-cm-schema",
+        "provider-not-selected",
+        "wrong-provider",
     }
 )
 
@@ -145,6 +151,10 @@ def _resolution_cid_preimage(raw: dict[str, Any]) -> dict[str, Any]:
             "useSite",
             "catalogCid",
             "memberCid",
+            "authenticatedImportUseCid",
+            "importBindingCid",
+            "providerKitCid",
+            "providerExportCid",
             "payloadCid",
             "bridgeSourceSymbol",
             "importSignature",
@@ -165,6 +175,10 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
         "resolutionCid",
         "demandCid",
         "useSite",
+        "authenticatedImportUseCid",
+        "importBindingCid",
+        "providerKitCid",
+        "providerExportCid",
         "catalogCid",
         "memberCid",
         "payloadCid",
@@ -192,6 +206,10 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
         resolution_cid,
         _cid(raw["demandCid"], "demandCid"),
         SourceFragmentCoordinateV1.decode(raw["useSite"]),
+        _cid(raw["authenticatedImportUseCid"], "authenticatedImportUseCid"),
+        _cid(raw["importBindingCid"], "importBindingCid"),
+        _cid(raw["providerKitCid"], "providerKitCid"),
+        _cid(raw["providerExportCid"], "providerExportCid"),
         _cid(raw["catalogCid"], "catalogCid"),
         _cid(raw["memberCid"], "memberCid"),
         _cid(raw["payloadCid"], "payloadCid"),

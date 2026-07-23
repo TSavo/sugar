@@ -51,6 +51,7 @@ from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
 from .warning_effect import WarningEffect
+from .expectation_not_met_effect import ExpectationNotMetEffect
 from .runtime_effect import (
     RuntimeEffect,
     RuntimeOperand,
@@ -124,6 +125,7 @@ __all__ = [
     "PowerRuntimeEffect",
     "RaiseEffect",
     "WarningEffect",
+    "ExpectationNotMetEffect",
     "RuntimeEffect",
     "RuntimeOperand",
     "RuntimeEffectWitness",
