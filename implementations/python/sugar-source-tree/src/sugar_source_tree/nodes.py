@@ -2130,13 +2130,38 @@ class AugAssign(Statement):
         from .shadow import rewrite
 
         new_value, d = self._substitute_field(self.value, scope)
-        return self if not d else rewrite(self, value=new_value)
+        rewritten = self if not d else rewrite(self, value=new_value)
+        if not isinstance(rewritten.target, Name):
+            return rewritten
+        name = rewritten.target.id
+        old_state = unwrap_binding_state(scope.get(name, rewritten.target))
+        old_read = binding_state_read_node(
+            old_state,
+            make_read=rewritten.target._make_binding_read,
+        )
+        operation = rewritten._make_binop(old_read, rewritten.op, rewritten.value)
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        desc = rewritten.ref.describe()
+        return materialize(
+            self.unit,
+            ShadowNode(
+                desc.kind,
+                desc.raw_span or self.span,
+                (*desc.slots, ("operation", Child(_handle_of(operation)))),
+            ),
+            self.reporter,
+        )
 
     def substitution_binding(self, scope):
         # `x OP= e` rebinds x to `x OP e`, reading the OLD x from the scope
         # (or the target itself if x was free). Only a plain Name target binds.
         if not isinstance(self.target, Name):
             return None
+        operation = getattr(self, "operation", None)
+        if isinstance(operation, Node):
+            return {self.target.id: operation}
         name = self.target.id
         old_state = scope.get(name, self.target)
         old_state = unwrap_binding_state(old_state)
@@ -2156,9 +2181,15 @@ class AugAssign(Statement):
         targets are runtime stores rather than lexical bindings, so they reuse
         Assign's typed attribute/subscript store effects."""
         if isinstance(self.target, Name):
-            from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+            from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 
-            return InertSugar(site=self.fragment)
+            operation = getattr(self, "operation", None)
+            if not isinstance(operation, Node):
+                return super()._construct_sugar()
+            return AugAssignSugar(
+                operation=operation.sugar(),
+                site=self.fragment,
+            )
         if isinstance(self.target, Attribute):
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,
