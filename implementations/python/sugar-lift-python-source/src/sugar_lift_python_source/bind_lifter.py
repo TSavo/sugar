@@ -13,6 +13,47 @@ from .canonical import blake3_512_of, cid_of_json, template_cid_of_json
 from .source_tables import parsed_tree
 
 Json = Any
+class UnsupportedStatementGrammar(RuntimeError):
+    pass
+
+
+AST_STATEMENT_TYPE_NAMES = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Return",
+        "Delete",
+        "Assign",
+        "TypeAlias",
+        "AugAssign",
+        "AnnAssign",
+        "For",
+        "AsyncFor",
+        "While",
+        "If",
+        "With",
+        "AsyncWith",
+        "Match",
+        "Raise",
+        "Try",
+        "TryStar",
+        "Assert",
+        "Import",
+        "ImportFrom",
+        "Global",
+        "Nonlocal",
+        "Expr",
+        "Pass",
+        "Break",
+        "Continue",
+    }
+)
+AST_STATEMENT_TYPES = frozenset(
+    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
+)
+if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
 CID_RE = re.compile(r"^blake3-512:[0-9a-f]{128}$")
 CONTRACT_COMMENT_KIND = "sugar-contract-comment-sugar"
 CONTRACT_COMMENT_ROLE_MAP = {
@@ -22,6 +63,10 @@ CONTRACT_COMMENT_ROLE_MAP = {
     "throws": "throws",
     "observation": "observation",
 }
+
+
+class UnsupportedStatementVariant(RuntimeError):
+    pass
 
 
 @dataclass
@@ -955,7 +1000,9 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
         )
     if isinstance(node, ast.Expr):
         return _shape_expr_with_bindings(node.value)
-    return _empty_shape_result()
+    if type(node) in AST_STATEMENT_TYPES:
+        return _empty_shape_result()
+    raise UnsupportedStatementVariant(type(node).__name__)
 
 
 def _shape_expr(node: ast.expr) -> Json:

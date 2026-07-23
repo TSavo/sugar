@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import ast
-import locale
 import os
-import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -35,6 +33,47 @@ from .ir import (
 )
 
 PANIC_FREEDOM_EFFECT_KIND = "panic-freedom"
+class UnsupportedStatementGrammar(RuntimeError):
+    pass
+
+
+AST_STATEMENT_TYPE_NAMES = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Return",
+        "Delete",
+        "Assign",
+        "TypeAlias",
+        "AugAssign",
+        "AnnAssign",
+        "For",
+        "AsyncFor",
+        "While",
+        "If",
+        "With",
+        "AsyncWith",
+        "Match",
+        "Raise",
+        "Try",
+        "TryStar",
+        "Assert",
+        "Import",
+        "ImportFrom",
+        "Global",
+        "Nonlocal",
+        "Expr",
+        "Pass",
+        "Break",
+        "Continue",
+    }
+)
+AST_STATEMENT_TYPES = frozenset(
+    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
+)
+if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
 RUNTIME_FAILURE_SITE_CONCEPT = "concept:panic-freedom.leaf.runtime-failure-site"
 CLASS_SHAPE_ASSUMPTIONS = [
     "presence-guaranteed-assuming-standard-construction-via-__init__",
@@ -1647,9 +1686,6 @@ class _Emitter:
         return _literal_default(node, self._tentative_default_expr)
 
     def _tentative_default_expr(self, node: ast.expr) -> Json:
-        known_constant = _known_external_default_constant(node, self.module_imports)
-        if known_constant is not None:
-            return known_constant
         effects = _EffectSet()
         panic_loci: list[Json] = []
         result = LiftResult()
@@ -1965,8 +2001,6 @@ def _lift_function(
         refused_decorator = _refused_decorator(node)
         if refused_decorator is not None:
             raise refused_decorator
-        if _is_overload_stub(node):
-            return None
         decorator_kinds = _function_decorator_kinds(node)
         default_emitter = _Emitter(
             fn_name=info.fn_name,
@@ -2352,8 +2386,10 @@ def _class_overrides_setattr(node: ast.ClassDef) -> bool:
 
 
 def _slot_entries(stmt: ast.stmt) -> tuple[list[Json], bool]:
-    if not isinstance(stmt, ast.Assign):
+    if not isinstance(stmt, ast.Assign) and type(stmt) in AST_STATEMENT_TYPES:
         return [], False
+    if not isinstance(stmt, ast.Assign):
+        raise _UnsupportedSyntax(stmt, f"unknown statement variant: {type(stmt).__name__}")
     if not any(
         isinstance(target, ast.Name) and target.id == "__slots__"
         for target in stmt.targets
@@ -2420,7 +2456,9 @@ def _class_body_attribute_sources(stmt: ast.stmt) -> list[tuple[str, Json]]:
                 _shape_source("nested-class-definition", stmt),
             )
         ]
-    return []
+    if type(stmt) in AST_STATEMENT_TYPES:
+        return []
+    raise _UnsupportedSyntax(stmt, f"unknown statement variant: {type(stmt).__name__}")
 
 
 def _merge_open_attr(
@@ -2615,24 +2653,6 @@ def _literal_default(
     return tentative_expr(node)
 
 
-def _known_external_default_constant(
-    node: ast.expr,
-    module_imports: dict[str, str],
-) -> Json | None:
-    name = _resolved_imported_dotted_name(node, module_imports)
-    if name == "numpy.nan":
-        return float_const(float("nan"))
-    if name == "os.curdir":
-        return str_const(os.curdir)
-    if name == "pickle.HIGHEST_PROTOCOL":
-        return int_const(pickle.HIGHEST_PROTOCOL)
-    if name == "locale.LC_ALL":
-        return int_const(locale.LC_ALL)
-    if name == "_format_impl._MAX_HEADER_SIZE":
-        return int_const(10000)
-    return None
-
-
 def _resolved_imported_dotted_name(
     node: ast.expr,
     module_imports: dict[str, str],
@@ -2699,16 +2719,11 @@ def _is_transparent_decorator(decorator: ast.expr) -> bool:
         "abc.abstractmethod",
         "wraps",
         "functools.wraps",
-        "overload",
-        "typing.overload",
         "final",
         "typing.final",
         "deprecated",
         "typing.deprecated",
         "warnings.deprecated",
-        "set_module",
-        "numpy._utils.set_module",
-        "numpy._core.overrides.set_module",
     }
 
 
@@ -2762,26 +2777,6 @@ def _refused_decorator_name(decorator: ast.expr) -> str:
         return ast.unparse(decorator)
     except Exception:
         return type(decorator).__name__
-
-
-def _is_overload_stub(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    if not any(
-        _decorator_name(decorator) in {"overload", "typing.overload"}
-        for decorator in node.decorator_list
-    ):
-        return False
-    body = [stmt for stmt in node.body if not _is_docstring_stmt(stmt)]
-    if not body:
-        return True
-    return all(
-        isinstance(stmt, ast.Pass)
-        or (
-            isinstance(stmt, ast.Expr)
-            and isinstance(stmt.value, ast.Constant)
-            and stmt.value.value is Ellipsis
-        )
-        for stmt in body
-    )
 
 
 def _contains_refused_control(fn: ast.FunctionDef) -> _UnsupportedSyntax | None:
@@ -3156,7 +3151,9 @@ def _module_statement_bound_names(stmt: ast.stmt) -> set[str]:
         for target in stmt.targets:
             names.update(_stored_names(target))
         return names
-    return set()
+    if type(stmt) in AST_STATEMENT_TYPES:
+        return set()
+    raise _UnsupportedSyntax(stmt, f"unknown statement variant: {type(stmt).__name__}")
 
 
 def _stored_names(node: ast.AST) -> set[str]:

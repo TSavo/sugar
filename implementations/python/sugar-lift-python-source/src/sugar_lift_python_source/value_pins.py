@@ -32,6 +32,47 @@ from .ir import (
 VALUE_PIN_BOUNDARY_KIND = "value-pin-boundary"
 ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
 FINAL_CONFESSION = "typing.Final"
+class UnsupportedStatementGrammar(RuntimeError):
+    pass
+
+
+AST_STATEMENT_TYPE_NAMES = frozenset(
+    {
+        "FunctionDef",
+        "AsyncFunctionDef",
+        "ClassDef",
+        "Return",
+        "Delete",
+        "Assign",
+        "TypeAlias",
+        "AugAssign",
+        "AnnAssign",
+        "For",
+        "AsyncFor",
+        "While",
+        "If",
+        "With",
+        "AsyncWith",
+        "Match",
+        "Raise",
+        "Try",
+        "TryStar",
+        "Assert",
+        "Import",
+        "ImportFrom",
+        "Global",
+        "Nonlocal",
+        "Expr",
+        "Pass",
+        "Break",
+        "Continue",
+    }
+)
+AST_STATEMENT_TYPES = frozenset(
+    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
+)
+if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
 
 # Scope boundaries: bindings inside these do not bind module names.
 # (Plain assignment in a function is a local; `global`-declaring functions
@@ -83,6 +124,10 @@ class _NotAdmissible(Exception):
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(reason)
+
+
+class UnsupportedStatementVariant(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -584,9 +629,12 @@ def _statement_binding_events(stmt: ast.stmt) -> Iterator[_BindingEvent]:
     elif _TYPE_ALIAS_NODE is not None and isinstance(stmt, _TYPE_ALIAS_NODE):
         if isinstance(stmt.name, ast.Name):
             yield _BindingEvent(stmt.name.id, stmt.lineno, "type-alias definition")
-    # Walrus targets anywhere in this statement's expressions, outside
-    # nested scopes, bind module names.
-    yield from _walrus_bindings(stmt)
+    if type(stmt) in AST_STATEMENT_TYPES:
+        # Walrus targets anywhere in this statement's expressions, outside
+        # nested scopes, bind module names.
+        yield from _walrus_bindings(stmt)
+        return
+    raise UnsupportedStatementVariant(type(stmt).__name__)
 
 
 def _match_pattern_bindings(pattern: ast.pattern) -> Iterator[_BindingEvent]:
