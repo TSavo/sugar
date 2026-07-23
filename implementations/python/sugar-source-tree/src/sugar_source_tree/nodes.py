@@ -83,9 +83,17 @@ _MISSING = object()
 @dataclass(frozen=True)
 class ControlConstructionContextV1:
     loop_targets: tuple[object, ...] = ()
+    exception_slots: tuple[str, ...] = ()
 
     def enter_loop(self, target: object) -> "ControlConstructionContextV1":
-        return ControlConstructionContextV1((*self.loop_targets, target))
+        return ControlConstructionContextV1(
+            (*self.loop_targets, target), self.exception_slots
+        )
+
+    def enter_exception(self, slot_id: str) -> "ControlConstructionContextV1":
+        return ControlConstructionContextV1(
+            self.loop_targets, (*self.exception_slots, slot_id)
+        )
 
     def nearest_loop_target(self):
         if not self.loop_targets:
@@ -93,6 +101,16 @@ class ControlConstructionContextV1:
 
             raise LoopWireError("loop-control occurrence has no enclosing loop")
         return self.loop_targets[-1]
+
+    def nearest_exception_slot(self) -> str:
+        if not self.exception_slots:
+            raise SugarNotWritten(
+                owner="ControlConstructionContextV1.nearest_exception_slot",
+                observed="bare raise has no authenticated in-flight exception slot",
+                requested="an enclosing except handler effect-slot coordinate",
+                fix="construct bare raise only inside the handler that owns its effect",
+            )
+        return self.exception_slots[-1]
 
 
 def _explicit_state(name: str, state):
@@ -105,7 +123,8 @@ def _explicit_state(name: str, state):
 class _ConditionalRaiseRoute:
     slot: BranchResultSlot
     raised_on_true: bool
-    exception_name: str
+    exception_identity: object | None
+    exception_mro: tuple | None
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
@@ -325,6 +344,54 @@ class SourceUnit:
             )
         return None
 
+    def exception_type_mro(self, node: "Name"):
+        """Return the source-authenticated ancestry known for ``node``.
+
+        Builtin/imported identities authenticate the exact class. Source class
+        identities additionally carry every lexically resolved base coordinate.
+        A computed base or cycle leaves the testimony unavailable, never guessed.
+        """
+        identity = self.exception_type_identity(node)
+        if identity is None:
+            return None
+        module = self._require_typed_module("SourceUnit.exception_type_mro")
+        definitions = [
+            statement
+            for statement in module.body
+            if statement.kind == "ClassDef" and statement.name == node.id
+        ]
+        if len(definitions) != 1:
+            return (identity,)
+
+        result = [identity]
+        visiting: set[str] = set()
+
+        def append_definition(definition) -> bool:
+            if definition.name in visiting:
+                return False
+            visiting.add(definition.name)
+            for base in definition.bases:
+                if not isinstance(base, Name):
+                    return False
+                base_identity = self.exception_type_identity(base)
+                if base_identity is None:
+                    return False
+                if base_identity not in result:
+                    result.append(base_identity)
+                base_definitions = [
+                    candidate
+                    for candidate in module.body
+                    if candidate.kind == "ClassDef" and candidate.name == base.id
+                ]
+                if len(base_definitions) == 1 and not append_definition(
+                    base_definitions[0]
+                ):
+                    return False
+            visiting.remove(definition.name)
+            return True
+
+        return tuple(result) if append_definition(definitions[0]) else None
+
 
 class Typeable:
     """The interface: you may ask me for my node type.
@@ -448,6 +515,8 @@ class Node(Typed):
 
                 raise LoopWireError("loop node has no owned target coordinate")
             return self.control_context.enter_loop(self.owned_loop_target)
+        if isinstance(self, ExceptHandler) and field_name == "body":
+            return self.control_context.enter_exception(self._effect_slot_id())
         if isinstance(self, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)) and field_name == "body":
             return ControlConstructionContextV1()
         return self.control_context
@@ -663,10 +732,11 @@ class Node(Typed):
         )
 
     def _effect_slot_id(self) -> str:
-        """Deterministic slot identity from this binding site's source extent.
+        """Content-addressed slot identity from this binding occurrence.
 
-        No process identity fallback. If a stable span cannot be produced,
-        stay loud — do not invent a nondeterministic coordinate.
+        The preimage pins the source, fragment, and occurrence span. Re-resolving
+        the same source occurrence is byte-identical; equal text at another
+        occurrence cannot collide. No process identity fallback exists.
         """
         try:
             lc = self.line_col_span()
@@ -677,9 +747,21 @@ class Node(Typed):
                 requested="a deterministic file:line:col extent for the binding site",
                 fix="ensure the adapter anchors this node; never invent a process-local identity",
             ) from exc
-        return (
-            f"{self.unit.filename}:{lc.start_line}:{lc.start_col}:"
-            f"{lc.end_line}:{lc.end_col}"
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        memento = self.fragment.seal()
+        return cid_of_json(
+            {
+                "kind": "python-effect-slot-v1",
+                "sourceCid": memento.source_cid,
+                "fragmentCid": memento.cid,
+                "span": {
+                    "startLine": lc.start_line,
+                    "startCol": lc.start_col,
+                    "endLine": lc.end_line,
+                    "endCol": lc.end_col,
+                },
+            }
         )
 
     def _make_effect_ref(self, slot_id: str) -> "Node":
@@ -3259,7 +3341,7 @@ class With(Statement):
             args = list(manager_sugar.args)
             position = actual_location[1]
             args[position] = AuthenticatedExceptionTypeSugar(
-                args[position], identity, actual.fragment
+                args[position], identity, site=actual.fragment
             )
             return replace(manager_sugar, args=tuple(args))
         keywords_sugar = list(manager_sugar.keywords)
@@ -3267,7 +3349,9 @@ class With(Statement):
             if name == actual_location[1]:
                 keywords_sugar[position] = (
                     name,
-                    AuthenticatedExceptionTypeSugar(sugar, identity, actual.fragment),
+                    AuthenticatedExceptionTypeSugar(
+                        sugar, identity, site=actual.fragment
+                    ),
                 )
                 break
         return replace(manager_sugar, keywords=tuple(keywords_sugar))
@@ -3392,9 +3476,15 @@ class Raise(Statement):
     def _construct_sugar(self):
         """Build exception and explicit cause children for the halt effect."""
         if self.exc is None:
-            # Re-raise needs authenticated active-exception context. It remains
-            # outside this arm rather than fabricating an exception operand.
-            return super()._construct_sugar()
+            from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+
+            return RaiseSugar(
+                exception=None,
+                cause=None,
+                exception_name=None,
+                site=self.fragment,
+                in_flight_slot=self.control_context.nearest_exception_slot(),
+            )
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
         from dataclasses import replace
 
@@ -3404,19 +3494,24 @@ class Raise(Statement):
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
         identity = None
+        mro = None
         if isinstance(self.exc, Call) and isinstance(self.exc.func, Name):
             identity = self.unit.exception_type_identity(self.exc.func)
+            mro = self.unit.exception_type_mro(self.exc.func)
         elif isinstance(self.exc, Name):
             identity = self.unit.exception_type_identity(self.exc)
+            mro = self.unit.exception_type_mro(self.exc)
 
         exception_sugar = self.exc.sugar()
         if identity is not None and isinstance(exception_sugar, CallSiteSugar):
             exception_sugar = replace(
-                exception_sugar, exception_type_coordinate=identity
+                exception_sugar,
+                exception_type_coordinate=identity,
+                exception_type_mro=mro,
             )
         elif identity is not None:
             exception_sugar = AuthenticatedExceptionTypeSugar(
-                exception_sugar, identity, self.exc.fragment
+                exception_sugar, identity, mro, self.exc.fragment
             )
 
         return RaiseSugar(
@@ -3491,16 +3586,20 @@ class Try(Statement):
         if any(new is not old for new, old in zip(new_handlers, self.handlers)):
             changed["handlers"] = tuple(new_handlers)
 
-        unconditional = self._unconditional_raise_name(self.body)
+        unconditional = self._unconditional_raise_testimony(self.body)
         conditional = self._conditional_raise(self.body)
         completion_nets = []
         if unconditional is None:
             completion_nets.append(body_completion)
         for handler, handler_net in zip(self.handlers, handler_nets):
             if unconditional is not None:
-                include = self._handler_matches(handler, unconditional)
+                include = self._handler_matches(handler, *unconditional)
             elif conditional is not None:
-                include = self._handler_matches(handler, conditional.exception_name)
+                include = self._handler_matches(
+                    handler,
+                    conditional.exception_identity,
+                    conditional.exception_mro,
+                )
             else:
                 include = True
             if include:
@@ -3522,50 +3621,67 @@ class Try(Statement):
         node = self if not changed else rewrite(self, **changed)
         return _Splice((node,), merged) if merged else node
 
-    @staticmethod
-    def _handler_matches(handler, exception_name: str) -> bool:
+    def _handler_matches(self, handler, exception_identity, exception_mro) -> bool:
         if handler.type_ is None:
+            return True
+        if exception_identity is None:
             return True
         nodes = (
             handler.type_.elts
             if isinstance(handler.type_, Tuple_)
             else (handler.type_,)
         )
-        return any(Try._except_type_name(node) == exception_name for node in nodes)
+        for node in nodes:
+            if not isinstance(node, Name):
+                continue
+            handler_identity = self.unit.exception_type_identity(node)
+            if handler_identity == exception_identity or (
+                exception_mro is not None and handler_identity in exception_mro
+            ):
+                return True
+        return False
 
-    @staticmethod
-    def _unconditional_raise_name(statements):
+    def _unconditional_raise_testimony(self, statements):
         for statement in statements:
             if isinstance(statement, Raise):
-                return statement._exception_name()
+                node = statement.exc
+                if isinstance(node, Call):
+                    node = node.func
+                if not isinstance(node, Name):
+                    return (None, None)
+                return (
+                    self.unit.exception_type_identity(node),
+                    self.unit.exception_type_mro(node),
+                )
             if isinstance(statement, Return):
                 return None
             if isinstance(statement, If):
-                left = Try._unconditional_raise_name(statement.body)
-                right = Try._unconditional_raise_name(statement.orelse)
+                left = self._unconditional_raise_testimony(statement.body)
+                right = self._unconditional_raise_testimony(statement.orelse)
                 if left is not None and left == right:
                     return left
             # The first ordinary statement can complete, so continue scanning.
         return None
 
-    @staticmethod
-    def _conditional_raise(statements):
+    def _conditional_raise(self, statements):
         for statement in statements:
             if not isinstance(statement, If):
                 continue
-            left = Try._unconditional_raise_name(statement.body)
-            right = Try._unconditional_raise_name(statement.orelse)
+            left = self._unconditional_raise_testimony(statement.body)
+            right = self._unconditional_raise_testimony(statement.orelse)
             if left is not None and right is None:
                 return _ConditionalRaiseRoute(
                     slot=branch_result_slot(statement.test),
                     raised_on_true=True,
-                    exception_name=left,
+                    exception_identity=left[0],
+                    exception_mro=left[1],
                 )
             if right is not None and left is None:
                 return _ConditionalRaiseRoute(
                     slot=branch_result_slot(statement.test),
                     raised_on_true=False,
-                    exception_name=right,
+                    exception_identity=right[0],
+                    exception_mro=right[1],
                 )
         return None
 
@@ -3616,33 +3732,13 @@ class Try(Statement):
     def _make_branch_result_ref(self, slot):
         return If._make_branch_result_ref(self, slot)
 
-    @staticmethod
-    def _except_type_name(type_node):
-        """Structural exception type name off an ``except E`` clause: bare
-        ``Name`` -> ``"E"``, dotted ``Attribute`` chain -> ``"mod.E"``. Same
-        walk as ``Raise._exception_name`` (no desugar, no factory). Tuple types,
-        bare ``except:``, and exotic expressions return ``None`` so the sugar
-        stays LOUD rather than inventing a matcher."""
-        if type_node is None:
-            return None
-        node = type_node
-        parts = []
-        while node is not None and node.kind == "Attribute":
-            parts.append(node.attr)
-            node = node.value
-        if node is not None and node.kind == "Name":
-            parts.append(node.id)
-        if not parts:
-            return None
-        return ".".join(reversed(parts))
-
     def _construct_sugar(self):
         """`try: body (except E: handler)+ [else] [finally]` -- the STRUCTURAL
-        sibling of with-raises. A typed clause contributes one exact router
-        matcher per bare/dotted type (including each element of a tuple); a
-        bare clause contributes the widest raise matcher. Exotic type
-        expressions and empty tuples stay loud. ``except*`` lives on TryStar
-        and stays loud there.
+        sibling of with-raises. A typed clause contributes one constructed,
+        authenticated exception coordinate per Name element of a tuple; a bare
+        clause contributes the widest raise matcher. Unresolved/dotted/computed
+        type expressions and empty tuples stay loud. ``except*`` lives on
+        TryStar and stays loud there.
 
         ``except <type> as <name>``: substitute already rewrote loads of
         ``name`` to ``EffectRef(slot)`` inside the handler. Routing
@@ -3663,12 +3759,11 @@ class Try(Statement):
                 site=self.fragment,
             )
 
-        from sugar_lift_py_tests.context_manager_contract import EffectMatcher
-
         handler_specs = []
         for handler in self.handlers:
-            # slot_id for authentication when this arm has `as` (substitute site).
-            slot_id = handler._effect_slot_id() if handler.name else None
+            # Every handler owns an effect slot. ``as e`` projects it; a bare
+            # re-raise cites the same slot even without a lexical target.
+            slot_id = handler._effect_slot_id()
             body_sugars = tuple(stmt.sugar() for stmt in handler.body)
             if handler.type_ is None:
                 handler_specs.append((None, body_sugars, slot_id))
@@ -3682,14 +3777,28 @@ class Try(Statement):
             if not type_nodes:
                 return super()._construct_sugar()  # empty tuple: no honest matcher
             for type_node in type_nodes:
-                type_name = self._except_type_name(type_node)
-                if type_name is None:
-                    return (
-                        super()._construct_sugar()
-                    )  # exotic tuple elt/type -- stay loud
+                if not isinstance(type_node, Name):
+                    return super()._construct_sugar()
+                identity = self.unit.exception_type_identity(type_node)
+                if identity is None:
+                    raise SugarNotWritten(
+                        owner="Try._construct_sugar",
+                        observed="typed except handler lacks authenticated exception identity",
+                        requested="a constructed exception-type coordinate",
+                        fix="resolve the handler type lexically or keep the try loud",
+                    )
+                from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+                    AuthenticatedExceptionTypeSugar,
+                )
+
                 handler_specs.append(
                     (
-                        EffectMatcher(kind="raise", name=type_name),
+                        AuthenticatedExceptionTypeSugar(
+                            type_node.sugar(),
+                            identity,
+                            self.unit.exception_type_mro(type_node),
+                            type_node.fragment,
+                        ),
                         body_sugars,
                         slot_id,
                     )

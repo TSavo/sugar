@@ -35,6 +35,7 @@ class CallSiteSugar(Sugar):
     contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
+    exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
 
     @classmethod
@@ -143,6 +144,7 @@ class CallSiteSugar(Sugar):
                 keyword_names=tuple(name for name, _ in kw_values),
                 site=self.site,
                 exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
                 source_call_frame_cid=source_frame_cid,
                 formal_coordinate_cids=(),
             )

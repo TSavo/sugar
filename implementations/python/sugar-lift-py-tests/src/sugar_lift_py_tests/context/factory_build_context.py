@@ -69,6 +69,7 @@ class FactoryBuildContext:
     # Default False keeps top-level force_floor Incomplete on nested gaps so
     # ambient strip posts stay logo-safe (str.suffixof sorts).
     nested_external_bridge: bool = False
+    in_flight_effects: tuple[tuple[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.construction_audit_sink is None and self.audit_sink is not None:
@@ -101,4 +102,21 @@ class FactoryBuildContext:
             record_operation=self.record_operation,
             building=self.building,
             nested_external_bridge=self.nested_external_bridge,
+            in_flight_effects=self.in_flight_effects,
         )
+
+    def with_in_flight_effect(
+        self, slot_id: str, effect: object
+    ) -> "FactoryBuildContext":
+        from dataclasses import replace
+
+        return replace(
+            self,
+            in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),
+        )
+
+    def in_flight_effect_for(self, slot_id: str):
+        for candidate_slot, effect in reversed(self.in_flight_effects):
+            if candidate_slot == slot_id:
+                return effect
+        return None

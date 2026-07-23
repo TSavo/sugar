@@ -32,6 +32,7 @@ class ReduceContext:
     # the attribute crashed the numpy/pandas package audit as unstructured exit=2
     # after opaque body dig started reducing vendor-bridged bodies.
     external_bridge_sink: Any = None
+    in_flight_effects: tuple[tuple[str, object], ...] = ()
 
     @classmethod
     def root(
@@ -65,6 +66,7 @@ class ReduceContext:
             ),
             dig_sink=source.dig_sink,
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
+            in_flight_effects=getattr(source, "in_flight_effects", ()),
         )
 
     def record_operation(
@@ -101,4 +103,29 @@ class ReduceContext:
             prefer_ground_module_bindings=self.prefer_ground_module_bindings,
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
+            in_flight_effects=self.in_flight_effects,
         )
+
+    def with_in_flight_effect(self, slot_id: str, effect: object) -> "ReduceContext":
+        return ReduceContext(
+            temporal=self.temporal,
+            module_temporal=self.module_temporal,
+            global_names=self.global_names,
+            nonlocal_names=self.nonlocal_names,
+            source_oracle=self.source_oracle,
+            proof_sink=self.proof_sink,
+            report_sink=self.report_sink,
+            construction_audit_sink=self.construction_audit_sink,
+            operation_log=self.operation_log,
+            module_rewrite_log=self.module_rewrite_log,
+            prefer_ground_module_bindings=self.prefer_ground_module_bindings,
+            dig_sink=self.dig_sink,
+            external_bridge_sink=self.external_bridge_sink,
+            in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),
+        )
+
+    def in_flight_effect_for(self, slot_id: str):
+        for candidate_slot, effect in reversed(self.in_flight_effects):
+            if candidate_slot == slot_id:
+                return effect
+        return None

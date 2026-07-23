@@ -77,7 +77,8 @@ def test_block_reduction_retains_complement_of_guarded_halt():
     effect = RaiseEffect(exception_name="ValueError")
 
     class GuardedHalt:
-        def desugar(self):
+        def desugar(self, ctx=None):
+            del ctx
             return Incomplete(effect).guarded(condition)
 
     exits = reduce_block_to_exitset((GuardedHalt(),))
