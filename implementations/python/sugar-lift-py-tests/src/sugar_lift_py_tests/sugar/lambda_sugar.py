@@ -15,6 +15,7 @@ class LambdaSugar(Sugar):
 
     formals: tuple[str, ...]
     body: Sugar
+    source_call_frame: object
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -40,5 +41,6 @@ class LambdaSugar(Sugar):
                 parameters=self.formals,
                 body=self.body,
                 construction_identity=construction_identity,
+                source_call_frame=self.source_call_frame,
             )
         )

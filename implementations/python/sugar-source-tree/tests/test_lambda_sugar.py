@@ -2,8 +2,15 @@
 
 import pytest
 
-from sugar_lift_py_tests.floor import SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor, num, str_const
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    DictValue,
+    ReturnValue,
+    StringValue,
+    TermValue,
+    TupleValue,
+)
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.proofir.formulas import _free_vars_in_ir_term
 from sugar_source_tree.panic import SugarNotWritten
 
@@ -105,9 +112,34 @@ def test_nested_lambda_capture_rebinding_changes_opaque_coordinate():
         "def A():\n    return lambda x, y: x\n",
     ],
 )
-def test_unsupported_lambda_parameter_roles_stay_sugar_not_written(source):
-    with pytest.raises(SugarNotWritten, match="Lambda.sugar"):
-        _return_expression(source).sugar()
+def test_lambda_parameter_roles_use_the_source_call_frame(source):
+    sugar = _return_expression(source).sugar()
+
+    assert sugar.source_call_frame is not None
+    assert sugar.source_call_frame.parameters == sugar.formals
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("(lambda x=3: x + 1)()", TermValue(4)),
+        ("(lambda *xs: xs)(1, 2)", TupleValue((TermValue(1), TermValue(2)))),
+        (
+            "(lambda **kw: kw)(renamed=7)",
+            DictValue(((StringValue("renamed"), TermValue(7)),)),
+        ),
+        ("(lambda *, x: x)(x=9)", TermValue(9)),
+        ("(lambda x, /: x)(9)", TermValue(9)),
+        ("(lambda: 1)()", TermValue(1)),
+    ],
+)
+def test_lambda_signature_roles_bind_through_the_shared_frame(expression, expected):
+    call = _return_expression(f"def A():\n    return {expression}\n")
+    reduced = call.sugar().desugar().value.force_floor(
+        None, owner="lambda-signature-twin"
+    )
+
+    assert reduced.statements[0].value == expected
 
 
 def test_lambda_preserves_child_panic_role():
@@ -149,15 +181,47 @@ def test_parser_backed_lambda_with_unresolved_capture_stays_loud():
         parser_backed_lambda.sugar()
 
 
-def test_lambda_application_substitutes_the_formal_in_the_body_term():
-    callable_value = (
-        _return_expression("def A():\n    return lambda x: x + 1\n")
-        .sugar()
-        .desugar()
-        .value
+def test_lambda_application_uses_body_bearing_callsite_not_private_apply():
+    call = _return_expression("def A():\n    return (lambda x: x + 1)(7)\n")
+    value = call.sugar().desugar().value
+
+    assert value.body is not None
+    assert value.source_call_frame_cid is not None
+    assert len(value.formal_coordinate_cids) == 1
+    reduced = value.force_floor(None, owner="lambda-call-frame-twin")
+    assert isinstance(reduced, BlockValue)
+    assert isinstance(reduced.statements[0], ReturnValue)
+    assert reduced.statements[0].value == TermValue(8)
+
+
+def test_lambda_call_frame_binds_runtime_entries_for_each_formal():
+    call = _return_expression("def A():\n    return (lambda x, y: x + y)(7, 8)\n")
+    frame = call.sugar().source_call_frame
+
+    assert tuple(entry.coordinate.cid for entry in frame.runtime_entries) == tuple(
+        coordinate.cid for coordinate in frame.formal_coordinates
+    )
+    assert all(not hasattr(entry, "sugar") for entry in frame.runtime_entries)
+
+
+def test_source_visible_callback_reuses_function_call_frame_and_lambda_frame():
+    functions = list(
+        oracle_source_file(
+            "def apply(fn, value):\n"
+            "    return fn(value)\n\n"
+            "def A():\n"
+            "    return apply(lambda renamed: renamed + 1, 4)\n"
+        ).functions()
+    )
+    apply_function, caller = functions
+    outer_call = caller.body[-1].value.substitute({})
+    apply_frame = apply_function.source_visible_call_frame().bind_node_actuals(
+        outer_call.args, ()
     )
 
-    applied = callable_value.apply(TermValue(7), None)
+    callback_call = apply_frame.body.desugar().value.statements[0].value
+    reduced = callback_call.force_floor(None, owner="source-visible-callback-twin")
 
-    assert isinstance(applied, SymbolicValue)
-    assert applied.term == ctor("+", [num(7), num(1)])
+    assert callback_call.source_call_frame_cid is not None
+    assert isinstance(reduced.statements[0], ReturnValue)
+    assert reduced.statements[0].value == TermValue(5)

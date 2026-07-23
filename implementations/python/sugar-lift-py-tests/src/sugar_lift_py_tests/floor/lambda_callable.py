@@ -19,6 +19,7 @@ class LambdaCallable(FloorValue):
     parameters: tuple[str, ...]
     body: Any
     construction_identity: str
+    source_call_frame: Any = None
     default_values: tuple[Any, ...] = ()
     keyword_only_parameters: tuple[str, ...] = ()
     keyword_only_default_values: tuple[Any | None, ...] = ()
@@ -81,31 +82,31 @@ class LambdaCallable(FloorValue):
         )
 
     def apply(self, value: TermValue, ctx):
-        from sugar_lift_py_tests.outcome import Incomplete, complete_value
+        del ctx
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_source_tree.panic import SugarNotWritten
 
-        if (
-            len(self.parameters) != 1
-            or self.keyword_only_parameters
-            or self.vararg_parameter is not None
-            or self.kwarg_parameter is not None
-        ):
-            raise TypeError(
-                "LambdaCallable.apply owns single-parameter apply only; "
-                f"got formals {self.parameters!r}, "
-                f"vararg={self.vararg_parameter!r}, "
-                f"kwarg={self.kwarg_parameter!r}"
+        frame = self.source_call_frame
+        if frame is None or len(self.parameters) != 1:
+            raise SugarNotWritten(
+                owner="LambdaCallable.apply",
+                observed="lambda has no single-actual source frame",
+                requested="the ordinary SourceCallFrameV1 call door",
+                fix="carry a source-visible frame or keep the callback loud",
             )
-        outcome = self.body.desugar(ctx)
-        if isinstance(outcome, Incomplete):
-            return outcome
-        result = complete_value(outcome, owner="LambdaCallable")
-        from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.ir import subst_var_in_term
-
-        return SymbolicValue(
-            subst_var_in_term(
-                result.to_term(owner="LambdaCallable.body"),
-                self.parameters[0],
-                value.to_term(owner="LambdaCallable.argument"),
-            )
+        return CallSiteValue(
+            target_name="py.call",
+            arg_values=(value,),
+            parameters=frame.parameters,
+            term=ctor(
+                "py.call",
+                [
+                    self.to_term(owner="LambdaCallable"),
+                    value.to_term(owner="LambdaCallable"),
+                ],
+            ),
+            body=frame.body,
+            source_call_frame_cid=frame.frame_cid,
+            formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
         )
