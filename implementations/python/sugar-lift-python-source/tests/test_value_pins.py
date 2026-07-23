@@ -27,7 +27,8 @@ ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
 
 
 def _scan(source: str):
-    return scan_module_value_pins(ast.parse(textwrap.dedent(source)))
+    text = textwrap.dedent(source)
+    return scan_module_value_pins(ast.parse(text), source=text)
 
 
 def _lift(source: str):
