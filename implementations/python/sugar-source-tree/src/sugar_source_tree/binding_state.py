@@ -69,8 +69,6 @@ def join_binding_state(
         return when_true
     if isinstance(when_true, Node) and isinstance(when_false, Node):
         return make_ifexp(slot, when_true, when_false)
-    if isinstance(when_true, UnboundBinding) and isinstance(
-        when_false, UnboundBinding
-    ):
+    if isinstance(when_true, UnboundBinding) and isinstance(when_false, UnboundBinding):
         return UnboundBinding(name=when_true.name, cause=when_true.cause)
     return GuardedBinding(slot=slot, when_true=when_true, when_false=when_false)

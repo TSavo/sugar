@@ -24,7 +24,6 @@ from . import (
     _witness_provenance,
 )
 
-    
 
 @dataclass(frozen=True, init=False)
 class BoundaryRecord:
@@ -86,7 +85,7 @@ class BoundaryRecord:
     def agreement_violation_diagnostic(
         violation: FloorContractAgreementViolation,
     ) -> dict[str, Any]:
-        
+
         if not isinstance(violation, FloorContractAgreementViolation):
             raise TypeError(
                 "agreement_violation_diagnostic requires "

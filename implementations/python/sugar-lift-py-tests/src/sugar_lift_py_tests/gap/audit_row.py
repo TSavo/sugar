@@ -60,7 +60,6 @@ def _unhandled_gap_kind(kind: Never) -> NoReturn:
     raise TypeError(f"unhandled GapKind arm: {type(kind).__name__}")
 
 
-
 @dataclass(frozen=True)
 class ConstructionAuditRow:
     role: str

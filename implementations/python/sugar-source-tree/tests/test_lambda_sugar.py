@@ -44,9 +44,7 @@ def test_lambda_body_changes_content_addressed_callable_identity():
 
 
 def test_lambda_parameter_masks_same_spelled_outer_binding():
-    expression = _return_expression(
-        "def A():\n    x = 7\n    return lambda x: x\n"
-    )
+    expression = _return_expression("def A():\n    x = 7\n    return lambda x: x\n")
     sugar = expression.sugar()
 
     assert sugar.formals == ("x",)
@@ -54,9 +52,7 @@ def test_lambda_parameter_masks_same_spelled_outer_binding():
 
 
 def test_lambda_captures_authenticated_outer_binding_while_masking_parameter():
-    expression = _return_expression(
-        "def A():\n    z = 7\n    return lambda x: x + z\n"
-    )
+    expression = _return_expression("def A():\n    z = 7\n    return lambda x: x + z\n")
     sugar = expression.sugar()
 
     assert sugar.formals == ("x",)
@@ -76,12 +72,22 @@ def test_lambda_rebinding_changes_constructed_capture():
 
 
 def test_nested_lambda_capture_rebinding_changes_opaque_coordinate():
-    first = _return_expression(
-        "def A():\n    z = 7\n    return lambda x: lambda x: x + z\n"
-    ).sugar().desugar().value
-    second = _return_expression(
-        "def A():\n    z = 8\n    return lambda x: lambda x: x + z\n"
-    ).sugar().desugar().value
+    first = (
+        _return_expression(
+            "def A():\n    z = 7\n    return lambda x: lambda x: x + z\n"
+        )
+        .sugar()
+        .desugar()
+        .value
+    )
+    second = (
+        _return_expression(
+            "def A():\n    z = 8\n    return lambda x: lambda x: x + z\n"
+        )
+        .sugar()
+        .desugar()
+        .value
+    )
 
     assert first.parameters == second.parameters == ("x",)
     assert first.to_term(owner="test") != second.to_term(owner="test")
@@ -124,9 +130,7 @@ def test_inline_lambda_call_constructs_callable_then_ordinary_computed_call():
 
 
 def test_lambda_coordinate_is_opaque_and_does_not_leak_nested_same_named_formals():
-    expression = _return_expression(
-        "def A(x):\n    return lambda x: lambda x: x\n"
-    )
+    expression = _return_expression("def A(x):\n    return lambda x: lambda x: x\n")
     outer = expression.sugar().desugar().value
 
     coordinate = outer.to_term(owner="test")
@@ -138,9 +142,7 @@ def test_lambda_coordinate_is_opaque_and_does_not_leak_nested_same_named_formals
 
 
 def test_parser_backed_lambda_with_unresolved_capture_stays_loud():
-    function = _function(
-        "def A():\n    z = 7\n    f = lambda x: x + z\n    return f\n"
-    )
+    function = _function("def A():\n    z = 7\n    f = lambda x: x + z\n    return f\n")
     parser_backed_lambda = function.body[1].value
 
     with pytest.raises(SugarNotWritten, match="Lambda.sugar"):
@@ -148,9 +150,12 @@ def test_parser_backed_lambda_with_unresolved_capture_stays_loud():
 
 
 def test_lambda_application_substitutes_the_formal_in_the_body_term():
-    callable_value = _return_expression(
-        "def A():\n    return lambda x: x + 1\n"
-    ).sugar().desugar().value
+    callable_value = (
+        _return_expression("def A():\n    return lambda x: x + 1\n")
+        .sugar()
+        .desugar()
+        .value
+    )
 
     applied = callable_value.apply(TermValue(7), None)
 

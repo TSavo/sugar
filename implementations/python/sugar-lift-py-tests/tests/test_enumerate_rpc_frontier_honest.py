@@ -71,7 +71,9 @@ def _drive_frontier(source: str):
                             "demandedSource": p["demandedSource"],
                             "terminalGapLocus": p["terminalGapLocus"],
                         }
-                        all_panics.append({**p, "demandedBody": body, "ownerIdentity": owner})
+                        all_panics.append(
+                            {**p, "demandedBody": body, "ownerIdentity": owner}
+                        )
                     audit_leaves_completed += 1
             status = (
                 "valid-empty"

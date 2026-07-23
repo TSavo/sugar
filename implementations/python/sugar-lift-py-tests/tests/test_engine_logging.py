@@ -110,9 +110,7 @@ def test_heartbeat_only_live_log_omits_high_volume_debug_spans(
     monkeypatch.setenv("SUGAR_ENGINE_TRACE_EVENTS", "0")
     try:
         engine_log.configure_live_log(str(path))
-        with engine_log.reduction_span(
-            sugar="NameSugar", role="term", site="t.py:1:0"
-        ):
+        with engine_log.reduction_span(sugar="NameSugar", role="term", site="t.py:1:0"):
             engine_log._emit_heartbeats(
                 now=time.monotonic() + 1.0, minimum_seconds=0.01
             )

@@ -31,8 +31,7 @@ def _effect(source: str):
 
 def test_raise_from_constructs_exception_and_cause_on_the_halt_effect() -> None:
     effect = _effect(
-        "def f():\n"
-        "    raise ValueError('outer') from KeyError('inner')\n"
+        "def f():\n" "    raise ValueError('outer') from KeyError('inner')\n"
     )
 
     assert isinstance(effect.raised_value, CallSiteValue)
@@ -56,8 +55,7 @@ def test_explicit_from_none_is_a_constructed_none_cause() -> None:
 
 def test_unwritten_cause_expression_stays_loud_at_the_cause() -> None:
     node = _raise(
-        "async def f(cause):\n"
-        "    raise ValueError('outer') from (await cause)\n"
+        "async def f(cause):\n" "    raise ValueError('outer') from (await cause)\n"
     )
 
     with pytest.raises(SugarNotWritten, match=r"\[Await\.sugar\]"):

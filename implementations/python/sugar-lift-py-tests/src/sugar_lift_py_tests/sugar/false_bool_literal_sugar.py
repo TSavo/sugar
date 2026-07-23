@@ -8,6 +8,7 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
+
 @dataclass(frozen=True)
 class FalseBoolLiteralSugar(Sugar, FloorValue):
     """The literal `False`. It holds no value -- the boolean IS the type. It is its own

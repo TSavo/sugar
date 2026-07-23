@@ -152,7 +152,13 @@ def scan_file(path: Path, *, rel: str) -> list[Finding]:
     except (OSError, UnicodeError) as exc:
         return [
             AuditorError(
-                rel, 0, 0, "-", "-", f"{type(exc).__name__}: {exc}", "auditor-read-error"
+                rel,
+                0,
+                0,
+                "-",
+                "-",
+                f"{type(exc).__name__}: {exc}",
+                "auditor-read-error",
             )
         ]
     try:
@@ -254,9 +260,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parser.parse_args(argv)
         if args.self_test:
             ok = discrimination_self_test()
-            print(
-                "NO-SUGAR-IN-DESUGAR SELF-TEST " + ("GREEN" if ok else "RED")
-            )
+            print("NO-SUGAR-IN-DESUGAR SELF-TEST " + ("GREEN" if ok else "RED"))
             print(json.dumps({"instrument": "R_no_sugar_in_desugar", "self_test": ok}))
             return 0 if ok else 1
         roots = args.roots or [

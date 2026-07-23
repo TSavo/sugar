@@ -19,10 +19,7 @@ class EllipsisLiteralSugar(Sugar):
     @classmethod
     def witnesses(cls):
         prefix = (
-            "def A(z):\n"
-            "    if z is ...:\n"
-            "        return 0\n"
-            "    return z\n\n"
+            "def A(z):\n" "    if z is ...:\n" "        return 0\n" "    return z\n\n"
         )
         return _call_pair(
             name="ellipsis_is_return",

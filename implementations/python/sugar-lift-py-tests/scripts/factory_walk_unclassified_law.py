@@ -74,7 +74,9 @@ def r_factory_walk_unclassified(rows: Sequence[Any] | Iterable[Any]) -> int:
     return sum(1 for row in rows if is_unclassified_row(row))
 
 
-def _synthesize_unclassified_from_counts(counts: Mapping[Any, Any]) -> list[dict[str, str]]:
+def _synthesize_unclassified_from_counts(
+    counts: Mapping[Any, Any],
+) -> list[dict[str, str]]:
     """Expand a status→count map into opaque unclassified/unresolved rows."""
     synthetic: list[dict[str, str]] = []
     for status_name in ("unclassified", "unresolved"):
@@ -344,11 +346,11 @@ def measure_live_roots(
     counts = {
         "files_discovered": len(results),
         "files_completed": sum(row.get("category") == "completed" for row in results),
-        "construction_panics": sum(row.get("category") == "factory-panic" for row in results),
-        "timeouts": sum(row.get("category") == "timeout" for row in results),
-        "native_crashes": sum(
-            row.get("category") == "native-crash" for row in results
+        "construction_panics": sum(
+            row.get("category") == "factory-panic" for row in results
         ),
+        "timeouts": sum(row.get("category") == "timeout" for row in results),
+        "native_crashes": sum(row.get("category") == "native-crash" for row in results),
         "auditor_errors": sum(
             row.get("category") == "auditor-error" for row in results
         ),
@@ -498,8 +500,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if r > 0:
         print(
-            "FACTORY-WALK-UNCLASSIFIED LAW RED: "
-            f"{r} unclassified factory-walk rows"
+            "FACTORY-WALK-UNCLASSIFIED LAW RED: " f"{r} unclassified factory-walk rows"
         )
         print(format_report(rows, limit=args.limit))
         print(json.dumps(summary))

@@ -48,9 +48,7 @@ def _roll_call_keys(audit: Mapping[str, Any]) -> set[tuple[str, int, int, str]]:
         status = raw.get("status")
         locus = raw.get("locus")
         kind = raw.get("kind")
-        if status not in {"warranted", "unresolved"} or not isinstance(
-            locus, Mapping
-        ):
+        if status not in {"warranted", "unresolved"} or not isinstance(locus, Mapping):
             continue
         file = locus.get("file")
         line = locus.get("line")
@@ -72,9 +70,7 @@ def silent_offenders(
     constructed_or_gap = _roll_call_keys(audit)
     disk_loci = [
         (locus.file, locus.line, locus.col, "Assert") for locus in census.asserts
-    ] + [
-        (locus.file, locus.line, locus.col, locus.kind) for locus in census.bodies
-    ]
+    ] + [(locus.file, locus.line, locus.col, locus.kind) for locus in census.bodies]
     return [
         SilentOffender(
             file=f"{file}:{line}:{col}",

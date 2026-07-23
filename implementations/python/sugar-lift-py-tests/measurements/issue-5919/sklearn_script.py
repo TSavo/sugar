@@ -27,10 +27,19 @@ def run_one(with_manifest):
         env["SUGAR_KIT_MANIFEST"] = manifest_path
     else:
         env.pop("SUGAR_KIT_MANIFEST", None)
-    cmd = [sys.executable, str(SCRIPT), "--child-file", str(sk_path), "--child-rel", "sklearn/utils/tests/test_stats.py"]
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--child-file",
+        str(sk_path),
+        "--child-rel",
+        "sklearn/utils/tests/test_stats.py",
+    ]
     t0 = time.time()
     try:
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=30, env=env, check=False)
+        proc = subprocess.run(
+            cmd, text=True, capture_output=True, timeout=30, env=env, check=False
+        )
         elapsed = time.time() - t0
         out = proc.stdout.strip().splitlines()
         last_json = None
@@ -51,7 +60,11 @@ def run_one(with_manifest):
         }
     except subprocess.TimeoutExpired:
         elapsed = time.time() - t0
-        return {"with_manifest": with_manifest, "elapsed_s": round(elapsed, 2), "timed_out": True}
+        return {
+            "with_manifest": with_manifest,
+            "elapsed_s": round(elapsed, 2),
+            "timed_out": True,
+        }
 
 
 for wm in (False, True):

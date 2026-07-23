@@ -52,9 +52,9 @@ def test_cyclic_ctor_intern_is_construction_panic_not_recursion_or_segv() -> Non
         f"R=1 cyclic intern owner wrong: {info.owner!r}; "
         "replacement=ConstructionPanic from ir._intern_term naming the cyclic graph"
     )
-    assert "cyclic" in info.observed, (
-        f"R=1 observed must name the cyclic IR term shape, got {info.observed!r}"
-    )
+    assert (
+        "cyclic" in info.observed
+    ), f"R=1 observed must name the cyclic IR term shape, got {info.observed!r}"
     assert "DAG" in info.requested or "hash-cons" in info.requested
     assert "RuntimeEffect" in info.fix or "timeout" in info.fix.lower()
 

@@ -58,7 +58,9 @@ class SubscriptDeleteEffectSugar(Sugar):
 
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: self._delete(receiver, index, runtime_effect_evidence, ctor)
+                lambda index: self._delete(
+                    receiver, index, runtime_effect_evidence, ctor
+                )
             )
         )
 

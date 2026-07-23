@@ -10,7 +10,13 @@ def _sub(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value.post().args[1]
+    return (
+        next(SourceFile(path_source(path)).functions())
+        .sugar()
+        .desugar()
+        .value.post()
+        .args[1]
+    )
 
 
 def test_full_slice():

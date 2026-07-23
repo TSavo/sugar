@@ -1,2 +1,6 @@
-class DoorB: pass
-def build_authority(): return DoorB()
+class DoorB:
+    pass
+
+
+def build_authority():
+    return DoorB()

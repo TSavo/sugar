@@ -87,14 +87,24 @@ def test_mixed_chained_targets_stay_loud():
 
 
 def test_attribute_store_target_lifts_a_typed_red_effect():
-    entries = _fn("def A(o):\n    o.a = 1\n    return o\n").sugar().desugar().value.record.statements
+    entries = (
+        _fn("def A(o):\n    o.a = 1\n    return o\n")
+        .sugar()
+        .desugar()
+        .value.record.statements
+    )
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
 def test_subscript_store_target_lifts_a_typed_red_effect():
-    entries = _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar().value.record.statements
+    entries = (
+        _fn("def A(xs):\n    xs[0] = 1\n    return xs\n")
+        .sugar()
+        .desugar()
+        .value.record.statements
+    )
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, SubscriptStoreRuntimeEffect)

@@ -25,10 +25,19 @@ def _site(source_cid: str, node: ast.AST) -> dict[str, Any]:
     if not hasattr(node, "lineno"):
         body = getattr(node, "body", ())
         if not body:
-            return {"sourceCid": source_cid, "startLine": 1, "startCol": 0, "endLine": 1, "endCol": 0}
+            return {
+                "sourceCid": source_cid,
+                "startLine": 1,
+                "startCol": 0,
+                "endLine": 1,
+                "endCol": 0,
+            }
         return {
-            "sourceCid": source_cid, "startLine": 1, "startCol": 0,
-            "endLine": body[-1].end_lineno, "endCol": body[-1].end_col_offset,
+            "sourceCid": source_cid,
+            "startLine": 1,
+            "startCol": 0,
+            "endLine": body[-1].end_lineno,
+            "endCol": body[-1].end_col_offset,
         }
     return {
         "sourceCid": source_cid,
@@ -61,7 +70,9 @@ State = dict[str, frozenset[Definition]]
 def _join(*states: State) -> State:
     names = set().union(*(state for state in states))
     return {
-        name: frozenset().union(*(state.get(name, frozenset({_UNBOUND})) for state in states))
+        name: frozenset().union(
+            *(state.get(name, frozenset({_UNBOUND})) for state in states)
+        )
         for name in names
     }
 
@@ -178,7 +189,9 @@ class _Pass:
                 inner[node.args.kwarg.arg] = frozenset({_NON_IMPORT})
             self.expression(node.body, inner, node)
             return
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+        if isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+        ):
             inner = dict(state)
             for generator in node.generators:
                 self.expression(generator.iter, inner, scope)
@@ -210,22 +223,23 @@ class _Pass:
                 "useSite": use_site,
                 "importBindingCid": binding.cid,
             }
-            self.rows.append({
-                "schemaVersion": "1",
-                "kind": "call-contract-demand",
-                "authenticatedImportUse": {**use, "cid": _hash(use)},
-                "importBinding": json.loads(binding.payload_jcs),
-                "targetSymbol": binding.target_symbol,
-                "importBindingCid": binding.cid,
-                "importSignature": {
-                    "formals": [],
-                    "sorts": [
-                        {"kind": "primitive", "name": "Value"}
-                        for _ in node.args
-                    ],
-                },
-                "useSite": use_site,
-            })
+            self.rows.append(
+                {
+                    "schemaVersion": "1",
+                    "kind": "call-contract-demand",
+                    "authenticatedImportUse": {**use, "cid": _hash(use)},
+                    "importBinding": json.loads(binding.payload_jcs),
+                    "targetSymbol": binding.target_symbol,
+                    "importBindingCid": binding.cid,
+                    "importSignature": {
+                        "formals": [],
+                        "sorts": [
+                            {"kind": "primitive", "name": "Value"} for _ in node.args
+                        ],
+                    },
+                    "useSite": use_site,
+                }
+            )
         elif imports:
             self.outcomes[key] = "ambiguous-lexical-binding"
         elif reaching == frozenset({_NON_IMPORT}):
@@ -233,7 +247,9 @@ class _Pass:
         else:
             self.outcomes[key] = "no-lexical-binding"
 
-    def statements(self, statements: Iterable[ast.stmt], state: State, scope: ast.AST) -> State:
+    def statements(
+        self, statements: Iterable[ast.stmt], state: State, scope: ast.AST
+    ) -> State:
         state = dict(state)
         for statement in statements:
             state = self.statement(statement, state, scope)
@@ -257,49 +273,79 @@ class _Pass:
                     "definitionSite": _site(self.source_cid, node),
                     "localSlot": local,
                     "target": {
-                        "moduleIdentity": self.module_identities.get(module, {
-                            "kind": "unavailable-python-module", "name": module,
-                        }),
+                        "moduleIdentity": self.module_identities.get(
+                            module,
+                            {
+                                "kind": "unavailable-python-module",
+                                "name": module,
+                            },
+                        ),
                         "exportedPath": [alias.name],
                     },
                 }
-                state[local] = frozenset({
-                    _ImportDef(
-                        _hash(payload), f"python:{module}.{alias.name}",
-                        encode_jcs(_json_value(payload)),
-                    )
-                })
+                state[local] = frozenset(
+                    {
+                        _ImportDef(
+                            _hash(payload),
+                            f"python:{module}.{alias.name}",
+                            encode_jcs(_json_value(payload)),
+                        )
+                    }
+                )
             return state
         if isinstance(node, ast.Import):
             for alias in node.names:
                 local = alias.asname or alias.name.split(".")[0]
                 payload = {
-                    "kind": "python-import-binding", "schemaVersion": "1",
-                    "sourceCid": self.source_cid, "scope": _site(self.source_cid, scope),
-                    "definitionSite": _site(self.source_cid, node), "localSlot": local,
-                    "target": {"moduleIdentity": self.module_identities.get(alias.name, {
-                        "kind": "unavailable-python-module", "name": alias.name,
-                    }), "exportedPath": []},
+                    "kind": "python-import-binding",
+                    "schemaVersion": "1",
+                    "sourceCid": self.source_cid,
+                    "scope": _site(self.source_cid, scope),
+                    "definitionSite": _site(self.source_cid, node),
+                    "localSlot": local,
+                    "target": {
+                        "moduleIdentity": self.module_identities.get(
+                            alias.name,
+                            {
+                                "kind": "unavailable-python-module",
+                                "name": alias.name,
+                            },
+                        ),
+                        "exportedPath": [],
+                    },
                 }
-                state[local] = frozenset({
-                    _ImportDef(
-                        _hash(payload), f"python:{alias.name}",
-                        encode_jcs(_json_value(payload)),
-                    )
-                })
+                state[local] = frozenset(
+                    {
+                        _ImportDef(
+                            _hash(payload),
+                            f"python:{alias.name}",
+                            encode_jcs(_json_value(payload)),
+                        )
+                    }
+                )
             return state
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for deco in node.decorator_list:
                 self.expression(deco, state, scope)
-            for default in (*node.args.defaults, *(d for d in node.args.kw_defaults if d)):
+            for default in (
+                *node.args.defaults,
+                *(d for d in node.args.kw_defaults if d),
+            ):
                 self.expression(default, state, scope)
             if isinstance(scope, ast.Module):
-                state[node.name] = frozenset({
-                    _ModuleFunctionDef(
-                        f"python:{self.module_name}.{node.name}",
-                        (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset),
-                    )
-                })
+                state[node.name] = frozenset(
+                    {
+                        _ModuleFunctionDef(
+                            f"python:{self.module_name}.{node.name}",
+                            (
+                                node.lineno,
+                                node.col_offset,
+                                node.end_lineno,
+                                node.end_col_offset,
+                            ),
+                        )
+                    }
+                )
             else:
                 state[node.name] = frozenset({_NON_IMPORT})
             if not self.analyze_nested:
@@ -407,7 +453,9 @@ def _function_locals(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
             self.nonlocals.update(child.names)
 
         def visit_Import(self, child):
-            self.names.update(alias.asname or alias.name.split(".")[0] for alias in child.names)
+            self.names.update(
+                alias.asname or alias.name.split(".")[0] for alias in child.names
+            )
 
         visit_ImportFrom = visit_Import
 
@@ -489,7 +537,10 @@ def _final_module_state(
 
 
 def authenticated_import_uses(
-    root: Path, path: Path, source: str, source_cid: str,
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
     module = ast.parse(source, filename=str(path))
@@ -531,26 +582,32 @@ def authenticated_module_exports(
         if isinstance(definition, _ModuleFunctionDef):
             exported = target = definition.target_symbol
             start_line, start_col, end_line, end_col = definition.definition_site
-            rows.append({
-                "kind": "call-contract-export", "schemaVersion": "1",
-                "sourceCid": source_cid,
-                "definitionSite": {
+            rows.append(
+                {
+                    "kind": "call-contract-export",
+                    "schemaVersion": "1",
                     "sourceCid": source_cid,
-                    "startLine": start_line,
-                    "startCol": start_col,
-                    "endLine": end_line,
-                    "endCol": end_col,
-                },
-                "exportedSymbol": exported, "targetSymbol": target,
-            })
+                    "definitionSite": {
+                        "sourceCid": source_cid,
+                        "startLine": start_line,
+                        "startCol": start_col,
+                        "endLine": end_line,
+                        "endCol": end_col,
+                    },
+                    "exportedSymbol": exported,
+                    "targetSymbol": target,
+                }
+            )
         elif isinstance(definition, _ImportDef):
             payload = json.loads(definition.payload_jcs)
-            rows.append({
-                "kind": "call-contract-export",
-                "schemaVersion": "1",
-                "sourceCid": source_cid,
-                "definitionSite": payload["definitionSite"],
-                "exportedSymbol": f"python:{module_name}.{local}",
-                "targetSymbol": definition.target_symbol,
-            })
+            rows.append(
+                {
+                    "kind": "call-contract-export",
+                    "schemaVersion": "1",
+                    "sourceCid": source_cid,
+                    "definitionSite": payload["definitionSite"],
+                    "exportedSymbol": f"python:{module_name}.{local}",
+                    "targetSymbol": definition.target_symbol,
+                }
+            )
     return rows

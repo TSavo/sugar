@@ -103,9 +103,7 @@ class WithResourceSugar(Sugar):
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
                 if isinstance(enter_exit, Halted):
-                    parts.append(
-                        ExitSet((Halted(face_guard, enter_exit.effect),))
-                    )
+                    parts.append(ExitSet((Halted(face_guard, enter_exit.effect),)))
                     continue
 
                 enter_facts = ()

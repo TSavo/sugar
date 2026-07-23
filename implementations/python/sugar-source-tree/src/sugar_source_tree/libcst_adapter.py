@@ -95,7 +95,6 @@ from .operators import Operator, operator_for
 from .panic import vocabulary_missing, backend_defect
 from .spans import Span
 
-
 # --------------------------------------------------------------------------
 # Context: the position map, resolved once per parse
 # --------------------------------------------------------------------------
@@ -150,7 +149,9 @@ class _Handle(BackendNode):
         return self._desc
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<libcst-handle {type(self._node).__name__} in {self._ctx.unit.filename}>"
+        return (
+            f"<libcst-handle {type(self._node).__name__} in {self._ctx.unit.filename}>"
+        )
 
 
 class _Synth(BackendNode):
@@ -776,7 +777,10 @@ def _r_functiondef(ctx: _Ctx, n: cst.FunctionDef) -> Description:
         ("name", Leaf(n.name.value)),
         ("params", _params(ctx, n.params)),
         ("body", Children(_statements(ctx, n.body))),
-        ("decorators", Children(tuple(_Handle(ctx, d.decorator) for d in n.decorators))),
+        (
+            "decorators",
+            Children(tuple(_Handle(ctx, d.decorator) for d in n.decorators)),
+        ),
         ("returns", _maybe(ctx, _unwrap_annotation(n.returns))),
         ("type_params", _type_params(ctx, n.type_parameters)),
     )
@@ -792,7 +796,10 @@ def _r_classdef(ctx: _Ctx, n: cst.ClassDef) -> Description:
         ("bases", Children(bases)),
         ("keywords", Children(keywords)),
         ("body", Children(_statements(ctx, n.body))),
-        ("decorators", Children(tuple(_Handle(ctx, d.decorator) for d in n.decorators))),
+        (
+            "decorators",
+            Children(tuple(_Handle(ctx, d.decorator) for d in n.decorators)),
+        ),
         ("type_params", _type_params(ctx, n.type_parameters)),
     )
 
@@ -1410,7 +1417,10 @@ def _r_comparison(ctx: _Ctx, n: cst.Comparison) -> Description:
                 tuple(_op(_COMPARE_OPS, t.operator, "compare") for t in n.comparisons)
             ),
         ),
-        ("comparators", Children(tuple(_Handle(ctx, t.comparator) for t in n.comparisons))),
+        (
+            "comparators",
+            Children(tuple(_Handle(ctx, t.comparator) for t in n.comparisons)),
+        ),
     )
 
 

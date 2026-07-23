@@ -33,7 +33,9 @@ def test_assert_bearing_py_files_finds_only_assert_sources(tmp_path: Path) -> No
 def test_panic_owner_fallback_and_engaged_report_shape() -> None:
     assert panic_owner_from_message("no owner here") == "unknown"
     assert (
-        panic_owner_from_message("ConstructionPanic: owner=TemporalContext observed=result")
+        panic_owner_from_message(
+            "ConstructionPanic: owner=TemporalContext observed=result"
+        )
         == "TemporalContext"
     )
     engaged = factory_engaged_empty_report()

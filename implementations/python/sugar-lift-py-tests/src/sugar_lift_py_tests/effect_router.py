@@ -177,9 +177,7 @@ def _route_expects(
                 )
             )
         bindings = _binding_for_slot(slot_id, observation)
-        binding_facts = tuple(
-            f for b in bindings for f in b.to_facts(site=site)
-        )
+        binding_facts = tuple(f for b in bindings for f in b.to_facts(site=site))
         remaining = entries[:index] + entries[index + 1 :]
         all_facts = (*facts, *binding_facts)
         return RoutedOutcome(
@@ -202,9 +200,7 @@ def _route_expects(
             str_const(o.pattern) for o in matcher.payload_obligations
         ]
         obligation = InvValue(atomic(_EFFECT_EXPECTED_OBLIGATION, operands), site=site)
-        return RoutedOutcome(
-            entries=(*entries, obligation), stated_facts=(obligation,)
-        )
+        return RoutedOutcome(entries=(*entries, obligation), stated_facts=(obligation,))
 
     fact = InvValue(
         eq(str_const(matcher.name), str_const(_EFFECT_ABSENT_NAME)), site=site
@@ -235,13 +231,9 @@ def route(
 ) -> RoutedOutcome:
     """Route once. Optional ``slot_id`` receives EffectBinding testimony on match."""
     if isinstance(contract, Expects):
-        return _route_expects(
-            entries, contract.matcher, slot_id=slot_id, site=site
-        )
+        return _route_expects(entries, contract.matcher, slot_id=slot_id, site=site)
     if isinstance(contract, Suppresses):
-        return _route_suppresses(
-            entries, contract.matcher, slot_id=slot_id, site=site
-        )
+        return _route_suppresses(entries, contract.matcher, slot_id=slot_id, site=site)
     if isinstance(contract, NeverSuppresses):
         return RoutedOutcome(entries=entries)
     if isinstance(contract, RuntimeSelected):

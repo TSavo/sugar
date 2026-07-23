@@ -18,6 +18,7 @@ import sys
 # Floors share ``_production_lift_child`` (this directory); make it
 # importable whether run standalone, as a child, or spec-loaded by a test.
 from pathlib import Path as _P
+
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 from typing import NamedTuple, Sequence
 
@@ -64,9 +65,7 @@ def require_python_paths(roots: Sequence[Path]) -> list[Path]:
     return paths
 
 
-def _run_isolated(
-    path: Path, *, root: Path, file_timeout: int
-) -> ChildResult:
+def _run_isolated(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
     rel = path.resolve().relative_to(root.resolve()).as_posix()
     env = dict(os.environ)
     env["PYTHONFAULTHANDLER"] = "1"

@@ -24,7 +24,9 @@ def _invs(src):
 
 
 def test_concrete_for_unrolls_the_body_per_element():
-    invs = _invs("def A(z):\n    for x in [1, 2, 3]:\n        assert x == z\n    return z\n")
+    invs = _invs(
+        "def A(z):\n    for x in [1, 2, 3]:\n        assert x == z\n    return z\n"
+    )
     assert len(invs) == 3
     assert [i.args[0].value for i in invs] == [1, 2, 3]  # x = each element
     assert all(i.name == "py.eq" and i.args[1].name == "z" for i in invs)
@@ -39,7 +41,9 @@ def test_symbolic_assert_only_loop_is_a_universal():
     # for x in xs: assert P(x)  over a symbolic (formal) xs is the degenerate
     # fold -- forall x. member(x, xs) -> P(x). The loop no longer sinks the
     # function; it emits its FOL universal.
-    inv = _invs("def A(z, xs):\n    for x in xs:\n        assert x == z\n    return z\n")[0]
+    inv = _invs(
+        "def A(z, xs):\n    for x in xs:\n        assert x == z\n    return z\n"
+    )[0]
     assert inv.kind == "forall"
     body = inv.body  # member(x, xs) -> (x == z)
     assert body.kind == "implies"
@@ -51,9 +55,14 @@ def test_symbolic_carried_accumulator_is_a_fold_coordinate():
     # t = 0; for x in xs: t = t + x; return t  over a symbolic xs is the fold:
     # the carried t rebinds to the coordinate py.fold.Add(0, xs) -- a reference
     # the dig resolves (the recurrence), the same shape as a recursion's call:f.
-    post = _fn(
-        "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
-    ).sugar().desugar().value.post()
+    post = (
+        _fn(
+            "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
+        )
+        .sugar()
+        .desugar()
+        .value.post()
+    )
     fold = post.args[1]
     assert fold.name == "call:py.fold.Add"
     assert fold.args[0].value == 0  # init
@@ -74,9 +83,14 @@ def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
     # t = 0; for x in [1,2,3]: t = t + x; return t  -- the carried accumulator is
     # threaded through the unroll (t reads the previous iteration's value), so it
     # folds to 6. The `for` dissolved into block-threading; no loop-sugar.
-    post = _fn(
-        "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n    return t\n"
-    ).sugar().desugar().value.post()
+    post = (
+        _fn(
+            "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n    return t\n"
+        )
+        .sugar()
+        .desugar()
+        .value.post()
+    )
     assert post.args[1].value == 6  # out == 0+1+2+3
 
 
@@ -92,14 +106,18 @@ def test_tuple_target_destructures_the_concrete_element():
 def test_starred_target_stays_loud():
     # for a, *b -- a starred target does not destructure here; still loud.
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    for a, *b in [(1, 2)]:\n        assert a == a\n    return z\n").sugar()
+        _fn(
+            "def A(z):\n    for a, *b in [(1, 2)]:\n        assert a == a\n    return z\n"
+        ).sugar()
 
 
 def test_arity_mismatch_stays_loud():
     # the target has two names, the element three -- not destructured, loud
     # (running it would be a ValueError; never bind a wrong shape).
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    for a, b in [(1, 2, 3)]:\n        assert a == b\n    return z\n").sugar()
+        _fn(
+            "def A(z):\n    for a, b in [(1, 2, 3)]:\n        assert a == b\n    return z\n"
+        ).sugar()
 
 
 if __name__ == "__main__":
@@ -132,8 +150,13 @@ def test_jump_bearing_body_never_unrolls():
 def test_for_else_splices_after_the_unroll():
     # With no break possible (the jump-guard blocks jump-bearing bodies from
     # unrolling), the else ALWAYS runs: just more block, after the iterations.
-    post = _fn(
-        "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
-        "    else:\n        t = t + 100\n    return t\n"
-    ).sugar().desugar().value.post()
+    post = (
+        _fn(
+            "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
+            "    else:\n        t = t + 100\n    return t\n"
+        )
+        .sugar()
+        .desugar()
+        .value.post()
+    )
     assert post.args[1].value == 103

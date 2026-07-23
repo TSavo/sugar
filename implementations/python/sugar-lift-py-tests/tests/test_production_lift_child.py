@@ -49,7 +49,9 @@ def test_intentional_typed_gap_is_typed_gap_not_failure(tmp_path: Path, capsys) 
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
 
 
-def test_kit_construction_panic_is_typed_gap_not_failure(tmp_path: Path, capsys, monkeypatch) -> None:
+def test_kit_construction_panic_is_typed_gap_not_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
     # Kit ConstructionPanic is a sanctioned typed gap alongside SugarNotWritten.
     # The child must mark typed-gap and exit 0 — never misclassify as bare exception.
     from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus

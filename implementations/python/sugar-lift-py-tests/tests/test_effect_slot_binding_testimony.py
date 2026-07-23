@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 _ROOT = Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src" / "sugar_lift_py_tests"
 
@@ -46,9 +45,7 @@ def test_router_match_once_emits_binding_facts() -> None:
     from sugar_lift_py_tests.outcome import Incomplete
 
     entries = (
-        Incomplete(
-            RaiseEffect(exception_name="ValueError", occurrence="t.py:2:4")
-        ),
+        Incomplete(RaiseEffect(exception_name="ValueError", occurrence="t.py:2:4")),
     )
     out = route(
         entries,

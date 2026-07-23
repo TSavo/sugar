@@ -156,17 +156,12 @@ def _build_alias_table(tree: ast.AST) -> _AliasTable:
                         attr = attr_node.value
                         if base_canonical == "importlib" and attr == "import_module":
                             aliases.add(target.id, "importlib.import_module")
-                        elif (
-                            base_canonical == "importlib.util"
-                            and attr == "find_spec"
-                        ):
+                        elif base_canonical == "importlib.util" and attr == "find_spec":
                             aliases.add(target.id, "importlib.util.find_spec")
     return aliases
 
 
-def _classify_call(
-    node: ast.Call, aliases: _AliasTable
-) -> tuple[str, str] | None:
+def _classify_call(node: ast.Call, aliases: _AliasTable) -> tuple[str, str] | None:
     """Return (kind, resolved-target) for an executing importlib call, else None."""
     func = node.func
 
@@ -186,14 +181,23 @@ def _classify_call(
     # "find_spec")(...) -- indirection that a plain qualified-name walk misses.
     if isinstance(func, ast.Call):
         inner = func.func
-        if isinstance(inner, ast.Name) and inner.id == "getattr" and len(func.args) >= 2:
+        if (
+            isinstance(inner, ast.Name)
+            and inner.id == "getattr"
+            and len(func.args) >= 2
+        ):
             base_qualified = _qualified_name(func.args[0])
-            base_canonical = aliases.canonicalize(base_qualified) if base_qualified else ""
+            base_canonical = (
+                aliases.canonicalize(base_qualified) if base_qualified else ""
+            )
             attr_node = func.args[1]
             if isinstance(attr_node, ast.Constant) and isinstance(attr_node.value, str):
                 attr = attr_node.value
                 if base_canonical == "importlib" and attr == "import_module":
-                    return "import-module-call", f"getattr({base_canonical!r}, {attr!r})"
+                    return (
+                        "import-module-call",
+                        f"getattr({base_canonical!r}, {attr!r})",
+                    )
                 if base_canonical == "importlib.util" and attr == "find_spec":
                     return "find-spec-call", f"getattr({base_canonical!r}, {attr!r})"
     return None
@@ -445,11 +449,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, ValueError):
             pass
-    package = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "sugar_lift_py_tests"
-    )
+    package = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "roots",
@@ -511,8 +511,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if r > 0 or err > 0:
         print(
             "SOURCE-VIA-EXECUTION LAW RED: "
-            f"{r} executing loci"
-            + (f"; {err} auditor errors" if err else "")
+            f"{r} executing loci" + (f"; {err} auditor errors" if err else "")
         )
         print(format_report(offenders))
         print(json.dumps(summary))

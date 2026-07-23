@@ -32,7 +32,9 @@ class ForUniversalSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(xs):\n    for x in xs:\n        assert x == x\n    return xs\n\n"
+        prefix = (
+            "def A(xs):\n    for x in xs:\n        assert x == x\n    return xs\n\n"
+        )
         return _call_pair(
             name="for_universal",
             owner_sugar="ForUniversalSugar",
@@ -43,7 +45,13 @@ class ForUniversalSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.ir import PrimitiveSort, atomic, forall, implies, make_var
+        from sugar_lift_py_tests.ir import (
+            PrimitiveSort,
+            atomic,
+            forall,
+            implies,
+            make_var,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_statements
 

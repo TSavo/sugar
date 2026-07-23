@@ -8,7 +8,6 @@ from with_v2_law_detector import (
     analyze_single_authority,
 )
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "with_v2_laws"
 
 AUTHORITY_CASES = {
@@ -41,7 +40,9 @@ ENROLLMENT_CASES = {
     "enrollment_loop_backedge": ("enrollment_loop_backedge.py",),
     "enrollment_for_backedge": ("enrollment_for_backedge.py",),
     "enrollment_async_for_backedge": ("enrollment_async_for_backedge.py",),
-    "enrollment_lookup_only_coexists_with_sugar": ("enrollment_lookup_only_coexists_with_sugar.py",),
+    "enrollment_lookup_only_coexists_with_sugar": (
+        "enrollment_lookup_only_coexists_with_sugar.py",
+    ),
     "enrollment_ordinary_dict": ("enrollment_ordinary_dict.py",),
     "enrollment_ordinary_get": ("enrollment_ordinary_get.py",),
     "enrollment_string_dict": ("enrollment_string_dict.py",),
@@ -71,7 +72,13 @@ def test_single_authority_planted_detector_cases():
         rows = analyze_single_authority(graph(AUTHORITY_CASES[case]))
         assert len(rows) == 1, (case, rows)
         assert rows[0].reason == reason
-    for case in ("authority_legitimate", "authority_data", "authority_zero", "authority_gap", "authority_rpc_data"):
+    for case in (
+        "authority_legitimate",
+        "authority_data",
+        "authority_zero",
+        "authority_gap",
+        "authority_rpc_data",
+    ):
         assert analyze_single_authority(graph(AUTHORITY_CASES[case])) == (), case
 
 
@@ -116,8 +123,28 @@ def test_truth_set_reports_zero_false_negatives_and_false_positives():
     for case, names in ENROLLMENT_CASES.items():
         verdicts[case] = bool(analyze_consumer_enrollment(graph(names)))
     expected = {
-        **{name: name not in {"authority_legitimate", "authority_data", "authority_zero", "authority_gap", "authority_rpc_data"} for name in AUTHORITY_CASES},
-        **{name: name not in {"enrollment_ordinary_dict", "enrollment_ordinary_get", "enrollment_string_dict", "enrollment_semantics_unreachable", "enrollment_lookup_only_coexists_with_sugar"} for name in ENROLLMENT_CASES},
+        **{
+            name: name
+            not in {
+                "authority_legitimate",
+                "authority_data",
+                "authority_zero",
+                "authority_gap",
+                "authority_rpc_data",
+            }
+            for name in AUTHORITY_CASES
+        },
+        **{
+            name: name
+            not in {
+                "enrollment_ordinary_dict",
+                "enrollment_ordinary_get",
+                "enrollment_string_dict",
+                "enrollment_semantics_unreachable",
+                "enrollment_lookup_only_coexists_with_sugar",
+            }
+            for name in ENROLLMENT_CASES
+        },
     }
     false_negatives = sum(expected[name] and not verdicts[name] for name in expected)
     false_positives = sum(not expected[name] and verdicts[name] for name in expected)

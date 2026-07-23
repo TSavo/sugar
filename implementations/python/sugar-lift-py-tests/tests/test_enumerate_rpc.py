@@ -28,7 +28,6 @@ def test_add():
 """
 
 
-
 @pytest.fixture()
 def project(tmp_path: Path) -> Path:
     (tmp_path / "mathy.py").write_text(FIXTURE_SOURCE, encoding="utf-8")
@@ -66,10 +65,6 @@ def _enumerate(
     response = captured[0]
     assert "error" not in response, response
     return response["result"]
-
-
-
-
 
 
 def test_enumeration_file_context_cache_is_bounded(
@@ -1066,8 +1061,6 @@ def test_term_ref_bridge_recovery_is_shared_by_callsite_universe_and_implication
     assert len(universe["nodes"]) == 1
     assert universe["nodes"][0]["memento"]["function_name"] == "mathy.add"
     assert universe["termTable"]
-
-
 
 
 def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:

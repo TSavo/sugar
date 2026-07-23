@@ -64,9 +64,7 @@ class CallSiteSugar(Sugar):
         if remaining:
             head, *rest = remaining
             return head.desugar(ctx).and_then(
-                lambda value: self._collect(
-                    tuple(rest), accumulated + (value,), ctx
-                )
+                lambda value: self._collect(tuple(rest), accumulated + (value,), ctx)
             )
         return self._collect_kwargs(self.keywords, (), accumulated, ctx)
 
@@ -92,9 +90,7 @@ class CallSiteSugar(Sugar):
             f"call:{self.target_name}",
             [value.to_term(owner=owner) for value in positional] + kwarg_terms,
             symbol_kind=(
-                "builtin"
-                if hasattr(builtins, self.target_name)
-                else "coordinate"
+                "builtin" if hasattr(builtins, self.target_name) else "coordinate"
             ),
         )
         if self.contract_ref is not None:
@@ -111,7 +107,9 @@ class CallSiteSugar(Sugar):
         )
 
     def _collect_bridged(self, positional: tuple) -> Outcome:
-        from sugar_lift_py_tests.floor.bridged_contract_value import BridgedContractValue
+        from sugar_lift_py_tests.floor.bridged_contract_value import (
+            BridgedContractValue,
+        )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import _Ctor, _free_vars_in_term, subst_var_in_term
         from sugar_lift_py_tests.outcome import Complete
@@ -142,7 +140,11 @@ class CallSiteSugar(Sugar):
             )
         for formal, actual in zip(reference.formals, positional):
             term = subst_var_in_term(term, formal, actual.to_term(owner=str(self.site)))
-        if not isinstance(term, _Ctor) or term.name not in {"tuple", "python:tuple", "python:list"}:
+        if not isinstance(term, _Ctor) or term.name not in {
+            "tuple",
+            "python:tuple",
+            "python:list",
+        }:
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
                 observed="authenticated contract has no exact structural return",
@@ -159,6 +161,8 @@ class CallSiteSugar(Sugar):
             target_contract_cid=reference.contract_cid,
             authenticated_target_symbol=reference.bridge_source_symbol,
         )
-        return Complete(BridgedContractValue(
-            term, reference.contract_cid, reference.member_cid, callsite
-        ))
+        return Complete(
+            BridgedContractValue(
+                term, reference.contract_cid, reference.member_cid, callsite
+            )
+        )

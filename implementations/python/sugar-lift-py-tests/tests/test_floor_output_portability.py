@@ -10,9 +10,7 @@ import sys
 
 def test_vendor_floor_emits_arrows_under_cp1252(tmp_path: Path) -> None:
     script = (
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "vendor_special_case_law.py"
+        Path(__file__).resolve().parents[1] / "scripts" / "vendor_special_case_law.py"
     )
     surface = tmp_path / "surface"
     surface.mkdir()

@@ -79,9 +79,7 @@ def test_hole_args_serve_the_abstract_contract():
     # A(ys) where ys is the caller's own formal: the pre is still a hole, so
     # the curried (abstract) contract stands -- post over the fold coordinate,
     # not a literal.
-    uni, gaps, kw = _enumerate(
-        SUM_HELPER + "def test_a(ys):\n    assert A(ys) == 6\n"
-    )
+    uni, gaps, kw = _enumerate(SUM_HELPER + "def test_a(ys):\n    assert A(ys) == 6\n")
     assert len(uni) == 1
     post = _resolved_post(uni, kw)
     assert post["name"] == "="

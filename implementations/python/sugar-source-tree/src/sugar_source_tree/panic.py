@@ -145,7 +145,14 @@ class ContextManagerResolutionConstructionGap(WithConstructionGap):
 
     _LABEL = "CONTEXT MANAGER RESOLUTION GAP"
 
-    def __init__(self, *, kind: str, demand_cid: str, candidate_member_cids: tuple[str, ...], **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        kind: str,
+        demand_cid: str,
+        candidate_member_cids: tuple[str, ...],
+        **kwargs,
+    ) -> None:
         super().__init__(
             gap_kind=WithConstructionGapKind(kind),
             demand_cid=demand_cid,
@@ -222,8 +229,12 @@ class BackendDefect(SourceTreePanic):
     _LABEL = "BACKEND DEFECT"
 
 
-def vocabulary_missing(owner: str, observed: str, requested: str, fix: str) -> "VocabularyMissing":
-    raise VocabularyMissing(owner=owner, observed=observed, requested=requested, fix=fix)
+def vocabulary_missing(
+    owner: str, observed: str, requested: str, fix: str
+) -> "VocabularyMissing":
+    raise VocabularyMissing(
+        owner=owner, observed=observed, requested=requested, fix=fix
+    )
 
 
 def backend_defect(

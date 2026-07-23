@@ -40,17 +40,24 @@ _HARD_MODULES = (
     "sugar_proof_envelope",
 )
 _SOURCE_ORACLE = "sugar_lift_python_source.source_oracle"
-_SOURCE_ORACLE_BOUNDARIES = frozenset({
-    "tree.py", "corpus.py", "bench_backends.py", "fragment.py",
-})
-_FORBIDDEN_CALLS = frozenset({
-    "resolve_context_manager_demand",
-    "resolve_context_manager_import",
-    "decode_context_manager_contract",
-    "member_field",
-    "member_kind",
-    "read_proof_catalog",
-})
+_SOURCE_ORACLE_BOUNDARIES = frozenset(
+    {
+        "tree.py",
+        "corpus.py",
+        "bench_backends.py",
+        "fragment.py",
+    }
+)
+_FORBIDDEN_CALLS = frozenset(
+    {
+        "resolve_context_manager_demand",
+        "resolve_context_manager_import",
+        "decode_context_manager_contract",
+        "member_field",
+        "member_kind",
+        "read_proof_catalog",
+    }
+)
 _SOURCE_CALLS = frozenset({"path_source", "installed_module_source"})
 
 
@@ -80,8 +87,13 @@ class _BoundaryVisitor(ast.NodeVisitor):
             self.aliases[local] = alias.name
             if alias.name.startswith(_HARD_MODULES):
                 self._record(node, f"forbidden import {alias.name}")
-            if alias.name == _SOURCE_ORACLE and self.path.name not in _SOURCE_ORACLE_BOUNDARIES:
-                self._record(node, f"source-oracle import outside setup boundary {alias.name}")
+            if (
+                alias.name == _SOURCE_ORACLE
+                and self.path.name not in _SOURCE_ORACLE_BOUNDARIES
+            ):
+                self._record(
+                    node, f"source-oracle import outside setup boundary {alias.name}"
+                )
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module or ""
@@ -95,7 +107,9 @@ class _BoundaryVisitor(ast.NodeVisitor):
                 module == _SOURCE_ORACLE
                 and self.path.name not in _SOURCE_ORACLE_BOUNDARIES
             ):
-                self._record(node, f"source-oracle import outside setup boundary {target}")
+                self._record(
+                    node, f"source-oracle import outside setup boundary {target}"
+                )
 
     def visit_Call(self, node: ast.Call) -> None:
         dotted = _dotted(node.func)
@@ -111,5 +125,7 @@ class _BoundaryVisitor(ast.NodeVisitor):
                 call_name in _SOURCE_CALLS
                 and self.path.name not in _SOURCE_ORACLE_BOUNDARIES
             ):
-                self._record(node, f"source-oracle call outside setup boundary {resolved}")
+                self._record(
+                    node, f"source-oracle call outside setup boundary {resolved}"
+                )
         self.generic_visit(node)

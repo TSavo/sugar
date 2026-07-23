@@ -9,7 +9,6 @@ import sys
 
 import pytest
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "timeout_zero_tolerance.py"
 _SPEC = importlib.util.spec_from_file_location("timeout_zero_tolerance", _SCANNER_PATH)
@@ -40,8 +39,7 @@ def test_completed_child_is_not_timeout() -> None:
 
 def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:
     assert _SCANNER.production_roots(tmp_path) == (
-        tmp_path
-        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+        tmp_path / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
         tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
     )
 

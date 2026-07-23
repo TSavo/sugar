@@ -1,1 +1,2 @@
-class DoorB: pass
+class DoorB:
+    pass

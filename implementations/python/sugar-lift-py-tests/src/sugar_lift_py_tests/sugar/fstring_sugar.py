@@ -47,9 +47,7 @@ class FormattedValueSugar(Sugar):
                 return format_spec
             format_spec_term = format_spec.value
         conversion_term = (
-            ctor("None", [])
-            if self.conversion is None
-            else str_const(self.conversion)
+            ctor("None", []) if self.conversion is None else str_const(self.conversion)
         )
         return Complete(
             SymbolicValue(
@@ -108,7 +106,5 @@ class JoinedStrSugar(Sugar):
             projected = part.desugar(ctx)
             if isinstance(projected, Incomplete):
                 return projected
-            terms.append(
-                projected.value.to_term(owner="JoinedStrSugar.reference_term")
-            )
+            terms.append(projected.value.to_term(owner="JoinedStrSugar.reference_term"))
         return Complete(ctor("python:fstring", terms))

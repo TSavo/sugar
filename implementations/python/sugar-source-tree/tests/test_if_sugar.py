@@ -37,7 +37,11 @@ def _return_of(fn):
 
 def test_if_else_assignment_becomes_a_phi():
     # if c: x = 5 else: x = 6 ; return x  ->  return (5 if c else 6)
-    ret = _return_of(_fn("def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n"))
+    ret = _return_of(
+        _fn(
+            "def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n"
+        )
+    )
     assert ret.value.kind == "IfExp"
     assert ret.value.test.kind == "BranchResultRef"
     assert ret.value.body.value == 5  # then arm
@@ -65,7 +69,9 @@ def test_one_armed_if_with_no_prior_is_an_honest_gap_not_a_guess():
 def test_the_phi_borrows_the_if_source_span():
     # The synthesized IfExp is a shadow that still addresses the if's source site
     # (the memento invariant survives rewriting).
-    fn = _fn("def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n")
+    fn = _fn(
+        "def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n"
+    )
     if_node = next(n for n in fn.walk() if n.kind == "If")
     phi = _return_of(fn).value
     assert phi.span == if_node.span
@@ -81,7 +87,9 @@ def _invs(fn):
 
 def test_guarded_assert_is_an_implication():
     # if z == 1: assert z == 1  ->  inv  (z == 1) -> (z == 1)
-    invs = _invs(_fn("def A(z):\n    if z == 1:\n        assert z == 1\n    return z\n"))
+    invs = _invs(
+        _fn("def A(z):\n    if z == 1:\n        assert z == 1\n    return z\n")
+    )
     assert len(invs) == 2
     guard = invs[-1]
     assert getattr(guard, "kind", None) == "implies", guard
@@ -94,7 +102,9 @@ def test_guarded_assert_is_an_implication():
 def test_guard_discriminates_condition_from_fact():
     # if z == 1: assert z == 2  ->  (z == 1) -> (z == 2): antecedent is the
     # CONDITION, consequent the FACT, and they are not conflated.
-    invs = _invs(_fn("def A(z):\n    if z == 1:\n        assert z == 2\n    return z\n"))
+    invs = _invs(
+        _fn("def A(z):\n    if z == 1:\n        assert z == 2\n    return z\n")
+    )
     ante, cons = invs[-1].operands
     # The antecedent is the authenticated branch-result coordinate; the fact
     # retains its original value.
@@ -110,7 +120,11 @@ def test_guarded_return_posts_both_faces():
     #   (z == 1 -> out == 10)  AND  (not(z == 1) -> out == 20)
     # The exiting branch posts under the guard; the fall-through tail posts under
     # its negation. No face is dropped.
-    uni = _fn("def A(z):\n    if z == 1:\n        return 10\n    return 20\n").sugar().desugar()
+    uni = (
+        _fn("def A(z):\n    if z == 1:\n        return 10\n    return 20\n")
+        .sugar()
+        .desugar()
+    )
     post = uni.value.post()
     assert post.kind == "and"
     then_imp, else_imp = post.operands
@@ -129,9 +143,13 @@ def test_guarded_raise_halts_its_branch_and_guards_the_tail():
     # the assert becomes  not(z == 1) -> (z == 2).
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    out = _fn(
-        "def A(z):\n    if z == 1:\n        raise ValueError\n    assert z == 2\n    return z\n"
-    ).sugar().desugar()
+    out = (
+        _fn(
+            "def A(z):\n    if z == 1:\n        raise ValueError\n    assert z == 2\n    return z\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(out, ExitSet)
     completed = next(e for e in out.exits if isinstance(e, Completed))
     halted = next(e for e in out.exits if isinstance(e, Halted))

@@ -53,7 +53,11 @@ def _term(raw: Any) -> Term:
             return bool_const(value)
         if name == "Int" and isinstance(value, int) and not isinstance(value, bool):
             return num(value)
-        if name == "Real" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            name == "Real"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
             return real_lit(str(value))
         raise CallContractRefProtocolError("unsupported returnTerm constant")
     if kind == "ctor" and set(raw) == {"kind", "name", "args"}:
@@ -128,9 +132,20 @@ class ResolvedCallContractRefsV1:
 
 def _decode_ref(raw: Any) -> ResolvedCallContractRefV1:
     expected = {
-        "kind", "schemaVersion", "resolutionCid", "demandCid", "useSite",
-        "importBindingCid", "catalogCid", "memberCid", "contractCid", "bridgeSourceSymbol",
-        "importSignature", "returnTerm", "sourceWarrantCids", "contractDecl",
+        "kind",
+        "schemaVersion",
+        "resolutionCid",
+        "demandCid",
+        "useSite",
+        "importBindingCid",
+        "catalogCid",
+        "memberCid",
+        "contractCid",
+        "bridgeSourceSymbol",
+        "importSignature",
+        "returnTerm",
+        "sourceWarrantCids",
+        "contractDecl",
     }
     if not isinstance(raw, dict) or set(raw) != expected:
         raise CallContractRefProtocolError("malformed resolved-call contract ref")
@@ -160,7 +175,10 @@ def _decode_ref(raw: Any) -> ResolvedCallContractRefV1:
     contract_cid = _cid(raw["contractCid"], "contractCid")
     return_term = None if raw["returnTerm"] is None else _term(raw["returnTerm"])
     contract_decl = raw["contractDecl"]
-    if not isinstance(contract_decl, dict) or _hash_json(contract_decl) != raw["contractCid"]:
+    if (
+        not isinstance(contract_decl, dict)
+        or _hash_json(contract_decl) != raw["contractCid"]
+    ):
         raise CallContractRefProtocolError("stale semantic contract CID")
     resolution_preimage = {
         "schemaVersion": "1",
@@ -186,20 +204,37 @@ def _decode_ref(raw: Any) -> ResolvedCallContractRefV1:
                 "returnTerm contains a variable not authenticated as a formal"
             )
     return ResolvedCallContractRefV1(
-        resolution_cid, demand_cid,
+        resolution_cid,
+        demand_cid,
         SourceFragmentCoordinateV1.decode(raw["useSite"]),
-        import_binding_cid, catalog_cid, member_cid, contract_cid,
+        import_binding_cid,
+        catalog_cid,
+        member_cid,
+        contract_cid,
         raw["bridgeSourceSymbol"],
-        tuple(signature["formals"]), sorts, return_term,
+        tuple(signature["formals"]),
+        sorts,
+        return_term,
         tuple(_cid(value, "sourceWarrantCid") for value in warrants),
         MappingProxyType(dict(contract_decl)),
     )
 
 
 def decode_resolved_call_contract_refs(raw: Any) -> ResolvedCallContractRefsV1:
-    if not isinstance(raw, dict) or set(raw) != {
-        "kind", "schemaVersion", "catalogCid", "tableCid", "enrolledUseSites", "byUseSite"
-    } or raw["kind"] != "resolved-call-contract-refs" or raw["schemaVersion"] != "1":
+    if (
+        not isinstance(raw, dict)
+        or set(raw)
+        != {
+            "kind",
+            "schemaVersion",
+            "catalogCid",
+            "tableCid",
+            "enrolledUseSites",
+            "byUseSite",
+        }
+        or raw["kind"] != "resolved-call-contract-refs"
+        or raw["schemaVersion"] != "1"
+    ):
         raise CallContractRefProtocolError("malformed resolved-call contract-ref table")
     rows = raw["byUseSite"]
     if not isinstance(rows, list):
@@ -219,29 +254,49 @@ def decode_resolved_call_contract_refs(raw: Any) -> ResolvedCallContractRefsV1:
         if use_site in decoded:
             raise CallContractRefProtocolError("duplicate use-site resolution row")
         if use_site not in enrolled:
-            raise CallContractRefProtocolError("resolution row is not an enrolled call demand")
+            raise CallContractRefProtocolError(
+                "resolution row is not an enrolled call demand"
+            )
         resolution = row["resolution"]
         if not isinstance(resolution, dict):
             raise CallContractRefProtocolError("malformed call resolution")
-        if resolution.get("kind") == "resolved" and set(resolution) == {"kind", "reference"}:
+        if resolution.get("kind") == "resolved" and set(resolution) == {
+            "kind",
+            "reference",
+        }:
             value: CallContractResolutionV1 = _decode_ref(resolution["reference"])
             if value.use_site != use_site:
-                raise CallContractRefProtocolError("resolved reference row use-site mismatch")
+                raise CallContractRefProtocolError(
+                    "resolved reference row use-site mismatch"
+                )
             if value.catalog_cid != catalog_cid:
-                raise CallContractRefProtocolError("resolved reference catalog CID mismatch")
-        elif resolution.get("kind") == "unresolved" and set(resolution) == {"kind", "gap"}:
+                raise CallContractRefProtocolError(
+                    "resolved reference catalog CID mismatch"
+                )
+        elif resolution.get("kind") == "unresolved" and set(resolution) == {
+            "kind",
+            "gap",
+        }:
             gap = resolution["gap"]
-            candidates = gap.get("candidateMemberCids") if isinstance(gap, dict) else None
+            candidates = (
+                gap.get("candidateMemberCids") if isinstance(gap, dict) else None
+            )
             if not isinstance(candidates, list) or candidates != sorted(candidates):
-                raise CallContractRefProtocolError("candidate member CIDs must be sorted")
+                raise CallContractRefProtocolError(
+                    "candidate member CIDs must be sorted"
+                )
             value = CallContractResolutionGapV1(
-                _cid(gap.get("demandCid"), "demandCid"), use_site,
+                _cid(gap.get("demandCid"), "demandCid"),
+                use_site,
                 _cid(gap.get("importBindingCid"), "importBindingCid"),
-                gap.get("targetSymbol"), CallContractResolutionGapKindV1(gap.get("kind")),
+                gap.get("targetSymbol"),
+                CallContractResolutionGapKindV1(gap.get("kind")),
                 tuple(_cid(cid, "candidateMemberCid") for cid in candidates),
             )
             if SourceFragmentCoordinateV1.decode(gap.get("useSite")) != use_site:
-                raise CallContractRefProtocolError("unresolved gap row use-site mismatch")
+                raise CallContractRefProtocolError(
+                    "unresolved gap row use-site mismatch"
+                )
         else:
             raise CallContractRefProtocolError("unknown call resolution")
         decoded[use_site] = value
@@ -251,7 +306,13 @@ def decode_resolved_call_contract_refs(raw: Any) -> ResolvedCallContractRefsV1:
         )
     identity = {
         key: raw[key]
-        for key in ("kind", "schemaVersion", "catalogCid", "enrolledUseSites", "byUseSite")
+        for key in (
+            "kind",
+            "schemaVersion",
+            "catalogCid",
+            "enrolledUseSites",
+            "byUseSite",
+        )
     }
     if _hash_json(identity) != raw["tableCid"]:
         raise CallContractRefProtocolError("table CID mismatch")

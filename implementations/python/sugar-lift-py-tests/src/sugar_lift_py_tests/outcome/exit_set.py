@@ -11,7 +11,6 @@ from sugar_lift_py_tests.ir import Formula, and_, not_, or_
 from .complete import Complete
 from .incomplete import Incomplete
 
-
 T = TypeVar("T")
 U = TypeVar("U")
 
@@ -98,9 +97,7 @@ class ExitSet(Generic[T]):
         return cls((Halted(guard or true_guard(), effect),)).normalize()
 
     @classmethod
-    def conditional_halt(
-        cls, guard: Formula, effect: Effect, state: T
-    ) -> "ExitSet[T]":
+    def conditional_halt(cls, guard: Formula, effect: Effect, state: T) -> "ExitSet[T]":
         return cls((Halted(guard, effect), Completed(not_(guard), state))).normalize()
 
     def union(self, other: "ExitSet[T]") -> "ExitSet[T]":
@@ -273,9 +270,7 @@ def outcome_to_exitset(outcome) -> ExitSet:
         return ExitSet.completed(outcome.value)
     if isinstance(outcome, Incomplete):
         if outcome.branch_conditions:
-            return ExitSet.halted(
-                outcome.effect, and_(list(outcome.branch_conditions))
-            )
+            return ExitSet.halted(outcome.effect, and_(list(outcome.branch_conditions)))
         return ExitSet.halted(outcome.effect)
     raise TypeError(type(outcome))
 

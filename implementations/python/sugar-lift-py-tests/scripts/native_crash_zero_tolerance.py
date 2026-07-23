@@ -22,6 +22,7 @@ import sys
 # Floors share ``_production_lift_child`` (this directory); make it
 # importable whether run standalone, as a child, or spec-loaded by a test.
 from pathlib import Path as _P
+
 sys.path.insert(0, str(_P(__file__).resolve().parent))
 from typing import NamedTuple, Sequence
 
@@ -82,9 +83,7 @@ def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
         "Loci:",
     ]
     for row in offenders:
-        lines.append(
-            f"{row.file}:returncode={row.returncode}:signal={row.signal}"
-        )
+        lines.append(f"{row.file}:returncode={row.returncode}:signal={row.signal}")
         if row.stderr_tail:
             lines.append(row.stderr_tail)
     return "\n".join(lines)
@@ -95,9 +94,7 @@ def _python_paths(roots: Sequence[Path]) -> list[Path]:
         {
             path
             for root in roots
-            for path in (
-                root.rglob("*.py") if root.is_dir() else (root,)
-            )
+            for path in (root.rglob("*.py") if root.is_dir() else (root,))
             if path.is_file() and "__pycache__" not in path.parts
         }
     )
@@ -183,9 +180,7 @@ def audit_paths(
                 sorted(paths),
             )
         )
-    offenders = tuple(
-        row.offender for row in rows if row.offender is not None
-    )
+    offenders = tuple(row.offender for row in rows if row.offender is not None)
     for row in rows:
         if row.category == "timeout":
             print(

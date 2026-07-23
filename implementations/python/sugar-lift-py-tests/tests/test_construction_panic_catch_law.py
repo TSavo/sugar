@@ -7,7 +7,9 @@ from pathlib import Path
 
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "construction_panic_catch_law.py"
-_SPEC = importlib.util.spec_from_file_location("construction_panic_catch_law", _SCANNER_PATH)
+_SPEC = importlib.util.spec_from_file_location(
+    "construction_panic_catch_law", _SCANNER_PATH
+)
 assert _SPEC is not None and _SPEC.loader is not None
 _SCANNER = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SCANNER)

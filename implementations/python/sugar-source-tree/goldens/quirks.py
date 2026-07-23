@@ -18,13 +18,11 @@ d = ()
 a += 2
 del c, d
 
-s_implicit = ("one "
-              "two "
-              "three")
+s_implicit = "one " "two " "three"
 s_f = f"pre {after_unicode!r:>10} post {CONST:{a}} end"
 s_nested = f"outer {f'inner {CONST}'} done"
 s_bytes = b"\x00" b"more"
-s_u = u"legacy"
+s_u = "legacy"
 
 numbers = [1, 2.5, 3j, 0x10, 0o7, 0b11, 1_000, ...]
 mapping = {"k": 1, **{"j": 2}}
@@ -33,7 +31,7 @@ a_set = {1, 2, 3}
 result = system.maxsize + (CONST * 2) - (-CONST)
 shifted = (CONST << 2) | (CONST & 1) ^ (CONST >> 1)
 divided = CONST / 2 // 1 % 2
-powed = CONST ** 2
+powed = CONST**2
 inverted = ~CONST
 truthy = not CONST
 chained = 0 < CONST <= 10 != 11
@@ -46,7 +44,7 @@ comp_gen = (x async for x in aiter) if False else (x for x in range(2))
 nested_comp = [[y for y in range(x)] for x in range(3)]
 
 fn = lambda p, q=1, *rest, kw_only=2, **extra: p + q
-walrus_result = [(n := len(numbers)), n ** 2]
+walrus_result = [(n := len(numbers)), n**2]
 
 multi_call = OD(
     first=1,
@@ -54,11 +52,20 @@ multi_call = OD(
 )
 star_call = print(*numbers[:2], **{"sep": ", "})
 subscripted = numbers[0], numbers[1:2], numbers[::2], mapping["k"]
-sliced = numbers[CONST:CONST + 1:1]
+sliced = numbers[CONST : CONST + 1 : 1]
 
 
-def plain(pos_only, /, normal, with_ann: int, with_def="d", *args,
-          kw1, kw2: float = 2.0, **kwargs) -> str:
+def plain(
+    pos_only,
+    /,
+    normal,
+    with_ann: int,
+    with_def="d",
+    *args,
+    kw1,
+    kw2: float = 2.0,
+    **kwargs,
+) -> str:
     """doc"""
     global CONST
     x: list = []

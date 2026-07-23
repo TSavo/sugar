@@ -75,7 +75,9 @@ class Child:
 
     handle: "BackendNode"
 
-    def resolve(self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER) -> Node:
+    def resolve(
+        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+    ) -> Node:
         return materialize(unit, self.handle, reporter)
 
 
@@ -88,9 +90,7 @@ class MaybeChild:
     def resolve(
         self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
     ) -> Optional[Node]:
-        return (
-            None if self.handle is None else materialize(unit, self.handle, reporter)
-        )
+        return None if self.handle is None else materialize(unit, self.handle, reporter)
 
 
 @dataclass(frozen=True)

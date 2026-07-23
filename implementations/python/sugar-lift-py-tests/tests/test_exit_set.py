@@ -149,18 +149,14 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
 
 def test_and_exit_completion_keeps_body_completed():
     incoming = ExitSet.completed("body")
-    after = incoming.and_exit(
-        ExitSet.completed(False), disposition=NeverSuppresses()
-    )
+    after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
     assert after.collapse() == Complete("body")
 
 
 def test_and_exit_halt_supersedes_body_completed():
     exit_halt = RaiseEffect(exception_name="RuntimeError")
     incoming = ExitSet.completed("body")
-    after = incoming.and_exit(
-        ExitSet.halted(exit_halt), disposition=NeverSuppresses()
-    )
+    after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
     assert after.collapse() == Incomplete(exit_halt)
 
 
@@ -168,18 +164,14 @@ def test_and_exit_halt_supersedes_body_halted():
     body = RaiseEffect(exception_name="ValueError")
     exit_halt = RaiseEffect(exception_name="RuntimeError")
     incoming = ExitSet.halted(body)
-    after = incoming.and_exit(
-        ExitSet.halted(exit_halt), disposition=NeverSuppresses()
-    )
+    after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
     assert after.collapse() == Incomplete(exit_halt)
 
 
 def test_and_exit_never_suppresses_restores_body_halt():
     body = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.halted(body)
-    after = incoming.and_exit(
-        ExitSet.completed(False), disposition=NeverSuppresses()
-    )
+    after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
     assert after.collapse() == Incomplete(body)
 
 

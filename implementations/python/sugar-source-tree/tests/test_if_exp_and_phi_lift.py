@@ -22,7 +22,9 @@ def _post(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value.post()
+    return (
+        next(SourceFile(path_source(path)).functions()).sugar().desugar().value.post()
+    )
 
 
 def _no_py_conditional(post):
@@ -72,7 +74,9 @@ def test_phi_conditional_binding_lifts_end_to_end():
     # if c: x = 5 else: x = 6 ; return x
     # substitute rewrites `return x` to `return (5 if c else 6)`; the IfExp value
     # distributes to the same guarded post -- the phi is liftable, not a gap.
-    post = _post("def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n")
+    post = _post(
+        "def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n"
+    )
     _no_py_conditional(post)
     assert post.kind == "and"
     then_imp, else_imp = post.operands
@@ -87,4 +91,6 @@ if __name__ == "__main__":
     test_direct_ifexp_predicate_distributes()
     test_direct_ifexp_bare_truthiness_distributes()
     test_phi_conditional_binding_lifts_end_to_end()
-    print("ok: IfExp value distributes; phi lifts end-to-end; substitute is sole binder")
+    print(
+        "ok: IfExp value distributes; phi lifts end-to-end; substitute is sole binder"
+    )

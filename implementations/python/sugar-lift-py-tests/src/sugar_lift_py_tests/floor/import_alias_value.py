@@ -26,13 +26,17 @@ class ImportAliasValue(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        return ctor("python:import_alias", [str_const(self.bound_name), str_const(self.name)])
+        return ctor(
+            "python:import_alias", [str_const(self.bound_name), str_const(self.name)]
+        )
 
     def test_python_type(self, value, site):
         from sugar_lift_py_tests.floor.type_tester import native_type_tester
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        return native_type_tester(value, ctor("python:type", [str_const(self.name)]), site)
+        return native_type_tester(
+            value, ctor("python:type", [str_const(self.name)]), site
+        )
 
     def qualified_class_attribute(self, attribute: str) -> ImportAliasValue | None:
         del attribute
@@ -112,7 +116,14 @@ class ImportAliasValue(FloorValue):
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(SymbolicValue(ctor("|", [self.to_term(owner=str(site)), other.to_term(owner=str(site))])))
+            return Complete(
+                SymbolicValue(
+                    ctor(
+                        "|",
+                        [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
+                    )
+                )
+            )
         return super().bitwise_or(other, site)
 
     def unary_minus(self, site):
@@ -127,54 +138,78 @@ class ImportAliasValue(FloorValue):
     def format_data_model(self, spec, site, ctx):
         del spec, ctx
         return _runtime_alias_effect_at_site(
-            self, shape=f"format({self.bound_name}, ...)", site=site,
+            self,
+            shape=f"format({self.bound_name}, ...)",
+            site=site,
             replacement="ImportedModuleFormatEffect",
         )
 
     def _binary_runtime_effect(self, other, site, operator):
         del other
         return _runtime_alias_effect_at_site(
-            self, shape=f"{self.bound_name} {operator} ...", site=site,
+            self,
+            shape=f"{self.bound_name} {operator} ...",
+            site=site,
             replacement="ImportedModuleBinaryEffect",
         )
 
     def _unary_runtime_effect(self, site, operator):
         return _runtime_alias_effect_at_site(
-            self, shape=f"{operator}{self.bound_name}", site=site,
+            self,
+            shape=f"{operator}{self.bound_name}",
+            site=site,
             replacement="ImportedModuleUnaryEffect",
         )
 
     def call_method_with(self, operation: Any, ctx: object):
         del ctx
-        return _runtime_alias_effect(self, operation=operation,
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
             shape=f"{self.bound_name}.{operation.name}(...)",
-            replacement="ImportedModuleCallEffect")
+            replacement="ImportedModuleCallEffect",
+        )
 
     def subscript_with(self, operation: Any, ctx: object):
         del ctx
-        return _runtime_alias_effect(self, operation=operation,
-            shape=f"{self.bound_name}[...]", replacement="ImportedModuleSubscriptEffect")
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
+            shape=f"{self.bound_name}[...]",
+            replacement="ImportedModuleSubscriptEffect",
+        )
 
     def contains_with(self, operation: Any, ctx: object):
         del ctx
-        return _runtime_alias_effect(self, operation=operation,
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
             shape="contains membership over imported module binding",
-            replacement="ImportedModuleContainsEffect")
+            replacement="ImportedModuleContainsEffect",
+        )
 
     def attribute_assign_with(self, operation: Any, ctx: object):
         del ctx
-        return _runtime_alias_effect(self, operation=operation,
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
             shape=f"{self.bound_name}.{operation.name} = ...",
-            replacement="ImportedModuleAttributeAssignEffect")
+            replacement="ImportedModuleAttributeAssignEffect",
+        )
 
     def binary_operator_with(self, operation: Any, ctx: object):
         del ctx
-        return _runtime_alias_effect(self, operation=operation,
+        return _runtime_alias_effect(
+            self,
+            operation=operation,
             shape=f"{self.bound_name} {operation.operator} ...",
-            replacement="ImportedModuleBinaryEffect")
+            replacement="ImportedModuleBinaryEffect",
+        )
 
 
-def _runtime_alias_effect(value: ImportAliasValue, *, operation: Any, shape: str, replacement: str):
+def _runtime_alias_effect(
+    value: ImportAliasValue, *, operation: Any, shape: str, replacement: str
+):
     return _runtime_alias_effect_at_site(
         value, shape=shape, site=operation.site, replacement=replacement
     )

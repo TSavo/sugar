@@ -83,6 +83,4 @@ class ExitTracebackRefSugar(Sugar):
             ExitTracebackCoordinate,
         )
 
-        return Complete(
-            ExitTracebackCoordinate(face_id=self.face_id, site=self.site)
-        )
+        return Complete(ExitTracebackCoordinate(face_id=self.face_id, site=self.site))

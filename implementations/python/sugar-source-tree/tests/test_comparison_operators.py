@@ -15,7 +15,12 @@ def _inv(src: str):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value.invs()[0]
+    return (
+        next(SourceFile(path_source(path)).functions())
+        .sugar()
+        .desugar()
+        .value.invs()[0]
+    )
 
 
 def test_not_equal_is_equals_negated():
@@ -37,7 +42,11 @@ def test_chained_comparison_conjoins_adjacent_pairs():
     assert inv.kind == "and"
     left, right = inv.operands
     assert left.name == "py.lt" and left.args[0].value == 0 and left.args[1].name == "z"
-    assert right.name == "py.lt" and right.args[0].name == "z" and right.args[1].value == 10
+    assert (
+        right.name == "py.lt"
+        and right.args[0].name == "z"
+        and right.args[1].value == 10
+    )
 
 
 def test_comparison_composes_inside_boolop():

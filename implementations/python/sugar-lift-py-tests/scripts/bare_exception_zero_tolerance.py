@@ -92,9 +92,7 @@ def require_python_paths(roots: Sequence[Path]) -> list[Path]:
     return paths
 
 
-def _run_isolated(
-    path: Path, *, root: Path, file_timeout: int
-) -> ChildResult:
+def _run_isolated(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
     rel = path.resolve().relative_to(root.resolve()).as_posix()
     env = dict(os.environ)
     env["PYTHONFAULTHANDLER"] = "1"

@@ -10,7 +10,6 @@ import sys
 
 import pytest
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "bare_exception_zero_tolerance.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -29,9 +28,7 @@ def test_planted_python_exception_trips_bare_floor() -> None:
         check=False,
     )
 
-    offender = _SCANNER.bare_exception_offender(
-        file="planted.py", result=result
-    )
+    offender = _SCANNER.bare_exception_offender(file="planted.py", result=result)
 
     assert offender is not None
     assert offender.returncode == 1
@@ -51,10 +48,7 @@ def test_typed_gap_testimony_is_not_bare() -> None:
         stderr="",
     )
 
-    assert (
-        _SCANNER.bare_exception_offender(file="typed-red.py", result=result)
-        is None
-    )
+    assert _SCANNER.bare_exception_offender(file="typed-red.py", result=result) is None
 
 
 def test_signal_death_is_not_bare() -> None:
@@ -67,8 +61,7 @@ def test_signal_death_is_not_bare() -> None:
 
 def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:
     assert _SCANNER.production_roots(tmp_path) == (
-        tmp_path
-        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+        tmp_path / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
         tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
     )
 

@@ -63,9 +63,9 @@ def test_term_cycle_key_under_intern_scope_stays_under_budget() -> None:
         elapsed = time.perf_counter() - started
     assert warm.startswith("blake3-512:")
     assert len(set(keys)) == 1 and keys[0] == warm
-    assert not warm.startswith("term-id:"), (
-        "term-id: keys are the scope-dependent #5477 bug (#5569)."
-    )
+    assert not warm.startswith(
+        "term-id:"
+    ), "term-id: keys are the scope-dependent #5477 bug (#5569)."
     assert elapsed < budget_seconds, (
         f"R=1 memoized _term_cycle_key×{repeats} over depth={depth} paid "
         f"{elapsed:.3f}s (budget {budget_seconds}s after first materialize). "

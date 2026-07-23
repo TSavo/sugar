@@ -72,8 +72,6 @@ def test_an_unparseable_file_produces_a_recorded_row_never_an_escaped_exception(
     )
 
     assert result.files == 1  # only fine.py parsed
-    could_not_parse = [
-        f for f in result.failures if f[1] == "backend_could_not_parse"
-    ]
+    could_not_parse = [f for f in result.failures if f[1] == "backend_could_not_parse"]
     assert len(could_not_parse) == 1
     assert could_not_parse[0][0] == "unparseable.py"

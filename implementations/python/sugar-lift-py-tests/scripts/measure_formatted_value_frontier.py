@@ -61,7 +61,9 @@ def measure(root: Path) -> dict[str, object]:
             source, filename, source_cid = path_source(path)
             parsed = ast.parse(source, filename=str(path))
             native_nodes = [
-                node for node in ast.walk(parsed) if isinstance(node, ast.FormattedValue)
+                node
+                for node in ast.walk(parsed)
+                if isinstance(node, ast.FormattedValue)
             ]
             if not native_nodes:
                 counts["files_without_formatted_value"] += 1
@@ -138,9 +140,7 @@ def measure(root: Path) -> dict[str, object]:
         "counts": dict(sorted(counts.items())),
         "direct_gap_by_shape": dict(sorted(direct_by_shape.items())),
         "roll_call": dict(sorted(roll_call.items())),
-        "roll_call_blocked_by_child": dict(
-            sorted(roll_call_blocked_by_child.items())
-        ),
+        "roll_call_blocked_by_child": dict(sorted(roll_call_blocked_by_child.items())),
         "blocked_descendant_by_child": dict(sorted(blocked_by_child.items())),
         "other_panics": dict(sorted(other_panics.items())),
     }

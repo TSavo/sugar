@@ -140,9 +140,9 @@ def main() -> None:
                 counts[f"lift_coverage.{key}"] += value
 
         for row in payload.factory_walk:
-            status_value = getattr(
-                getattr(row, "status", None), "value", None
-            ) or str(getattr(row, "status", "") or "")
+            status_value = getattr(getattr(row, "status", None), "value", None) or str(
+                getattr(row, "status", "") or ""
+            )
             # Permanent product-completeness axis (#5252): unclassified /
             # wire-unresolved walk rows are honest red residue, not success.
             # Retain a row-addressable locus for shape-split drain.

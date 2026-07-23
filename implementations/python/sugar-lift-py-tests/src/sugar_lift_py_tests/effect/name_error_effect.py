@@ -21,9 +21,11 @@ class NameErrorEffect(RaiseEffect):
         object.__setattr__(
             self,
             "source_sha256",
-            hashlib.sha256(source.encode()).hexdigest()
-            if isinstance(source, str)
-            else None,
+            (
+                hashlib.sha256(source.encode()).hexdigest()
+                if isinstance(source, str)
+                else None
+            ),
         )
         object.__setattr__(self, "occurrence", locus)
 

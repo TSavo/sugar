@@ -52,9 +52,10 @@ def test_gap_when_no_claim_owns_the_operand_types():
 
 
 def test_gap_when_no_claim_accepts_the_shape_at_all():
-    site = only(parse("y = [1]\n"), __import__(
-        "sugar_node_membrane.nodes", fromlist=["List"]
-    ).List)
+    site = only(
+        parse("y = [1]\n"),
+        __import__("sugar_node_membrane.nodes", fromlist=["List"]).List,
+    )
     with pytest.raises(RecognitionPanic) as exc:
         default_catalog().resolve(Role.TERM, site)
     assert exc.value.arm is RecognitionArm.GAP
@@ -152,9 +153,10 @@ def test_ambiguity_is_the_soundness_guarantee_of_the_ported_disjointness():
     assert exc.value.arm is RecognitionArm.AMBIGUOUS
 
     # With the exclusion as ported, the same site resolves to exactly one.
-    assert TypedCatalog((PlainCallClaim, LenCallClaim)).resolve(
-        Role.TERM, site
-    ) is LenCallClaim
+    assert (
+        TypedCatalog((PlainCallClaim, LenCallClaim)).resolve(Role.TERM, site)
+        is LenCallClaim
+    )
 
 
 def test_the_ported_catalog_is_unambiguous_over_a_real_corpus():
@@ -266,6 +268,7 @@ def test_structural_absence_is_a_fact_not_a_missing():
 
 def test_a_kind_string_as_accepts_is_refused_at_class_creation():
     with pytest.raises(RecognitionPanic) as exc:
+
         class Stringly(TypedClaim):
             accepts = "Call"  # type: ignore[assignment]
             role = Role.TERM
@@ -301,8 +304,7 @@ def test_operator_fields_cover_every_operator_carrier():
         for f in dataclass_fields(cls):
             annotation = f.type if isinstance(f.type, str) else ""
             mentions_operator_class = any(
-                sub.__name__ in annotation
-                for sub in _all_subclasses(Operator)
+                sub.__name__ in annotation for sub in _all_subclasses(Operator)
             )
             if mentions_operator_class:
                 assert f.name in declared, (

@@ -69,9 +69,9 @@ def test_content_cid_evict_and_recompute_preserves_identity() -> None:
         cid_before = _term_content_cid(term)
         hash_before = hash(formula)
         assert _term_content_cid_memo_size() >= 1
-        assert _evict_term_content_cid(term) is True, (
-            "R=1 expected a live content-CID memo entry to evict (#5572)."
-        )
+        assert (
+            _evict_term_content_cid(term) is True
+        ), "R=1 expected a live content-CID memo entry to evict (#5572)."
         # Second evict is a no-op (already gone) — not a soft success for identity.
         assert _evict_term_content_cid(term) is False
         cid_after = _term_content_cid(term)
@@ -116,9 +116,9 @@ def test_content_cid_memo_does_not_strong_pin_dead_terms() -> None:
     with term_intern_scope():
         twin = ctor("ephemeral", [make_var("z")])
         cid = _term_content_cid(twin)
-    assert cid == TermTableBuilder().reference(
-        ctor("ephemeral", [make_var("z")])
-    )["cid"]
+    assert (
+        cid == TermTableBuilder().reference(ctor("ephemeral", [make_var("z")]))["cid"]
+    )
 
 
 def test_cross_scope_dictionary_twin() -> None:
@@ -174,9 +174,9 @@ def test_cross_scope_set_twin() -> None:
         bucket.add(right)
         bucket.add(lying)
 
-    assert left == right, (
-        "R=1 structural formula twins compare unequal across scopes (#5568)."
-    )
+    assert (
+        left == right
+    ), "R=1 structural formula twins compare unequal across scopes (#5568)."
     assert hash(left) == hash(right), (
         f"R=1 structural formula twins hash differently "
         f"({hash(left)!r} vs {hash(right)!r}) (#5568)."
@@ -275,9 +275,9 @@ def test_formula_and_callsite_keys_match_wire_cid_prefix() -> None:
     with term_intern_scope():
         term = _deep_term(20)
         key = _term_cycle_key(term)
-    assert key.startswith("blake3-512:"), (
-        f"R=1 cycle key must be wire CID, not intern object id; got {key!r}"
-    )
-    assert not key.startswith("term-id:"), (
-        "R=1 term-id: keys are the #5477 scope-dependent bug (#5569)."
-    )
+    assert key.startswith(
+        "blake3-512:"
+    ), f"R=1 cycle key must be wire CID, not intern object id; got {key!r}"
+    assert not key.startswith(
+        "term-id:"
+    ), "R=1 term-id: keys are the #5477 scope-dependent bug (#5569)."

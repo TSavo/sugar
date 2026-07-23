@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 _SEMANTIC_ROOTS = ("floor", "temporal", "proofir", "audit_only")
 _FACTORY_AUDIT_NAMES = ("ConstructionAuditStatus", "ConstructionAuditRow")
 

@@ -72,4 +72,6 @@ if __name__ == "__main__":
     test_global_is_inert()
     test_nonlocal_is_inert()
     test_import_does_not_block_a_later_fact()
-    print("ok: import/importfrom/pass/global/nonlocal inert; effects still ride through")
+    print(
+        "ok: import/importfrom/pass/global/nonlocal inert; effects still ride through"
+    )

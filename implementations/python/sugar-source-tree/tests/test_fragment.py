@@ -19,11 +19,7 @@ from sugar_source_tree import (
 )
 
 SOURCE = (
-    "def f(a, b):\n"
-    "    total = a + b\n"
-    "    return total\n"
-    "\n"
-    "x = f(1, 2)\n"
+    "def f(a, b):\n" "    total = a + b\n" "    return total\n" "\n" "x = f(1, 2)\n"
 )
 
 

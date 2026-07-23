@@ -27,7 +27,8 @@ def _exit_fn(src: str) -> ast.FunctionDef:
     return next(
         n
         for n in cls.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "__exit__"
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and n.name == "__exit__"
     )
 
 
@@ -43,109 +44,91 @@ def _prove_src(src: str) -> ExitDispositionProof:
 
 
 def test_truthful_implicit_none_fallthrough():
-    assert _prove_src(
-        """
+    assert _prove_src("""
         class M:
             def __exit__(self, *a):
                 self.cleanup()
-        """
-    ).kind == "never_suppresses"
+        """).kind == "never_suppresses"
 
 
 def test_truthful_explicit_none_and_false():
-    assert _prove_src(
-        """
+    assert _prove_src("""
         class M:
             def __exit__(self, *a):
                 if a[0] is None:
                     return None
                 return False
-        """
-    ).kind == "never_suppresses"
+        """).kind == "never_suppresses"
 
 
 def test_truthful_raise_inside_exit_is_halt_not_suppress():
-    assert _prove_src(
-        """
+    assert _prove_src("""
         class M:
             def __exit__(self, *a):
                 if a[0] is not None:
                     raise RuntimeError("exit failed")
-        """
-    ).kind == "never_suppresses"
+        """).kind == "never_suppresses"
 
 
 def test_lying_return_true():
     with pytest.raises(ExitDispositionUnproven, match="not exact None/False"):
-        _prove_src(
-            """
+        _prove_src("""
             class M:
                 def __exit__(self, *a):
                     return True
-            """
-        )
+            """)
 
 
 def test_lying_symbolic_return():
     with pytest.raises(ExitDispositionUnproven, match="not exact None/False"):
-        _prove_src(
-            """
+        _prove_src("""
             class M:
                 def __exit__(self, *a):
                     return a[0]
-            """
-        )
+            """)
 
 
 def test_lying_mixed_branch():
     with pytest.raises(ExitDispositionUnproven, match="not exact None/False"):
-        _prove_src(
-            """
+        _prove_src("""
             class M:
                 def __exit__(self, *a):
                     if a[0] is None:
                         return None
                     return True
-            """
-        )
+            """)
 
 
 def test_lying_swallowed_exception_then_return_true():
     with pytest.raises(ExitDispositionUnproven, match="not exact None/False"):
-        _prove_src(
-            """
+        _prove_src("""
             class M:
                 def __exit__(self, *a):
                     try:
                         self.close()
                     except Exception:
                         return True
-            """
-        )
+            """)
 
 
 def test_truthful_swallowed_exception_then_none():
-    assert _prove_src(
-        """
+    assert _prove_src("""
         class M:
             def __exit__(self, *a):
                 try:
                     self.close()
                 except Exception:
                     pass
-        """
-    ).kind == "never_suppresses"
+        """).kind == "never_suppresses"
 
 
 def test_lying_ambiguous_dispatch_return_call():
     with pytest.raises(ExitDispositionUnproven, match="not exact None/False"):
-        _prove_src(
-            """
+        _prove_src("""
             class M:
                 def __exit__(self, *a):
                     return self._maybe_suppress(a)
-            """
-        )
+            """)
 
 
 def test_no_runtime_resolve_authority_floor():
@@ -225,4 +208,7 @@ def test_open_still_unproven_statically():
         path = f.name
     fn = next(SourceFile(path_source(path)).functions())
     with_node = next(s for s in fn.body if s.kind == "With")
-    assert prove_exit_disposition_from_manager_expr(with_node.items[0].context_expr) is None
+    assert (
+        prove_exit_disposition_from_manager_expr(with_node.items[0].context_expr)
+        is None
+    )

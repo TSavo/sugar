@@ -114,9 +114,9 @@ def project_unclassified_locus(row: Any) -> dict[str, Any] | None:
         )
         reason = row.get("reason") or ""
         extra = row.get("extra") if isinstance(row.get("extra"), Mapping) else {}
-        resolution_kind = row.get("resolution_kind") or extra.get(
-            "resolution_kind"
-        ) or ""
+        resolution_kind = (
+            row.get("resolution_kind") or extra.get("resolution_kind") or ""
+        )
     else:
         file = getattr(row, "file", None) or getattr(row, "path", None) or ""
         line = getattr(row, "line", None)
@@ -177,13 +177,12 @@ def locus_is_addressable(locus: Mapping[str, Any]) -> bool:
         line_int = 0
     ast_kind = str(locus.get("ast_kind") or locus.get("astKind") or "").strip()
     role = str(
-        locus.get("role")
-        or locus.get("requested_role")
-        or locus.get("selected")
-        or ""
+        locus.get("role") or locus.get("requested_role") or locus.get("selected") or ""
     ).strip()
     reason = str(locus.get("reason") or "").strip()
-    return bool(file) and line_int > 0 and bool(ast_kind) and bool(role) and bool(reason)
+    return (
+        bool(file) and line_int > 0 and bool(ast_kind) and bool(role) and bool(reason)
+    )
 
 
 def shape_split_unclassified(

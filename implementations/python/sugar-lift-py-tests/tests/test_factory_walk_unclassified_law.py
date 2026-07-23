@@ -6,7 +6,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "factory_walk_unclassified_law.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -40,7 +39,12 @@ def test_clean_walk_is_zero() -> None:
 
 def test_extract_from_audit_summary_status_counts() -> None:
     payload = {
-        "statusCounts": {"warranted": 10, "support": 3, "unresolved": 4, "incomplete": 1}
+        "statusCounts": {
+            "warranted": 10,
+            "support": 3,
+            "unresolved": 4,
+            "incomplete": 1,
+        }
     }
     rows = _SCANNER.extract_walk_rows(payload)
     assert _SCANNER.r_factory_walk_unclassified(rows) == 4
@@ -53,7 +57,10 @@ def test_extract_from_recensus_red_statuses() -> None:
             "raise-effect": 12,
         }
     }
-    assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 1389
+    assert (
+        _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload))
+        == 1389
+    )
 
 
 def test_extract_from_factory_walk_statuses_aggregate() -> None:
@@ -122,7 +129,9 @@ def test_extract_from_unclassified_rows_alias() -> None:
 
 def test_extract_from_map_shaped_factory_walk() -> None:
     payload = {"factory_walk": {"unclassified": 12, "warranted": 40}}
-    assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 12
+    assert (
+        _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 12
+    )
 
 
 def test_extract_from_nested_accounting_factory() -> None:
@@ -132,7 +141,9 @@ def test_extract_from_nested_accounting_factory() -> None:
             "typed_effect": 26,
         }
     }
-    assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 393
+    assert (
+        _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 393
+    )
 
 
 def test_cli_red_on_planted_json(tmp_path: Path) -> None:

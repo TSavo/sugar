@@ -181,10 +181,9 @@ def configure_live_log(path: str | None = None) -> None:
     if not selected or _LIVE_HANDLER is not None:
         return
     handler = logging.FileHandler(selected, mode="a", encoding="utf-8", delay=False)
-    trace_events = (
-        os.environ.get("SUGAR_ENGINE_TRACE_EVENTS", "1").strip().lower()
-        not in {"0", "false", "no", "off"}
-    )
+    trace_events = os.environ.get(
+        "SUGAR_ENGINE_TRACE_EVENTS", "1"
+    ).strip().lower() not in {"0", "false", "no", "off"}
     handler.setLevel(logging.DEBUG if trace_events else logging.WARNING)
     handler.setFormatter(logging.Formatter("%(message)s"))
     LOGGER.addHandler(handler)

@@ -7,7 +7,7 @@ from typing import Any, NoReturn
 from sugar_lift_py_tests.ir import Term, TermTableBuilder
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
- 
+
 
 from .floor_value import FloorValue
 
@@ -104,7 +104,9 @@ class CallSiteValue(FloorValue):
     # never an attestation/member CID and is absent for ordinary unresolved
     # call sites.
     target_contract_cid: str | None = dataclass_field(default=None, compare=False)
-    authenticated_target_symbol: str | None = dataclass_field(default=None, compare=False)
+    authenticated_target_symbol: str | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
@@ -793,7 +795,8 @@ class CallSiteValue(FloorValue):
         edge = {
             "kind": "call-edge",
             "sourceContract": source_contract,
-            "targetSymbol": self.authenticated_target_symbol or f"call:{self.target_name}",
+            "targetSymbol": self.authenticated_target_symbol
+            or f"call:{self.target_name}",
         }
         if self.target_contract_cid is not None:
             edge["targetContractCid"] = self.target_contract_cid

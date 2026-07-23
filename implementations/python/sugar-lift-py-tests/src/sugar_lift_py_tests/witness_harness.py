@@ -15,7 +15,11 @@ from sugar_lift_py_tests.sugar_binary import (
 )
 
 Verdict = Literal[
-    "sat", "unsat", "unwitnessed", "unwitnessed-modulo-unavailable-seats", "solver-timeout"
+    "sat",
+    "unsat",
+    "unwitnessed",
+    "unwitnessed-modulo-unavailable-seats",
+    "solver-timeout",
 ]
 
 ROOT = Path(__file__).resolve().parents[5]

@@ -11,7 +11,6 @@ from sugar_lift_py_tests.gap.audit_row import (
 )
 from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind
 
-
 _GAP = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests" / "gap"
 
 
@@ -27,17 +26,16 @@ def test_info_module_does_not_import_audit_row() -> None:
             for alias in node.names:
                 if "audit_row" in alias.name:
                     offenders.append(f"Import {alias.name}")
-    assert offenders == [], (
-        "gap/info.py must not import audit projection:\n" + "\n".join(offenders)
-    )
+    assert (
+        offenders == []
+    ), "gap/info.py must not import audit projection:\n" + "\n".join(offenders)
 
 
 def test_gap_kind_status_lives_on_audit_boundary() -> None:
     assert gap_kind_status(GapKind.FLOOR) is ConstructionAuditStatus.FLOOR_GAP
     assert gap_kind_status(GapKind.SUGAR) is ConstructionAuditStatus.SUGAR_GAP
     assert (
-        gap_kind_status(GapKind.CONSTRUCTOR)
-        is ConstructionAuditStatus.CONSTRUCTOR_GAP
+        gap_kind_status(GapKind.CONSTRUCTOR) is ConstructionAuditStatus.CONSTRUCTOR_GAP
     )
     # Pure testimony constructs without touching audit status.
     gap = ConstructionGap(

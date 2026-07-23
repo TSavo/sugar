@@ -6,6 +6,7 @@ the Constant node recognizes ITSELF (its value is an int) and constructs
 its sugar directly. A literal kind not yet converted throws SugarNotWritten
 loudly, by kind — the honest gap arm.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -78,6 +79,7 @@ def test_an_unconverted_literal_kind_throws_loudly_by_kind():
 
 # ── the Sugar base contract: meaning-only, enforced by ABC ──────────────
 
+
 def test_a_sugar_cannot_exist_without_desugar_and_witnesses():
     """The base's whole job: a sugar IS desugar + witnesses. ABC enforces it
     at construction — a half-sugar is unconstructable, no bookkeeping, no
@@ -119,6 +121,7 @@ def test_int_and_equality_sugars_are_meaning_only():
 
 
 # ── the whole point, from a source string: `1 == 1` → sugar ──────────────
+
 
 def test_source_string_one_equals_one_gives_back_sugar():
     """Python source as a string. Parse it. Ask the comparison node for its

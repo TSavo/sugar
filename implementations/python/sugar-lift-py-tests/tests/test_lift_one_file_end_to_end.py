@@ -9,6 +9,7 @@ SourceTree -> SourceFile (source_files)
 Every step is a real tree operation over oracle-pinned source. No factory,
 no catalog, no owns anywhere in the chain.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -64,6 +65,7 @@ def test_lift_a_single_assertion_all_the_way_to_sugar():
         # the whole assertion desugars — no context, no temporal, no factory:
         #   1 == 1 reduces to True; True states its inv; the assert is testimony
         from sugar_lift_py_tests.outcome import Complete as _C
+
         outcome = sugar.desugar(None)
         assert isinstance(outcome, _C)
         # the assertion EMITS a fact: the vendor asserted 1 == 1, so the record
@@ -72,6 +74,6 @@ def test_lift_a_single_assertion_all_the_way_to_sugar():
         # emission; the value does not get to opt out because it is ground-true.
         inv = outcome.value
         assert type(inv).__name__ == "InvValue"
-        assert inv.operand_callsites == ()          # no call site
-        assert inv.formula.name == "="              # the fact is an equality
-        assert [a.value for a in inv.formula.args] == [1, 1]   # 1 = 1
+        assert inv.operand_callsites == ()  # no call site
+        assert inv.formula.name == "="  # the fact is an equality
+        assert [a.value for a in inv.formula.args] == [1, 1]  # 1 = 1

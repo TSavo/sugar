@@ -10,7 +10,6 @@ import subprocess
 import sys
 import pytest
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "native_crash_zero_tolerance.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -69,8 +68,7 @@ def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> No
     roots = _SCANNER.production_roots(tmp_path)
 
     assert roots == (
-        tmp_path
-        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+        tmp_path / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
         tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
     )
 

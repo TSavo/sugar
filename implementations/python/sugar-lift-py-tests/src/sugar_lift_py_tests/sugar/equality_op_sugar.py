@@ -30,6 +30,7 @@ class EqualityOpSugar(Sugar):
             )
         )
 
+
 def _finite_equality_face(value, peer, *, matches: bool):
     """Filter an exact construction-time finite join by a ground equality."""
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue

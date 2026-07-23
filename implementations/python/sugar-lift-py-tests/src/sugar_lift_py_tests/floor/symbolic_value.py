@@ -440,9 +440,7 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            PredicateValue(
-                atomic("py.in", [item.to_term(owner="contains"), self.term])
-            )
+            PredicateValue(atomic("py.in", [item.to_term(owner="contains"), self.term]))
         )
 
     def format_data_model(self, spec, site, ctx):
