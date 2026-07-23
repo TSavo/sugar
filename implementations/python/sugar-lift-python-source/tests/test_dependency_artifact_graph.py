@@ -7,17 +7,20 @@ import importlib.metadata
 import json
 from pathlib import Path
 import sys
+from types import MappingProxyType
 
 import pytest
+from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
 from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactAuthenticationError,
     DependencyArtifactGraph,
+    AuthenticatedModuleSourceV1,
     PythonObjectResolutionGapV1,
     ResolvedPythonObjectV1,
     resolve_import_binding,
 )
-from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
 
 
 def _install_distribution(
@@ -50,17 +53,18 @@ def _install_distribution(
 
 def _demand(
     root: Path, source: str = "import example_pkg\nexample_pkg.build(1)\n"
-) -> dict[str, object]:
-    from sugar_lift_py_tests.import_binding import authenticated_import_uses
+) -> AuthenticatedImportUseV1:
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
     path = root / "consumer.py"
     path.write_text(source, encoding="utf-8")
     source_cid = blake3_512_of(source.encode("utf-8"))
-    rows, outcomes = authenticated_import_uses(
+    receipts, outcomes = authenticated_import_use_receipts(
         root, path, source, source_cid, module_identities={}
     )
     assert set(outcomes.values()) == {"authenticated-import-use"}
-    return next(item for item in rows if item["kind"] == "call-contract-demand")
+    assert len(receipts) == 1
+    return receipts[0]
 
 
 def test_static_reexport_resolves_to_content_addressed_definition_without_import(
@@ -79,9 +83,7 @@ def test_static_reexport_resolves_to_content_addressed_definition_without_import
 
     graph = DependencyArtifactGraph.authenticate(distribution)
     demand = _demand(tmp_path)
-    result = resolve_import_binding(
-        demand["importBinding"], target_symbol=demand["targetSymbol"], graph=graph
-    )
+    result = resolve_import_binding(demand, graph=graph)
 
     assert isinstance(result, ResolvedPythonObjectV1)
     assert result.distribution_artifact_cid == graph.distribution_artifact_cid
@@ -106,13 +108,13 @@ def test_resolved_python_object_round_trips_with_identical_cid(tmp_path: Path) -
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
     demand = _demand(tmp_path, "from example_pkg import build as make\nmake(1)\n")
-    result = resolve_import_binding(
-        demand["importBinding"], target_symbol=demand["targetSymbol"], graph=graph
-    )
+    result = resolve_import_binding(demand, graph=graph)
     assert isinstance(result, ResolvedPythonObjectV1)
 
     encoded = json.loads(json.dumps(result.to_value(), sort_keys=True))
-    decoded = ResolvedPythonObjectV1.from_value(encoded)
+    decoded = ResolvedPythonObjectV1.from_value(
+        encoded, graph=graph, authenticated_use=demand
+    )
 
     assert decoded == result
     assert decoded.cid == result.cid
@@ -128,9 +130,7 @@ def test_dynamic_export_stays_a_typed_loud_gap(tmp_path: Path) -> None:
     graph = DependencyArtifactGraph.authenticate(distribution)
 
     demand = _demand(tmp_path)
-    result = resolve_import_binding(
-        demand["importBinding"], target_symbol=demand["targetSymbol"], graph=graph
-    )
+    result = resolve_import_binding(demand, graph=graph)
 
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "dynamic-export"
@@ -146,9 +146,7 @@ def test_real_pytest_reexport_resolves_without_manager_name_recognition(
     )
     demand = _demand(tmp_path, "import pytest\npytest.raises(ValueError)\n")
 
-    result = resolve_import_binding(
-        demand["importBinding"], target_symbol=demand["targetSymbol"], graph=graph
-    )
+    result = resolve_import_binding(demand, graph=graph)
 
     assert isinstance(result, ResolvedPythonObjectV1)
     assert result.definition.name == "raises"
@@ -169,3 +167,144 @@ def test_fabricated_artifact_file_wrapper_is_loud(tmp_path: Path) -> None:
 
     with pytest.raises(DependencyArtifactAuthenticationError):
         replace(graph.files[0], content=b"forged bytes")
+
+
+def test_recorded_source_seat_cannot_be_relabelled_as_invented_module(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source="def build(value):\n    return value\n",
+        )
+    )
+    real = graph.modules["example_pkg.implementation"]
+    invented = AuthenticatedModuleSourceV1(
+        module_name="invented.module",
+        source_seat=real.source_seat,
+        source_cid=real.source_cid,
+        source=real.source,
+    )
+
+    with pytest.raises(
+        DependencyArtifactAuthenticationError,
+        match="module source is not projected",
+    ):
+        replace(graph, modules=MappingProxyType({"invented.module": invented}))
+
+
+def test_fabricated_import_binding_mapping_is_rejected_at_resolution_door(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source="def build(value):\n    return value\n",
+        )
+    )
+    fabricated = _demand(tmp_path).import_binding.to_value()
+
+    with pytest.raises(
+        DependencyArtifactAuthenticationError,
+        match="AuthenticatedImportUseV1",
+    ):
+        resolve_import_binding(fabricated, graph=graph)
+
+
+def test_final_checked_import_use_rejects_fabricated_definition_coordinate(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source="def build(value):\n    return value\n",
+        )
+    )
+    receipt = _demand(tmp_path)
+    binding_value = receipt.import_binding.to_value()
+    binding_value["definitionSite"]["startLine"] = 999
+    binding_cid = cid_of_json(binding_value)
+    forged_binding = replace(
+        receipt.import_binding, value=binding_value, cid=binding_cid
+    )
+    use = dict(receipt.use)
+    use["importBindingCid"] = binding_cid
+    use["cid"] = cid_of_json({key: value for key, value in use.items() if key != "cid"})
+    demand = dict(receipt.demand)
+    demand["importBinding"] = binding_value
+    demand["importBindingCid"] = binding_cid
+    demand["authenticatedImportUse"] = use
+    forged_receipt = replace(
+        receipt,
+        import_binding=forged_binding,
+        use=use,
+        demand=demand,
+    )
+
+    with pytest.raises(
+        DependencyArtifactAuthenticationError,
+        match="lexical revalidation",
+    ):
+        resolve_import_binding(forged_receipt, graph=graph)
+
+
+def test_recomputed_outer_cid_cannot_authenticate_invented_resolved_artifact(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source="def build(value):\n    return value\n",
+        )
+    )
+    demand = _demand(tmp_path)
+    resolved = resolve_import_binding(demand, graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    forged = resolved.to_value()
+    forged["moduleName"] = "invented.module"
+    forged["cid"] = cid_of_json(
+        {key: value for key, value in forged.items() if key != "cid"}
+    )
+
+    with pytest.raises(
+        DependencyArtifactAuthenticationError,
+        match="byte-identical",
+    ):
+        ResolvedPythonObjectV1.from_value(forged, graph=graph, authenticated_use=demand)
+
+
+def test_final_reaching_definition_wins_without_decorator_name_recognition(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source=(
+                "def build(value):\n    return 'typing-only'\n\n"
+                "def build(value):\n    return value\n"
+            ),
+        )
+    )
+    resolved = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    assert resolved.definition.start_line == 4
+
+
+def test_later_non_name_assignment_makes_export_dynamic(tmp_path: Path) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source="def build(value):\n    return value\nbuild = 42\n",
+        )
+    )
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"

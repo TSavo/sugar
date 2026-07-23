@@ -24,6 +24,9 @@ class DependencyArtifactAuthenticationError(Exception):
     """The selected installed artifact cannot be authenticated exactly."""
 
 
+_ARTIFACT_INTAKE_AUTHORITY = object()
+
+
 @dataclass(frozen=True)
 class AuthenticatedArtifactFileV1:
     source_seat: str
@@ -247,7 +250,18 @@ class ResolvedPythonObjectV1:
         return {**self._preimage(), "cid": self.cid}
 
     @classmethod
-    def from_value(cls, value: Any) -> "ResolvedPythonObjectV1":
+    def from_value(
+        cls,
+        value: Any,
+        *,
+        graph: "DependencyArtifactGraph",
+        authenticated_use: Any,
+    ) -> "ResolvedPythonObjectV1":
+        """Authenticate wire input by re-resolving every cited preimage.
+
+        Parsing and recomputing this object's outer CID is insufficient: an
+        invented but self-consistent payload is not artifact authentication.
+        """
         _require_exact_keys(
             value,
             {
@@ -268,7 +282,12 @@ class ResolvedPythonObjectV1:
         warrants = value["reexportWarrants"]
         if not isinstance(warrants, list):
             raise ValueError("reexportWarrants must be a list")
-        return cls(
+        revalidated = resolve_import_binding(authenticated_use, graph=graph)
+        if not isinstance(revalidated, cls) or revalidated.to_value() != value:
+            raise DependencyArtifactAuthenticationError(
+                "resolved object is not byte-identical to artifact re-resolution"
+            )
+        decoded = cls(
             distribution_artifact_cid=_cid(
                 value["distributionArtifactCid"], "distributionArtifactCid"
             ),
@@ -281,6 +300,11 @@ class ResolvedPythonObjectV1:
             definition=DefinitionCoordinateV1.from_value(value["definition"]),
             cid=_cid(value["cid"], "resolved object cid"),
         )
+        if decoded != revalidated:
+            raise DependencyArtifactAuthenticationError(
+                "decoded resolved object differs from its authenticated preimage"
+            )
+        return revalidated
 
 
 @dataclass(frozen=True)
@@ -311,8 +335,13 @@ class DependencyArtifactGraph:
     distribution_artifact_cid: str
     files: tuple[AuthenticatedArtifactFileV1, ...]
     modules: Mapping[str, AuthenticatedModuleSourceV1]
+    _intake_authority: object = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self._intake_authority is not _ARTIFACT_INTAKE_AUTHORITY:
+            raise DependencyArtifactAuthenticationError(
+                "dependency artifact graph was not minted by SourceOracle intake"
+            )
         metadata_files = [
             item
             for item in self.files
@@ -360,12 +389,23 @@ class DependencyArtifactGraph:
             recorded = files_by_seat.get(module.source_seat)
             if (
                 module_name != module.module_name
+                or module_name != _module_name(PurePosixPath(module.source_seat))
                 or recorded is None
                 or recorded.content_cid != module.source_cid
             ):
                 raise DependencyArtifactAuthenticationError(
                     "module source is not projected from the artifact file manifest"
                 )
+        expected_modules = {
+            name
+            for item in self.files
+            for name in [_module_name(PurePosixPath(item.source_seat))]
+            if name is not None
+        }
+        if set(self.modules) != expected_modules:
+            raise DependencyArtifactAuthenticationError(
+                "artifact module projection is incomplete or contains invented modules"
+            )
 
     @classmethod
     def authenticate(
@@ -451,18 +491,35 @@ class DependencyArtifactGraph:
             distribution_artifact_cid=cid_of_json(preimage),
             files=tuple(authenticated_files),
             modules=MappingProxyType(modules),
+            _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
 
 
 def resolve_import_binding(
-    import_binding: Mapping[str, Any],
+    authenticated_use: Any,
     *,
-    target_symbol: str,
     graph: DependencyArtifactGraph,
 ) -> PythonObjectResolutionV1:
-    """Resolve an existing ImportBinding through one authenticated artifact."""
-    binding_value = dict(import_binding)
+    """Resolve a final-checked #6090 import use through one artifact graph."""
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+    if not isinstance(authenticated_use, AuthenticatedImportUseV1):
+        raise DependencyArtifactAuthenticationError(
+            "source resolution requires AuthenticatedImportUseV1"
+        )
+    try:
+        authenticated_use.revalidate()
+    except ValueError as exc:
+        raise DependencyArtifactAuthenticationError(
+            "authenticated import use failed lexical revalidation"
+        ) from exc
+    binding_value = authenticated_use.import_binding.to_value()
+    target_symbol = authenticated_use.target_symbol
     binding_cid = cid_of_json(binding_value)
+    if binding_cid != authenticated_use.import_binding.cid:
+        raise DependencyArtifactAuthenticationError(
+            "authenticated import binding differs from its final-checked preimage"
+        )
     try:
         module_name, bound_path, authenticated_source_cid = _binding_target(
             binding_value
@@ -528,38 +585,59 @@ def _resolve_export(
             "artifact-module-absent", binding_cid, graph, module_name, exported_name
         )
     tree = parsed_tree(module.source, module.source_seat)
-    candidates: list[ast.AST] = []
-    imports: list[tuple[ast.ImportFrom, ast.alias]] = []
-    aliases: list[ast.Name] = []
-    dynamic = False
+    binding: tuple[str, Any] | None = None
+    dynamic_getattr = False
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if node.name == "__getattr__":
-                dynamic = True
+                dynamic_getattr = True
             if node.name == exported_name:
-                candidates.append(node)
+                binding = (
+                    ("definition", node)
+                    if not node.decorator_list
+                    else ("dynamic", node)
+                )
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if (alias.asname or alias.name) == exported_name:
-                    imports.append((node, alias))
-        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if (
-                isinstance(target, ast.Name)
-                and target.id == exported_name
+                    binding = ("import", (node, alias))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if (alias.asname or alias.name.split(".")[0]) == exported_name:
+                    binding = ("dynamic", node)
+        elif isinstance(node, ast.Assign) and any(
+            _target_binds(target, exported_name) for target in node.targets
+        ):
+            binding = (
+                ("alias", node.value)
+                if len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
                 and isinstance(node.value, ast.Name)
-            ):
-                aliases.append(node.value)
-    runtime_candidates = [node for node in candidates if not _is_overload(node)]
-    if runtime_candidates:
-        candidates = runtime_candidates
-    count = len(candidates) + len(imports) + len(aliases)
-    if count > 1:
-        return _gap(
-            "ambiguous-static-export", binding_cid, graph, module_name, exported_name
-        )
-    if candidates:
-        definition = _definition(module, candidates[0])
+                else ("dynamic", node)
+            )
+        elif isinstance(node, ast.AnnAssign) and _target_binds(
+            node.target, exported_name
+        ):
+            if node.value is not None:
+                binding = (
+                    ("alias", node.value)
+                    if isinstance(node.target, ast.Name)
+                    and isinstance(node.value, ast.Name)
+                    else ("dynamic", node)
+                )
+        elif isinstance(node, ast.AugAssign) and _target_binds(
+            node.target, exported_name
+        ):
+            binding = ("dynamic", node)
+        elif isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try)):
+            if _compound_binds(node, exported_name):
+                binding = ("dynamic", node)
+        elif isinstance(node, ast.Delete) and any(
+            _target_binds(target, exported_name) for target in node.targets
+        ):
+            binding = None
+    if binding is not None and binding[0] == "definition":
+        definition = _definition(module, binding[1])
         return ResolvedPythonObjectV1(
             distribution_artifact_cid=graph.distribution_artifact_cid,
             import_binding_cid=binding_cid,
@@ -568,8 +646,8 @@ def _resolve_export(
             reexport_warrants=warrants,
             definition=definition,
         )
-    if imports:
-        node, alias = imports[0]
+    if binding is not None and binding[0] == "import":
+        node, alias = binding[1]
         target_module = _absolute_import(module_name, module.source_seat, node)
         if target_module is None:
             return _gap("opaque-source", binding_cid, graph, module_name, exported_name)
@@ -599,17 +677,21 @@ def _resolve_export(
             (*warrants, warrant),
             seen | {key},
         )
-    if aliases:
+    if binding is not None and binding[0] == "alias":
         return _resolve_export(
             graph,
             binding_cid,
             module_name,
-            aliases[0].id,
+            binding[1].id,
             warrants,
             seen | {key},
         )
     return _gap(
-        "dynamic-export" if dynamic else "static-export-absent",
+        (
+            "dynamic-export"
+            if dynamic_getattr or (binding is not None and binding[0] == "dynamic")
+            else "static-export-absent"
+        ),
         binding_cid,
         graph,
         module_name,
@@ -702,14 +784,57 @@ def _absolute_import(
     return ".".join(base) or None
 
 
-def _is_overload(node: ast.AST) -> bool:
-    decorators = getattr(node, "decorator_list", ())
-    for decorator in decorators:
-        if isinstance(decorator, ast.Name) and decorator.id == "overload":
-            return True
-        if isinstance(decorator, ast.Attribute) and decorator.attr == "overload":
-            return True
+def _target_binds(target: ast.AST, name: str) -> bool:
+    if isinstance(target, ast.Name):
+        return target.id == name
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return any(_target_binds(item, name) for item in target.elts)
+    if isinstance(target, ast.Starred):
+        return _target_binds(target.value, name)
     return False
+
+
+def _compound_binds(statement: ast.stmt, name: str) -> bool:
+    """Conservatively identify a conditional/runtime-selected rebinding."""
+
+    class BindingVisitor(ast.NodeVisitor):
+        found = False
+
+        def visit_Name(self, node: ast.Name) -> None:
+            if isinstance(node.ctx, (ast.Store, ast.Del)) and node.id == name:
+                self.found = True
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node.name == name:
+                self.found = True
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node.name == name:
+                self.found = True
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            if node.name == name:
+                self.found = True
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            if any((alias.asname or alias.name) == name for alias in node.names):
+                self.found = True
+
+        def visit_Import(self, node: ast.Import) -> None:
+            if any(
+                (alias.asname or alias.name.split(".")[0]) == name
+                for alias in node.names
+            ):
+                self.found = True
+
+        def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+            if node.name == name:
+                self.found = True
+            self.generic_visit(node)
+
+    visitor = BindingVisitor()
+    visitor.visit(statement)
+    return visitor.found
 
 
 def _module_name(path: PurePosixPath) -> str | None:
