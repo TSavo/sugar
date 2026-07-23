@@ -1321,6 +1321,8 @@ def _send_enumerate_result(
 
 
 def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
+    from sugar_lift_py_tests.kit_rpc import AuditLeafEnvelopeDto
+
     """Project one construction roll call directly onto the legacy audit wire.
 
     The old wire names remain compatibility spelling only. They are populated
@@ -1412,15 +1414,17 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     # `kind` and `recoveryOverride` are closed-envelope discriminators required
     # by the current Rust reader. No recovery policy is consulted here; every
     # semantic value is projected from the roll call above.
-    return {
-        "kind": "recovered-construction-audit",
-        "recoveryOverride": True,
-        "status": "failed" if panics else "clean",
-        "panics": panics,
-        "effects": [],
-        "suppressedDescendants": [],
-        "sourceAudit": source_audit,
-    }
+    return AuditLeafEnvelopeDto.from_rpc({
+        "semanticCore": {
+            "kind": "recovered-construction-audit",
+            "recoveryOverride": True,
+            "status": "failed" if panics else "clean",
+            "panics": panics,
+            "effects": [],
+            "suppressedDescendants": [],
+        },
+        "auxiliaryRows": {"sourceAudit": source_audit},
+    }).to_rpc()
 
 
 def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:

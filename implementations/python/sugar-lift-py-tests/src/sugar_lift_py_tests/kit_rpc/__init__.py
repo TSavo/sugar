@@ -27,6 +27,8 @@ from .open_lane_dto import (
 )
 from .plan_atom_dto import PlanAtomDto
 from .recovered_audit_dto import (
+    AuditLeafEnvelopeDto,
+    AuditLeafSourceAuditDto,
     RecoveredAuditDto,
     RecoveredEffectDto,
     RecoveredEffectTreeDto,
@@ -42,6 +44,8 @@ from .source_memento_dto import SourceMementoDto
 from .source_span_dto import SourceSpanDto
 
 __all__ = [
+    "AuditLeafEnvelopeDto",
+    "AuditLeafSourceAuditDto",
     "AssertionFactDto",
     "AssertionSurfaceAuditDto",
     "BodyUniverseDto",

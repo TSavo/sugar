@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.kit_rpc import RecoveredAuditDto, RecoveredFrontierAuditDto
+from sugar_lift_py_tests.kit_rpc import (
+    AuditLeafEnvelopeDto,
+    RecoveredAuditDto,
+    RecoveredFrontierAuditDto,
+)
 
 _FIXTURES = (
     Path(__file__).resolve().parents[4] / "protocol" / "conformance" / "recovered-audit"
@@ -27,14 +31,14 @@ def _load(name: str) -> dict:
 @pytest.mark.parametrize("name", ["leaf-clean.json", "leaf-full.json"])
 def test_leaf_goldens_round_trip_without_loss(name: str) -> None:
     fixture = _load(name)
-    audit = RecoveredAuditDto.from_rpc(fixture)
+    audit = AuditLeafEnvelopeDto.from_rpc(fixture)
     assert audit.to_rpc() == fixture
 
 
 def test_leaf_golden_rejects_unknown_fields() -> None:
     fixture = _load("bad-leaf-unknown-field.json")
     with pytest.raises(ValueError, match="unknown field"):
-        RecoveredAuditDto.from_rpc(fixture)
+        AuditLeafEnvelopeDto.from_rpc(fixture)
 
 
 @pytest.mark.parametrize(
