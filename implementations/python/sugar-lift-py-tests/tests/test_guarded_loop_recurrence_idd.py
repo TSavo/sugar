@@ -84,12 +84,30 @@ def project_loop_recurrence(loop, scope, trace_builder):
     }
 
 
+def test_instrument_names_legacy_single_generator_comprehension(tmp_path: Path):
+    (tmp_path / "comprehension_sugar.py").write_text(
+        """
+class ComprehensionSugar:
+    target: str
+    iterable: object
+"""
+    )
+
+    findings = scan_guarded_loop_recurrence(tmp_path)
+
+    assert [(finding.code, finding.replacement) for finding in findings] == [
+        (
+            "single-generator-comprehension-transform",
+            "nested guarded flat-map recurrence with explicit exhaustion",
+        )
+    ]
+
+
 def test_current_tree_measurement_has_nonempty_denominator() -> None:
     root = Path(__file__).parents[2]
     findings = scan_guarded_loop_recurrence(root / "sugar-source-tree" / "src")
 
     assert findings
     assert {f.code for f in findings} == {
-        "symbolic-loop-fold-substitution",
-        "symbolic-loop-universal",
+        "missing-source-loop-recurrence-projection",
     }

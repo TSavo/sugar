@@ -39,9 +39,9 @@ def test_filtered_listcomp_keeps_ground_true_elements():
     assert [arg.value for arg in term.args] == [3, 4]
 
 
-def test_undecidable_filtered_listcomp_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n").sugar()
+def test_undecidable_filtered_listcomp_retains_guard_without_guessing_verdict():
+    term = _out("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
+    assert term.args[1].body.name == "python:loop.filter_guard"
 
 
 def test_dictcomp_over_concrete_range_dissolves():
@@ -85,8 +85,8 @@ def test_filtered_setcomp_keeps_only_ground_true_members():
     ],
 )
 def test_filtered_set_and_dict_do_not_fabricate_symbolic_guard_verdict(source):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A(keep):\n    return {source}\n").sugar()
+    term = _out(f"def A(keep):\n    return {source}\n")
+    assert term.args[1].body.name == "python:loop.filter_guard"
 
 
 def test_setcomp_preserves_duplicate_elimination():
@@ -121,6 +121,39 @@ def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, tra
         assert body.args[1].name == transform
     else:
         assert body.name == transform
+
+
+def test_nested_symbolic_generators_build_flat_map_recurrence():
+    term = _out("def A(xs, ys):\n    return [x + y for x in xs for y in ys]\n")
+
+    assert term.name == "py.listcomp"
+    assert term.args[0].name == "xs"
+    assert term.args[2].name == "python:loop.exhaustion"
+    inner = term.args[1].body
+    assert inner.name == "python:loop.flat_map"
+    assert inner.args[0].name == "ys"
+    assert inner.args[2].name == "python:loop.exhaustion"
+    yielded = inner.args[1].body
+    assert yielded.name == "+"
+
+
+def test_symbolic_comprehension_filter_is_a_guard_in_the_recurrence():
+    term = _out("def A(xs, keep):\n    return [x for x in xs if keep(x)]\n")
+
+    guarded = term.args[1].body
+    assert guarded.name == "python:loop.filter_guard"
+    assert guarded.args[0].name == "py.call"
+    assert guarded.args[1].name == "x"
+    assert guarded.args[2].name == "python:loop.latch"
+
+
+def test_generator_expression_uses_same_recurrence_without_eager_builder_claim():
+    term = _out("def A(xs, keep):\n    return (x for x in xs if keep(x))\n")
+
+    assert term.name == "py.generatorexp"
+    assert term.args[0].name == "xs"
+    assert term.args[1].body.name == "python:loop.filter_guard"
+    assert term.args[2].name == "python:loop.exhaustion"
 
 
 def test_symbolic_comprehension_serializes_transform_as_real_lambda():
@@ -243,11 +276,13 @@ def test_nested_arm_composes_already_built_comprehension_kinds(
     assert _free_vars_in_ir_term(term) == frozenset(free)
 
 
-def test_nested_comprehension_does_not_admit_an_inner_filtered_gap():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(xs, ys):\n" "    return [[y for y in ys if keep(y)] for x in xs]\n"
-        ).sugar()
+def test_nested_comprehension_retains_inner_filtered_guard():
+    term = _out(
+        "def A(xs, ys, keep):\n"
+        "    return [[y for y in ys if keep(y)] for x in xs]\n"
+    )
+    assert term.args[1].body.name == "py.listcomp"
+    assert term.args[1].body.args[1].body.name == "python:loop.filter_guard"
 
 
 @pytest.mark.parametrize(
@@ -257,9 +292,10 @@ def test_nested_comprehension_does_not_admit_an_inner_filtered_gap():
         "{x: x for x in [y for y in ys]}",
     ],
 )
-def test_list_generator_nested_arm_does_not_widen_set_or_dict(source):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A(ys):\n    return {source}\n").sugar()
+def test_list_generator_nested_arm_uses_same_recurrence_for_set_or_dict(source):
+    term = _out(f"def A(ys):\n    return {source}\n")
+    assert term.name in {"py.setcomp", "py.dictcomp"}
+    assert term.args[0].name == "py.listcomp"
 
 
 def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
@@ -291,8 +327,8 @@ def test_shadowed_consumer_does_not_materialize_generator():
         "    list = materialize\n"
         "    return list(x for x in [0, 1])\n"
     )
-    assert term.name == "call:materialize"
-    assert term.args[0].name == "py.generatorexp"
+    assert term.name == "py.call"
+    assert term.args[1].name == "py.generatorexp"
 
 
 def test_list_and_generator_keep_distinct_eager_and_lazy_coordinates():
@@ -333,14 +369,16 @@ def test_lambda_substitution_alpha_renames_to_avoid_capture():
 def test_shadowed_range_is_not_unrolled_but_builds_symbolic_coordinate():
     term = _out("def A(range):\n    return [x for x in range(3)]\n")
     assert term.name == "py.listcomp"
-    assert term.args[0].name == "call:range"
+    assert term.args[0].name == "py.call"
 
 
-def test_every_filter_must_be_ground_decidable():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n"
-        ).sugar()
+def test_every_symbolic_filter_becomes_an_ordered_guard():
+    term = _out(
+        "def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n"
+    )
+    first = term.args[1].body
+    assert first.name == "python:loop.filter_guard"
+    assert first.args[1].name == "python:loop.filter_guard"
 
 
 @pytest.mark.parametrize(
