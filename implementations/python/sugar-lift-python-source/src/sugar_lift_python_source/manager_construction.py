@@ -212,6 +212,26 @@ def construct_manager_behavior(
     )
 
 
+# Source-visible frames are pure in (artifact, definition coordinate).  The same
+# authenticated definition is projected once per repeated call-site receipt in
+# pandas megamodules; re-materializing SourceFile + class base sugar each time
+# was residual wall after export/revalidation amortization.
+_SOURCE_VISIBLE_FRAME_CACHE: dict[
+    tuple[str, str, str, str, int, int, int, int],
+    tuple[object, Node] | ManagerConstructionGapV1,
+] = {}
+# Keep SourceFile alive for cached (frame, target) node identity.
+_SOURCE_VISIBLE_FRAME_HOLD: dict[
+    tuple[str, str, str, str, int, int, int, int], object
+] = {}
+
+
+def clear_source_visible_frame_cache() -> None:
+    """Drop amortized source-visible frames (tests / hermetic process reuse)."""
+    _SOURCE_VISIBLE_FRAME_CACHE.clear()
+    _SOURCE_VISIBLE_FRAME_HOLD.clear()
+
+
 def resolve_source_visible_frame(
     resolved: ResolvedPythonObjectV1,
     *,
@@ -231,6 +251,39 @@ def resolve_source_visible_frame(
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
+    definition = resolved.definition
+    cache_key = (
+        graph.distribution_artifact_cid,
+        resolved.source_cid,
+        definition.name,
+        definition.kind,
+        definition.start_line,
+        definition.start_col,
+        definition.end_line,
+        definition.end_col,
+    )
+    hit = _SOURCE_VISIBLE_FRAME_CACHE.get(cache_key)
+    if hit is not None:
+        return hit
+
+    result = _resolve_source_visible_frame_uncached(resolved, graph=graph, module=module)
+    if isinstance(result, tuple) and len(result) == 3:
+        frame, target, source_file = result
+        # Hold the SourceFile that owns target/frame node identity.
+        _SOURCE_VISIBLE_FRAME_HOLD[cache_key] = source_file
+        _SOURCE_VISIBLE_FRAME_CACHE[cache_key] = (frame, target)
+        return frame, target
+    assert not isinstance(result, tuple)
+    _SOURCE_VISIBLE_FRAME_CACHE[cache_key] = result
+    return result
+
+
+def _resolve_source_visible_frame_uncached(
+    resolved: ResolvedPythonObjectV1,
+    *,
+    graph: DependencyArtifactGraph,
+    module,
+) -> tuple[object, Node, object] | ManagerConstructionGapV1:
     context = TreeConstructionContextV1.for_source_call_construction()
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
@@ -316,7 +369,7 @@ def resolve_source_visible_frame(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "ordinary source call frame"
         )
-    return frame, target
+    return frame, target, source_file
 
 
 def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:
