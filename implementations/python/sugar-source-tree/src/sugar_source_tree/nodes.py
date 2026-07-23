@@ -1559,18 +1559,30 @@ class AnnAssign(Statement):
         threaded via substitution_binding, exactly as a plain Assign's does;
         the rebind rode into the tail and this node contributes nothing more.
         If there is no value, it is a bare declaration: no bytecode runs, no
-        binding is introduced, nothing happens at runtime at all.
+        binding is introduced, nothing happens at runtime at all.  A bare
+        attribute annotation is different: CPython evaluates the receiver and
+        discards it, without reading the attribute or performing a store.
 
         The annotation itself is NEVER a fact the meaning layer states either
         way: Python does not check it at runtime (no TypeError on mismatch),
         so an annotation asserts nothing -- it is documentation the tree
         passes through, never a stated post. A valued attribute/subscript target
-        is the same runtime store owned by Assign. A bare non-Name annotation
-        stays loud: evaluating that target is not an inert name declaration."""
+        is the same runtime store owned by Assign.  A bare Attribute therefore
+        reuses the ordinary expression-statement path for its receiver only.
+        Other bare non-Name annotations stay loud."""
         if isinstance(self.target, Name):
             from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
             return InertSugar(site=self.fragment)
+        if self.value is None and isinstance(self.target, Attribute):
+            from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+                ExprStatementSugar,
+            )
+
+            return ExprStatementSugar(
+                value=self.target.value.sugar(),
+                site=self.fragment,
+            )
         if self.value is not None and isinstance(self.target, Attribute):
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,

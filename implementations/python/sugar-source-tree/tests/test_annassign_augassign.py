@@ -13,6 +13,8 @@ from sugar_lift_py_tests.effect import (
     SubscriptStoreRuntimeEffect,
 )
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
+from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_source_tree.tree import SourceFile
 
 
@@ -72,6 +74,33 @@ def test_annotated_subscript_with_value_builds_store_effect():
 
     assert len(effects) == 1
     assert isinstance(effects[0], SubscriptStoreRuntimeEffect)
+
+
+def test_bare_attribute_annotation_evaluates_only_renamed_receiver():
+    function = _fn(
+        "def record_shape(receiver):\n"
+        "    receiver.payload: MissingType\n"
+        "    return receiver\n"
+    )
+    substituted = function.substitute({})
+    declaration = substituted.body[0]
+    sugar = declaration.sugar()
+    assert isinstance(sugar, ExprStatementSugar)
+    assert sugar.value == declaration.target.value.sugar()
+
+    value = function.sugar().desugar().value
+    assert value.post().args[1].name == "receiver"
+
+
+def test_valued_attribute_annotation_does_not_enter_bare_declaration_arm():
+    function = _fn(
+        "def record_shape(receiver, supplied):\n"
+        "    receiver.payload: MissingType = supplied\n"
+        "    return supplied\n"
+    ).substitute({})
+    sugar = function.body[0].sugar()
+    assert isinstance(sugar, AttributeStoreEffectSugar)
+    assert not isinstance(sugar, ExprStatementSugar)
 
 
 def test_aug_assign_with_no_prior_binding_is_sound():
