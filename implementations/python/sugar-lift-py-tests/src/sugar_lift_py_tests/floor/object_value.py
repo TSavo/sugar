@@ -110,6 +110,15 @@ class ObjectValue(FloorValue):
             [str_const(self.class_name), str_const(self.identity)],
         )
 
+    def attribute(self, name, site):
+        """Project an exact field from this constructed receiver state."""
+        for field in reversed(self.fields):
+            if field.name == name:
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(field.value)
+        return super().attribute(name, site)
+
     def attribute_assign_with(
         self, operation: AttributeMutationOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:
@@ -361,7 +370,6 @@ class ObjectValue(FloorValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         for method in reversed(self.methods):
             if method.name != name:
@@ -389,7 +397,7 @@ class ObjectValue(FloorValue):
             target_name = f"{self.class_name}.{name}"
             arg_values = (self, *arguments)
             arg_terms = [
-                floor_to_term(value, owner=f"{owner} method argument")
+                value.to_term(owner=f"{owner} method argument")
                 for value in arg_values
             ]
             call_value = CallSiteValue(
@@ -402,6 +410,8 @@ class ObjectValue(FloorValue):
                     symbol_kind="contract-target",
                 ),
                 body=method.body,
+                source_call_frame_cid=method.source_call_frame_cid,
+                formal_coordinate_cids=method.formal_coordinate_cids,
             )
             if not any(
                 isinstance(value, (SymbolicValue, CallSiteValue))
