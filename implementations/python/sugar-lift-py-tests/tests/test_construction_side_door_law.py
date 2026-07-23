@@ -2,9 +2,9 @@
 
 Green only when meaning is tree + prebound authenticated contract refs only.
 This suite proves the instrument discriminates planted twins, stays quiet on
-clean trees / adapters, and reports live-repository R > 0 while offenders
-remain. It does not fix, delete, or allowlist production doors — including
-import_binding / contract_expression foreign-ast imports.
+clean trees / adapters, holds sole-path packages at R=0, and keeps the live
+default scan red while dual-body residual remains under sugar-lift-python-
+source. It does not allowlist dual-body doors.
 """
 
 from __future__ import annotations
@@ -181,42 +181,72 @@ def test_default_roots_include_lift_python_source() -> None:
     assert "sugar_lift_python_source" in names
 
 
-def test_live_repository_is_red_while_offenders_remain() -> None:
-    """Instrument runs on production roots; main stays RED while R > 0."""
+def test_sole_path_roots_exclude_dual_body() -> None:
+    sole = _SCANNER.sole_path_roots()
+    names = [p.name for p in sole]
+    assert "sugar_lift_py_tests" in names
+    assert "sugar_source_tree" in names
+    assert "sugar_lift_python_source" not in names
+
+
+def test_sole_path_packages_are_green() -> None:
+    """Post-#6120/#6122/#6123: sole path is tree + prebound refs only."""
+    roots = _SCANNER.sole_path_roots()
+    offenders = _SCANNER.scan_roots(roots)
+    r = _SCANNER.r_construction_side_doors(offenders)
+    err = _SCANNER.r_auditor_errors(offenders)
+    assert err == 0, _SCANNER.format_report(offenders)
+    assert r == 0, (
+        "sole-path packages must stay at R=0; residual:\n"
+        + _SCANNER.format_report(offenders)
+    )
+    # Drained sole-path modules must not reintroduce foreign ast.
+    sole_foreign = [
+        row
+        for row in offenders
+        if row.kind == "foreign-ast-import"
+        and (
+            "import_binding" in row.path
+            or "contract_expression" in row.path
+            or "verify_dialect" in row.path
+        )
+    ]
+    assert sole_foreign == []
+
+
+def test_live_repository_is_red_while_dual_body_residual_remains() -> None:
+    """Default roots stay RED while dual-body sugar-lift-python-source has debt."""
     roots = _SCANNER.default_production_roots()
     offenders = _SCANNER.scan_roots(roots)
     r = _SCANNER.r_construction_side_doors(offenders)
     err = _SCANNER.r_auditor_errors(offenders)
     axes = _SCANNER.r_by_axis(offenders)
 
-    # Honest red: named side doors still on the construction path.
     assert err == 0, _SCANNER.format_report(offenders)
     assert r > 0, (
-        "expected live construction-path side doors (foreign ast import and/or "
-        "ast above adapter and/or membrane admission); instrument must stay red "
-        "until sole path is tree + prebound refs only"
+        "expected dual-body residual under sugar-lift-python-source; default "
+        "scan must stay red until that construction body is retired or routed "
+        "through the sole path"
     )
-    # Foreign-ast-import axis must name real debt (import_binding /
-    # contract_expression and dual construction body under lift-python-source).
     assert axes["foreign-ast-import"] > 0, (
-        "R_foreign_ast_import must stay red until no production package above "
-        "adapters imports stdlib ast"
+        "R_foreign_ast_import must stay red while dual-body packages above "
+        "adapters still import stdlib ast"
     )
     foreign_paths = {
         row.path
         for row in offenders
         if row.kind == "foreign-ast-import"
     }
-    # Do not allowlist these — they must remain counted until killed.
-    assert any("import_binding" in p for p in foreign_paths)
-    assert any("contract_expression" in p for p in foreign_paths)
-    # Dual construction body still on the production path.
+    # Dual construction body still on the production path — do not allowlist.
     assert any("sugar_lift_python_source" in p for p in foreign_paths)
+    # Sole-path drained modules are not residual debt.
+    assert not any("import_binding" in p for p in foreign_paths)
+    assert not any("contract_expression" in p for p in foreign_paths)
 
-    # Every counted row must name a class and axis.
     debt = [row for row in offenders if row.kind in _SCANNER._SIDE_DOOR_KINDS]
     assert debt
     assert all(row.axis and row.kind for row in debt)
+    assert all("sugar_lift_python_source" in row.path for row in debt)
     assert (
         axes["foreign-ast-import"] > 0
         or axes["ast-semantic-above-adapter"] > 0
@@ -238,6 +268,7 @@ def test_main_json_reports_r_and_offenders(capsys) -> None:
     assert summary["instrument"] == "R_construction_side_doors"
     assert summary["ok"] is False
     assert summary["R_construction_side_doors"] > 0
+    assert summary["R_sole_path_construction_side_doors"] == 0
     assert summary["R_foreign_ast_import"] > 0
     assert isinstance(summary["offenders"], list)
     assert summary["offenders"]
@@ -245,6 +276,10 @@ def test_main_json_reports_r_and_offenders(capsys) -> None:
     assert "axis" in summary["offenders"][0]
     assert any(
         row["axis"] == "foreign-ast-import" for row in summary["offenders"]
+    )
+    assert all(
+        "sugar_lift_python_source" in row["path"]
+        for row in summary["offenders"]
     )
 
 

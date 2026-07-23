@@ -14,8 +14,10 @@ parser objects.
 
 This instrument names every current construction-path side door. There is no
 baseline, threshold, or allowlist. Exit 1 while R > 0. Prefer larger honest
-red over hollow green. Do not allowlist remaining offenders (including
-``import_binding`` / ``contract_expression``) — they stay red until killed.
+red over hollow green. Sole-path packages (``sugar-lift-py-tests`` construction
+and ``sugar-source-tree`` above adapters) must stay at R=0. Dual-body residual
+under ``sugar-lift-python-source`` stays named and red until that body is
+retired or routed through the sole path — do not allowlist it.
 
 Measure axes (combined R; every offender named by class):
 
@@ -506,6 +508,22 @@ def scan_roots(roots: Sequence[Path]) -> list[SideDoorOffender]:
     return sorted(offenders, key=lambda r: (r.path, r.line, r.kind, r.expression))
 
 
+def sole_path_roots(repo: Path | None = None) -> list[Path]:
+    """Sole construction packages only (no dual-body parasite).
+
+    R on these roots must stay 0: meaning is tree + prebound refs only.
+    """
+    kit = Path(__file__).resolve().parents[1]
+    py = kit.parent
+    if repo is not None:
+        py = (repo / "implementations" / "python").resolve()
+        kit = py / "sugar-lift-py-tests"
+    return [
+        kit / "src" / "sugar_lift_py_tests",
+        py / "sugar-source-tree" / "src" / "sugar_source_tree",
+    ]
+
+
 def default_production_roots(repo: Path | None = None) -> list[Path]:
     """Production construction packages on the sole path (and its parasites).
 
@@ -519,8 +537,7 @@ def default_production_roots(repo: Path | None = None) -> list[Path]:
         py = (repo / "implementations" / "python").resolve()
         kit = py / "sugar-lift-py-tests"
     return [
-        kit / "src" / "sugar_lift_py_tests",
-        py / "sugar-source-tree" / "src" / "sugar_source_tree",
+        *sole_path_roots(repo),
         py / "sugar-lift-python-source" / "src" / "sugar_lift_python_source",
     ]
 
@@ -740,23 +757,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     r = r_construction_side_doors(offenders)
     err = r_auditor_errors(offenders)
     axes = r_by_axis(offenders)
+    # Always remeasure sole-path packages so dual-body residual cannot mask a
+    # sole-path reintroduction (or a hollow green on the real construction path).
+    sole_offenders = scan_roots(sole_path_roots(args.repo))
+    sole_r = r_construction_side_doors(sole_offenders)
+    sole_err = r_auditor_errors(sole_offenders)
     summary = {
         "instrument": "R_construction_side_doors",
         "ok": r == 0 and err == 0,
         "R_construction_side_doors": r,
+        "R_sole_path_construction_side_doors": sole_r,
         "R_membrane_admission": axes["membrane-admission"],
         "R_foreign_ast_import": axes["foreign-ast-import"],
         "R_ast_semantic_above_adapter": axes["ast-semantic-above-adapter"],
         "R_dual_old_lifter": axes["dual-old-lifter"],
         "auditor_errors": err,
+        "sole_path_auditor_errors": sole_err,
         "offenders": offenders_to_jsonable(
             [row for row in offenders if row.kind in _SIDE_DOOR_KINDS]
         ),
     }
+    if sole_r > 0 or sole_err > 0:
+        print(
+            "CONSTRUCTION-SIDE-DOOR LAW SOLE-PATH RED: "
+            f"R_sole_path={sole_r}"
+            + (f"; sole_path_auditor_errors={sole_err}" if sole_err else "")
+            + " (sole path must stay tree + prebound refs only)"
+        )
+        print(format_report(sole_offenders))
     if r > 0 or err > 0:
         print(
             "CONSTRUCTION-SIDE-DOOR LAW RED: "
             f"R={r}"
+            f" sole_path={sole_r}"
             f" membrane={axes['membrane-admission']}"
             f" foreign_ast_import={axes['foreign-ast-import']}"
             f" ast_above_adapter={axes['ast-semantic-above-adapter']}"
@@ -765,10 +798,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(format_report(offenders))
         print(json.dumps(summary))
+        # Sole-path reintroduction is worse than dual-body residual alone.
+        return 1
+    if sole_r > 0 or sole_err > 0:
+        print(json.dumps(summary))
         return 1
     print(
         "CONSTRUCTION-SIDE-DOOR LAW GREEN: R_construction_side_doors = 0 "
-        "(meaning is tree + prebound refs only)"
+        f"(sole_path={sole_r}; meaning is tree + prebound refs only)"
     )
     print(json.dumps(summary))
     return 0
