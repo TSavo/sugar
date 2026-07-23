@@ -559,6 +559,20 @@ def test_collect_int_signatures_keys_methods_by_qualified_name_not_bare_leaf():
     assert sorts["B.compute"].formal_sorts == {"y": "Int"}
 
 
+def test_collect_signatures_uses_typed_source_tree_not_raw_parser():
+    import sugar_lift_python_source.verify_dialect as verify_dialect
+
+    assert not hasattr(verify_dialect, "parsed_tree")
+
+    sorts = verify_dialect.collect_int_signatures(
+        "class Renamed:\n"
+        "    def arbitrary(self, value: int) -> str:\n"
+        "        return str(value)\n"
+    )
+    assert sorts["Renamed.arbitrary"].formal_sorts == {"value": "Int"}
+    assert sorts["Renamed.arbitrary"].return_sort == "String"
+
+
 def test_lift_workspace_resolves_nested_functions_sharing_a_leaf_name():
     """End-to-end regression for #3819: two nested `helper` closures (in
     different outer functions) share only their bare leaf name. Under
