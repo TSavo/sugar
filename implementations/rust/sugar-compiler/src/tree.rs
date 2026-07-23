@@ -106,7 +106,6 @@ pub enum Level {
     Exports,
     ContractDeclarations,
     ContractDemands,
-    LegacyMembraneTokens,
     ContextManagerEdges,
 }
 
@@ -123,7 +122,6 @@ impl Level {
             Level::Exports => "exports",
             Level::ContractDeclarations => "contract-declarations",
             Level::ContractDemands => "contract-demands",
-            Level::LegacyMembraneTokens => "legacy-membrane-tokens",
             Level::ContextManagerEdges => "context-manager-edges",
         }
     }
@@ -1470,13 +1468,6 @@ impl Kit {
         Ok(preconstruction_rows_rpc(
             &self.enumerate_conn(workspace_root),
             Level::ContractDemands,
-        )?)
-    }
-
-    pub fn legacy_membrane_tokens(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
-        Ok(preconstruction_rows_rpc(
-            &self.enumerate_conn(workspace_root),
-            Level::LegacyMembraneTokens,
         )?)
     }
 

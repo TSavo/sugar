@@ -2123,17 +2123,15 @@ class With(Statement):
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
 
-    def _prebound_manager_authority(self, item: WithItem):
-        """Read the sole preconstruction routing authority for this occurrence."""
+    def _prebound_manager_resolution(self, item: WithItem):
+        """Read the sole preconstruction contract resolution for this occurrence."""
         context = self.unit.construction_context
         if context is None:
             return None
         from sugar_lift_py_tests.context_manager_resolution import (
+            ContractRefProtocolError,
             SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
-        )
-        from sugar_lift_py_tests.with_manager_authority import (
-            WithManagerAuthorityProtocolError,
         )
 
         if not isinstance(context, TreeConstructionContextV1):
@@ -2152,39 +2150,14 @@ class With(Statement):
             span.end_col,
         )
         try:
-            return context.with_manager_authorities.require(coordinate)
-        except WithManagerAuthorityProtocolError as exc:
+            return context.contract_refs.require(coordinate)
+        except ContractRefProtocolError as exc:
             backend_defect(
                 owner="With._construct_sugar",
                 observed=str(exc),
-                requested="one resolution row for every enrolled With demand",
+                requested="one contract-resolution row for every enrolled With demand",
                 fix="repair prereq-2 demand/table generation; never search at construction",
             )
-
-    def _prebound_manager_resolution(self, item: WithItem):
-        authority = self._prebound_manager_authority(item)
-        if authority is None:
-            return None
-        from sugar_lift_py_tests.with_manager_authority import (
-            ConflictingAuthority,
-            ResolvedContextManager,
-            UnresolvedContextManager,
-            WithManagerAuthorityProtocolError,
-        )
-        if isinstance(authority, ResolvedContextManager):
-            return authority.reference
-        if isinstance(authority, UnresolvedContextManager):
-            return authority.gap
-        if isinstance(authority, ConflictingAuthority):
-            backend_defect(
-                owner="With._construct_sugar",
-                observed=authority.gap.kind,
-                requested="exactly one authenticated With manager authority",
-                fix="repair preconstruction authority assembly; never choose precedence",
-            )
-        raise WithManagerAuthorityProtocolError(
-            "legacy membrane authority is not a context-manager resolution"
-        )
 
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
@@ -2254,20 +2227,13 @@ class With(Statement):
         return resolution
 
     def _construct_sugar(self):
-        """`with <manager> [as <name>]: <body>` -- the node consults the
-        MEMBRANE, never a vendor name (#5994). A single manager whose
-        membrane-issued contract is raise/warning Expects/Suppresses wires
-        through the shared effect router (WithContractSugar). Plain ``as
-        <Name>`` is admitted for Expects (step 5: matched-effect witness bound
-        for the tail via substitution_binding).
+        """Build only from the pre-resolved authenticated CM contract ref.
 
-        Unauthenticated managers stay LOUD as ``RuntimeSelectedContextManager``
-        unless a SourceOracle-backed ``ExitDispositionProof`` proves every
-        completed ``__exit__`` return is exact None/False (incl. implicit None)
-        → ``NeverSuppresses`` via ``WithResourceSugar``. Generator CMs and
-        builtins (``open``) stay RuntimeSelected until their separate proofs.
-        Non-Name as-targets, Suppresses+as, and multiple managers stay loud."""
-        if self.unit.construction_context is not None and len(self.items) != 1:
+        There is no consumer/vendor membrane fallback. Missing provider
+        publication or resolution remains a typed construction gap. The narrow
+        resource arm admits one synchronous manager and an optional simple-name
+        binding to its real enter-result projection."""
+        if len(self.items) != 1:
             from .panic import MultipleContextManagerItems
 
             panic = MultipleContextManagerItems(
@@ -2278,47 +2244,23 @@ class With(Statement):
             )
             self.reporter.report_gap(self, panic)
             raise panic
-        if len(self.items) != 1:
-            return super()._construct_sugar()
         item = self.items[0]
         as_name = None
         if item.optional_vars is not None:
             # ``as <Name>`` only: substitute already rewrote loads to
             # ObservationRef(slot). Non-Name targets stay loud.
             if item.optional_vars.kind != "Name":
-                if self.unit.construction_context is not None:
-                    from .panic import UnsupportedWithBindingTarget
+                from .panic import UnsupportedWithBindingTarget
 
-                    panic = UnsupportedWithBindingTarget(
-                        owner="With._construct_sugar",
-                        observed=f"unsupported with binding target {item.optional_vars.kind}",
-                        requested="no target or one simple Name target",
-                        fix="leave destructuring and attribute targets loud",
-                    )
-                    self.reporter.report_gap(self, panic)
-                    raise panic
-                return super()._construct_sugar()
-            as_name = item.optional_vars.id
-
-        authority = self._prebound_manager_authority(item)
-        if authority is not None:
-            from sugar_lift_py_tests.with_manager_authority import (
-                AuthenticatedLegacyMembrane,
-            )
-            if isinstance(authority, AuthenticatedLegacyMembrane):
-                from sugar_lift_py_tests.context_manager_contract import Expects, Suppresses
-                from sugar_lift_py_tests.sugar.with_contract_sugar import WithContractSugar
-                contract = authority.reference.contract
-                if as_name is not None and not isinstance(contract, Expects):
-                    return super()._construct_sugar()
-                return WithContractSugar(
-                    contract=contract,
-                    body=tuple(stmt.sugar() for stmt in self.body),
-                    site=self.fragment,
-                    slot_id=(item._effect_slot_id()
-                             if as_name is not None and isinstance(contract, Expects)
-                             else None),
+                panic = UnsupportedWithBindingTarget(
+                    owner="With._construct_sugar",
+                    observed=f"unsupported with binding target {item.optional_vars.kind}",
+                    requested="no target or one simple Name target",
+                    fix="leave destructuring and attribute targets loud",
                 )
+                self.reporter.report_gap(self, panic)
+                raise panic
+            as_name = item.optional_vars.id
 
         resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
@@ -2347,23 +2289,17 @@ class With(Statement):
         panic = RuntimeSelectedContextManager(
             owner="With.sugar",
             observed="With manager has no injected authenticated preconstruction authority",
-            requested="one typed WithManagerAuthorityV1 at the exact use-site",
-            fix="run the preconstruction authority assembler before tree construction",
+            requested="one resolved ContextManagerContractRefV1 at the exact use-site",
+            fix="run authenticated contract resolution before tree construction",
         )
         self.reporter.report_gap(self, panic)
         raise panic
 
     def substitute(self, scope):
-        """with ... as <Name>: rewrite name → ObservationRef(slot, projection).
-
-        Projection comes from membrane Expects.binding or resource
-        ENTER_RESULT under NeverSuppresses. Syntax creates the coordinate;
-        routing/enter authenticates the slot.
-        """
+        """Rewrite a simple as-name to the resolved resource enter projection."""
         from .shadow import rewrite
         from sugar_lift_py_tests.context_manager_contract import (
             ENTER_RESULT,
-            Expects,
         )
 
         changed = {}
@@ -2378,22 +2314,11 @@ class With(Statement):
                 return self if not changed else rewrite(self, **changed)
             item = items[0]
             if item.optional_vars is not None and item.optional_vars.kind == "Name":
-                from sugar_lift_py_tests.with_manager_authority import (
-                    AuthenticatedLegacyMembrane,
+                self._require_narrow_cm_ref(item)
+                enter_slot = f"{item._manager_slot_id()}#enter_result"
+                body_scope[item.optional_vars.id] = item._make_observation_ref(
+                    enter_slot, ENTER_RESULT
                 )
-                authority = self._prebound_manager_authority(item)
-                if isinstance(authority, AuthenticatedLegacyMembrane):
-                    contract = authority.reference.contract
-                    if isinstance(contract, Expects) and contract.binding:
-                        body_scope[item.optional_vars.id] = item._make_observation_ref(
-                            item._effect_slot_id(), contract.binding
-                        )
-                else:
-                    resolved_ref = self._require_narrow_cm_ref(item)
-                    enter_slot = f"{item._manager_slot_id()}#enter_result"
-                    body_scope[item.optional_vars.id] = item._make_observation_ref(
-                        enter_slot, ENTER_RESULT
-                    )
             new_body, d = self._substitute_body(self.body, body_scope)
             if d:
                 changed["body"] = new_body
@@ -2409,10 +2334,9 @@ class With(Statement):
         return self if not changed else rewrite(self, **changed)
 
     def substitution_binding(self, scope):
-        """Export ObservationRef for Expects / resource enter-result as-names."""
+        """Export ObservationRef for resolved resource enter-result as-names."""
         from sugar_lift_py_tests.context_manager_contract import (
             ENTER_RESULT,
-            Expects,
         )
 
         del scope
@@ -2421,17 +2345,6 @@ class With(Statement):
                 return None
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
-                return None
-            from sugar_lift_py_tests.with_manager_authority import (
-                AuthenticatedLegacyMembrane,
-            )
-            authority = self._prebound_manager_authority(item)
-            if isinstance(authority, AuthenticatedLegacyMembrane):
-                contract = authority.reference.contract
-                if isinstance(contract, Expects) and contract.binding:
-                    return {item.optional_vars.id: item._make_observation_ref(
-                        item._effect_slot_id(), contract.binding
-                    )}
                 return None
             self._require_narrow_cm_ref(item)
             enter_slot = f"{item._manager_slot_id()}#enter_result"

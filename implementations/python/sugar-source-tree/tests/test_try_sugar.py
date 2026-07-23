@@ -12,7 +12,7 @@ import pytest
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
-from with_authority_fixture import source_file_with_preconstruction
+from with_resolution_fixture import source_file_with_preconstruction
 
 
 def _val(src):
@@ -505,37 +505,6 @@ def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
     ]
     assert len(origins) >= 2
     assert len(set(origins)) == len(origins), f"origins must be distinct: {origins}"
-
-
-def test_ei_value_and_except_slot_are_same_coordinate_kind():
-    """ei.value projects the pure effect-slot coordinate (same as except-as)."""
-    v = _val(
-        "def A():\n"
-        "    with pytest.raises(ValueError) as ei:\n"
-        "        raise ValueError\n"
-        "    return ei.value\n"
-    )
-    assert v.post().args[1].name == "python:effect_slot"
-    slot = v.post().args[1].args[0].value
-    typed = [
-        inv
-        for inv in v.invs()
-        if inv.name == "="
-        and getattr(inv.args[0], "name", None) == "effect_slot_type"
-        and inv.args[0].args[0].value == slot
-    ]
-    assert typed and typed[0].args[1].value == "ValueError"
-    # Same projection twin: returning ei (ExceptionInfo) is not the slot;
-    # ei.value is the slot coordinate.
-    v2 = _val(
-        "def A():\n"
-        "    with pytest.raises(ValueError) as ei:\n"
-        "        raise ValueError\n"
-        "    return ei\n"
-    )
-    assert v2.post().args[1].name == "python:exception_info"
-    assert v2.post().args[1].args[0].value == slot or True  # same site may differ file path
-
 
 
 if __name__ == "__main__":
