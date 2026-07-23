@@ -6142,8 +6142,9 @@ class ObjectPlaceStateV1(Expression):
     """Immutable field versions carried only inside runtime BindingEntryV1.
 
     This is a constructed Node value, not a binding resolver or heap.  Its sole
-    identity source is the owning entry's BindingCoordinateV1.  If it escapes
-    the attribute store/read projections, its base value constructs normally.
+    identity source is ``object_coordinate.cid``, authenticated from the exact
+    construction occurrence.  If it escapes the attribute store/read
+    projections, its base value constructs normally.
     """
 
     object_coordinate: object
