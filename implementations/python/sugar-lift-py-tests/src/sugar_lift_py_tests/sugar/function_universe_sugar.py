@@ -42,7 +42,9 @@ class _ReducedBlock:
     transforms: tuple = ()
 
 
-def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
+def reduce_block_to_exitset(
+    statements: tuple, ctx: object = None
+) -> ExitSet[_ReducedBlock]:
     """Reduce a suite to guarded exits before the linear compatibility view."""
     exits = ExitSet.completed(
         _ReducedBlock(entries=(), can_fall_through=True, fall_through=())
@@ -51,7 +53,7 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
     for index, head in enumerate(statements):
 
         def reduce_next(state: _ReducedBlock) -> ExitSet[_ReducedBlock]:
-            outcome = head.desugar()
+            outcome = head.desugar(ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
             if (
@@ -164,9 +166,9 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
     return exits
 
 
-def reduce_statements(statements: tuple):
+def reduce_statements(statements: tuple, ctx: object = None):
     """Return the legacy tuple only after ExitSet proves one unconditional exit."""
-    collapsed = reduce_block_to_exitset(statements).collapse()
+    collapsed = reduce_block_to_exitset(statements, ctx).collapse()
     if isinstance(collapsed, Incomplete):
         return ((collapsed,), False, ())
     if not isinstance(collapsed, Complete):
@@ -175,7 +177,7 @@ def reduce_statements(statements: tuple):
     return state.entries, state.can_fall_through, state.fall_through
 
 
-def reduce_body(statements: tuple):
+def reduce_body(statements: tuple, ctx: object = None):
     """Reduce a function body to ONE Outcome, preserving Complete/Incomplete.
 
     A body that reduces to a value is `Complete(BlockValue(record))` -- the
@@ -187,7 +189,7 @@ def reduce_body(statements: tuple):
     always Complete -- the distinction is carried structurally for the sugars
     (calls, unsupported statements) that will.
     """
-    exits = reduce_block_to_exitset(statements)
+    exits = reduce_block_to_exitset(statements, ctx)
     collapsed = exits.collapse()
     if isinstance(collapsed, Incomplete):
         return collapsed

@@ -109,6 +109,7 @@ class CallSiteValue(FloorValue):
         default=None, compare=False
     )
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
+    formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
@@ -990,7 +991,9 @@ class CallSiteValue(FloorValue):
             return None
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+        reduce_ctx = _ctx_with_curried_args(
+            ctx, self.parameters, self.arg_values, self.formal_coordinate_cids
+        )
         active_demand = _ACTIVE_DIG_DEMAND.get()
         nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
         if active_demand >= nested_budget:
@@ -1080,7 +1083,9 @@ class CallSiteValue(FloorValue):
             )
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+        reduce_ctx = _ctx_with_curried_args(
+            ctx, self.parameters, self.arg_values, self.formal_coordinate_cids
+        )
         outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
         if isinstance(outcome, Incomplete):
             _force_floor_gap(
@@ -1144,8 +1149,13 @@ def _reduce_callsite_body(
     from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
         SourceVisibleFunctionBodySugar,
     )
+    from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+        ClassConstructorBodySugar,
+    )
 
     if isinstance(body, SourceVisibleFunctionBodySugar):
+        return body.desugar(ctx)
+    if isinstance(body, ClassConstructorBodySugar):
         return body.desugar(ctx)
     if isinstance(body, SugarBody):
         return body.reduce(ctx)
@@ -1157,7 +1167,7 @@ def _reduce_callsite_body(
         owner="CallSiteValue.force_floor",
         target_name=blame,
         observed=type(body).__name__,
-        fix="carry a SugarBody or FunctionBodyUniverse before demanding a callsite floor",
+        fix="carry a closed ordinary source-body variant before demanding a callsite floor",
     )
 
 
@@ -1249,13 +1259,21 @@ def _ctx_with_curried_args(
     ctx: Any,
     parameters: tuple[str, ...],
     arg_values: tuple[FloorValue, ...],
+    formal_coordinate_cids: tuple[str, ...] = (),
 ):
     from sugar_lift_py_tests.temporal import curry_temporal
 
-    return curry_temporal(
+    result = curry_temporal(
         ctx,
         parameters,
         arg_values,
         owner="CallSiteValue.force_floor",
         blame="<callsite>",
     )
+    if formal_coordinate_cids:
+        if len(formal_coordinate_cids) != len(arg_values):
+            return result
+        result = result.with_binding_coordinate_values(
+            zip(formal_coordinate_cids, arg_values, strict=True)
+        )
+    return result

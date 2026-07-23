@@ -24,5 +24,4 @@ class SourceVisibleFunctionBodySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        return reduce_body(self.statements)
+        return reduce_body(self.statements, ctx)

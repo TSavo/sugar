@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -111,11 +111,54 @@ class ResolvedContractRefsV1:
             ) from exc
 
 
+# Placeholder table for construction that does not enroll context-manager
+# demands (e.g. sole-path manager-factory construction). With.require still
+# fails closed when a use-site is absent.
+_EMPTY_CONTRACT_TABLE_CID = "blake3-512:" + ("00" * 64)
+
+
+def empty_resolved_contract_refs() -> ResolvedContractRefsV1:
+    from types import MappingProxyType
+
+    return ResolvedContractRefsV1(
+        catalog_cid=_EMPTY_CONTRACT_TABLE_CID,
+        table_cid=_EMPTY_CONTRACT_TABLE_CID,
+        by_use_site=MappingProxyType({}),
+    )
+
+
 @dataclass(frozen=True)
 class TreeConstructionContextV1:
+    """Explicit tree construction handle — the only non-Sugar construction currency.
+
+    - ``contract_refs``: prebound With resolutions (empty table is valid; missing
+      use-sites stay loud via ``require``).
+    - ``source_call_frames``: prebound ordinary source-call frames keyed by
+      use-site coordinate string; mutated only by the sole-path scheduler that
+      owns the handle, never ambient process state.
+    """
+
     contract_refs: ResolvedContractRefsV1
     call_contract_refs: object | None = None
     workspace_root: str | None = None
+    # Mutable frame table held by reference; the context object itself is frozen.
+    source_call_frames: dict = field(default_factory=dict)
+
+    @classmethod
+    def for_source_call_construction(
+        cls,
+        *,
+        source_call_frames: dict | None = None,
+        call_contract_refs: object | None = None,
+        workspace_root: str | None = None,
+    ) -> "TreeConstructionContextV1":
+        """Construction context for sole-path source-call frames without CM enrollment."""
+        return cls(
+            contract_refs=empty_resolved_contract_refs(),
+            call_contract_refs=call_contract_refs,
+            workspace_root=workspace_root,
+            source_call_frames={} if source_call_frames is None else source_call_frames,
+        )
 
 
 _GAP_KINDS = frozenset(

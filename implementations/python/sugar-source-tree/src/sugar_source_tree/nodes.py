@@ -226,12 +226,8 @@ class SourceUnit:
             if start <= (span.start_line, span.start_col) <= end:
                 containing.append(candidate)
         if containing:
-            owner = max(
-                containing, key=lambda value: value.line_col_span().start_line
-            )
-            table = self.function_symtable(
-                owner.name, owner.line_col_span().start_line
-            )
+            owner = max(containing, key=lambda value: value.line_col_span().start_line)
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(node.id)
             except KeyError:
@@ -257,11 +253,7 @@ class SourceUnit:
                 if statement.name == node.id:
                     bindings.append(("other",))
             elif kind in ("Assign", "AnnAssign", "AugAssign"):
-                targets = (
-                    statement.targets
-                    if kind == "Assign"
-                    else (statement.target,)
-                )
+                targets = statement.targets if kind == "Assign" else (statement.target,)
                 if any(
                     isinstance(target, Name) and target.id == node.id
                     for target in targets
@@ -1250,10 +1242,8 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
         )
-        from sugar_lift_py_tests.source_call_frame import (
-            AwaitingBindingCoordinateCallFrameV1,
-            SourceVisibleCallFrameV1,
-        )
+        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
 
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
@@ -1264,24 +1254,57 @@ class FunctionDef(Statement):
             span.end_col,
         )
         parameters = tuple(param.name for param in self.params)
-        if parameters:
-            return AwaitingBindingCoordinateCallFrameV1(
-                self.unit.source_cid, site, parameters
-            )
+        owner_cid = self.fragment.seal().cid
+        coordinates = tuple(
+            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
+            for index, param in enumerate(self.params)
+        )
+        formal_scope = {
+            param.name: self._make_coordinate_ref(param, coordinate)
+            for param, coordinate in zip(self.params, coordinates, strict=True)
+        }
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
         )
 
-        substituted = self.substitute({})
+        substituted_body, _ = self._substitute_body(self.body, formal_scope)
         body = SourceVisibleFunctionBodySugar(
-            tuple(statement.sugar() for statement in substituted.body), self.fragment
+            tuple(statement.sugar() for statement in substituted_body), self.fragment
         )
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
             definition_site=site,
             definition_fragment_cid=self.fragment.seal().cid,
-            parameters=(),
+            parameters=parameters,
+            formal_coordinates=coordinates,
+            parameter_kinds=tuple(param.param_kind for param in self.params),
+            default_sugars=tuple(
+                param.default.sugar() if param.default is not None else None
+                for param in self.params
+            ),
+            default_fragments=tuple(
+                param.default.fragment if param.default is not None else None
+                for param in self.params
+            ),
+            default_fragment_cids=tuple(
+                param.default.fragment.seal().cid if param.default is not None else None
+                for param in self.params
+            ),
             body=body,
+        )
+
+    def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "BindingCoordinateRef",
+                param.span,
+                (("coordinate", Leaf(coordinate)),),
+            ),
+            self.reporter,
         )
 
     def substitute(self, scope):
@@ -1491,7 +1514,10 @@ class ClassDef(Statement):
 
         constructed = tuple(
             ConstructedClassMethodV1(
-                method.name, method.fragment.seal().cid, method.sugar()
+                method.name,
+                method.fragment.seal().cid,
+                method.sugar(),
+                method.source_visible_call_frame(),
             )
             for method in methods
         )
@@ -1501,6 +1527,65 @@ class ClassDef(Statement):
             definition_fragment_cid=self.fragment.seal().cid,
             methods=constructed,
             site=self.fragment,
+        )
+
+    def source_visible_constructor_frame(self):
+        """The class call projected through its already-constructed definition."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            ClassConstructorBodySugar,
+        )
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        initializer = next(
+            (
+                item
+                for item in self.body
+                if isinstance(item, FunctionDef) and item.name == "__init__"
+            ),
+            None,
+        )
+        params = () if initializer is None else initializer.params[1:]
+        owner_cid = self.fragment.seal().cid
+        coordinates = tuple(
+            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
+            for index, param in enumerate(params)
+        )
+        span = self.line_col_span()
+        site = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+        return SourceVisibleCallFrameV1(
+            source_identity_cid=self.unit.source_cid,
+            definition_site=site,
+            definition_fragment_cid=owner_cid,
+            parameters=tuple(param.name for param in params),
+            formal_coordinates=coordinates,
+            parameter_kinds=tuple(param.param_kind for param in params),
+            default_sugars=tuple(
+                param.default.sugar() if param.default is not None else None
+                for param in params
+            ),
+            default_fragments=tuple(
+                param.default.fragment if param.default is not None else None
+                for param in params
+            ),
+            default_fragment_cids=tuple(
+                param.default.fragment.seal().cid if param.default is not None else None
+                for param in params
+            ),
+            body=ClassConstructorBodySugar(
+                definition=self.sugar(),
+                formal_coordinates=coordinates,
+                site=self.fragment,
+            ),
         )
 
 
@@ -1630,9 +1715,15 @@ class Assign(Statement):
         from .shadow import rewrite
 
         new_value, changed = self._substitute_field(self.value, scope)
-        if not changed:
+        changes = {"value": new_value} if changed else {}
+        if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
+            target = self.targets[0]
+            receiver, receiver_changed = self._substitute_field(target.value, scope)
+            if receiver_changed:
+                changes["targets"] = (rewrite(target, value=receiver),)
+        if not changes:
             return self
-        return rewrite(self, value=new_value)
+        return rewrite(self, **changes)
 
     def _destructured_binding(self):
         # `a, b = <display>` -- a single Tuple/List target of plain Names,
@@ -1700,6 +1791,17 @@ class Assign(Statement):
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
+            if isinstance(self.targets[0].value, BindingCoordinateRef):
+                from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+                    ReceiverFieldStoreSugar,
+                )
+
+                return ReceiverFieldStoreSugar(
+                    receiver=self.targets[0].value.sugar(),
+                    value=self.value.sugar(),
+                    attr=self.targets[0].attr,
+                    site=self.fragment,
+                )
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,
             )
@@ -4364,12 +4466,12 @@ class Call(Expression):
                     contract_ref = resolution
 
             source_call_frame = None
-            frames = getattr(context, "source_call_frames", None)
-            if frames is not None:
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+                TreeConstructionContextV1,
+            )
 
+            if isinstance(context, TreeConstructionContextV1) and context.source_call_frames:
                 span = self.line_col_span()
                 coordinate = SourceFragmentCoordinateV1(
                     self.unit.source_cid,
@@ -4378,7 +4480,7 @@ class Call(Expression):
                     span.end_line,
                     span.end_col,
                 )
-                source_call_frame = frames.get(coordinate)
+                source_call_frame = context.source_call_frames.get(coordinate)
 
             return CallSiteSugar(
                 target_name=self.func.id,
@@ -4657,6 +4759,23 @@ class FormalRef(Expression):
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         return NameSugar(name=self.name, site=self.fragment)
+
+
+class BindingCoordinateRef(Expression):
+    """Projection of one authenticated formal binding in a source call frame."""
+
+    coordinate: object
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
+            BindingCoordinateRefSugar,
+        )
+
+        return BindingCoordinateRefSugar(self.coordinate, self.fragment)
 
 
 class BranchResultRef(Expression):
