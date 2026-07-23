@@ -87,7 +87,7 @@ def test_source_files_scan_finds_the_fixture_file(project: Path) -> None:
     assert files == ["mathy.py"]
 
 
-def _audit_leaf(workspace: Path, file: str = "mathy.py") -> dict:
+def _audit_envelope(workspace: Path, file: str = "mathy.py") -> dict:
     file_key = next(
         node["memento"]
         for node in _enumerate("source_files", workspace)["nodes"]
@@ -104,6 +104,32 @@ def _audit_leaf(workspace: Path, file: str = "mathy.py") -> dict:
         seek=True,
         options={"auditFrontier": True},
     )["nodes"][0]["audit"]
+
+
+def _audit_leaf(workspace: Path, file: str = "mathy.py") -> dict:
+    envelope = _audit_envelope(workspace, file)
+    return {
+        **envelope["semanticCore"],
+        "sourceAudit": envelope["auxiliaryRows"]["sourceAudit"],
+    }
+
+
+def test_audit_leaf_separates_closed_semantic_core_from_typed_auxiliary_rows(
+    project: Path,
+) -> None:
+    leaf = _audit_envelope(project)
+
+    assert set(leaf) == {"semanticCore", "auxiliaryRows"}
+    assert set(leaf["semanticCore"]) == {
+        "kind",
+        "recoveryOverride",
+        "status",
+        "panics",
+        "effects",
+        "suppressedDescendants",
+    }
+    assert set(leaf["auxiliaryRows"]) == {"sourceAudit"}
+    assert leaf["auxiliaryRows"]["sourceAudit"]["role"] == "mathy.py"
 
 
 def _script_roll_call(monkeypatch: pytest.MonkeyPatch, answer: str) -> None:

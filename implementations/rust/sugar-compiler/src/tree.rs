@@ -1049,6 +1049,53 @@ struct RecoveredAuditLeafWire {
     suppressed_descendants: Vec<SuppressedAuditLocusLeafWire>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SourceAuditLocusWire {
+    file: String,
+    line: u64,
+    col: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SourceAuditRowWire {
+    status: String,
+    kind: String,
+    name: String,
+    source_cid: String,
+    locus: SourceAuditLocusWire,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SourceAuditTotalsWire {
+    source_loci: u64,
+    source_warranted: u64,
+    source_unresolved: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SourceAuditWire {
+    role: String,
+    loci: Vec<SourceAuditRowWire>,
+    totals: SourceAuditTotalsWire,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuditLeafAuxiliaryRowsWire {
+    source_audit: SourceAuditWire,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuditLeafEnvelopeWire {
+    semantic_core: RecoveredAuditLeafWire,
+    auxiliary_rows: AuditLeafAuxiliaryRowsWire,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RecoveredPanicOwnerIdentity {
@@ -1254,54 +1301,42 @@ pub fn fold_lift_report_response(
             if let Some(payload) = leaf.payload.clone() {
                 facts.push(payload);
             }
-            let mut audit = leaf.audit.ok_or_else(|| EnumerateError::Malformed {
+            let audit = leaf.audit.ok_or_else(|| EnumerateError::Malformed {
                 plugin: conn.surface.clone(),
                 reason: format!(
                     "report leaf {} omitted recovered body",
                     memento_locus_display(&definition.memento)
                 ),
             })?;
+            let decoded = decode_audit_leaf_boundary(&conn.surface, audit)?;
             // The reporter's roll-call partition -- everything the CLI renders
             // (present -> warranted/Blue, absent -> unresolved/Yellow). One
             // source-audit row per leaf; its totals sum into the ledger.
-            if let Some(source_audit) = audit
-                .as_object_mut()
-                .and_then(|object| object.remove("sourceAudit"))
-            {
-                if let Some(totals) = source_audit.get("totals") {
-                    source_loci += totals
-                        .get("source_loci")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0);
-                    source_warranted += totals
-                        .get("source_warranted")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0);
-                    source_unresolved += totals
-                        .get("source_unresolved")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0);
+            let source_audit = decoded.auxiliary_rows.source_audit;
+            source_loci += source_audit.totals.source_loci;
+            source_warranted += source_audit.totals.source_warranted;
+            source_unresolved += source_audit.totals.source_unresolved;
+            // Each unresolved locus (absent -> the minority) becomes a
+            // Yellow un_asserted body the visual renderer paints.
+            for locus in &source_audit.loci {
+                if locus.status == "unresolved" {
+                    un_asserted_loci.push(json!({
+                        "file": locus.locus.file,
+                        "line": locus.locus.line,
+                        "name": locus.name,
+                    }));
                 }
-                // Each unresolved locus (absent -> the minority) becomes a
-                // Yellow un_asserted body the visual renderer paints.
-                if let Some(loci) = source_audit.get("loci").and_then(Value::as_array) {
-                    for locus in loci {
-                        if locus.get("status").and_then(Value::as_str) == Some("unresolved") {
-                            let place = locus.get("locus");
-                            un_asserted_loci.push(json!({
-                                "file": place.and_then(|p| p.get("file")).cloned().unwrap_or(Value::Null),
-                                "line": place.and_then(|p| p.get("line")).cloned().unwrap_or(Value::Null),
-                                "name": locus.get("name").cloned().unwrap_or(Value::Null),
-                            }));
-                        }
-                    }
-                }
-                source_audits.push(source_audit);
             }
-            merge_recovered_audit_leaf(
+            source_audits.push(serde_json::to_value(source_audit).map_err(|error| {
+                EnumerateError::Malformed {
+                    plugin: conn.surface.clone(),
+                    reason: format!("typed source audit does not serialize: {error}"),
+                }
+            })?);
+            merge_recovered_audit_core(
                 &conn.surface,
                 &definition.memento,
-                audit,
+                decoded.semantic_core,
                 &mut panics,
                 &mut effects,
                 &mut suppressed,
@@ -1362,17 +1397,48 @@ fn merge_recovered_audit_leaf(
     effects: &mut Vec<Value>,
     suppressed: &mut Vec<Value>,
 ) -> Result<(), KitError> {
+    let decoded = decode_audit_leaf_boundary(plugin, audit)?;
+    merge_recovered_audit_core(
+        plugin,
+        demanded_body,
+        decoded.semantic_core,
+        panics,
+        effects,
+        suppressed,
+    )
+}
+
+fn decode_audit_leaf_boundary(
+    plugin: &str,
+    audit: Value,
+) -> Result<AuditLeafEnvelopeWire, KitError> {
     let malformed = |reason: String| {
         KitError::from(EnumerateError::Malformed {
             plugin: plugin.to_string(),
             reason,
         })
     };
-    let leaf: RecoveredAuditLeafWire = serde_json::from_value(audit).map_err(|error| {
+    serde_json::from_value(audit).map_err(|error| {
         malformed(format!(
-            "audit leaf does not decode as closed recovered wire schema: {error}"
+            "audit leaf does not decode as closed typed core-plus-sidecar schema: {error}"
         ))
-    })?;
+    })
+}
+
+fn merge_recovered_audit_core(
+    plugin: &str,
+    demanded_body: &SourceMemento,
+    leaf: RecoveredAuditLeafWire,
+    panics: &mut Vec<Value>,
+    effects: &mut Vec<Value>,
+    suppressed: &mut Vec<Value>,
+) -> Result<(), KitError> {
+    let malformed = |reason: String| {
+        KitError::from(EnumerateError::Malformed {
+            plugin: plugin.to_string(),
+            reason,
+        })
+    };
     if leaf.kind != "recovered-construction-audit" || !leaf.recovery_override {
         return Err(malformed(
             "audit leaf is not a recovery-override construction audit".to_string(),
@@ -1957,7 +2023,7 @@ mod tests {
         }
     }
 
-    fn recovered_leaf(panics: Vec<Value>) -> Value {
+    fn recovered_semantic_core(panics: Vec<Value>) -> Value {
         json!({
             "kind": "recovered-construction-audit",
             "recoveryOverride": true,
@@ -1966,6 +2032,85 @@ mod tests {
             "effects": [],
             "suppressedDescendants": [],
         })
+    }
+
+    fn source_audit_leaf() -> Value {
+        json!({
+            "role": "pkg.py",
+            "loci": [{
+                "status": "warranted",
+                "kind": "Module",
+                "name": "<module>",
+                "source_cid": "blake3-512:source",
+                "locus": {"file": "pkg.py", "line": 1, "col": 0},
+            }],
+            "totals": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_unresolved": 0,
+            },
+        })
+    }
+
+    fn recovered_leaf_envelope(core: Value) -> Value {
+        json!({
+            "semanticCore": core,
+            "auxiliaryRows": {"sourceAudit": source_audit_leaf()},
+        })
+    }
+
+    fn recovered_leaf(panics: Vec<Value>) -> Value {
+        recovered_leaf_envelope(recovered_semantic_core(panics))
+    }
+
+    #[test]
+    fn recovered_leaf_with_source_audit_decodes_core_and_sidecar() {
+        let envelope = recovered_leaf(Vec::new());
+        let decoded = decode_audit_leaf_boundary("fixture", envelope)
+            .expect("recovered leaf core and typed sidecar must decode together");
+
+        assert_eq!(decoded.semantic_core.status, "clean");
+        assert_eq!(decoded.auxiliary_rows.source_audit.role, "pkg.py");
+    }
+
+    #[test]
+    fn report_leaf_uses_the_same_typed_boundary() {
+        let envelope = recovered_leaf(Vec::new());
+        let decoded = decode_audit_leaf_boundary("fixture", envelope)
+            .expect("report leaf must use the shared core-plus-sidecar boundary");
+
+        assert_eq!(decoded.semantic_core.kind, "recovered-construction-audit");
+        assert_eq!(decoded.auxiliary_rows.source_audit.totals.source_loci, 1);
+    }
+
+    #[test]
+    fn unknown_semantic_core_field_stays_loud() {
+        let mut core = recovered_semantic_core(Vec::new());
+        core["inventedSemanticField"] = json!(true);
+        let error = decode_audit_leaf_boundary("fixture", recovered_leaf_envelope(core))
+            .expect_err("unknown semantic-core fields must remain closed-world errors");
+
+        assert!(error.to_string().contains("inventedSemanticField"));
+    }
+
+    #[test]
+    fn unknown_auxiliary_row_stays_loud() {
+        let mut envelope = recovered_leaf(Vec::new());
+        envelope["auxiliaryRows"]["inventedDiagnostic"] = json!({});
+        let error = decode_audit_leaf_boundary("fixture", envelope)
+            .expect_err("untyped auxiliary rows must not be silently ignored");
+
+        assert!(error.to_string().contains("inventedDiagnostic"));
+    }
+
+    #[test]
+    fn typed_leaf_sidecar_round_trips_without_loss() {
+        let envelope = recovered_leaf(Vec::new());
+        let decoded = decode_audit_leaf_boundary("fixture", envelope.clone())
+            .expect("typed leaf envelope must decode");
+        let round_trip = serde_json::to_value(decoded).expect("typed leaf envelope must serialize");
+
+        assert_eq!(round_trip, envelope);
     }
 
     fn recovered_panic(demand: &str) -> Value {
@@ -2129,7 +2274,7 @@ mod tests {
     fn recovered_audit_leaf_goldens_round_trip_without_loss() {
         for name in ["leaf-clean.json", "leaf-full.json"] {
             let fixture = recovered_audit_fixture(name);
-            let leaf: RecoveredAuditLeafWire = serde_json::from_value(fixture.clone())
+            let leaf = decode_audit_leaf_boundary("fixture", fixture.clone())
                 .unwrap_or_else(|error| panic!("{name} must decode as leaf wire: {error}"));
             let round_trip = serde_json::to_value(&leaf).expect("closed leaf wire must serialize");
             assert_eq!(
@@ -2142,7 +2287,7 @@ mod tests {
     #[test]
     fn recovered_audit_leaf_golden_rejects_unknown_fields() {
         let fixture = recovered_audit_fixture("bad-leaf-unknown-field.json");
-        let error = serde_json::from_value::<RecoveredAuditLeafWire>(fixture)
+        let error = decode_audit_leaf_boundary("fixture", fixture)
             .expect_err("unknown leaf lane must be rejected");
         assert!(
             error.to_string().contains("inventedLane")

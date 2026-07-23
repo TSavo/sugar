@@ -72,6 +72,16 @@ _LEAF_PANIC_FIELDS = frozenset(
 )
 _LEAF_EFFECT_FIELDS = frozenset({"locus", "effect", "category", "status", "reason"})
 _LEAF_SUPPRESSED_FIELDS = frozenset({"locus", "reason"})
+_LEAF_ENVELOPE_FIELDS = frozenset({"semanticCore", "auxiliaryRows"})
+_LEAF_AUXILIARY_FIELDS = frozenset({"sourceAudit"})
+_SOURCE_AUDIT_FIELDS = frozenset({"role", "loci", "totals"})
+_SOURCE_AUDIT_ROW_FIELDS = frozenset(
+    {"status", "kind", "name", "source_cid", "locus"}
+)
+_SOURCE_AUDIT_LOCUS_FIELDS = frozenset({"file", "line", "col"})
+_SOURCE_AUDIT_TOTALS_FIELDS = frozenset(
+    {"source_loci", "source_warranted", "source_unresolved"}
+)
 
 _TREE_AUDIT_FIELDS = _LEAF_AUDIT_FIELDS | frozenset({"census"})
 _TREE_CENSUS_FIELDS = frozenset(
@@ -233,6 +243,109 @@ class RecoveredAuditDto:
             panics=panics,
             effects=effects,
             suppressed_descendants=suppressed,
+        )
+
+
+@dataclass(frozen=True)
+class AuditLeafSourceAuditDto:
+    """Closed diagnostic sidecar carried beside the semantic audit core."""
+
+    role: str
+    loci: list[dict[str, Any]]
+    totals: dict[str, int]
+
+    def to_rpc(self) -> dict[str, Any]:
+        return {"role": self.role, "loci": self.loci, "totals": self.totals}
+
+    @classmethod
+    def from_rpc(cls, data: object) -> AuditLeafSourceAuditDto:
+        row = _require_mapping(data, "audit leaf sourceAudit")
+        _reject_unknown(row, set(_SOURCE_AUDIT_FIELDS), "audit leaf sourceAudit")
+        loci = _require_list(row.get("loci"), "audit leaf sourceAudit loci")
+        checked_loci: list[dict[str, Any]] = []
+        for item in loci:
+            locus_row = _require_mapping(item, "audit leaf sourceAudit row")
+            _reject_unknown(
+                locus_row,
+                set(_SOURCE_AUDIT_ROW_FIELDS),
+                "audit leaf sourceAudit row",
+            )
+            place = _require_mapping(
+                locus_row.get("locus"), "audit leaf sourceAudit locus"
+            )
+            _reject_unknown(
+                place,
+                set(_SOURCE_AUDIT_LOCUS_FIELDS),
+                "audit leaf sourceAudit locus",
+            )
+            checked_loci.append(
+                {
+                    "status": _require_str(
+                        locus_row.get("status"), "audit leaf sourceAudit status"
+                    ),
+                    "kind": _require_str(
+                        locus_row.get("kind"), "audit leaf sourceAudit kind"
+                    ),
+                    "name": _require_str(
+                        locus_row.get("name"), "audit leaf sourceAudit name"
+                    ),
+                    "source_cid": _require_str(
+                        locus_row.get("source_cid"),
+                        "audit leaf sourceAudit source_cid",
+                    ),
+                    "locus": {
+                        "file": _require_str(
+                            place.get("file"), "audit leaf sourceAudit locus file"
+                        ),
+                        "line": _require_int(
+                            place.get("line"), "audit leaf sourceAudit locus line"
+                        ),
+                        "col": _require_int(
+                            place.get("col"), "audit leaf sourceAudit locus col"
+                        ),
+                    },
+                }
+            )
+        totals = _require_mapping(row.get("totals"), "audit leaf sourceAudit totals")
+        _reject_unknown(
+            totals, set(_SOURCE_AUDIT_TOTALS_FIELDS), "audit leaf sourceAudit totals"
+        )
+        return cls(
+            role=_require_str(row.get("role"), "audit leaf sourceAudit role"),
+            loci=checked_loci,
+            totals={
+                key: _require_int(totals.get(key), f"audit leaf sourceAudit {key}")
+                for key in _SOURCE_AUDIT_TOTALS_FIELDS
+            },
+        )
+
+
+@dataclass(frozen=True)
+class AuditLeafEnvelopeDto:
+    semantic_core: RecoveredAuditDto
+    source_audit: AuditLeafSourceAuditDto
+
+    def to_rpc(self) -> dict[str, Any]:
+        return {
+            "semanticCore": self.semantic_core.to_rpc(),
+            "auxiliaryRows": {"sourceAudit": self.source_audit.to_rpc()},
+        }
+
+    @classmethod
+    def from_rpc(cls, data: object) -> AuditLeafEnvelopeDto:
+        row = _require_mapping(data, "audit leaf envelope")
+        _reject_unknown(row, set(_LEAF_ENVELOPE_FIELDS), "audit leaf envelope")
+        auxiliary = _require_mapping(
+            row.get("auxiliaryRows"), "audit leaf auxiliaryRows"
+        )
+        _reject_unknown(
+            auxiliary, set(_LEAF_AUXILIARY_FIELDS), "audit leaf auxiliaryRows"
+        )
+        return cls(
+            semantic_core=RecoveredAuditDto.from_rpc(row.get("semanticCore")),
+            source_audit=AuditLeafSourceAuditDto.from_rpc(
+                auxiliary.get("sourceAudit")
+            ),
         )
 
 

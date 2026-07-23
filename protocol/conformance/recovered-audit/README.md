@@ -6,10 +6,14 @@ Two closed shapes:
 
 | Prefix | Producer | Consumer | Status vocabulary |
 | --- | --- | --- | --- |
-| `leaf-*` | Python kit leaf (`RecoveredAuditDto`) | Rust fold (`RecoveredAuditLeafWire`) | `clean` \| `failed` |
+| `leaf-*` | Python kit typed envelope | Rust shared leaf boundary (`AuditLeafEnvelopeWire`) | `clean` \| `failed` |
 | `tree-*` | Rust fold (`fold_recovered_audit`) | CLI + wall consumers | `valid-empty` \| `complete` \| `failed` |
 
-Both languages round-trip these fixtures and reject unknown fields. A writer
+Each leaf has exactly two named fields: strict `semanticCore` and strict
+`auxiliaryRows`. The semantic core remains `RecoveredAuditLeafWire`; the typed
+auxiliary channel currently contains `sourceAudit`. Both languages round-trip
+these fixtures and reject unknown fields at the envelope, semantic-core, and
+auxiliary-row levels. A writer
 change the other side cannot parse fails in the PR that introduces it, not on
 the next wall run. Schema generation from one shared definition is the stronger
 end state; these goldens are the first ratchet.

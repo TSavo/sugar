@@ -416,6 +416,7 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
     (present Blue / absent Yellow), everything the report needs on the CLI side.
     """
     from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
+        AuditLeafEnvelopeDto,
         RecoveredAuditDto,
         RecoveredConstructionPanicDto,
     )
@@ -435,6 +436,9 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
                 gap={"blame": terminal, "kind": node.kind, "reason": reason},
             )
         )
-    leaf = RecoveredAuditDto(panics=panics).to_rpc()
-    leaf["sourceAudit"] = source_audit_from_roll_call(full_path, file_rel)
-    return leaf
+    return AuditLeafEnvelopeDto.from_rpc({
+        "semanticCore": RecoveredAuditDto(panics=panics).to_rpc(),
+        "auxiliaryRows": {
+            "sourceAudit": source_audit_from_roll_call(full_path, file_rel)
+        },
+    }).to_rpc()
