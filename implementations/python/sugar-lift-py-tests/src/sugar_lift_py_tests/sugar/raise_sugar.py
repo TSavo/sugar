@@ -25,10 +25,11 @@ class RaiseSugar(Sugar):
     or authenticates an exception value.
     """
 
-    exception: object
+    exception: object | None
     cause: object | None
     exception_name: str | None
     site: object = dataclass_field(compare=False)
+    in_flight_slot: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -54,7 +55,25 @@ class RaiseSugar(Sugar):
         )
         blame = f"{self.site.filename}:{self.site.line}:{self.site.col}"
 
+        if self.exception is None:
+            if self.in_flight_slot is None:
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="RaiseSugar.desugar",
+                    observed="bare raise lacks an authenticated in-flight effect slot",
+                    requested="the enclosing handler's effect-slot coordinate",
+                    fix="keep unowned bare raise loud",
+                )
+            from sugar_lift_py_tests.in_flight_effect import (
+                resolve_in_flight_effect,
+            )
+
+            return Incomplete(resolve_in_flight_effect(ctx, self.in_flight_slot))
+
         def halt(raised_value, cause_value=None):
+            identity_reader = getattr(raised_value, "exception_type_identity", None)
+            mro_reader = getattr(raised_value, "exception_type_mro", None)
             return Incomplete(
                 RaiseEffect(
                     exception_name=self.exception_name,
@@ -63,9 +82,14 @@ class RaiseSugar(Sugar):
                     # Occurrence is the raise site — not a type-level identity.
                     occurrence=blame,
                     exception_type_coordinate=(
-                        raised_value.exception_type_identity()
-                        if hasattr(raised_value, "exception_type_identity")
+                        identity_reader()
+                        if identity_reader is not None
                         else getattr(raised_value, "exception_type_coordinate", None)
+                    ),
+                    exception_type_mro=(
+                        mro_reader()
+                        if callable(mro_reader)
+                        else getattr(raised_value, "exception_type_mro", None)
                     ),
                     raised_value=raised_value,
                     cause_value=cause_value,

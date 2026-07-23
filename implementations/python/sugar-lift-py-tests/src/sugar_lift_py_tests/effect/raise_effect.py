@@ -11,6 +11,7 @@ class RaiseEffect:
     blame: str | None = None
     source_sha256: str | None = None
     exception_type_coordinate: Term | None = None
+    exception_type_mro: tuple[Term, ...] | None = None
     # Deterministic occurrence of THIS raise site (file:line:col). Distinct from
     # type name: two raise ValueError at different loci have different
     # occurrences. Never used as a fabricated "instance identity" from type alone.

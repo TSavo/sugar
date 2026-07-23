@@ -23,7 +23,7 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class TrySugar(Sugar):
-    """handlers: ((EffectMatcher|None, body_sugars, slot_id|None), ...)"""
+    """handlers: ((authenticated type Sugar|None, body_sugars, slot_id), ...)"""
 
     body: tuple
     handlers: tuple
@@ -59,20 +59,19 @@ class TrySugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        del ctx
-
-        body_es = promote_raise_halts(reduce_block_to_exitset(self.body))
+        body_es = promote_raise_halts(reduce_block_to_exitset(self.body, ctx))
         pre_finally = _route_handlers_over_exits(
             body_es,
             self.handlers,
             self.orelse,
             site=self.site,
+            ctx=ctx,
         )
 
         if not self.finalbody:
             return exitset_to_outcome(pre_finally)
 
-        cleanup_es = reduce_block_to_exitset(self.finalbody)
+        cleanup_es = reduce_block_to_exitset(self.finalbody, ctx)
 
         def _cleanup():
             return cleanup_es
@@ -90,17 +89,28 @@ class TrySugar(Sugar):
         return exitset_to_outcome(after)
 
 
-def _effect_matches(effect, matcher) -> bool:
-    """Bare except (matcher is None) matches any raise; typed arms exact name."""
+def _effect_matches(effect, matcher, ctx=None) -> bool:
+    """Bare except matches any raise; typed arms use constructed identity."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
 
     if not isinstance(effect, RaiseEffect):
         return False
     if matcher is None:
         return True
-    if getattr(matcher, "kind", None) != "raise":
-        return False
-    return effect.exception_name == matcher.name
+    expected = matcher.desugar(ctx)
+    if not isinstance(expected, Complete):
+        raise SugarNotWritten(
+            owner="TrySugar._effect_matches",
+            observed="except type did not construct a completed type operand",
+            requested="an authenticated exception-type value",
+            fix="keep unresolved handler types loud",
+        )
+    return matches_raise_effect(effect, expected.value)
 
 
 def _binding_facts_for(slot_id, effect, site) -> tuple:
@@ -123,6 +133,7 @@ def _route_handlers_over_exits(
     orelse: tuple,
     *,
     site,
+    ctx=None,
 ):
     """Route each Halted raise through the first matching handler.
 
@@ -140,9 +151,14 @@ def _route_handlers_over_exits(
         if isinstance(exit_, Halted):
             matched = False
             for matcher, handler_body, slot_id in handlers:
-                if not _effect_matches(exit_.effect, matcher):
+                if not _effect_matches(exit_.effect, matcher, ctx):
                     continue
-                handler_es = reduce_block_to_exitset(handler_body)
+                from sugar_lift_py_tests.in_flight_effect import (
+                    bind_in_flight_effect,
+                )
+
+                handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect)
+                handler_es = reduce_block_to_exitset(handler_body, handler_ctx)
                 facts = _binding_facts_for(slot_id, exit_.effect, site)
                 if facts:
                     handler_es = _prepend_facts(handler_es, facts)
@@ -154,7 +170,7 @@ def _route_handlers_over_exits(
             continue
 
         if orelse:
-            else_es = reduce_block_to_exitset(orelse)
+            else_es = reduce_block_to_exitset(orelse, ctx)
 
             def _then_else(state):
                 return else_es.sequence(

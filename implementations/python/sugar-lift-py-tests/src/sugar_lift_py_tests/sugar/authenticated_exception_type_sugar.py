@@ -9,6 +9,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 class AuthenticatedExceptionTypeSugar(Sugar):
     value: Sugar
     identity: object
+    mro: tuple | None = None
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
@@ -31,6 +32,6 @@ class AuthenticatedExceptionTypeSugar(Sugar):
 
         return self.value.desugar(ctx).and_then(
             lambda value: Complete(
-                AuthenticatedExceptionTypeValue(value, self.identity)
+                AuthenticatedExceptionTypeValue(value, self.identity, self.mro)
             )
         )

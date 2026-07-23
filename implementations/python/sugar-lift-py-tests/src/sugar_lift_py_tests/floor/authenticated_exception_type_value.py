@@ -13,9 +13,13 @@ class AuthenticatedExceptionTypeValue(FloorValue):
 
     value: FloorValue
     identity: Term
+    mro: tuple[Term, ...] | None = None
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
 
     def exception_type_identity(self) -> Term:
         return self.identity
+
+    def exception_type_mro(self) -> tuple[Term, ...] | None:
+        return self.mro

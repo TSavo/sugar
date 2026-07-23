@@ -98,6 +98,9 @@ class CallSiteValue(FloorValue):
     exception_type_coordinate: Term | None = dataclass_field(
         default=None, compare=False
     )
+    exception_type_mro: tuple[Term, ...] | None = dataclass_field(
+        default=None, compare=False
+    )
     # Issued by a registered Call Sugar from an authenticated import target.
     # The target spelling alone never grants native behavior.
     native_shape: object | None = None
@@ -110,6 +113,9 @@ class CallSiteValue(FloorValue):
     )
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+
+    def exception_type_identity(self) -> Term | None:
+        return self.exception_type_coordinate
 
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.

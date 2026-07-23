@@ -109,6 +109,158 @@ def test_except_valueerror_does_catch_valueerror():
     assert v.post().args[1].name == "z"
 
 
+def test_renamed_handler_and_raise_match_by_authenticated_identity():
+    """Different lexical spellings for one builtin identity still match."""
+    v = _val(
+        "from builtins import ValueError as Raised\n"
+        "from builtins import ValueError as Caught\n"
+        "def A(z):\n"
+        "    try:\n"
+        "        raise Raised\n"
+        "    except Caught:\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "z"
+
+
+def test_source_subclass_matches_authenticated_base_coordinate():
+    """A source-derived MRO, not a spelling relation, proves the catch."""
+    v = _val(
+        "class RootFault(Exception):\n"
+        "    pass\n"
+        "class LeafFault(RootFault):\n"
+        "    pass\n"
+        "def A(z):\n"
+        "    try:\n"
+        "        raise LeafFault\n"
+        "    except RootFault:\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "z"
+
+
+def test_source_unrelated_handler_propagates_by_authenticated_mro():
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    v = _val(
+        "class RootFault(Exception):\n"
+        "    pass\n"
+        "class LeafFault(RootFault):\n"
+        "    pass\n"
+        "class OtherFault(Exception):\n"
+        "    pass\n"
+        "def A(z):\n"
+        "    try:\n"
+        "        raise LeafFault\n"
+        "    except OtherFault:\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    reds = _incompletes(v)
+    assert len(reds) == 1
+    assert isinstance(reds[0].effect, RaiseEffect)
+
+
+def test_same_spelling_unresolved_handler_identity_stays_loud():
+    """A formal named E is not exception authority on either side."""
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(E):\n"
+            "    try:\n"
+            "        raise E\n"
+            "    except E:\n"
+            "        pass\n"
+        ).sugar()
+
+
+def test_unresolved_raised_identity_stays_loud_at_the_router():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(E):\n"
+            "    try:\n"
+            "        raise E\n"
+            "    except ValueError:\n"
+            "        pass\n"
+        ).sugar().desugar()
+
+
+def test_bare_reraise_reemits_the_exact_inflight_raise():
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    out = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except ValueError:\n"
+            "        raise\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    assert out.effect.exception_type_coordinate is not None
+    assert out.effect.exception_name == "ValueError"
+    assert out.effect.occurrence.endswith(":6:8")
+
+
+def test_nested_bare_reraise_uses_the_nearest_handler_slot():
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    out = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except ValueError:\n"
+            "        try:\n"
+            "            raise KeyError\n"
+            "        except KeyError:\n"
+            "            raise\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    if isinstance(out, Incomplete):
+        effects = (out.effect,)
+    else:
+        effects = tuple(
+            entry.effect
+            for entry in out.value.record.contribution()
+            if isinstance(entry, Incomplete)
+        )
+    assert len(effects) == 1
+    assert isinstance(effects[0], RaiseEffect)
+    assert effects[0].exception_name == "KeyError"
+    assert effects[0].occurrence.endswith(":9:12")
+
+
+def test_handler_effect_slots_are_content_addressed_occurrences():
+    fn = _fn(
+        "def A():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError:\n"
+        "        pass\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError:\n"
+        "        pass\n"
+    )
+    handlers = [node for node in fn.walk() if node.kind == "ExceptHandler"]
+    slots = [handler._effect_slot_id() for handler in handlers]
+    assert all(slot.startswith("blake3-512:") for slot in slots)
+    assert slots[0] != slots[1]
+    assert slots == [handler._effect_slot_id() for handler in handlers]
+
+
 def test_else_runs_when_body_is_raise_free():
     # Body with no observed raise reduces else; the else return is the exit.
     v = _val(
@@ -464,19 +616,18 @@ def test_non_name_except_type_stays_loud():
         ).sugar()
 
 
-def test_dotted_except_type_matches():
-    # Dotted Name exception types are in the tractable core (same structural
-    # walk as raise's exception_name).
-    v = _val(
-        "def A(z):\n"
-        "    try:\n"
-        "        raise os.error\n"
-        "    except os.error:\n"
-        "        pass\n"
-        "    return z\n"
-    )
-    assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+def test_dotted_except_without_authenticated_import_identity_stays_loud():
+    # Equal dotted spelling is not exception authority. The import-binding
+    # bridge must eventually provide a coordinate; until then this is loud.
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(z):\n"
+            "    try:\n"
+            "        raise os.error\n"
+            "    except os.error:\n"
+            "        pass\n"
+            "    return z\n"
+        ).sugar()
 
 
 def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
