@@ -1,5 +1,5 @@
 """`try` as the STRUCTURAL surface of the effect router: except clauses match
-by exact kind+name (the same rule with-contracts ride), matching handlers
+by authenticated exception identity (the same rule with-contracts ride), matching handlers
 consume the Incomplete, non-matches propagate, else/finally splice, and the
 loud residuals stay loud. Mirror of test_with_contract.py for the native-syntax
 twin."""
@@ -441,6 +441,110 @@ def test_conditional_raise_assign_paths_through_finally_no_residual_halt():
     }
     assert by_value[2].name == "py.truthy"
     assert by_value[1].kind == "not"
+
+
+def test_finally_fallthrough_preserves_break_for_the_matching_loop():
+    """Cleanup runs on break, then the loop alone consumes its owned halt."""
+    v = _val(
+        "def A():\n"
+        "    for item in [1]:\n"
+        "        try:\n"
+        "            break\n"
+        "        finally:\n"
+        "            marker = item\n"
+        "    return marker\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].value == 1
+
+
+def test_finally_fallthrough_preserves_continue_for_the_matching_loop():
+    """Cleanup runs on continue before the matching loop routes its latch."""
+    v = _val(
+        "def A():\n"
+        "    for item in [1]:\n"
+        "        try:\n"
+        "            continue\n"
+        "        finally:\n"
+        "            marker = item\n"
+        "    return marker\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].value == 1
+
+
+def test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit():
+    """A cleanup halt supersedes the incoming break face."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    out = (
+        _fn(
+            "class ArbitraryCleanupFault(Exception):\n"
+            "    pass\n"
+            "def A():\n"
+            "    for item in [1]:\n"
+            "        try:\n"
+            "            break\n"
+            "        finally:\n"
+            "            raise ArbitraryCleanupFault\n"
+            "    return 11\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    assert out.effect.exception_type_coordinate is not None
+    assert out.effect.exception_name == "ArbitraryCleanupFault"
+
+
+def test_finally_return_supersedes_break_exit():
+    """A terminal cleanup completion replaces the incoming break face."""
+    v = _val(
+        "def A():\n"
+        "    for item in [1]:\n"
+        "        try:\n"
+        "            break\n"
+        "        finally:\n"
+        "            return 13\n"
+        "    return 0\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].value == 13
+
+
+def test_trystar_stays_loud_without_grouped_exception_router():
+    """except* has no honest consumer in the single-effect ExitSet router."""
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('group', [ValueError()])\n"
+            "    except* ValueError:\n"
+            "        pass\n"
+        ).sugar()
+
+
+def test_warnings_warn_does_not_fabricate_a_warning_effect_without_a_producer():
+    """The live warning schema has no source producer; the call stays unresolved."""
+    from sugar_lift_py_tests.effect.warning_effect import WarningEffect
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.warning_observation_value import (
+        WarningObservationValue,
+    )
+
+    v = _val(
+        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n"
+    )
+    entries = v.record.contribution()
+    calls = [entry for entry in entries if isinstance(entry, CallSiteValue)]
+    assert len(calls) == 1
+    assert calls[0].target_contract_cid is None
+    assert not any(isinstance(entry, WarningObservationValue) for entry in entries)
+    assert not any(
+        isinstance(getattr(entry, "effect", None), WarningEffect) for entry in entries
+    )
 
 
 def test_false_arm_conditional_raise_routes_with_reverse_polarity():

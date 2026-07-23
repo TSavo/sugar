@@ -2832,6 +2832,32 @@ class For(Statement):
         produced = []
         current = dict(scope)
         for statement in statements:
+            if (
+                statement.kind == "Try"
+                and not statement.handlers
+                and not statement.orelse
+                and statement.finalbody
+                and len(statement.body) == 1
+                and statement.body[0].kind in ("Break", "Continue")
+                and statement.body[0].control_context.nearest_loop_target().target_cid
+                == self.owned_loop_target.target_cid
+            ):
+                # A concrete loop dissolves before construction, so consume its
+                # owned jump here only after routing the mandatory cleanup.  The
+                # jump has no value to evaluate; ``finally`` therefore precedes
+                # the selected loop edge.  A cleanup halt/return remains in the
+                # produced block and supersedes that edge through ordinary
+                # ExitSet reduction.  Wider Try shapes retain their live
+                # TrySugar router below rather than being linearized here.
+                incoming_action = statement.body[0].kind.lower()
+                cleanup = For._substitute_controlled_suite(
+                    self, statement.finalbody, current
+                )
+                if cleanup is None:
+                    return None
+                cleanup_statements, current, cleanup_action = cleanup
+                produced.extend(cleanup_statements)
+                return produced, current, cleanup_action or incoming_action
             if statement.kind == "Break":
                 return produced, current, "break"
             if statement.kind == "Continue":
