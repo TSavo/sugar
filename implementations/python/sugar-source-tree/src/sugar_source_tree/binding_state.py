@@ -294,6 +294,14 @@ class SubstitutionTraceBuilderV1:
     def freeze(
         self, testimony_source: "ConstructionTestimonyReporterV1 | None" = None
     ) -> SealedSubstitutionTraceV1 | RuntimeSubstitutionTraceV1:
+        """Publish the substitution trace.
+
+        Without a testimony reporter (no loop consumer), keep the runtime
+        trace and skip sealing/hashing every binding — measured exclusive
+        cost of unconditional project() was ~1.2s on pandas asserters for
+        functions that never need sealed wire. Sealed projections run only
+        when a loop testimony reporter is provided.
+        """
         if self._frozen:
             raise ValueError("SubstitutionTraceBuilderV1 is frozen")
         self._frozen = True
@@ -304,6 +312,8 @@ class SubstitutionTraceBuilderV1:
                 for record in self._records
             ),
         )
+        if testimony_source is None:
+            return runtime
         try:
             return runtime.project()
         except BindingProvenanceGap:
