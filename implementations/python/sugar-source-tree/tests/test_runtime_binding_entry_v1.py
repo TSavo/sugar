@@ -168,3 +168,27 @@ def test_loop_projection_rejects_lying_target_and_cid_as_runtime_value():
             guard_cid,
             cid_of_json({"fabricated": "value"}),
         )
+
+
+def test_canonical_constructed_value_seals_float_and_bytes():
+    # Float and bytes literal testimony must enter the closed canonical wire.
+    from sugar_source_tree.binding_state import _canonical_constructed_value
+
+    # Float -> the ONE canonical fixed-point decimal string the system uses
+    # (ir.real_lit), tagged so a float never collides with the str "1.5".
+    assert _canonical_constructed_value(1.5) == {"float": "1.5"}
+    assert _canonical_constructed_value(0.0) == {"float": "0.0"}
+    assert _canonical_constructed_value(-2.25) == {"float": "-2.25"}
+    assert _canonical_constructed_value(1e-05) == {"float": "0.00001"}
+    # Bytes -> hex, matching bytes_value / sequence_repetition.
+    assert _canonical_constructed_value(b"\xde\xad\xbe\xef") == {"bytes": "deadbeef"}
+
+    # Both must be canonical-JSON admissible and deterministic.
+    for value in (1.5, 0.0, b"\x00\xff"):
+        encoded = _canonical_constructed_value(value)
+        assert cid_of_json({"v": encoded}) == cid_of_json({"v": encoded})
+
+    # Bad twin: a value with no canonical spelling stays LOUD, never silently
+    # collapses to a fabricated testimony.
+    with pytest.raises(TypeError, match="unserializable"):
+        _canonical_constructed_value(1 + 2j)
