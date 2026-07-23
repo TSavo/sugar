@@ -107,6 +107,21 @@ def some_resource() -> SomeResource:
     return SomeResource()
 
 
+class ImplicitNoneResource:
+    """A renamed resource whose multi-statement exit falls through to None."""
+
+    def __enter__(self) -> ObservationSlot:
+        return ObservationSlot("implicit-none-value")
+
+    def __exit__(self, effect_type, effect, traceback) -> None:
+        first_marker = 1
+        second_marker = 2
+
+
+def implicit_none_resource() -> ImplicitNoneResource:
+    return ImplicitNoneResource()
+
+
 class LyingGuard:
     """A claim cannot override the source-visible NeverSuppresses behavior."""
 
