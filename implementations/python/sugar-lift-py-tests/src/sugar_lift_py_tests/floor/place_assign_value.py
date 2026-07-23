@@ -21,6 +21,13 @@ class PlaceAssignValue(FloorValue):
                 "python:attribute",
                 [receiver, str_const(self.selector)],
             )
+        elif self.selector_kind == "subscript":
+            if not isinstance(self.selector, FloorValue):
+                raise ValueError("subscript selector must be one FloorValue")
+            target = ctor(
+                "python:subscript",
+                [receiver, self.selector.to_term(owner=owner)],
+            )
         else:
             raise ValueError(f"unknown place selector kind {self.selector_kind!r}")
         return ctor(

@@ -13,6 +13,9 @@ from sugar_source_tree.object_identity import (
     AttributeFieldVersionV1,
     OpaqueObjectCoordinateV1,
     SourceObjectCoordinateV1,
+    SubscriptFieldCoordinateV1,
+    SubscriptFieldVersionV1,
+    SubscriptKeyCoordinateV1,
     decode_object_coordinate_v1,
 )
 from sugar_source_tree.tree import SourceFile
@@ -93,3 +96,43 @@ def test_attribute_versions_are_immutable_prior_linked_and_closed():
             forged[key] = "blake3-512:forged"
         with pytest.raises(BindingProvenanceGap):
             AttributeFieldVersionV1.decode(forged)
+
+
+def test_subscript_versions_key_the_same_object_by_authenticated_key_coordinate():
+    site, _ = _calls()
+    owner = _source(site)
+    zero = SubscriptKeyCoordinateV1.mint(
+        constructed_value_cid=cid_of_json({"key": 0}),
+        construction_testimony_cid=cid_of_json({"testimony": 0}),
+    )
+    one = SubscriptKeyCoordinateV1.mint(
+        constructed_value_cid=cid_of_json({"key": 1}),
+        construction_testimony_cid=cid_of_json({"testimony": 1}),
+    )
+    zero_field = SubscriptFieldCoordinateV1.mint(owner, zero)
+    one_field = SubscriptFieldCoordinateV1.mint(owner, one)
+    assert zero_field.cid != one_field.cid
+
+    first = SubscriptFieldVersionV1.mint(
+        owner=owner,
+        field=zero_field,
+        store_occurrence=site,
+        construction_generation=1,
+        stored_value_testimony_cid=cid_of_json({"value": 7}),
+        prior_version_cid=None,
+    )
+    second = SubscriptFieldVersionV1.mint(
+        owner=owner,
+        field=zero_field,
+        store_occurrence=site,
+        construction_generation=2,
+        stored_value_testimony_cid=cid_of_json({"value": 8}),
+        prior_version_cid=first.cid,
+    )
+    assert second.prior_version_cid == first.cid
+    assert SubscriptFieldVersionV1.decode(second.wire()) == second
+
+    forged = deepcopy(second.wire())
+    forged["fieldCoordinate"] = one_field.wire()
+    with pytest.raises(BindingProvenanceGap):
+        SubscriptFieldVersionV1.decode(forged)
