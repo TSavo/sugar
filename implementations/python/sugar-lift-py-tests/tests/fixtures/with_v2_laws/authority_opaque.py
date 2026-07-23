@@ -1,3 +1,6 @@
-def admit(factory):
-    # Dynamic result reaches the admission call; detector must report opaque.
-    return factory()
+class Sugar: pass
+class WithResourceSugar(Sugar): pass
+class With:
+    def _construct_sugar(self, module, runtime_name):
+        value = getattr(module, runtime_name)()
+        return WithResourceSugar(value)

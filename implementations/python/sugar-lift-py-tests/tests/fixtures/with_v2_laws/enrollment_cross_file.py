@@ -1,3 +1,6 @@
 from enrollment_helper import resolve
-def demand(symbol):
-    return resolve(symbol)
+class Sugar: pass
+class WithResourceSugar(Sugar): pass
+def demand(imported):
+    targetSymbol = imported
+    return WithResourceSugar(resolve(targetSymbol))

@@ -1,1 +1,3 @@
-ordinary = {"authority": "not a construction value", "count": 1}
+class DoorB: pass
+Choice = DoorB | int
+ordinary = {"authority": DoorB(), "count": 1}

@@ -1,10 +1,10 @@
 class Sugar: pass
 class WithResourceSugar(Sugar): pass
 class DoorB: pass
-def write(value): return {"z9": value}
-def read(message): return message["z9"]
+doors = {"arbitrary": DoorB()}
+def require(key): return doors.get(key)
 class With:
     def _construct_sugar(self):
-        value = read(write(DoorB()))
+        value = require("arbitrary")
         if isinstance(value, DoorB): return WithResourceSugar()
         raise RuntimeError
