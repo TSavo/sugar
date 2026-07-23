@@ -34,6 +34,34 @@ class UniverseValue(FloorValue):
         )
 
     def post(self) -> Formula:
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            ContractConditionalConstructionV1,
+        )
+
+        pending = tuple(
+            entry
+            for entry in self.record.statements
+            if isinstance(entry, ContractConditionalConstructionV1)
+        )
+        if pending:
+            from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="UniverseValue.post",
+                blame=self.name,
+                observed=(
+                    "pending parameter contract demands "
+                    + ",".join(entry.demand.demand_cid for entry in pending)
+                ),
+                requested="authenticated ParameterContractResolutionV1 rows",
+                fix=(
+                    "discharge every exact demand/candidate CID through the Rust "
+                    "linker; never admit the serialized candidate before resolution"
+                ),
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
         exits = tuple(
             formula
             for entry in self.record.statements

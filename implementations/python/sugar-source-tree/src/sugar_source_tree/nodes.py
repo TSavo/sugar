@@ -61,6 +61,7 @@ from .binding_state import (
     BindingState,
     BranchResultSlot,
     GuardedBinding,
+    RuntimeBindingEntryFactoryV1,
     SubstitutionTraceBuilderV1,
     UnboundBinding,
     binding_state_read_node,
@@ -73,9 +74,9 @@ from .binding_state import (
 # It lets recognition distinguish a builtin spelling from a lexically bound
 # formal without substituting a fake value for that formal.
 _LEXICALLY_BOUND_NAMES = object()
-_FUNCTION_PARAMETERS = object()
 _SCOPE_OWNER_CID = object()
 _SUBSTITUTION_TRACE_BUILDER = object()
+_BINDING_ENTRY_FACTORY = object()
 _MISSING = object()
 
 
@@ -94,11 +95,9 @@ class ControlConstructionContextV1:
         return self.loop_targets[-1]
 
 
-def _explicit_state(name: str, state, make_formal_ref):
+def _explicit_state(name: str, state):
     if name in state:
         return unwrap_binding_state(state[name])
-    if name in state.get(_FUNCTION_PARAMETERS, frozenset()):
-        return make_formal_ref(name)
     return _MISSING
 
 
@@ -1412,13 +1411,17 @@ class FunctionDef(Statement):
             {k: v for k, v in scope.items() if k not in bound} if bound else scope
         )
         inherited_bound = scope.get(_LEXICALLY_BOUND_NAMES, frozenset())
+        formal_refs = {
+            parameter.name: self._make_parameter_entry(parameter, ordinal, scope)
+            for ordinal, parameter in enumerate(self.params)
+        }
         body_scope = {
             **body_scope,
+            **formal_refs,
             **{
                 name: UnboundBinding(name=name, cause=self.fragment) for name in locals_
             },
             _LEXICALLY_BOUND_NAMES: frozenset(inherited_bound) | bound | locals_,
-            _FUNCTION_PARAMETERS: parameters,
         }
 
         changed: dict[str, object] = {}
@@ -1436,6 +1439,69 @@ class FunctionDef(Statement):
         if not changed:
             return self
         return rewrite(self, **changed)
+
+    def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
+        ref = self._make_parameter_ref(parameter, ordinal)
+        factory = scope.get(_BINDING_ENTRY_FACTORY)
+        if not isinstance(factory, RuntimeBindingEntryFactoryV1):
+            return ref
+        return factory.mint_entry(
+            binding_site=parameter.fragment,
+            projection_path=("formal", ordinal),
+            state=ref,
+        )
+
+    def _make_parameter_ref(self, parameter: Param, ordinal: int) -> "Node":
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+        from sugar_lift_py_tests.ir import PrimitiveSort
+
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        kind = {
+            "positional_only": "positional-only",
+            "positional_or_keyword": "positional-or-keyword",
+            "vararg": "variadic-positional",
+            "keyword_only": "keyword-only",
+            "kwarg": "variadic-keyword",
+        }.get(parameter.param_kind)
+        if kind is None:
+            from .panic import BackendDefect
+
+            raise BackendDefect(
+                owner="FunctionDef._make_parameter_ref",
+                observed=parameter.param_kind,
+                requested="one canonical Python parameter kind",
+                fix="repair the backend parameter-kind projection",
+            )
+
+        def coordinate(node: Node) -> SourceFragmentCoordinateV1:
+            span = node.line_col_span()
+            return SourceFragmentCoordinateV1(
+                node.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+
+        formal = FormalParameterCoordinateV1.mint(
+            owner_source_identity_cid=self.unit.source_cid,
+            owner_definition_locus=coordinate(self),
+            declaration_locus=coordinate(parameter),
+            ordinal=ordinal,
+            parameter_kind=kind,
+            declared_name=parameter.name,
+            sort=PrimitiveSort("Value"),
+        )
+        return materialize(
+            self.unit,
+            ShadowNode("FormalRef", parameter.span, (("coordinate", Leaf(formal)),)),
+            self.reporter,
+        )
 
     def _construct_sugar(self):
         """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
@@ -1489,6 +1555,9 @@ class FunctionDef(Statement):
                     {
                         _SCOPE_OWNER_CID: scope_owner_cid,
                         _SUBSTITUTION_TRACE_BUILDER: trace_builder,
+                        _BINDING_ENTRY_FACTORY: RuntimeBindingEntryFactoryV1(
+                            scope_owner_cid
+                        ),
                     }
                 )
             with reduction_span(sugar="Construct", role="construction", site=where):
@@ -1791,11 +1860,7 @@ class Delete(Statement):
         operations = []
         for target in self.targets:
             if isinstance(target, Name):
-                prior = _explicit_state(
-                    target.id,
-                    current,
-                    lambda name: self._make_formal_ref(name, target.span),
-                )
+                prior = _explicit_state(target.id, current)
                 if prior is _MISSING:
                     prior = UnboundBinding(name=target.id, cause=target.fragment)
                 operation = self._make_delete_name(target.id, prior, target.span)
@@ -1814,16 +1879,6 @@ class Delete(Statement):
                 )
             operations.append(operation)
         return operations[0] if len(operations) == 1 else _Splice(tuple(operations))
-
-    def _make_formal_ref(self, name: str, span: Span) -> "Node":
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        return materialize(
-            self.unit,
-            ShadowNode("FormalRef", span, (("name", Leaf(name)),)),
-            self.reporter,
-        )
 
     def _make_delete_name(
         self, name: str, prior: BindingState, span: Span | None = None
@@ -2755,11 +2810,7 @@ class If(Statement):
         phis = []
         availability: BindingMap = {}
         for name in sorted(names):
-            incoming = _explicit_state(
-                name,
-                scope,
-                lambda spelling: self._make_formal_ref(spelling),
-            )
+            incoming = _explicit_state(name, scope)
             then_val = then_net.get(name, incoming)
             else_val = else_net.get(name, incoming)
             if then_val is _MISSING or else_val is _MISSING:
@@ -2791,16 +2842,6 @@ class If(Statement):
                 desc.raw_span or self.span,
                 (*desc.slots, ("branch_result_slot_id", Leaf(slot.slot_id))),
             ),
-            self.reporter,
-        )
-
-    def _make_formal_ref(self, name: str) -> "Node":
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        return materialize(
-            self.unit,
-            ShadowNode("FormalRef", self.span, (("name", Leaf(name)),)),
             self.reporter,
         )
 
@@ -3479,7 +3520,7 @@ class Try(Statement):
         merged: BindingMap = {}
         for name in sorted(names):
             states = [
-                net.get(name, _explicit_state(name, scope, self._make_formal_ref))
+                net.get(name, _explicit_state(name, scope))
                 for net in nets
             ]
             if any(state is _MISSING for state in states):
@@ -3504,16 +3545,6 @@ class Try(Statement):
             if all(isinstance(state, UnboundBinding) for state in states):
                 merged[name] = states[0]
         return merged
-
-    def _make_formal_ref(self, name: str) -> "Node":
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        return materialize(
-            self.unit,
-            ShadowNode("FormalRef", self.span, (("name", Leaf(name)),)),
-            self.reporter,
-        )
 
     def _make_ifexp(self, test, body, orelse):
         return If._make_ifexp(self, test, body, orelse)
@@ -5071,18 +5102,18 @@ class Name(Expression):
 
 
 class FormalRef(Expression):
-    """A lazily materialized formal used only when availability becomes explicit."""
+    """The declaration-owned authenticated reference for one formal."""
 
-    name: str
+    coordinate: object
 
     def substitute(self, scope):
         del scope
         return self
 
     def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+        from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
 
-        return NameSugar(name=self.name, site=self.fragment)
+        return FormalRefSugar(coordinate=self.coordinate, site=self.fragment)
 
 
 class BindingCoordinateRef(Expression):

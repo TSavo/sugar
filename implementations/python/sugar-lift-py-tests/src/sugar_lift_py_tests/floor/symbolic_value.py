@@ -43,6 +43,7 @@ class SymbolicValue(FloorValue):
     """
 
     term: Term
+    formal_coordinate: object | None = None
 
     def python_isinstance(self, type_name: str, type_term, site):
         """Fold ground ``python:*`` data ctors against a named builtin type.
@@ -414,8 +415,21 @@ class SymbolicValue(FloorValue):
         return Complete(SymbolicValue(ctor("py.invert", [self.term])))
 
     def subscript(self, index, site):
-        # A symbolic receiver stays the py.subscript coordinate regardless of index.
-        return self.py_subscript_coordinate(index, site)
+        built = self.py_subscript_coordinate(index, site)
+        if self.formal_coordinate is None:
+            return built
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            ContractConditionalConstructionV1,
+        )
+        from sugar_lift_py_tests.ir import atomic
+
+        return ContractConditionalConstructionV1.mint(
+            site=site,
+            candidate=built.value.to_term(owner=str(site)),
+            demand_formula=atomic("python:indexable", [self.term]),
+            value=built.value,
+            coordinate=self.formal_coordinate,
+        )
 
     def attribute(self, name, site):
         # A symbolic receiver stays the py.getattr coordinate: an opaque term

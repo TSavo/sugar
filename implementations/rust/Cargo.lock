@@ -1758,6 +1758,7 @@ dependencies = [
 name = "sugar-linker"
 version = "0.0.1"
 dependencies = [
+ "libsugar",
  "serde",
  "serde_json",
  "sugar-canonicalizer",
