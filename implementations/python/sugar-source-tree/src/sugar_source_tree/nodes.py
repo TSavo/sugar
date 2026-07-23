@@ -358,22 +358,20 @@ class SourceUnit:
         )
 
     def construction_generation(self, node: "Node") -> int:
-        """The deterministic occurrence ordinal in this construction graph."""
-        module = self._require_typed_module("SourceUnit.construction_generation")
-        occurrences = tuple(candidate for candidate in module.walk() if isinstance(candidate, Call))
-        matches = tuple(
-            generation
-            for generation, candidate in enumerate(occurrences)
-            if candidate.fragment == node.fragment
-        )
-        if len(matches) == 1:
-            return matches[0]
-        raise SourceTreePanic(
-            owner="SourceUnit.construction_generation",
-            observed="call occurrence absent from the bound typed module",
-            requested="the exact call occurrence in the sole construction graph",
-            fix="mint object identity only from a SourceFile-enumerated Call",
-        )
+        """The source-authenticated generation of this exact occurrence.
+
+        The byte offset is stable across shadow rewrites of the same occurrence
+        and differs for distinct occurrences. It comes from the oracle-sealed
+        construction fragment, never a binding owner or process counter.
+        """
+        if not isinstance(node, Call):
+            raise SourceTreePanic(
+                owner="SourceUnit.construction_generation",
+                observed=type(node).__name__,
+                requested="one exact Call construction occurrence",
+                fix="mint object identity only at the sole Call boundary",
+            )
+        return node.fragment.seal().start
 
     @staticmethod
     def _module_statement_bound_names(statement: "Node") -> set[str]:
