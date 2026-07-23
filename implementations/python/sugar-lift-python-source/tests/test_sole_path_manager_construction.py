@@ -19,6 +19,7 @@ from sugar_lift_python_source.manager_construction import (
     construct_manager_behavior,
 )
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
+from sugar_source_tree.binding_state import BindingEntryV1
 from sugar_source_tree.nodes import Call, Constant
 from sugar_source_tree.tree import SourceFile
 
@@ -68,7 +69,12 @@ def _resolved(root: Path, source: str):
     testimony = ConstructedValueTestimonyV1.mint(
         literal.fragment, _term_content_cid(actual.to_term(owner="test"))
     )
-    return graph, resolved, ConstructedCallActualV1(actual, testimony), call.fragment
+    return (
+        graph,
+        resolved,
+        ConstructedCallActualV1(literal, actual, testimony),
+        call.fragment,
+    )
 
 
 def test_renamed_factory_constructs_returned_receiver_state_through_one_door(tmp_path):
@@ -88,7 +94,11 @@ def test_renamed_factory_constructs_returned_receiver_state_through_one_door(tmp
     assert isinstance(result, ConstructedManagerBehaviorV1)
     fields = {field.name: field.value for field in result.receiver_state.fields}
     assert fields == {"expected": actual.value}
-    assert result.formal_actual_bindings[0].coordinate.projection_path == ("formal", 0)
+    entry = result.formal_actual_bindings[0]
+    assert isinstance(entry, BindingEntryV1)
+    assert entry.state is actual.node
+    assert entry.coordinate.projection_path == ("formal", 0)
+    assert "node" not in repr(entry.wire()).lower()
     assert result.manager_construction_cid.startswith("blake3-512:")
 
 

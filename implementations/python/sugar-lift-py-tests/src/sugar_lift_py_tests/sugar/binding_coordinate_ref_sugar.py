@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -22,13 +22,11 @@ class BindingCoordinateRefSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        if ctx is None:
-            from sugar_source_tree.panic import SugarNotWritten
+        from sugar_source_tree.panic import SugarNotWritten
 
-            raise SugarNotWritten(
-                owner="BindingCoordinateRefSugar.desugar",
-                observed="missing source-call binding frame",
-                requested="the exact constructed actual for this BindingCoordinateV1",
-                fix="reduce the source body through its authenticated call frame",
-            )
-        return Complete(ctx.value_for_binding_coordinate(self.coordinate.cid))
+        raise SugarNotWritten(
+            owner="BindingCoordinateRefSugar.desugar",
+            observed="unspecialized source-call formal",
+            requested="runtime BindingEntryV1 substitution before Sugar construction",
+            fix="bind the exact typed actual Node through SourceVisibleCallFrameV1",
+        )

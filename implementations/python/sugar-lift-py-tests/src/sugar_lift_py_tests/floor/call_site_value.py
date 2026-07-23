@@ -991,9 +991,7 @@ class CallSiteValue(FloorValue):
             return None
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        reduce_ctx = _ctx_with_curried_args(
-            ctx, self.parameters, self.arg_values, self.formal_coordinate_cids
-        )
+        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
         active_demand = _ACTIVE_DIG_DEMAND.get()
         nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
         if active_demand >= nested_budget:
@@ -1083,9 +1081,7 @@ class CallSiteValue(FloorValue):
             )
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        reduce_ctx = _ctx_with_curried_args(
-            ctx, self.parameters, self.arg_values, self.formal_coordinate_cids
-        )
+        reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
         outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
         if isinstance(outcome, Incomplete):
             _force_floor_gap(
@@ -1259,7 +1255,6 @@ def _ctx_with_curried_args(
     ctx: Any,
     parameters: tuple[str, ...],
     arg_values: tuple[FloorValue, ...],
-    formal_coordinate_cids: tuple[str, ...] = (),
 ):
     from sugar_lift_py_tests.temporal import curry_temporal
 
@@ -1270,10 +1265,4 @@ def _ctx_with_curried_args(
         owner="CallSiteValue.force_floor",
         blame="<callsite>",
     )
-    if formal_coordinate_cids:
-        if len(formal_coordinate_cids) != len(arg_values):
-            return result
-        result = result.with_binding_coordinate_values(
-            zip(formal_coordinate_cids, arg_values, strict=True)
-        )
     return result

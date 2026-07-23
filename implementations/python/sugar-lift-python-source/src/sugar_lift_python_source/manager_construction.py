@@ -15,10 +15,9 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import _term_content_cid, ctor
 from sugar_source_tree.binding_provenance import (
-    BindingEntryV1,
-    BoundBindingStateV1,
     ConstructedValueTestimonyV1,
 )
+from sugar_source_tree.binding_state import BindingEntryV1
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef, Name, Node
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
@@ -29,6 +28,7 @@ from .dependency_artifact import DependencyArtifactGraph, ResolvedPythonObjectV1
 
 @dataclass(frozen=True)
 class ConstructedCallActualV1:
+    node: Node = field(compare=False)
     value: FloorValue = field(compare=False)
     testimony: ConstructedValueTestimonyV1
 
@@ -170,6 +170,14 @@ def construct_manager_behavior(
             tuple(item.value for item in actuals),
             tuple((name, item.value) for name, item in keyword_actuals),
         )
+        frame = frame.bind_node_actuals(
+            tuple(item.node for item in actuals),
+            tuple((name, item.node) for name, item in keyword_actuals),
+            testimonies=tuple(
+                item.testimony
+                for item in (*actuals, *(item for _, item in keyword_actuals))
+            ),
+        )
     except SourceCallBindingGap as exc:
         return ManagerConstructionGapV1("call-binding", resolved.cid, str(exc))
     call = CallSiteValue(
@@ -183,7 +191,7 @@ def construct_manager_behavior(
         ),
         body=frame.body,
         source_call_frame_cid=frame.frame_cid,
-        formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
+        formal_coordinate_cids=(),
     )
     result = call.force_floor(
         None, owner="construct_manager_behavior", project_callsite=False
@@ -204,32 +212,7 @@ def construct_manager_behavior(
         return ManagerConstructionGapV1(
             "non-manager-result", resolved.cid, type(result).__name__
         )
-    original_actuals = (*actuals, *(item for _, item in keyword_actuals))
-    used: set[int] = set()
-    bindings = []
-    for index, (coordinate, value) in enumerate(
-        zip(frame.formal_coordinates, values, strict=True)
-    ):
-        testimony = None
-        for actual_index, actual in enumerate(original_actuals):
-            if actual_index not in used and actual.value is value:
-                testimony = actual.testimony
-                used.add(actual_index)
-                break
-        if testimony is None:
-            fragment = frame.default_fragments[index]
-            if fragment is None and frame.parameter_kinds[index] in {"vararg", "kwarg"}:
-                fragment = call_site
-            if fragment is None:
-                return ManagerConstructionGapV1(
-                    "call-binding", resolved.cid, "constructed binding testimony absent"
-                )
-            testimony = ConstructedValueTestimonyV1.mint(
-                fragment,
-                _term_content_cid(value.to_term(owner=resolved.cid)),
-            )
-        bindings.append(BindingEntryV1(coordinate, BoundBindingStateV1(testimony)))
-    bindings = tuple(bindings)
+    bindings = frame.runtime_entries
     preimage = {
         "kind": "constructed-manager-behavior",
         "schemaVersion": "1",

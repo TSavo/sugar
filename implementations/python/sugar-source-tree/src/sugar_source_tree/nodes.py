@@ -1282,6 +1282,7 @@ class FunctionDef(Statement):
                 param.default.sugar() if param.default is not None else None
                 for param in self.params
             ),
+            default_nodes=tuple(param.default for param in self.params),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
                 for param in self.params
@@ -1291,6 +1292,17 @@ class FunctionDef(Statement):
                 for param in self.params
             ),
             body=body,
+            owner=self,
+        )
+
+    def _source_visible_body(self, scope):
+        from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+            SourceVisibleFunctionBodySugar,
+        )
+
+        substituted_body, _ = self._substitute_body(self.body, scope)
+        return SourceVisibleFunctionBodySugar(
+            tuple(statement.sugar() for statement in substituted_body), self.fragment
         )
 
     def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
@@ -1573,6 +1585,7 @@ class ClassDef(Statement):
                 param.default.sugar() if param.default is not None else None
                 for param in params
             ),
+            default_nodes=tuple(param.default for param in params),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
                 for param in params
@@ -1583,9 +1596,71 @@ class ClassDef(Statement):
             ),
             body=ClassConstructorBodySugar(
                 definition=self.sugar(),
-                formal_coordinates=coordinates,
+                initializer_body=None,
+                receiver_coordinate_cid=None,
                 site=self.fragment,
             ),
+            owner=self,
+        )
+
+    def _source_visible_body(self, scope):
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            ClassConstructorBodySugar,
+        )
+        from sugar_source_tree.binding_provenance import (
+            BindingCoordinateV1,
+            BoundBindingStateV1,
+        )
+        from sugar_source_tree.binding_state import BindingEntryV1
+
+        initializer = next(
+            (
+                item
+                for item in self.body
+                if isinstance(item, FunctionDef) and item.name == "__init__"
+            ),
+            None,
+        )
+        initializer_body = None
+        receiver_coordinate_cid = None
+        if initializer is not None:
+            receiver_param = initializer.params[0]
+            coordinate = BindingCoordinateV1.mint(
+                self.fragment.seal().cid,
+                receiver_param.fragment,
+                ("receiver", 0),
+            )
+            receiver = self._make_constructed_receiver_ref(coordinate.cid)
+            receiver_coordinate_cid = coordinate.cid
+            initializer_scope = {
+                receiver_param.name: BindingEntryV1(
+                    coordinate, receiver, BoundBindingStateV1(None)
+                ),
+                **scope,
+            }
+            initializer_body = initializer._source_visible_body(initializer_scope)
+        return ClassConstructorBodySugar(
+            definition=self.sugar(),
+            initializer_body=initializer_body,
+            receiver_coordinate_cid=receiver_coordinate_cid,
+            site=self.fragment,
+        )
+
+    def _make_constructed_receiver_ref(self, receiver_coordinate_cid):
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "ConstructedReceiverRef",
+                self.span,
+                (
+                    ("class_name", Leaf(self.name)),
+                    ("binding_coordinate_cid", Leaf(receiver_coordinate_cid)),
+                ),
+            ),
+            self.reporter,
         )
 
 
@@ -1791,7 +1866,10 @@ class Assign(Statement):
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
-            if isinstance(self.targets[0].value, BindingCoordinateRef):
+            if isinstance(
+                self.targets[0].value,
+                (BindingCoordinateRef, ConstructedReceiverRef),
+            ):
                 from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
                     ReceiverFieldStoreSugar,
                 )
@@ -4481,6 +4559,23 @@ class Call(Expression):
                     span.end_col,
                 )
                 source_call_frame = context.source_call_frames.get(coordinate)
+                if source_call_frame is not None:
+                    from sugar_lift_py_tests.source_call_frame import (
+                        SourceCallBindingGap,
+                    )
+
+                    if any(keyword.arg is None for keyword in self.keywords):
+                        raise SourceCallBindingGap(
+                            "spread keyword requires typed variadic projection"
+                        )
+                    source_call_frame = source_call_frame.bind_node_actuals(
+                        self.args,
+                        tuple(
+                            (keyword.arg, keyword.value)
+                            for keyword in self.keywords
+                            if keyword.arg is not None
+                        ),
+                    )
 
             return CallSiteSugar(
                 target_name=self.func.id,
@@ -4776,6 +4871,25 @@ class BindingCoordinateRef(Expression):
         )
 
         return BindingCoordinateRefSugar(self.coordinate, self.fragment)
+
+
+class ConstructedReceiverRef(Expression):
+    """Typed projection of the receiver constructed by this exact class call."""
+
+    class_name: str
+    binding_coordinate_cid: str
+
+    def substitute(self, scope):
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
+            ConstructedReceiverRefSugar,
+        )
+
+        return ConstructedReceiverRefSugar(
+            self.class_name, self.binding_coordinate_cid, self.fragment
+        )
 
 
 class BranchResultRef(Expression):

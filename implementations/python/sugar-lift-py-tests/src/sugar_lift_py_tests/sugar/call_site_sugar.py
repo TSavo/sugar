@@ -140,13 +140,7 @@ class CallSiteSugar(Sugar):
                 site=self.site,
                 exception_type_coordinate=self.exception_type_coordinate,
                 source_call_frame_cid=source_frame_cid,
-                formal_coordinate_cids=(
-                    tuple(
-                        item.cid for item in self.source_call_frame.formal_coordinates
-                    )
-                    if self.source_call_frame is not None
-                    else ()
-                ),
+                formal_coordinate_cids=(),
             )
         )
 
