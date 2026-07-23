@@ -9,6 +9,7 @@ from .assertion_surface_audit_dto import AssertionSurfaceAuditDto
 from .body_universe_dto import BodyUniverseDto
 from .component_plan_memento_dto import ComponentPlanMementoDto
 from .context_manager_contract_dto import ContextManagerContractIrV1
+from .context_manager_edge_dto import ContextManagerEdgeDtoV1
 from .effect_dto import EffectDto
 from .factory_audit_summary_dto import FactoryAuditSummaryDto
 from .factory_walk_row_dto import FactoryWalkRowDto
@@ -60,6 +61,9 @@ class LiftReportPayloadDto:
     source_audits: list[SourceAuditDto] = field(default_factory=list[SourceAuditDto])
     factory_audits: list[FactoryAuditDto] = field(default_factory=list[FactoryAuditDto])
     call_edges: list[CallEdgeDto] = field(default_factory=list[CallEdgeDto])
+    context_manager_edges: list[ContextManagerEdgeDtoV1] = field(
+        default_factory=list[ContextManagerEdgeDtoV1]
+    )
     vendor_conjoins: list[VendorConjoinDto] = field(
         default_factory=list[VendorConjoinDto]
     )
@@ -121,6 +125,9 @@ class LiftReportPayloadDto:
             "implications": [to_rpc_value(edge) for edge in self.implications],
             "effects": [to_rpc_value(effect) for effect in self.effects],
             "callEdges": [to_rpc_value(edge) for edge in self.call_edges],
+            "contextManagerEdges": [
+                to_rpc_value(edge) for edge in self.context_manager_edges
+            ],
             "vendorConjoins": [to_rpc_value(row) for row in self.vendor_conjoins],
             "diagnostics": [to_rpc_value(row) for row in self.diagnostics],
             "warnings": [],

@@ -39,6 +39,8 @@ tree (#5940 builds the tree in isolation).
 
 from __future__ import annotations
 
+from enum import Enum
+
 
 class SourceTreePanic(Exception):
     """Common base. Never raised directly — always one of the two below."""
@@ -103,6 +105,93 @@ class RuntimeSelectedContextManager(SugarNotWritten):
     """
 
     _LABEL = "RUNTIME-SELECTED CONTEXT MANAGER"
+
+
+class WithConstructionGapKind(str, Enum):
+    RUNTIME_SELECTED = "runtime-selected"
+    UNRESOLVED_SYMBOL = "unresolved-symbol"
+    AMBIGUOUS_SYMBOL = "ambiguous-symbol"
+    WRONG_CONTRACT_KIND = "wrong-contract-kind"
+    SIGNATURE_MISMATCH = "signature-mismatch"
+    UNAUTHENTICATED_MEMBER = "unauthenticated-member"
+    PAYLOAD_CID_MISMATCH = "payload-cid-mismatch"
+    UNSUPPORTED_CM_SCHEMA = "unsupported-cm-schema"
+    UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS = "unsupported-context-manager-semantics"
+    MULTIPLE_CONTEXT_MANAGER_ITEMS = "multiple-context-manager-items"
+    UNSUPPORTED_WITH_BINDING_TARGET = "unsupported-with-binding-target"
+    ASYNC_CONTEXT_MANAGER_UNSUPPORTED = "async-context-manager-unsupported"
+
+
+class WithConstructionGap(SugarNotWritten):
+    def __init__(
+        self,
+        *,
+        gap_kind: WithConstructionGapKind,
+        demand_cid: str | None = None,
+        candidate_member_cids: tuple[str, ...] = (),
+        member_cid: str | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.gap_kind = gap_kind
+        self.kind = gap_kind.value
+        self.demand_cid = demand_cid
+        self.candidate_member_cids = candidate_member_cids
+        self.member_cid = member_cid
+
+
+class ContextManagerResolutionConstructionGap(WithConstructionGap):
+    """A prereq-2 typed resolution gap consumed unchanged by ``With``."""
+
+    _LABEL = "CONTEXT MANAGER RESOLUTION GAP"
+
+    def __init__(self, *, kind: str, demand_cid: str, candidate_member_cids: tuple[str, ...], **kwargs) -> None:
+        super().__init__(
+            gap_kind=WithConstructionGapKind(kind),
+            demand_cid=demand_cid,
+            candidate_member_cids=candidate_member_cids,
+            **kwargs,
+        )
+
+
+class UnsupportedContextManagerSemantics(WithConstructionGap):
+    _LABEL = "UNSUPPORTED CONTEXT MANAGER SEMANTICS"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(
+            gap_kind=WithConstructionGapKind.UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS,
+            **kwargs,
+        )
+
+
+class MultipleContextManagerItems(WithConstructionGap):
+    _LABEL = "MULTIPLE CONTEXT MANAGER ITEMS"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(
+            gap_kind=WithConstructionGapKind.MULTIPLE_CONTEXT_MANAGER_ITEMS,
+            **kwargs,
+        )
+
+
+class UnsupportedWithBindingTarget(WithConstructionGap):
+    _LABEL = "UNSUPPORTED WITH BINDING TARGET"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(
+            gap_kind=WithConstructionGapKind.UNSUPPORTED_WITH_BINDING_TARGET,
+            **kwargs,
+        )
+
+
+class AsyncContextManagerUnsupported(WithConstructionGap):
+    _LABEL = "ASYNC CONTEXT MANAGER UNSUPPORTED"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(
+            gap_kind=WithConstructionGapKind.ASYNC_CONTEXT_MANAGER_UNSUPPORTED,
+            **kwargs,
+        )
 
 
 class SubstituteNotWritten(SourceTreePanic):

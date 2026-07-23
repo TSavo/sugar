@@ -25,6 +25,7 @@ def disposition_verdict(disposition: object, effect: object) -> Verdict:
     """
     from sugar_lift_py_tests.context_manager_contract import (
         NeverSuppresses,
+        NeverSuppressesDispositionV1,
         RuntimeSelected,
         Suppresses,
     )
@@ -33,7 +34,7 @@ def disposition_verdict(disposition: object, effect: object) -> Verdict:
     if disposition is None or isinstance(disposition, RuntimeSelected):
         return "open"
 
-    if isinstance(disposition, NeverSuppresses):
+    if isinstance(disposition, (NeverSuppresses, NeverSuppressesDispositionV1)):
         return "restore"
 
     if isinstance(disposition, ExitSuppressionContract):

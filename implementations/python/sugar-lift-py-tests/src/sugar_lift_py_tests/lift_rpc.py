@@ -69,6 +69,7 @@ _ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
 _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
+_BOUND_WITH_MANAGER_AUTHORITIES = None
 _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS: tuple[ContextManagerContractIrV1, ...] = ()
 
 
@@ -135,6 +136,112 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
                     "gapKind": None if target else "runtime-selected",
                 })
     return rows
+
+
+def _legacy_membrane_token_rows(root: Path) -> List[Dict[str, Any]]:
+    """Authenticate legacy manifest enrollments before any Tree construction."""
+    import re
+
+    from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
+    from sugar_source_tree.tree import SourceTree
+    from sugar_lift_py_tests.context_manager_contract import EffectMatcher, MessagePattern
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1, _hash_json,
+    )
+    from sugar_lift_py_tests.manifest_membrane import (
+        _CONTRACT_BUILDERS, default_community_manifest,
+    )
+    from sugar_lift_py_tests.with_manager_authority import (
+        AuthenticatedLegacyMembraneRefV1,
+    )
+
+    manifest = default_community_manifest()
+    tokens = []
+    for path in SourceTree(root).paths():
+        try:
+            source, _filename, source_cid = path_source(str(path))
+        except SourceUnavailable:
+            continue
+        module = ast.parse(source, filename=str(path))
+        imports: Dict[str, str] = {}
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports[alias.asname or alias.name.split(".")[0]] = alias.name
+
+        def resolved_callee(call: ast.Call) -> Optional[str]:
+            if isinstance(call.func, ast.Name):
+                return imports.get(call.func.id)
+            if isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
+                base = imports.get(call.func.value.id)
+                return f"{base}.{call.func.attr}" if base else None
+            return None
+
+        def dotted(node: ast.AST) -> Optional[str]:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                base = dotted(node.value)
+                return f"{base}.{node.attr}" if base else None
+            return None
+
+        for with_node in ast.walk(module):
+            if not isinstance(with_node, (ast.With, ast.AsyncWith)):
+                continue
+            for item in with_node.items:
+                call = item.context_expr
+                if not isinstance(call, ast.Call):
+                    continue
+                target = resolved_callee(call)
+                row = manifest.row_for_spelling(target) if target else None
+                if row is None or len(call.args) != 1:
+                    continue
+                matcher_name = dotted(call.args[0])
+                if matcher_name is None:
+                    continue
+                obligations = ()
+                if row.arity == "one-exception-arg":
+                    if call.keywords:
+                        continue
+                elif row.arity == "exception-arg-optional-match":
+                    if call.keywords:
+                        if len(call.keywords) != 1 or call.keywords[0].arg != "match" \
+                                or not isinstance(call.keywords[0].value, ast.Constant) \
+                                or not isinstance(call.keywords[0].value.value, str):
+                            continue
+                        try:
+                            re.compile(call.keywords[0].value.value)
+                        except re.error:
+                            continue
+                        obligations = (MessagePattern(call.keywords[0].value.value),)
+                else:
+                    continue
+                builder = _CONTRACT_BUILDERS.get(row.contract)
+                if builder is None:
+                    continue
+                contract = builder(EffectMatcher(row.effect_kind, matcher_name, obligations))
+                site = SourceFragmentCoordinateV1(
+                    source_cid, call.lineno, call.col_offset, call.end_lineno, call.end_col_offset
+                )
+                demand_preimage = {
+                    "useSite": site.wire(), "targetSymbol": None,
+                    "importSignature": {"formals": [], "sorts": []},
+                    "expectedKind": "context-manager-contract",
+                }
+                enrollment = {
+                    "spelling": row.spelling, "arity": row.arity,
+                    "contract": row.contract, "effect_kind": row.effect_kind,
+                }
+                token = AuthenticatedLegacyMembraneRefV1.mint_from_authenticated_identity(
+                    demand_cid=_hash_json(demand_preimage), use_site=site,
+                    manifest_cid=manifest.cid, enrollment_cid=_hash_json(enrollment),
+                    contract=contract,
+                )
+                tokens.append(token.to_wire())
+    return tokens
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -1425,6 +1532,43 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 "rows": _context_manager_demand_rows(root)
             }})
             return
+        if level == "legacy-membrane-tokens":
+            _send({"jsonrpc": "2.0", "id": msg_id, "result": {
+                "rows": _legacy_membrane_token_rows(root)
+            }})
+            return
+        if level == "context-manager-edges":
+            if _BOUND_CONTRACT_REFS is None:
+                raise ValueError(
+                    "context-manager edge enumeration requires frozen contract refs"
+                )
+            from sugar_lift_python_source.source_oracle import path_source
+            from sugar_source_tree.tree import SourceFile as _TreeSourceFile
+            from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+            rows = []
+            construction_context = TreeConstructionContextV1(
+                _BOUND_CONTRACT_REFS, _BOUND_WITH_MANAGER_AUTHORITIES
+            )
+            for source_path in sorted(root.rglob("*.py")):
+                identity = path_source(str(source_path))
+                source_file = _TreeSourceFile(
+                    identity, construction_context=construction_context
+                )
+                for function in source_file.functions():
+                    function_sugar = function.sugar()
+                    rows.extend(
+                        edge.to_rpc()
+                        for edge in function_sugar.context_manager_edges()
+                    )
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"contextManagerEdges": rows},
+                }
+            )
+            return
         if level == "source_files":
             # The source_files level IS SourceTree.fragments(): whole-file
             # fragments minted through the SourceOracle — identity without
@@ -1619,7 +1763,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
                 construction_context = (
-                    TreeConstructionContextV1(_BOUND_CONTRACT_REFS)
+                    TreeConstructionContextV1(
+                        _BOUND_CONTRACT_REFS, _BOUND_WITH_MANAGER_AUTHORITIES
+                    )
                     if _BOUND_CONTRACT_REFS is not None
                     else None
                 )
@@ -2096,13 +2242,25 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
         )
     elif method == BIND_CONTRACT_REFS_RPC_METHOD:
         from sugar_lift_py_tests.context_manager_resolution import decode_resolved_contract_refs
+        from sugar_lift_py_tests.with_manager_authority import (
+            WithManagerAuthoritiesV1, _decode_legacy_ref,
+        )
 
-        global _BOUND_CONTRACT_REFS
-        installed = decode_resolved_contract_refs(params)
+        global _BOUND_CONTRACT_REFS, _BOUND_WITH_MANAGER_AUTHORITIES
+        if not isinstance(params, dict) or set(params) != {"contractRefs", "legacyMembraneRefs"} \
+                or not isinstance(params["legacyMembraneRefs"], list):
+            raise ValueError("malformed preconstruction With authority bind")
+        installed = decode_resolved_contract_refs(params["contractRefs"])
+        legacy_tokens = tuple(_decode_legacy_ref(row) for row in params["legacyMembraneRefs"])
+        authorities = WithManagerAuthoritiesV1.assemble(installed, legacy_tokens)
         if _BOUND_CONTRACT_REFS is not None and _BOUND_CONTRACT_REFS.table_cid != installed.table_cid:
             raise ValueError("contract-ref generation is already frozen")
         _BOUND_CONTRACT_REFS = installed
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": {"tableCid": installed.table_cid}})
+        _BOUND_WITH_MANAGER_AUTHORITIES = authorities
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": {
+            "tableCid": installed.table_cid,
+            "withManagerAuthoritiesCid": authorities.table_cid,
+        }})
     elif method == ENUMERATE_RPC_METHOD:
         global _ENUMERATION_ACTIVE, _ENUMERATION_REQUEST_COUNT
         enumerate_started = time.monotonic()

@@ -4,26 +4,28 @@ is wireable today (resource expansion, `as` witnesses, warning-kind are later
 steps and stay loud)."""
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import RuntimeSelectedContextManager, SugarNotWritten
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from with_authority_fixture import source_file_with_preconstruction
 
 
 def _val(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        f.write("import pytest\nimport contextlib\nimport tm\n" + src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value
+    return next(source_file_with_preconstruction(Path(path)).functions()).sugar().desugar().value
 
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        f.write("import pytest\nimport contextlib\nimport tm\n" + src)
         path = f.name
-    return next(SourceFile(path_source(path)).functions())
+    return next(source_file_with_preconstruction(Path(path)).functions())
 
 
 def test_expected_matching_raise_discharges_and_consumes():
@@ -86,15 +88,12 @@ def test_suppress_non_match_propagates():
 
 
 def test_unauthenticated_manager_stays_loud():
-    # Named residual (step 4): RuntimeSelectedContextManager, not bare
-    # SugarNotWritten — census can count resource managers separately.
-    with pytest.raises(RuntimeSelectedContextManager) as ei:
+    # Preserve the exact prereq-2 runtime-selected resolution gap.
+    with pytest.raises(SugarNotWritten) as ei:
         _fn("def A(z):\n    with open(z):\n        pass\n    return z\n").sugar()
     assert isinstance(ei.value, SugarNotWritten)
-    assert (
-        "unauthenticated context manager — exit suppression runtime-selected"
-        in ei.value.observed
-    )
+    assert type(ei.value).__name__ == "ContextManagerResolutionConstructionGap"
+    assert ei.value.kind == "runtime-selected"
 
 
 def test_as_exception_info_completes_when_effect_matches():

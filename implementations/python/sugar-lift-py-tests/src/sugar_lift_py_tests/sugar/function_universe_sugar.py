@@ -253,3 +253,37 @@ class FunctionUniverseSugar(Sugar):
                 UniverseValue(name=self.name, formals=self.formals, record=record)
             )
         )
+
+    def context_manager_edges(self) -> tuple:
+        """Project already-constructed CM edges without re-entering the tree."""
+        from dataclasses import fields, is_dataclass
+
+        edges = []
+        stack = list(reversed(self.statements))
+        seen = set()
+        while stack:
+            sugar = stack.pop()
+            marker = id(sugar)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            edge = getattr(sugar, "context_manager_edge", None)
+            if edge is not None:
+                edges.append(edge)
+            if not is_dataclass(sugar):
+                continue
+            for field in reversed(fields(sugar)):
+                if field.name in {
+                    "site",
+                    "contract_ref",
+                    "context_manager_edge",
+                }:
+                    continue
+                value = getattr(sugar, field.name)
+                if isinstance(value, Sugar):
+                    stack.append(value)
+                elif isinstance(value, tuple):
+                    stack.extend(
+                        reversed(tuple(item for item in value if isinstance(item, Sugar)))
+                    )
+        return tuple(edges)

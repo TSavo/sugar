@@ -500,6 +500,7 @@ impl Kit {
     pub fn bind_contract_refs(
         &self,
         table: &Value,
+        legacy_membrane_refs: &[Value],
     ) -> Result<String, crate::kit_path::LiftPluginKitError> {
         let catalog_cid = table
             .get("catalogCid")
@@ -521,7 +522,10 @@ impl Kit {
             .connection
             .clone()
             .with_method("sugar.plugin.bind_contract_refs")
-            .request(table)?;
+            .request(&serde_json::json!({
+                "contractRefs": table,
+                "legacyMembraneRefs": legacy_membrane_refs,
+            }))?;
         let acknowledged = response
             .get("tableCid")
             .and_then(Value::as_str)

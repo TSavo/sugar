@@ -196,6 +196,7 @@ fn validate_cm_preconstruction_sequence(sequence: &str) -> Result<(), String> {
     };
     let declarations = position("sugar.enumerate:contract-declarations")?;
     let demands = position("sugar.enumerate:contract-demands")?;
+    let legacy = position("sugar.enumerate:legacy-membrane-tokens")?;
     let bind = position("sugar.plugin.bind_contract_refs")?;
     let first_semantic = events
         .iter()
@@ -203,9 +204,10 @@ fn validate_cm_preconstruction_sequence(sequence: &str) -> Result<(), String> {
             event.starts_with("sugar.enumerate:")
                 && !event.ends_with(":contract-declarations")
                 && !event.ends_with(":contract-demands")
+                && !event.ends_with(":legacy-membrane-tokens")
         })
         .ok_or_else(|| format!("missing semantic enumeration; events={events:?}"))?;
-    if declarations < demands && demands < bind && bind < first_semantic {
+    if declarations < demands && demands < legacy && legacy < bind && bind < first_semantic {
         Ok(())
     } else {
         Err(format!("invalid CM preconstruction order: {events:?}"))
@@ -217,6 +219,7 @@ fn phase_order_detector_rejects_bind_after_first_semantic_enumeration() {
     let planted = concat!(
         "sugar.enumerate:contract-declarations\n",
         "sugar.enumerate:contract-demands\n",
+        "sugar.enumerate:legacy-membrane-tokens\n",
         "sugar.enumerate:source_files\n",
         "sugar.plugin.bind_contract_refs\n",
     );

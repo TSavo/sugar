@@ -35,6 +35,8 @@ class WithResourceSugar(Sugar):
 
     body: tuple
     disposition: object
+    contract_ref: object | None = None
+    context_manager_edge: object | None = None
     enter_slot_id: str | None = None
     site: object = dataclass_field(compare=False, default=None)
 

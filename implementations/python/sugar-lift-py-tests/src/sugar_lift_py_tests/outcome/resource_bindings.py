@@ -20,13 +20,13 @@ class ManagerBinding:
 
     def to_facts(self, site=None) -> tuple:
         from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.ir import atomic, eq, str_const
+        from sugar_lift_py_tests.ir import ctor, eq, str_const
 
         slot = str_const(self.slot_id)
         term = self.manager_value.to_term(owner="ManagerBinding")
         return (
             InvValue(
-                eq(atomic("manager_slot_value", [slot]), term),
+                eq(ctor("manager_slot_value", [slot]), term),
                 site=site,
             ),
         )
@@ -41,13 +41,13 @@ class EnterResultBinding:
 
     def to_facts(self, site=None) -> tuple:
         from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.ir import atomic, eq, str_const
+        from sugar_lift_py_tests.ir import ctor, eq, str_const
 
         slot = str_const(self.slot_id)
         term = self.enter_value.to_term(owner="EnterResultBinding")
         return (
             InvValue(
-                eq(atomic("enter_result_value", [slot]), term),
+                eq(ctor("enter_result_value", [slot]), term),
                 site=site,
             ),
         )
@@ -94,7 +94,7 @@ class ExitFaceBinding:
 
     def to_facts(self, site=None, guard=None) -> tuple:
         from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
+        from sugar_lift_py_tests.ir import ctor, eq, str_const
         from sugar_lift_py_tests.outcome.exit_set import true_guard
 
         face = str_const(self.face_id)
@@ -105,9 +105,9 @@ class ExitFaceBinding:
 
         if self.kind == "completed":
             rows = (
-                eq(atomic("exit_type", [face]), none),
-                eq(atomic("exit_value", [face]), none),
-                eq(atomic("exit_traceback", [face]), none),
+                eq(ctor("exit_type", [face]), none),
+                eq(ctor("exit_value", [face]), none),
+                eq(ctor("exit_traceback", [face]), none),
             )
         elif self.kind == "raised":
             type_term = (
@@ -120,15 +120,15 @@ class ExitFaceBinding:
                 [str_const(self.occurrence or "unknown-raise")],
             )
             rows = (
-                eq(atomic("exit_type", [face]), type_term),
-                eq(atomic("exit_value", [face]), value_term),
-                eq(atomic("exit_traceback", [face]), open_tb),
+                eq(ctor("exit_type", [face]), type_term),
+                eq(ctor("exit_value", [face]), value_term),
+                eq(ctor("exit_traceback", [face]), open_tb),
             )
         else:
             rows = (
-                eq(atomic("exit_type", [face]), open_type),
-                eq(atomic("exit_value", [face]), open_val),
-                eq(atomic("exit_traceback", [face]), open_tb),
+                eq(ctor("exit_type", [face]), open_type),
+                eq(ctor("exit_value", [face]), open_val),
+                eq(ctor("exit_traceback", [face]), open_tb),
             )
 
         facts = tuple(InvValue(row, site=site) for row in rows)
