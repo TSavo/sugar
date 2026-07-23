@@ -48,6 +48,7 @@ class SourceCallPreconstructionGapV1:
         "definition-missing",
         "source-body-gap",
         "opaque-call-target",
+        "expansion-bound",
         "non-manager-result",
         "call-binding",
         "dynamic-call-target",

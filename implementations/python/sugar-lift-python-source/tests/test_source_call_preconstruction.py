@@ -240,6 +240,37 @@ def test_unselected_definition_gap_does_not_expand_into_selected_callee(
     )
 
 
+def test_selected_definition_expansion_bound_stays_typed_loud(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sugar_lift_python_source.manager_construction as manager_construction
+
+    distribution = _distribution(
+        tmp_path,
+        "class ArbitraryLarge:\n"
+        "    def first(self):\n        return 1\n"
+        "    def second(self):\n        return 2\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged.helpers import ArbitraryLarge\nArbitraryLarge()\n",
+    )
+    monkeypatch.setattr(manager_construction, "_SOURCE_DEFINITION_NODE_LIMIT", 4)
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+        artifact_graph_cache={},
+        source_frame_cache={},
+    )
+
+    row = next(iter(context.source_call_resolutions.values()))
+    assert isinstance(row, SourceCallPreconstructionGapV1)
+    assert row.kind == "expansion-bound"
+
+
 def test_source_visible_function_with_opaque_child_stays_typed_loud(
     tmp_path: Path,
 ) -> None:

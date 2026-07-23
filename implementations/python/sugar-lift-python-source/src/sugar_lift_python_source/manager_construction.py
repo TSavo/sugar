@@ -26,6 +26,9 @@ from .canonical import cid_of_json
 from .dependency_artifact import DependencyArtifactGraph, ResolvedPythonObjectV1
 
 
+_SOURCE_DEFINITION_NODE_LIMIT = 4096
+
+
 @dataclass(frozen=True)
 class ConstructedCallActualV1:
     node: Node = field(compare=False)
@@ -97,6 +100,7 @@ class ManagerConstructionGapV1:
         "artifact-mismatch",
         "definition-missing",
         "opaque-call-target",
+        "expansion-bound",
         "non-manager-result",
         "call-binding",
     ]
@@ -331,6 +335,13 @@ def _construct_source_target_frame(definition_graph, target):
             result = ("opaque-call-target", "recursive source call graph")
             definition_graph.gaps[item.name] = result
             return ("gap", *result)
+        if _definition_exceeds_expansion_bound(item):
+            result = (
+                "expansion-bound",
+                f"definition exceeds {_SOURCE_DEFINITION_NODE_LIMIT} constructed nodes",
+            )
+            definition_graph.gaps[item.name] = result
+            return ("gap", *result)
         active = active | {item.name}
         if isinstance(item, ClassDef):
             local_bases = []
@@ -364,6 +375,13 @@ def _construct_source_target_frame(definition_graph, target):
         return frame
 
     return ensure(target, frozenset())
+
+
+def _definition_exceeds_expansion_bound(definition: Node) -> bool:
+    for count, _node in enumerate(definition.walk(), start=1):
+        if count > _SOURCE_DEFINITION_NODE_LIMIT:
+            return True
+    return False
 
 
 def _remember_frame_result(frame_cache, resolved_cid, result):
