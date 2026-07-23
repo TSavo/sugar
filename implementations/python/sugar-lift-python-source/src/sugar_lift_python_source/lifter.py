@@ -2,16 +2,41 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .canonical import cid_of_json
+from .canonical import blake3_512_of, cid_of_json
 from .value_pins import (
     ValuePin,
     mutable_global_pin_opacity_entry,
     scan_module_value_pins,
 )
+
+
+def _typed_tree():
+    """Lazy typed-tree import — lifter is still dual-body residual overall."""
+    tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+    if tree_src.is_dir() and str(tree_src) not in sys.path:
+        sys.path.insert(0, str(tree_src))
+    from sugar_source_tree.backend import BackendCouldNotParse
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        FunctionDef,
+        Node,
+    )
+    from sugar_source_tree.tree import SourceFile
+
+    return (
+        SourceFile,
+        BackendCouldNotParse,
+        FunctionDef,
+        AsyncFunctionDef,
+        ClassDef,
+        Node,
+    )
 from .ir import (
     Json,
     bool_const,
@@ -258,14 +283,17 @@ def lift_source(source: str, source_path: str) -> LiftResult:
         mutable_global_pin_opacity_entry(pin, source_path=source_path)
         for pin in pin_scan.mutable_global_pins
     )
-    class_shapes = _lift_class_shapes(tree, module_path)
-    collector = _DefinitionCollector(module_path)
-    collector.visit(tree)
+    class_shapes = _lift_class_shapes(
+        tree, module_path, source=source, source_path=source_path
+    )
+    definitions = _collect_definitions(
+        source, source_path, module_path, tree
+    )
     receiver_contexts = _receiver_contexts_by_method(class_shapes)
 
     body_terms: list[Json] = []
     contracts: list[Json] = []
-    for info in collector.definitions:
+    for info in definitions:
         contract = _lift_function(
             info,
             source_path,
@@ -343,67 +371,220 @@ def lift_paths(workspace_root: str, source_paths: Iterable[str]) -> LiftResult:
     return result
 
 
-class _DefinitionCollector(ast.NodeVisitor):
-    def __init__(self, module_path: str):
-        self.module_path = module_path
-        self.scope: list[tuple[str, str]] = []
-        self.definitions: list[_FunctionInfo] = []
+def _dual_function_index(
+    tree: ast.Module,
+) -> dict[tuple[int, str], ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Index residual dual-body function nodes by (lineno, name) for body lifting.
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> Any:
-        self.scope.append(("class", node.name))
-        for stmt in node.body:
-            self.visit(stmt)
-        self.scope.pop()
+    Manual stack — not ``ast.NodeVisitor`` / ``ast.walk``. Semantic authority for
+    *which* functions participate is the typed walk; this index only pairs the
+    dual-body payload residual body emitters still consume.
+    """
+    index: dict[tuple[int, str], ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            index[(int(node.lineno), node.name)] = node
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+    return index
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
-        self._record_function(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
-        self._record_function(node)
+def _dual_class_index(tree: ast.Module) -> dict[tuple[int, str], ast.ClassDef]:
+    """Index residual dual-body class nodes by (lineno, name) for shape building."""
+    index: dict[tuple[int, str], ast.ClassDef] = {}
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.ClassDef):
+            index[(int(node.lineno), node.name)] = node
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+    return index
 
-    def _record_function(self, node: ast.AST) -> None:
-        assert isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        qualname = _qualname(self.scope, node.name)
-        self.definitions.append(
-            _FunctionInfo(
-                node=node,
-                qualname=qualname,
-                fn_name=f"{self.module_path}.{qualname}",
-            )
+
+def _collect_definitions(
+    source: str,
+    source_path: str,
+    module_path: str,
+    tree: ast.Module,
+) -> list[_FunctionInfo]:
+    """Discover functions via SourceFile / typed Nodes.
+
+    SourceFile is the parse door for discovery. Scope / qualname rules match the
+    retired ``_DefinitionCollector`` NodeVisitor: enter class bodies with class
+    scope; record FunctionDef / AsyncFunctionDef and do NOT enter their bodies
+    (nested functions are not separate contracts here). Residual dual-body AST
+    nodes are paired by (lineno, name) until body emission drains.
+    """
+    (
+        SourceFile,
+        BackendCouldNotParse,
+        FunctionDef,
+        AsyncFunctionDef,
+        ClassDef,
+        Node,
+    ) = _typed_tree()
+    dual = _dual_function_index(tree)
+    try:
+        source_file = SourceFile(
+            (source, source_path, blake3_512_of(source.encode("utf-8")))
         )
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+        return _collect_definitions_dual(tree, module_path)
 
+    definitions: list[_FunctionInfo] = []
 
-class _ClassCollector(ast.NodeVisitor):
-    def __init__(self, module_path: str):
-        self.module_path = module_path
-        self.scope: list[tuple[str, str]] = []
-        self.classes: list[_ClassInfo] = []
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> Any:
-        qualname = _qualname(self.scope, node.name)
-        self.classes.append(
-            _ClassInfo(
-                node=node,
-                qualname=qualname,
-                class_name=f"{self.module_path}.{qualname}",
+    def visit(node: Node, scope: list[tuple[str, str]]) -> None:
+        if isinstance(node, ClassDef):
+            nested = scope + [("class", node.name)]
+            for stmt in node.body:
+                visit(stmt, nested)
+            return
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+            qualname = _qualname(scope, node.name)
+            lineno = int(node.line_col_span().start_line)
+            dual_node = dual.get((lineno, node.name))
+            if dual_node is None:
+                raise RuntimeError(
+                    "typed/dual function pair missing for "
+                    f"{node.name!r} at line {lineno} in {source_path}"
+                )
+            definitions.append(
+                _FunctionInfo(
+                    node=dual_node,
+                    qualname=qualname,
+                    fn_name=f"{module_path}.{qualname}",
+                )
             )
+            return
+        for _, _, child in node.children():
+            visit(child, scope)
+
+    visit(source_file.root, [])
+    return definitions
+
+
+def _collect_definitions_dual(
+    tree: ast.Module, module_path: str
+) -> list[_FunctionInfo]:
+    """Residual dual-body discovery when SourceFile construction refuses."""
+    definitions: list[_FunctionInfo] = []
+
+    def visit(node: ast.AST, scope: list[tuple[str, str]]) -> None:
+        if isinstance(node, ast.ClassDef):
+            nested = scope + [("class", node.name)]
+            for stmt in node.body:
+                visit(stmt, nested)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            qualname = _qualname(scope, node.name)
+            definitions.append(
+                _FunctionInfo(
+                    node=node,
+                    qualname=qualname,
+                    fn_name=f"{module_path}.{qualname}",
+                )
+            )
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(tree, [])
+    return definitions
+
+
+def _collect_classes(
+    source: str,
+    source_path: str,
+    module_path: str,
+    tree: ast.Module,
+) -> list[_ClassInfo]:
+    """Discover classes via SourceFile / typed Nodes.
+
+    Scope rules match the retired ``_ClassCollector`` NodeVisitor: record every
+    ClassDef; enter class bodies with class scope; enter function bodies with
+    function scope so nested classes under ``f.<locals>`` keep qualnames. Dual
+    ClassDef payload pairs by (lineno, name) for residual shape scanners.
+    """
+    (
+        SourceFile,
+        BackendCouldNotParse,
+        FunctionDef,
+        AsyncFunctionDef,
+        ClassDef,
+        Node,
+    ) = _typed_tree()
+    dual = _dual_class_index(tree)
+    try:
+        source_file = SourceFile(
+            (source, source_path, blake3_512_of(source.encode("utf-8")))
         )
-        self.scope.append(("class", node.name))
-        for stmt in node.body:
-            self.visit(stmt)
-        self.scope.pop()
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+        return _collect_classes_dual(tree, module_path)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
-        self.scope.append(("function", node.name))
-        for stmt in node.body:
-            self.visit(stmt)
-        self.scope.pop()
+    classes: list[_ClassInfo] = []
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
-        self.scope.append(("function", node.name))
-        for stmt in node.body:
-            self.visit(stmt)
-        self.scope.pop()
+    def visit(node: Node, scope: list[tuple[str, str]]) -> None:
+        if isinstance(node, ClassDef):
+            qualname = _qualname(scope, node.name)
+            lineno = int(node.line_col_span().start_line)
+            dual_node = dual.get((lineno, node.name))
+            if dual_node is None:
+                raise RuntimeError(
+                    "typed/dual class pair missing for "
+                    f"{node.name!r} at line {lineno} in {source_path}"
+                )
+            classes.append(
+                _ClassInfo(
+                    node=dual_node,
+                    qualname=qualname,
+                    class_name=f"{module_path}.{qualname}",
+                )
+            )
+            nested = scope + [("class", node.name)]
+            for stmt in node.body:
+                visit(stmt, nested)
+            return
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+            nested = scope + [("function", node.name)]
+            for stmt in node.body:
+                visit(stmt, nested)
+            return
+        for _, _, child in node.children():
+            visit(child, scope)
+
+    visit(source_file.root, [])
+    return classes
+
+
+def _collect_classes_dual(tree: ast.Module, module_path: str) -> list[_ClassInfo]:
+    """Residual dual-body class discovery when SourceFile construction refuses."""
+    classes: list[_ClassInfo] = []
+
+    def visit(node: ast.AST, scope: list[tuple[str, str]]) -> None:
+        if isinstance(node, ast.ClassDef):
+            qualname = _qualname(scope, node.name)
+            classes.append(
+                _ClassInfo(
+                    node=node,
+                    qualname=qualname,
+                    class_name=f"{module_path}.{qualname}",
+                )
+            )
+            nested = scope + [("class", node.name)]
+            for stmt in node.body:
+                visit(stmt, nested)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            nested = scope + [("function", node.name)]
+            for stmt in node.body:
+                visit(stmt, nested)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(tree, [])
+    return classes
 
 
 class _MethodAttributeScanner(ast.NodeVisitor):
@@ -2079,14 +2260,19 @@ def _lift_function(
         return None
 
 
-def _lift_class_shapes(tree: ast.Module, module_path: str) -> list[Json]:
-    collector = _ClassCollector(module_path)
-    collector.visit(tree)
+def _lift_class_shapes(
+    tree: ast.Module,
+    module_path: str,
+    *,
+    source: str,
+    source_path: str,
+) -> list[Json]:
+    classes = _collect_classes(source, source_path, module_path, tree)
     shapes: list[Json] = []
     shapes_by_name: dict[str, Json] = {}
     setattr_override_by_name: dict[str, bool] = {}
 
-    for info in collector.classes:
+    for info in classes:
         shape, setattr_override_in_mro = _build_class_shape(
             info,
             shapes_by_name=shapes_by_name,

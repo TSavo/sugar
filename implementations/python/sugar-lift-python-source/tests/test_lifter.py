@@ -26,6 +26,10 @@ from sugar_lift_python_source.lifter import (
     _EffectSet,
     _Emitter,
     _UnsupportedSyntax,
+    _collect_classes,
+    _collect_classes_dual,
+    _collect_definitions,
+    _collect_definitions_dual,
     lift_source,
 )
 from sugar_lift_python_source.rpc import dispatch, initialize_result
@@ -6657,3 +6661,59 @@ def test_kit_declaration_returns_python_source_lift_surface() -> None:
         },
     ]
     assert result["residueCategories"] == []
+
+
+def test_definition_and_class_collectors_typed_dual_twins() -> None:
+    """Typed SourceFile discovery must match residual dual-body scope rules.
+
+    Scope twins the retired NodeVisitor collectors: class bodies prepend the
+    class name; nested classes under functions take ``f.<locals>``; nested
+    functions inside functions are not separate definitions.
+    """
+    source = """\
+def outer():
+    def nested():
+        return 1
+    class Inner:
+        def method(self):
+            return 2
+    return nested
+
+class Outer:
+    def method(self):
+        return 3
+    class Nested:
+        async def amethod(self):
+            return 4
+
+async def top_async():
+    pass
+"""
+    path = "collector_twins.py"
+    module_path = "collector_twins"
+    tree = ast.parse(source, filename=path)
+
+    typed_defs = _collect_definitions(source, path, module_path, tree)
+    dual_defs = _collect_definitions_dual(tree, module_path)
+    assert [(d.qualname, d.fn_name, d.node.name, d.node.lineno) for d in typed_defs] == [
+        (d.qualname, d.fn_name, d.node.name, d.node.lineno) for d in dual_defs
+    ]
+    assert [d.qualname for d in typed_defs] == [
+        "outer",
+        "Outer.method",
+        "Outer.Nested.amethod",
+        "top_async",
+    ]
+
+    typed_classes = _collect_classes(source, path, module_path, tree)
+    dual_classes = _collect_classes_dual(tree, module_path)
+    assert [
+        (c.qualname, c.class_name, c.node.name, c.node.lineno) for c in typed_classes
+    ] == [
+        (c.qualname, c.class_name, c.node.name, c.node.lineno) for c in dual_classes
+    ]
+    assert [c.qualname for c in typed_classes] == [
+        "outer.<locals>.Inner",
+        "Outer",
+        "Outer.Nested",
+    ]
