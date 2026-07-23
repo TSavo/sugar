@@ -238,9 +238,11 @@ class Interpreter:
     def __init__(self, graph: ModuleGraph):
         self.index = Index(graph)
         self.summaries: dict[tuple[str, tuple[tuple[Atom, ...], ...]], AbstractValue] = {}
+        self.summary_revision = 0
         self.active: set[tuple[str, tuple[tuple[Atom, ...], ...]]] = set()
         self.tables: dict[tuple[str, str], AbstractValue] = {}
         self._initialize_modules()
+        self._structural_admission_roots = self._derive_structural_admission_roots()
 
     def _initialize_modules(self) -> None:
         # Module values and tables form a finite monotone fixed point.
@@ -279,18 +281,18 @@ class Interpreter:
         params = [*fn.node.args.posonlyargs, *fn.node.args.args, *fn.node.args.kwonlyargs]
         env = dict(self.index.module_values[fn.module])
         for i, param in enumerate(params):
-            if param.arg == "self" and fn.owner:
-                env[param.arg] = AbstractValue(frozenset({Atom("ClassObject", fn.owner, self.index.classes[fn.owner].site, chain)}))
-            elif param.arg == "cls" and fn.owner:
+            if i == 0 and fn.owner:
                 env[param.arg] = AbstractValue(frozenset({Atom("ClassObject", fn.owner, self.index.classes[fn.owner].site, chain)}))
             elif i < len(args):
                 env[param.arg] = args[i].stepped(f"argument -> {fid}.{param.arg}")
-            elif param.arg not in {"self", "cls"}:
+            else:
                 env[param.arg] = ORDINARY
         result = self.exec_block(fn.module, fn.node.body, env, chain + (fid,), sink_slice=sink_slice)
         previous = self.summaries.get(key, AbstractValue())
         result = previous.join(result)
         self.summaries[key] = result
+        if result != previous:
+            self.summary_revision += 1
         self.active.remove(key)
         return result.stepped(f"return <- {fid}", rpc=bool(result.entries))
 
@@ -316,11 +318,7 @@ class Interpreter:
                 targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
                 for target in targets:
                     if isinstance(target, ast.Name):
-                        if target.id == "targetSymbol":
-                            value = value.with_atom(Atom("SourceSpelling", origin=self.index.site(module, target), chain=chain + ("targetSymbol seed",)))
                         env[target.id] = env.get(target.id, AbstractValue()).join(value)
-                    elif isinstance(target, ast.Attribute) and target.attr == "targetSymbol":
-                        env["targetSymbol"] = value.with_atom(Atom("SourceSpelling", origin=self.index.site(module, target), chain=chain + ("targetSymbol seed",)))
             elif isinstance(stmt, ast.Return):
                 if stmt.value is not None:
                     returns = returns.join(self.eval_expr(module, stmt.value, env, chain, sink_slice=sink_slice))
@@ -342,7 +340,7 @@ class Interpreter:
         return returns
 
     def _isinstance_refinement(self, module: str, expr: ast.expr, env: Mapping[str, AbstractValue], chain: tuple[str, ...]) -> tuple[str, AbstractValue] | None:
-        if not (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "isinstance" and len(expr.args) >= 2):
+        if not (isinstance(expr, ast.Call) and len(expr.args) >= 2):
             return None
         if not isinstance(expr.args[0], ast.Name):
             return None
@@ -392,16 +390,11 @@ class Interpreter:
         if isinstance(expr, ast.Attribute):
             return self.eval_expr(module, expr.value, env, chain, sink_slice=sink_slice)
         if isinstance(expr, ast.Call):
-            if isinstance(expr.func, ast.Name) and expr.func.id in {"getattr", "globals", "locals", "eval", "exec"}:
-                if sink_slice:
-                    return AbstractValue(frozenset({Atom("UnknownOnAdmissionSlice", origin=site, chain=chain + (f"reflective call at {site.path}:{site.line}",))}))
-                return ORDINARY
-            if isinstance(expr.func, ast.Name) and expr.func.id == "isinstance":
-                return ORDINARY
-            if isinstance(expr.func, ast.Attribute) and expr.func.attr in {"get", "lookup"}:
+            if isinstance(expr.func, ast.Attribute) and expr.args:
                 table = self.eval_expr(module, expr.func.value, env, chain, sink_slice=sink_slice)
-                key = self.eval_expr(module, expr.args[0], env, chain, sink_slice=sink_slice) if expr.args else ORDINARY
-                return self._lookup(table, key, f"lookup at {site.path}:{site.line}")
+                if table.entries or table.has("UnknownOnAdmissionSlice"):
+                    key = self.eval_expr(module, expr.args[0], env, chain, sink_slice=sink_slice)
+                    return self._lookup(table, key, f"selection at {site.path}:{site.line}")
             callee = self.index.resolve(module, expr.func)
             if callee is None and isinstance(expr.func, ast.Attribute):
                 receiver = self.eval_expr(module, expr.func.value, env, chain, sink_slice=sink_slice)
@@ -415,7 +408,12 @@ class Interpreter:
             if callee in self.index.classes:
                 atom = Atom("Instance", callee, self.index.classes[callee].site, chain + (f"construct {callee}",))
                 value = AbstractValue(frozenset({atom}))
-                if self.index.is_sugar(callee):
+                if self.index.is_sugar(callee) or any(
+                    arg.has("AdmissionLookup")
+                    or arg.has("LookupConstructed")
+                    or arg.has("UnknownOnAdmissionSlice")
+                    for arg in args
+                ):
                     value = value.with_atom(Atom("SuccessSugar", callee, site, chain + (f"success {callee}",)))
                     for arg in args:
                         value = value.join(arg)
@@ -459,9 +457,8 @@ class Interpreter:
         if table.entries:
             result = result.stepped(label, rpc=rpc)
             result = result.with_atom(Atom("AdmissionLookup", chain=(label,), rpc=rpc))
-            result = result.join(AbstractValue(frozenset(a.step(label, rpc=rpc) for a in key.atoms if a.kind == "SourceSpelling")))
         elif table.has("UnknownOnAdmissionSlice"):
-            result = table.join(AbstractValue(frozenset(a.step(label) for a in key.atoms if a.kind == "SourceSpelling")))
+            result = table.with_atom(Atom("AdmissionLookup", chain=(label,), rpc=rpc))
         return result
 
     def authority_rows(self) -> tuple[ReportRow, ...]:
@@ -470,8 +467,8 @@ class Interpreter:
         for sink in sorted(sinks, key=lambda f: f.identity):
             params = [*sink.node.args.posonlyargs, *sink.node.args.args, *sink.node.args.kwonlyargs]
             args = []
-            for param in params:
-                if param.arg in {"self", "cls"}:
+            for index, param in enumerate(params):
+                if index == 0 and sink.owner:
                     args.append(ORDINARY)
                     continue
                 args.append(self._annotation_value(sink.module, param.annotation, sink.site))
@@ -519,12 +516,7 @@ class Interpreter:
     def enrollment_rows(self) -> tuple[ReportRow, ...]:
         rows = []
         for fn in sorted(self.index.functions.values(), key=lambda f: f.identity):
-            seeded = any(
-                (isinstance(node, ast.Name) and node.id == "targetSymbol")
-                or (isinstance(node, ast.Attribute) and node.attr == "targetSymbol")
-                for node in ast.walk(fn.node)
-            )
-            if not seeded and not self._has_structural_admission_lookup(fn):
+            if not self._has_structural_admission_lookup(fn):
                 continue
             params = [*fn.node.args.posonlyargs, *fn.node.args.args, *fn.node.args.kwonlyargs]
             args = tuple(ORDINARY for _ in params)
@@ -532,13 +524,12 @@ class Interpreter:
             if not result.has("SuccessSugar"):
                 continue
             constructed = [a for a in result.atoms if a.kind == "LookupConstructed"]
-            spelling = [a for a in result.atoms if a.kind == "SourceSpelling"]
             admission_lookup = [a for a in result.atoms if a.kind == "AdmissionLookup"]
-            if constructed and (spelling or admission_lookup):
+            if constructed and admission_lookup:
                 origin = sorted(constructed, key=repr)[0]
-                reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in constructed + spelling + admission_lookup) else "consumer-spelling-enrollment"
+                reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in constructed + admission_lookup) else "consumer-spelling-enrollment"
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, origin, reason))
-            elif result.has("UnknownOnAdmissionSlice") and (spelling or admission_lookup):
+            elif result.has("UnknownOnAdmissionSlice") and admission_lookup:
                 atom = sorted((a for a in result.atoms if a.kind == "UnknownOnAdmissionSlice"), key=repr)[0]
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, atom, "opaque-consumer-enrollment-flow"))
         if not rows:
@@ -547,22 +538,53 @@ class Interpreter:
 
     def _has_structural_admission_lookup(self, fn: FunctionDef) -> bool:
         """Find a lookup and successful Sugar sink without identifier policy."""
-        has_lookup = any(
-            isinstance(node, ast.Subscript)
-            or (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"get", "lookup"}
+        return fn.identity in self._structural_admission_roots
+
+    def _derive_structural_admission_roots(self) -> frozenset[str]:
+        """Propagate lookup and constructed-sink facts over the call graph."""
+        edges: dict[str, set[str]] = {}
+        has_lookup: dict[str, bool] = {}
+        has_constructed_sink: dict[str, bool] = {}
+        for identity, fn in self.index.functions.items():
+            nodes = tuple(ast.walk(fn.node))
+            edges[identity] = {
+                callee
+                for node in nodes
+                if isinstance(node, ast.Call)
+                and (callee := self.index.resolve(fn.module, node.func)) in self.index.functions
+            }
+            has_lookup[identity] = any(
+                isinstance(node, ast.Subscript)
+                or (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and bool(node.args)
+                )
+                for node in nodes
             )
-            for node in ast.walk(fn.node)
-        )
-        if not has_lookup:
-            return False
-        return any(
-            isinstance(node, ast.Call)
-            and (callee := self.index.resolve(fn.module, node.func)) in self.index.classes
-            and self.index.is_sugar(callee)
-            for node in ast.walk(fn.node)
+            has_constructed_sink[identity] = any(
+                isinstance(node, ast.Call)
+                and (callee := self.index.resolve(fn.module, node.func)) in self.index.classes
+                and self.index.is_sugar(callee)
+                for node in nodes
+            )
+
+        changed = True
+        while changed:
+            changed = False
+            for identity in sorted(edges):
+                lookup = has_lookup[identity] or any(has_lookup[callee] for callee in edges[identity])
+                sink = has_constructed_sink[identity] or any(
+                    has_constructed_sink[callee] for callee in edges[identity]
+                )
+                if lookup != has_lookup[identity] or sink != has_constructed_sink[identity]:
+                    has_lookup[identity] = lookup
+                    has_constructed_sink[identity] = sink
+                    changed = True
+        return frozenset(
+            identity
+            for identity in edges
+            if has_lookup[identity] and has_constructed_sink[identity]
         )
 
     def _fixed_call(self, fid: str, args: tuple[AbstractValue, ...], chain: tuple[str, ...]) -> AbstractValue:
@@ -570,9 +592,9 @@ class Interpreter:
         result = AbstractValue()
         limit = max(4, len(self.index.functions) * 2 + len(self.index.classes))
         for _ in range(limit):
-            before = dict(self.summaries)
+            before = self.summary_revision
             result = result.join(self.call(fid, args, chain, sink_slice=True))
-            if self.summaries == before:
+            if self.summary_revision == before:
                 return result
         raise AssertionError("With-v2 abstract interpreter did not reach its finite fixed point")
 
@@ -592,7 +614,7 @@ class Interpreter:
                 calls = [ret.value] if isinstance(ret.value, ast.Call) else []
                 for call in calls:
                     callee = self.index.resolve(fn.module, call.func)
-                    if callee in self.index.classes and not self.index.is_sugar(callee):
+                    if callee in self.index.classes:
                         builders.add(fid)
 
         tables: dict[tuple[str, str], Site] = {}
@@ -603,7 +625,7 @@ class Interpreter:
                 semantic = False
                 for value in node.value.values:
                     resolved = self.index.resolve(module, value)
-                    if resolved in builders or (resolved in self.index.classes and not self.index.is_sugar(resolved)):
+                    if resolved in builders or resolved in self.index.classes:
                         semantic = True
                 if semantic:
                     tables[(module, node.targets[0].id)] = self.index.site(module, node)
@@ -626,7 +648,7 @@ class Interpreter:
                 if key in tables:
                     aliases[name] = key
             for call in (node for node in ast.walk(fn.node) if isinstance(node, ast.Call)):
-                if not (isinstance(call.func, ast.Attribute) and call.func.attr in {"get", "lookup"} and isinstance(call.func.value, ast.Name)):
+                if not (isinstance(call.func, ast.Attribute) and call.args and isinstance(call.func.value, ast.Name)):
                     continue
                 table_key = aliases.get(call.func.value.id)
                 if table_key is None:
@@ -637,9 +659,8 @@ class Interpreter:
                 key_expr = call.args[0] if call.args else None
                 if key_expr is None or not _key_came_from_spelling_selection(fn.node, key_expr):
                     continue
-                # Precise SourceSpelling flows are handled by the fixed-point
-                # interpreter above. The runtime-AST producer makes this key
-                # opaque, but the prior selector call and returned semantic
+                # The runtime-AST producer makes this key opaque, but the
+                # prior selector call and returned semantic
                 # result retain the complete structural admission path.
                 origin = self.index.site(fn.module, key_expr or call)
                 atom = Atom(
@@ -690,7 +711,7 @@ def _name_reaches_return(function: ast.AST, seed: str) -> bool:
                         if isinstance(target, ast.Name) and target.id not in tainted:
                             tainted.add(target.id)
                             changed = True
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "append" and isinstance(node.func.value, ast.Name):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
                 if any(isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load) and name.id in tainted for arg in node.args for name in ast.walk(arg)):
                     if node.func.value.id not in tainted:
                         tainted.add(node.func.value.id)
