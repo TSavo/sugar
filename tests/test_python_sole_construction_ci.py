@@ -22,6 +22,9 @@ AXIS_COMMANDS = {
     "R_finite_unfold_compact_gaps = 0": ("finite_unfold_compact_projection_law.py"),
     "R_source_via_execution = 0": "source_via_execution_law.py",
     "R_no_sugar_in_desugar = 0": "no_sugar_in_desugar_law.py",
+    # Whole-kit construction currency (adapters only may name stdlib ast).
+    # Live R includes dual-body sugar-lift-python-source residual — exit 1 until 0.
+    "R_construction_side_doors = 0": "construction_side_door_law.py",
 }
 
 
