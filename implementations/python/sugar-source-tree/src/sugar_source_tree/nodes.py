@@ -5269,12 +5269,112 @@ class Call(Expression):
             (kw.arg if kw.arg is not None else "**", kw.value.sugar())
             for kw in self.keywords
         )
+        context = self.unit.construction_context
+        source_call_frame = None
+        source_call_resolution = None
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if (
+            isinstance(context, TreeConstructionContextV1)
+            and context.source_call_frames
+        ):
+            span = self.line_col_span()
+            coordinate = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            source_call_frame = context.source_call_frames.get(coordinate)
+            source_call_resolution = context.source_call_resolutions.get(coordinate)
+        elif isinstance(context, TreeConstructionContextV1):
+            span = self.line_col_span()
+            coordinate = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            source_call_resolution = context.source_call_resolutions.get(coordinate)
+        if source_call_resolution is not None:
+            from sugar_lift_py_tests.source_call_resolution import (
+                SourceCallPreconstructionGapV1,
+                SourceCallPreconstructionRefV1,
+            )
+            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+            if isinstance(source_call_resolution, SourceCallPreconstructionGapV1):
+                return CallSiteSugar(
+                    target_name="python:unresolved-source-call",
+                    args=tuple(a.sugar() for a in self.args),
+                    site=self.fragment,
+                    keywords=keyword_sugars,
+                    contract_resolution_gap=(
+                        f"{source_call_resolution.kind}:"
+                        f"{source_call_resolution.detail}"
+                    ),
+                )
+            if not isinstance(
+                source_call_resolution, SourceCallPreconstructionRefV1
+            ):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    owner="Call._construct_sugar",
+                    observed=type(source_call_resolution).__name__,
+                    requested="closed source-call preconstruction result",
+                    fix="emit one typed source-call ref or gap at the exact use site",
+                )
+            if (
+                source_call_frame is None
+                or source_call_frame.frame_cid
+                != source_call_resolution.source_call_frame_cid
+            ):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    owner="Call._construct_sugar",
+                    observed="source-call ref/frame mismatch",
+                    requested="byte-identical prebound source frame CID",
+                    fix="re-run authenticated source-call preconstruction",
+                )
+        if source_call_frame is not None:
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+            if any(keyword.arg is None for keyword in self.keywords):
+                raise SourceCallBindingGap(
+                    "spread keyword requires typed variadic projection"
+                )
+            bound_frame = (
+                source_call_frame
+                if source_call_resolution is not None
+                else source_call_frame.bind_node_actuals(
+                    self.args,
+                    tuple(
+                        (keyword.arg, keyword.value)
+                        for keyword in self.keywords
+                        if keyword.arg is not None
+                    ),
+                )
+            )
+            return CallSiteSugar(
+                target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
+                args=tuple(a.sugar() for a in self.args),
+                site=self.fragment,
+                keywords=keyword_sugars,
+                source_call_frame=bound_frame,
+            )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
             contract_ref = None
             contract_resolution_gap = None
-            context = self.unit.construction_context
             call_refs = getattr(context, "call_contract_refs", None)
             if call_refs is not None:
                 from sugar_lift_py_tests.call_contract_resolution import (
@@ -5311,43 +5411,6 @@ class Call(Expression):
                 elif resolution is not None:
                     contract_ref = resolution
 
-            source_call_frame = None
-            from sugar_lift_py_tests.context_manager_resolution import (
-                SourceFragmentCoordinateV1,
-                TreeConstructionContextV1,
-            )
-
-            if (
-                isinstance(context, TreeConstructionContextV1)
-                and context.source_call_frames
-            ):
-                span = self.line_col_span()
-                coordinate = SourceFragmentCoordinateV1(
-                    self.unit.source_cid,
-                    span.start_line,
-                    span.start_col,
-                    span.end_line,
-                    span.end_col,
-                )
-                source_call_frame = context.source_call_frames.get(coordinate)
-                if source_call_frame is not None:
-                    from sugar_lift_py_tests.source_call_frame import (
-                        SourceCallBindingGap,
-                    )
-
-                    if any(keyword.arg is None for keyword in self.keywords):
-                        raise SourceCallBindingGap(
-                            "spread keyword requires typed variadic projection"
-                        )
-                    source_call_frame = source_call_frame.bind_node_actuals(
-                        self.args,
-                        tuple(
-                            (keyword.arg, keyword.value)
-                            for keyword in self.keywords
-                            if keyword.arg is not None
-                        ),
-                    )
-
             return CallSiteSugar(
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
@@ -5355,7 +5418,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
-                source_call_frame=source_call_frame,
+                source_call_frame=None,
             )
         if isinstance(self.func, Attribute):
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar

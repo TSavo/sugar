@@ -104,86 +104,10 @@ def construct_manager_behavior(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
 
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source_file = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
-        construction_context=context,
-    )
-    definitions = tuple(
-        item
-        for item in source_file.root.body
-        if isinstance(item, (FunctionDef, ClassDef))
-    )
-    target = next(
-        (item for item in definitions if _matches_definition(item, resolved)), None
-    )
-    if target is None:
-        return ManagerConstructionGapV1(
-            "definition-missing", resolved.cid, "resolved definition coordinate"
-        )
-
-    definition_names = {item.name for item in definitions}
-    if isinstance(target, FunctionDef):
-        opaque = tuple(
-            call.func.id
-            for call in _local_named_calls(target)
-            if call.func.id not in definition_names
-        )
-        if opaque:
-            return ManagerConstructionGapV1(
-                "opaque-call-target", resolved.cid, opaque[0]
-            )
-
-    frames: dict[str, object] = {}
-    # Prebind exact local base occurrences to already-owned class Sugars.  The
-    # ClassDef arm consumes these children through the ordinary door and seals
-    # their definition CIDs; dynamic/imported bases remain loud there.
-    reaching_classes: dict[str, ClassDef] = {}
-    for item in definitions:
-        if not isinstance(item, ClassDef):
-            continue
-        local_bases = []
-        for base in item.bases:
-            if not isinstance(base, Name) or base.id not in reaching_classes:
-                local_bases = []
-                break
-            local_bases.append(reaching_classes[base.id].sugar())
-        if local_bases and len(local_bases) == len(item.bases):
-            context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
-        reaching_classes[item.name] = item
-    for item in definitions:
-        if isinstance(item, ClassDef):
-            frames[item.name] = item.source_visible_constructor_frame()
-
-    pending = [item for item in definitions if isinstance(item, FunctionDef)]
-    while pending:
-        progressed = False
-        for function in tuple(pending):
-            local_calls = tuple(_local_named_calls(function))
-            unresolved = tuple(
-                call.func.id
-                for call in local_calls
-                if call.func.id in definition_names and call.func.id not in frames
-            )
-            if unresolved:
-                continue
-            for call in local_calls:
-                frame = frames.get(call.func.id)
-                if frame is not None:
-                    context.source_call_frames[_call_coordinate(call)] = frame
-            frames[function.name] = function.source_visible_call_frame()
-            pending.remove(function)
-            progressed = True
-        if not progressed:
-            return ManagerConstructionGapV1(
-                "opaque-call-target", resolved.cid, "recursive source call graph"
-            )
-
-    frame = frames.get(target.name)
-    if frame is None:
-        return ManagerConstructionGapV1(
-            "definition-missing", resolved.cid, "ordinary source call frame"
-        )
+    frame_result = resolve_source_visible_frame(resolved, graph=graph)
+    if isinstance(frame_result, ManagerConstructionGapV1):
+        return frame_result
+    frame, _target = frame_result
     try:
         values = frame.bind_actuals(
             tuple(item.value for item in actuals),
@@ -264,6 +188,113 @@ def construct_manager_behavior(
         factory_prefix,
         prefix_cids,
     )
+
+
+def resolve_source_visible_frame(
+    resolved: ResolvedPythonObjectV1,
+    *,
+    graph: DependencyArtifactGraph,
+) -> tuple[object, Node] | ManagerConstructionGapV1:
+    """Resolve one authenticated definition into the ordinary source frame.
+
+    This is orchestration over typed Nodes.  Function/Class bodies still
+    construct only through their existing ``source_visible_*_frame`` arms.
+    """
+    if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
+        return ManagerConstructionGapV1(
+            "artifact-mismatch", resolved.cid, "distribution artifact CID"
+        )
+    module = graph.modules.get(resolved.module_name)
+    if module is None or module.source_cid != resolved.source_cid:
+        return ManagerConstructionGapV1(
+            "artifact-mismatch", resolved.cid, "module source CID"
+        )
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    definitions = tuple(
+        item
+        for item in source_file.root.body
+        if isinstance(item, (FunctionDef, ClassDef))
+    )
+    target = next(
+        (item for item in definitions if _matches_definition(item, resolved)), None
+    )
+    if target is None:
+        return ManagerConstructionGapV1(
+            "definition-missing", resolved.cid, "resolved definition coordinate"
+        )
+
+    definition_names = {item.name for item in definitions}
+    if isinstance(target, FunctionDef):
+        opaque = tuple(
+            call.func.id
+            for call in _local_named_calls(target)
+            if call.func.id not in definition_names
+        )
+        if opaque:
+            return ManagerConstructionGapV1(
+                "opaque-call-target", resolved.cid, opaque[0]
+            )
+
+    frames: dict[str, object] = {}
+    reaching_classes: dict[str, ClassDef] = {}
+    for item in definitions:
+        if not isinstance(item, ClassDef):
+            continue
+        local_bases = []
+        for base in item.bases:
+            if not isinstance(base, Name) or base.id not in reaching_classes:
+                local_bases = []
+                break
+            local_bases.append(reaching_classes[base.id].sugar())
+        if local_bases and len(local_bases) == len(item.bases):
+            context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
+        reaching_classes[item.name] = item
+    for item in definitions:
+        if isinstance(item, ClassDef):
+            frames[item.name] = item.source_visible_constructor_frame()
+
+    pending = [item for item in definitions if isinstance(item, FunctionDef)]
+    while pending:
+        progressed = False
+        for function in tuple(pending):
+            local_calls = tuple(_local_named_calls(function))
+            opaque = tuple(
+                call.func.id
+                for call in local_calls
+                if call.func.id not in definition_names
+            )
+            if opaque:
+                return ManagerConstructionGapV1(
+                    "opaque-call-target", resolved.cid, opaque[0]
+                )
+            unresolved = tuple(
+                call.func.id
+                for call in local_calls
+                if call.func.id in definition_names and call.func.id not in frames
+            )
+            if unresolved:
+                continue
+            for call in local_calls:
+                nested = frames.get(call.func.id)
+                if nested is not None:
+                    context.source_call_frames[_call_coordinate(call)] = nested
+            frames[function.name] = function.source_visible_call_frame()
+            pending.remove(function)
+            progressed = True
+        if not progressed:
+            return ManagerConstructionGapV1(
+                "opaque-call-target", resolved.cid, "recursive source call graph"
+            )
+    frame = frames.get(target.name)
+    if frame is None:
+        return ManagerConstructionGapV1(
+            "definition-missing", resolved.cid, "ordinary source call frame"
+        )
+    return frame, target
 
 
 def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:

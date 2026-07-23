@@ -133,7 +133,12 @@ def _exact_never_suppresses(value: object) -> bool:
 
 
 def populate_source_derived_resource_refs(
-    source_file, *, root, path, distribution_index=None
+    source_file,
+    *,
+    root,
+    path,
+    distribution_index=None,
+    artifact_graph_cache: dict | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows."""
     import importlib.metadata
@@ -197,6 +202,7 @@ def populate_source_derived_resource_refs(
         if distribution_index is None
         else {name: (name,) for name in distribution_index}
     )
+    graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     for receipt in receipts:
         raw_site = receipt.use["useSite"]
         key = (
@@ -219,7 +225,10 @@ def populate_source_derived_resource_refs(
             if distribution_index is None
             else distribution_index[top_level]
         )
-        graph = DependencyArtifactGraph.authenticate(distribution)
+        graph = graphs.get(top_level)
+        if graph is None:
+            graph = DependencyArtifactGraph.authenticate(distribution)
+            graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph)
         if not isinstance(resolved, ResolvedPythonObjectV1):
             _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")

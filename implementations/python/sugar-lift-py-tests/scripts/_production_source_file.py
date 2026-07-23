@@ -11,12 +11,22 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def production_source_file(path, *, root, reporter, distribution_index=None):
+def production_source_file(
+    path,
+    *,
+    root,
+    reporter,
+    distribution_index=None,
+    artifact_graph_cache=None,
+):
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
     from sugar_lift_python_source.manager_summary_derivation import (
         populate_source_derived_resource_refs,
+    )
+    from sugar_lift_python_source.source_call_preconstruction import (
+        populate_source_visible_call_frames,
     )
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.tree import SourceFile
@@ -27,11 +37,19 @@ def production_source_file(path, *, root, reporter, distribution_index=None):
     source_file = SourceFile(
         path_source(str(path)), reporter=reporter, construction_context=context
     )
+    populate_source_visible_call_frames(
+        source_file,
+        root=root,
+        path=path,
+        distribution_index=distribution_index,
+        artifact_graph_cache=artifact_graph_cache,
+    )
     populate_source_derived_resource_refs(
         source_file,
         root=root,
         path=path,
         distribution_index=distribution_index,
+        artifact_graph_cache=artifact_graph_cache,
     )
     _install_unresolved_source_derived_gaps(source_file)
     return source_file
