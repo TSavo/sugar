@@ -20,16 +20,42 @@ from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectValue,
     StringValue,
-    SymbolicValue,
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.ir import ctor, encode_jcs, str_const, term_to_value
-from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.ir import encode_jcs, term_to_value
 
 from .canonical import cid_of_json
 from .dependency_artifact import DependencyArtifactGraph, ResolvedPythonObjectV1
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+
+class ManagerConstructionAuthenticationError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ConstructedCallActualV1:
+    occurrence: SourceFragmentCoordinateV1
+    value: FloorValue = field(compare=False)
+    keyword: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.occurrence, SourceFragmentCoordinateV1):
+            raise ManagerConstructionAuthenticationError(
+                "constructed actual requires a source occurrence"
+            )
+        if not isinstance(self.value, FloorValue):
+            raise ManagerConstructionAuthenticationError(
+                "constructed actual requires an already-constructed floor value"
+            )
+        if self.keyword is not None and (
+            not isinstance(self.keyword, str) or not self.keyword
+        ):
+            raise ManagerConstructionAuthenticationError(
+                "constructed keyword actual requires a nonempty keyword"
+            )
 
 
 @dataclass(frozen=True)
@@ -46,6 +72,7 @@ class FormalActualBindingV1:
     formal_name: str
     actual: FloorValue = field(compare=False)
     provenance: Literal["actual", "default", "variadic"]
+    actual_occurrences: tuple[SourceFragmentCoordinateV1, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,7 +85,9 @@ class ConstructedCallFrameV1:
 @dataclass(frozen=True)
 class ConstructedManagerBehaviorV1:
     resolved_object_cid: str
+    manager_call_occurrence: SourceFragmentCoordinateV1
     manager_construction_cid: str
+    returned_object_cid: str
     receiver_state: ObjectValue = field(compare=False)
     receiver_state_cid: str
     formal_actuals: tuple[FormalActualBindingV1, ...] = field(compare=False)
@@ -75,6 +104,8 @@ class ConstructedManagerBehaviorV1:
             "kind": "python-manager-construction",
             "schemaVersion": "1",
             "resolvedObjectCid": self.resolved_object_cid,
+            "managerCallOccurrence": self.manager_call_occurrence.wire(),
+            "returnedObjectCid": self.returned_object_cid,
             "receiverStateCid": self.receiver_state_cid,
             "formalActuals": [_binding_value(item) for item in self.formal_actuals],
             "callFrames": [frame.__dict__ for frame in self.call_frames],
@@ -85,11 +116,44 @@ class ConstructedManagerBehaviorV1:
             "kind": "constructed-manager-behavior",
             "schemaVersion": "1",
             "resolvedObjectCid": self.resolved_object_cid,
+            "managerCallOccurrence": self.manager_call_occurrence.wire(),
             "managerConstructionCid": self.manager_construction_cid,
+            "returnedObjectCid": self.returned_object_cid,
+            "receiverState": _object_value(self.receiver_state),
             "receiverStateCid": self.receiver_state_cid,
             "callFrames": [frame.__dict__ for frame in self.call_frames],
             "formalActuals": [_binding_value(item) for item in self.formal_actuals],
         }
+
+    @classmethod
+    def from_value(
+        cls,
+        value: Any,
+        *,
+        resolved: ResolvedPythonObjectV1,
+        graph: DependencyArtifactGraph,
+        authenticated_use: AuthenticatedImportUseV1,
+        manager_call_occurrence: SourceFragmentCoordinateV1,
+        positional_actuals: tuple[ConstructedCallActualV1, ...],
+        keyword_actuals: tuple[ConstructedCallActualV1, ...] = (),
+    ) -> "ConstructedManagerBehaviorV1":
+        reconstructed = construct_manager_behavior(
+            resolved,
+            graph=graph,
+            authenticated_use=authenticated_use,
+            manager_call_occurrence=manager_call_occurrence,
+            positional_actuals=positional_actuals,
+            keyword_actuals=keyword_actuals,
+        )
+        if not isinstance(reconstructed, cls):
+            raise ManagerConstructionAuthenticationError(
+                "manager construction cannot be revalidated"
+            )
+        if not isinstance(value, dict) or value != reconstructed.to_value():
+            raise ManagerConstructionAuthenticationError(
+                "decoded manager construction is not byte-identical to reconstruction"
+            )
+        return reconstructed
 
 
 @dataclass(frozen=True)
@@ -142,9 +206,46 @@ def construct_manager_behavior(
     resolved: ResolvedPythonObjectV1,
     *,
     graph: DependencyArtifactGraph,
-    positional_actuals: tuple[FloorValue, ...],
-    keyword_actuals: tuple[tuple[str, FloorValue], ...] = (),
+    authenticated_use: AuthenticatedImportUseV1,
+    manager_call_occurrence: SourceFragmentCoordinateV1,
+    positional_actuals: tuple[ConstructedCallActualV1, ...],
+    keyword_actuals: tuple[ConstructedCallActualV1, ...] = (),
 ) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
+    if not isinstance(authenticated_use, AuthenticatedImportUseV1):
+        return ManagerConstructionGapV1(
+            "call-binding", resolved.cid, "authenticated import use"
+        )
+    try:
+        authenticated_use.revalidate()
+    except ValueError:
+        return ManagerConstructionGapV1(
+            "call-binding", resolved.cid, "stale authenticated import use"
+        )
+    if authenticated_use.import_binding.cid != resolved.import_binding_cid:
+        return ManagerConstructionGapV1(
+            "call-binding", resolved.cid, "import binding CID"
+        )
+    if not isinstance(
+        manager_call_occurrence, SourceFragmentCoordinateV1
+    ) or manager_call_occurrence != SourceFragmentCoordinateV1.decode(
+        authenticated_use.use["useSite"]
+    ):
+        return ManagerConstructionGapV1(
+            "call-binding", resolved.cid, "manager call occurrence"
+        )
+    if any(actual.keyword is not None for actual in positional_actuals) or any(
+        actual.keyword is None for actual in keyword_actuals
+    ):
+        return ManagerConstructionGapV1(
+            "call-binding", resolved.cid, "actual occurrence role"
+        )
+    if any(
+        actual.occurrence.source_cid != authenticated_use.source_cid
+        for actual in (*positional_actuals, *keyword_actuals)
+    ):
+        return ManagerConstructionGapV1(
+            "call-binding", resolved.cid, "actual occurrence source CID"
+        )
     if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "artifact CID"
@@ -175,17 +276,29 @@ def construct_manager_behavior(
         )
     state = _object_value(invocation.value)
     state_cid = cid_of_json(state)
+    returned_object_cid = cid_of_json(
+        {
+            "kind": "constructed-python-object",
+            "managerCallOccurrence": manager_call_occurrence.wire(),
+            "typeDefinitionCid": invocation.value.identity,
+            "receiverStateCid": state_cid,
+        }
+    )
     preimage = {
         "kind": "python-manager-construction",
         "schemaVersion": "1",
         "resolvedObjectCid": resolved.cid,
+        "managerCallOccurrence": manager_call_occurrence.wire(),
+        "returnedObjectCid": returned_object_cid,
         "receiverStateCid": state_cid,
         "formalActuals": [_binding_value(item) for item in invocation.bindings],
         "callFrames": [frame.__dict__ for frame in invocation.frames],
     }
     return ConstructedManagerBehaviorV1(
         resolved.cid,
+        manager_call_occurrence,
         cid_of_json(preimage),
+        returned_object_cid,
         invocation.value,
         state_cid,
         invocation.bindings,
@@ -251,6 +364,11 @@ def _bind(definition, positional, keywords, skip_first=False):
         raw = raw[1:]
     parameters: list[inspect.Parameter] = []
     defaults = [None] * (len(raw) - len(node.args.defaults)) + list(node.args.defaults)
+    default_nodes = {
+        argument.arg: default
+        for argument, default in zip(raw, defaults, strict=True)
+        if default is not None
+    }
     for index, (argument, default) in enumerate(zip(raw, defaults, strict=True)):
         kind = (
             inspect.Parameter.POSITIONAL_ONLY
@@ -273,6 +391,8 @@ def _bind(definition, positional, keywords, skip_first=False):
     for argument, default in zip(
         node.args.kwonlyargs, node.args.kw_defaults, strict=True
     ):
+        if default is not None:
+            default_nodes[argument.arg] = default
         parameters.append(
             inspect.Parameter(
                 argument.arg,
@@ -288,7 +408,9 @@ def _bind(definition, positional, keywords, skip_first=False):
         )
     signature = inspect.Signature(parameters)
     try:
-        bound = signature.bind(*positional, **dict(keywords))
+        bound = signature.bind(
+            *positional, **{actual.keyword: actual for actual in keywords}
+        )
     except TypeError as exc:
         raise _Gap("call-binding", str(exc)) from exc
     supplied = set(bound.arguments)
@@ -296,19 +418,38 @@ def _bind(definition, positional, keywords, skip_first=False):
     result = []
     env = {}
     for index, parameter in enumerate(parameters):
-        value = bound.arguments[parameter.name]
+        supplied_value = bound.arguments[parameter.name]
+        occurrences = ()
         if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
-            value = TupleValue(tuple(value))
+            occurrences = tuple(item.occurrence for item in supplied_value)
+            value = TupleValue(tuple(item.value for item in supplied_value))
             provenance = "variadic"
         elif parameter.kind is inspect.Parameter.VAR_KEYWORD:
-            value = DictValue(tuple((StringValue(k), v) for k, v in value.items()))
+            occurrences = tuple(item.occurrence for item in supplied_value.values())
+            value = DictValue(
+                tuple(
+                    (StringValue(k), item.value) for k, item in supplied_value.items()
+                )
+            )
             provenance = "variadic"
         else:
             provenance = "actual" if parameter.name in supplied else "default"
+            if provenance == "actual":
+                occurrences = (supplied_value.occurrence,)
+                value = supplied_value.value
+            else:
+                value = supplied_value
+                occurrences = (
+                    _node_occurrence(
+                        default_nodes[parameter.name], definition.source_cid
+                    ),
+                )
         coordinate = FormalParameterCoordinateV1(
             definition.cid, index, parameter.name, parameter.kind.name
         )
-        binding = FormalActualBindingV1(coordinate, parameter.name, value, provenance)
+        binding = FormalActualBindingV1(
+            coordinate, parameter.name, value, provenance, occurrences
+        )
         result.append(binding)
         env[parameter.name] = value
     return tuple(result), env
@@ -332,10 +473,19 @@ def _expr(node, env, definitions):
                 frames = (*frames, *nested)
                 if not isinstance(value, TupleValue):
                     raise _Gap("call-binding", "* value")
-                positional.extend(value.elements)
+                positional.extend(
+                    ConstructedCallActualV1(
+                        _node_occurrence(item, callee.source_cid), element
+                    )
+                    for element in value.elements
+                )
                 continue
             value, nested = _expr(item, env, definitions)
-            positional.append(value)
+            positional.append(
+                ConstructedCallActualV1(
+                    _node_occurrence(item, callee.source_cid), value
+                )
+            )
             frames = (*frames, *nested)
         keywords = []
         for item in node.keywords:
@@ -345,12 +495,22 @@ def _expr(node, env, definitions):
                 if not isinstance(value, DictValue):
                     raise _Gap("call-binding", "** value")
                 keywords.extend(
-                    (key.value, entry)
+                    ConstructedCallActualV1(
+                        _node_occurrence(item.value, callee.source_cid),
+                        entry,
+                        keyword=key.value,
+                    )
                     for key, entry in value.entries
                     if isinstance(key, StringValue)
                 )
             else:
-                keywords.append((item.arg, value))
+                keywords.append(
+                    ConstructedCallActualV1(
+                        _node_occurrence(item.value, callee.source_cid),
+                        value,
+                        keyword=item.arg,
+                    )
+                )
         called = _invoke(callee, tuple(positional), tuple(keywords), definitions)
         return called.value, (*frames, *called.frames)
     raise _Gap("unsupported-source", type(node).__name__)
@@ -361,9 +521,9 @@ def _literal(node):
     if value is None:
         return NoneValue()
     if value is True:
-        return TrueBoolLiteralSugar(None)
+        return TermValue(True)
     if value is False:
-        return FalseBoolLiteralSugar(None)
+        return TermValue(False)
     if isinstance(value, int):
         return TermValue(value)
     if isinstance(value, str):
@@ -392,6 +552,7 @@ def _binding_value(binding):
         "formal": binding.coordinate.__dict__,
         "actual": _floor_value(binding.actual),
         "provenance": binding.provenance,
+        "actualOccurrences": [item.wire() for item in binding.actual_occurrences],
     }
 
 
@@ -414,4 +575,14 @@ def _coordinate_cid(resolved):
             "endLine": coordinate.end_line,
             "endColumn": coordinate.end_col,
         }
+    )
+
+
+def _node_occurrence(node: ast.AST, source_cid: str) -> SourceFragmentCoordinateV1:
+    return SourceFragmentCoordinateV1(
+        source_cid,
+        node.lineno,
+        node.col_offset,
+        node.end_lineno,
+        node.end_col_offset,
     )
