@@ -155,6 +155,15 @@ class SourceUnit:
     _exception_identity_cache: dict[tuple, object | None] = field(
         init=False, default_factory=dict, compare=False, repr=False
     )
+    _function_scope_nodes: tuple = field(
+        init=False, default=(), compare=False, repr=False
+    )
+    _function_scope_nodes_ready: bool = field(
+        init=False, default=False, compare=False, repr=False
+    )
+    _function_symtable_cache: dict[tuple[str, int], object] = field(
+        init=False, default_factory=dict, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -213,6 +222,10 @@ class SourceUnit:
         return module  # type: ignore[return-value]
 
     def function_symtable(self, name: str, lineno: int):
+        key = (name, lineno)
+        cached = self._function_symtable_cache.get(key)
+        if cached is not None:
+            return cached
         matches = []
 
         def visit(table) -> None:
@@ -235,6 +248,7 @@ class SourceUnit:
                 requested="one CPython function symtable selected by type, name, and line",
                 fix="preserve the source function's exact CPython symtable identity",
             )
+        self._function_symtable_cache[key] = matches[0]
         return matches[0]
 
     def is_module_level_function(self, name: str, lineno: int) -> bool:
@@ -291,10 +305,19 @@ class SourceUnit:
 
         module = self._require_typed_module("SourceUnit.exception_type_identity")
         span = node.line_col_span()
+        if not self._function_scope_nodes_ready:
+            object.__setattr__(
+                self,
+                "_function_scope_nodes",
+                tuple(
+                    candidate
+                    for candidate in module.walk()
+                    if candidate.kind in ("FunctionDef", "AsyncFunctionDef")
+                ),
+            )
+            object.__setattr__(self, "_function_scope_nodes_ready", True)
         containing = []
-        for candidate in module.walk():
-            if candidate.kind not in ("FunctionDef", "AsyncFunctionDef"):
-                continue
+        for candidate in self._function_scope_nodes:
             cspan = candidate.line_col_span()
             start = (cspan.start_line, cspan.start_col)
             end = (cspan.end_line, cspan.end_col)

@@ -139,7 +139,16 @@ def test_exception_type_identity_truthful_arms():
 
 
 def test_exception_identity_reuses_content_local_structural_testimony(monkeypatch):
-    sf, name = _raise_name("def arbitrary():\n    raise ValueError\n", "ValueError")
+    sf = _file(
+        "def arbitrary():\n    raise ValueError\n"
+        "def renamed():\n    raise KeyError\n"
+    )
+    names = [
+        node.exc
+        for node in sf.root.walk()
+        if node.kind == "Raise" and node.exc is not None
+    ]
+    assert len(names) == 2
     node_type = type(sf.root).__mro__[1]
     original = node_type.walk
     walks = 0
@@ -151,11 +160,12 @@ def test_exception_identity_reuses_content_local_structural_testimony(monkeypatc
         return original(self)
 
     monkeypatch.setattr(node_type, "walk", counted)
-    first = sf.unit.exception_type_identity(name)
+    first = sf.unit.exception_type_identity(names[0])
     assert first is not None
     assert walks == 1
-    second = sf.unit.exception_type_identity(name)
-    assert second == first
+    second = sf.unit.exception_type_identity(names[1])
+    assert second is not None
+    assert second != first
     assert walks == 1
 
 
