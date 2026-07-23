@@ -3224,6 +3224,12 @@ class ListComp(Expression):
             for node in root.walk()
         )
 
+    def _contains_named_expression(self, roots: tuple) -> bool:
+        """True when a walrus would bind outside the comprehension coordinate."""
+        return any(
+            node.kind == "NamedExpr" for root in roots for node in root.walk()
+        )
+
     def _calls_shadowed_range(self, iterable, scope) -> bool:
         return (
             iterable.kind == "Call"
@@ -3270,8 +3276,8 @@ class ListComp(Expression):
         )
 
     def _construct_sugar(self):
-        gen = ListComp._simple_generator(self)
-        if gen is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+        gen = ListComp._simple_generator(self, allow_nested_iterable=True)
+        if gen is None or ListComp._contains_named_expression(self, (self.elt,)):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -3283,7 +3289,7 @@ class ListComp(Expression):
             site=self.fragment,
         )
 
-    def _simple_generator(self):
+    def _simple_generator(self, *, allow_nested_iterable=False):
         if len(self.generators) != 1:
             return None
         gen = self.generators[0]
@@ -3291,7 +3297,11 @@ class ListComp(Expression):
             gen.is_async
             or gen.ifs
             or gen.target.kind != "Name"
-            or ListComp._contains_forbidden_shape(self, (gen.iter,))
+            or (
+                ListComp._contains_named_expression(self, (gen.iter,))
+                if allow_nested_iterable
+                else ListComp._contains_forbidden_shape(self, (gen.iter,))
+            )
         ):
             return None
         return gen
@@ -3517,8 +3527,8 @@ class GeneratorExp(Expression):
         return self if not changed else rewrite(self, **changed)
 
     def _construct_sugar(self):
-        gen = ListComp._simple_generator(self)
-        if gen is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+        gen = ListComp._simple_generator(self, allow_nested_iterable=True)
+        if gen is None or ListComp._contains_named_expression(self, (self.elt,)):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
