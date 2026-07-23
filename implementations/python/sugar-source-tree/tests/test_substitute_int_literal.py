@@ -75,9 +75,12 @@ def test_compound_just_recurses():
 
 def test_function_masks_its_parameter():
     # def f(x): return x -- the parameter x is HELD OUT of the body's scope, so
-    # an outer x cannot capture it. The function comes back unchanged.
+    # an outer x cannot capture it. The read becomes its declaration-owned
+    # FormalRef rather than retaining a generic Name.
     fx = next(_tree("def f(x):\n    return x\n").functions())
-    assert fx.substitute({"x": _bind_target()}) is fx
+    substituted = fx.substitute({"x": _bind_target()})
+    ref = next(node for node in substituted.walk() if node.kind == "FormalRef")
+    assert ref.coordinate.declared_name == "x"
     # def g(): return x -- no parameter shadows it, so the FREE x DOES substitute.
     g = next(_tree("def g():\n    return x\n").functions())
     gsub = g.substitute({"x": _bind_target()})
@@ -101,9 +104,11 @@ def test_a_block_threads_its_assignments():
 
 def test_binders_mask_their_bound_names():
     # for x in xs: return x -- the loop target x is masked for the body, so an
-    # outer x cannot capture it; the loop comes back unchanged.
+    # outer x cannot capture it; the parameter read is coordinate-bearing.
     forfn = next(_tree("def f(xs):\n    for x in xs:\n        return x\n").functions())
-    assert forfn.substitute({"x": _bind_target()}) is forfn
+    substituted = forfn.substitute({"x": _bind_target()})
+    ref = next(node for node in substituted.walk() if node.kind == "FormalRef")
+    assert ref.coordinate.declared_name == "xs"
     # lambda z: z + 1 -- the parameter z is masked for the body.
     lam = next(
         n for n in _tree("g = lambda z: z + z\n").root.walk() if n.kind == "Lambda"
