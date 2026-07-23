@@ -1510,6 +1510,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 source_file = _TreeSourceFile(
                     identity, construction_context=construction_context
                 )
+                from sugar_lift_python_source.manager_summary_derivation import (
+                    populate_source_derived_resource_refs,
+                )
+
+                populate_source_derived_resource_refs(
+                    source_file, root=root, path=source_path
+                )
                 for function in source_file.functions():
                     function_sugar = function.sugar()
                     rows.extend(
@@ -1729,6 +1736,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 tree_file = _TreeSourceFile(
                     identity, construction_context=construction_context
                 )
+                if construction_context is not None:
+                    from sugar_lift_python_source.manager_summary_derivation import (
+                        populate_source_derived_resource_refs,
+                    )
+
+                    populate_source_derived_resource_refs(
+                        tree_file, root=root, path=full_path
+                    )
                 nodes = []
                 for fn in tree_file.functions():
                     lc = fn.line_col_span()

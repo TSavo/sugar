@@ -23,6 +23,12 @@ from sugar_lift_python_source.manager_protocol_construction import (
     ManagerProtocolConstructionGapV1,
     construct_manager_protocol,
 )
+from sugar_lift_python_source.manager_summary_derivation import (
+    DerivedManagerSummaryGapV1,
+    DerivedManagerSummaryV1,
+    derive_manager_summary,
+    populate_source_derived_resource_refs,
+)
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import BindingEntryV1
 from sugar_source_tree.nodes import Call, Constant
@@ -224,9 +230,7 @@ def test_fixture_manager_class_bodies_construct_docstrings_and_class_fields():
     )
     source = SourceFile(path_source(str(fixture)))
     classes = {
-        item.name: item
-        for item in source.root.body
-        if isinstance(item, ClassDef)
+        item.name: item for item in source.root.body if isinstance(item, ClassDef)
     }
 
     some_guard = classes["SomeGuard"].sugar().desugar().value
@@ -322,3 +326,161 @@ def test_merged_renamed_some_guard_factory_constructs_through_sole_door(tmp_path
     assert isinstance(protocol, ConstructedManagerProtocolV1)
     assert protocol.enter_outcome() is not None
     assert protocol.exit_outcome() is not None
+
+
+def test_renamed_resource_derives_never_suppresses_from_constructed_protocol(tmp_path):
+    fixture = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
+        / "arbitrary_manager_module.py"
+    )
+    graph, resolved, _actual, call_site = _resolved(
+        tmp_path, fixture.read_text(encoding="utf-8"), exported="some_resource"
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="resource-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+        ProtocolResourceSemanticsV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(summary.semantics.exit.disposition, NeverSuppressesDispositionV1)
+    assert summary.summary_cid.startswith("blake3-512:")
+
+
+def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
+    fixture = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
+        / "arbitrary_manager_module.py"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, fixture.read_text(encoding="utf-8"), exported="some_manager"
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="boundary-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol)
+
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    assert summary.kind in {"enter-may-halt", "opaque-exit-truthiness"}
+
+
+def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
+    fixture = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests/tests/fixtures/with_source_derivation"
+        / "arbitrary_manager_module.py"
+    )
+    graph, resolved, _actual, call_site = _resolved(
+        tmp_path, fixture.read_text(encoding="utf-8"), exported="some_resource"
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(), call_site=call_site
+    )
+    protocol = construct_manager_protocol(behavior, exit_face_id="with-resource-face")
+    summary = derive_manager_summary(protocol)
+    assert isinstance(summary, DerivedManagerSummaryV1)
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithSourceResourceSugar,
+    )
+    from sugar_source_tree.nodes import With
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    consumer = (
+        "def use_resource():\n"
+        "    with resource_factory():\n"
+        "        raise ValueError('body')\n"
+    )
+    tree = SourceFile(
+        (consumer, "resource-consumer.py", "blake3-512:" + ("46" * 64)),
+        construction_context=context,
+    )
+    node = next(item for item in tree.nodes() if isinstance(item, With))
+    expr = node.items[0].context_expr
+    span = expr.line_col_span()
+    coordinate = SourceFragmentCoordinateV1(
+        node.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    context.source_derived_contract_refs[coordinate] = SourceDerivedContextManagerRefV1(
+        coordinate, summary.summary_cid, summary.semantics, protocol
+    )
+
+    sugar = node.sugar()
+
+    assert isinstance(sugar, WithSourceResourceSugar)
+    assert sugar.protocol is protocol
+    assert sugar.summary.summary_cid == summary.summary_cid
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    routed = outcome_to_exitset(sugar.desugar())
+    assert routed.exits
+    assert any(isinstance(face, Halted) for face in routed.exits), [
+        (type(face).__name__, repr(face.guard)) for face in routed.exits
+    ]
+
+
+def test_preconstruction_populates_resource_ref_from_authenticated_import(tmp_path):
+    implementation = (
+        "class RenamedResource:\n"
+        "    def __enter__(self):\n"
+        "        return 9\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_resource():\n"
+        "    return RenamedResource()\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="make_resource")
+    consumer = (
+        "import arbitrary\n"
+        "def use_resource():\n"
+        "    with arbitrary.make_resource():\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode("utf-8"))
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile((consumer, str(path), source_cid), construction_context=context)
+
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    assert isinstance(
+        next(iter(context.source_derived_contract_refs.values())),
+        SourceDerivedContextManagerRefV1,
+    )

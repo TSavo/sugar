@@ -3243,6 +3243,9 @@ class With(Statement):
             span.end_line,
             span.end_col,
         )
+        derived = context.source_derived_contract_refs.get(coordinate)
+        if derived is not None:
+            return derived
         try:
             return context.contract_refs.require(coordinate)
         except ContractRefProtocolError as exc:
@@ -3283,13 +3286,16 @@ class With(Statement):
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
             ContextManagerResolutionGapV1,
+            SourceDerivedContextManagerRefV1,
         )
         from sugar_lift_py_tests.ir import PrimitiveSort
         from .panic import UnsupportedContextManagerSemantics
 
         if isinstance(resolution, ContextManagerResolutionGapV1):
             self._raise_resolution_gap(resolution)
-        if not isinstance(resolution, ContextManagerContractRefV1):
+        if not isinstance(
+            resolution, (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1)
+        ):
             backend_defect(
                 owner="With._construct_sugar",
                 observed=f"unexpected resolution value {type(resolution).__name__}",
@@ -3373,6 +3379,30 @@ class With(Statement):
             )
             from sugar_lift_py_tests.kit_rpc import ContextManagerEdgeDtoV1
             from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceDerivedContextManagerRefV1,
+            )
+
+            if isinstance(resolved_ref, SourceDerivedContextManagerRefV1):
+                from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+                    WithSourceResourceSugar,
+                )
+
+                manager_slot = item._manager_slot_id()
+                enter_slot = (
+                    f"{manager_slot}#enter_result" if as_name is not None else None
+                )
+                return WithSourceResourceSugar(
+                    manager=item.context_expr.sugar(),
+                    protocol=resolved_ref.protocol,
+                    summary=resolved_ref,
+                    body=tuple(stmt.sugar() for stmt in self.body),
+                    manager_slot_id=manager_slot,
+                    enter_slot_id=enter_slot,
+                    exit_face_id=item._exit_face_id(),
+                    site=self.fragment,
+                )
 
             if isinstance(resolved_ref.semantics, EffectBoundarySemanticsV1):
                 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
