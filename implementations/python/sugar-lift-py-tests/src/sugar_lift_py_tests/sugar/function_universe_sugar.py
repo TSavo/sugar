@@ -228,6 +228,7 @@ class FunctionUniverseSugar(Sugar):
     formals: tuple[str, ...]
     statements: tuple  # the body statements' sugars, in source order
     site: object = dataclass_field(compare=False, default=None)
+    bridge_source_symbol: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -250,7 +251,12 @@ class FunctionUniverseSugar(Sugar):
         del ctx
         return reduce_body(self.statements).and_then(
             lambda record: Complete(
-                UniverseValue(name=self.name, formals=self.formals, record=record)
+                UniverseValue(
+                    name=self.name,
+                    formals=self.formals,
+                    record=record,
+                    bridge_source_symbol=self.bridge_source_symbol,
+                )
             )
         )
 

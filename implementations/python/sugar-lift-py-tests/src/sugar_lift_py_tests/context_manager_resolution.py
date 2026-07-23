@@ -102,6 +102,8 @@ class ResolvedContractRefsV1:
 class TreeConstructionContextV1:
     contract_refs: ResolvedContractRefsV1
     with_manager_authorities: Any = None
+    call_contract_refs: object | None = None
+    workspace_root: str | None = None
 
     def __post_init__(self) -> None:
         if self.with_manager_authorities is None:

@@ -57,6 +57,7 @@ COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
 RESOLVE_SOURCE_MEMENTO_RPC_METHOD = "sugar.plugin.resolve_source_memento"
 ENUMERATE_RPC_METHOD = "sugar.enumerate"
 BIND_CONTRACT_REFS_RPC_METHOD = "sugar.plugin.bind_contract_refs"
+BIND_CALL_CONTRACT_REFS_RPC_METHOD = "sugar.plugin.bind_call_contract_refs"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
 LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
@@ -70,6 +71,7 @@ _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_WITH_MANAGER_AUTHORITIES = None
+_BOUND_CALL_CONTRACT_REFS = None
 _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS: tuple[ContextManagerContractIrV1, ...] = ()
 
 
@@ -242,6 +244,40 @@ def _legacy_membrane_token_rows(root: Path) -> List[Dict[str, Any]]:
                 )
                 tokens.append(token.to_wire())
     return tokens
+
+
+def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
+    """Enroll imported plain calls by their source-authenticated use sites."""
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_uses, authenticated_module_exports,
+        module_name_for_path,
+    )
+    from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
+    from sugar_source_tree.tree import SourceTree
+
+    rows: List[Dict[str, Any]] = []
+    units = []
+    for path in SourceTree(root).paths():
+        try:
+            source, _filename, source_cid = path_source(str(path))
+        except SourceUnavailable:
+            continue
+        units.append((path, source, source_cid))
+    module_identities = {
+        module_name_for_path(root, path): {
+            "kind": "authenticated-python-module", "schemaVersion": "1",
+            "moduleName": module_name_for_path(root, path),
+            "sourceCid": source_cid,
+        }
+        for path, _source, source_cid in units
+    }
+    for path, source, source_cid in units:
+        enrolled, _outcomes = authenticated_import_uses(
+            root, path, source, source_cid, module_identities
+        )
+        rows.extend(authenticated_module_exports(root, path, source, source_cid))
+        rows.extend(enrolled)
+    return rows
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -713,6 +749,7 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
                 {"name": ENUMERATE_RPC_METHOD, "required": False},
                 {"name": BIND_CONTRACT_REFS_RPC_METHOD, "required": False},
+                {"name": BIND_CALL_CONTRACT_REFS_RPC_METHOD, "required": False},
                 {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
                 {"name": "sugar.plugin.resolve_dependency_proofs", "required": False},
@@ -1502,6 +1539,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             "tableCid": _BOUND_CONTRACT_REFS.table_cid,
         }:
             raise ValueError("semantic construction request has a stale contract-ref generation")
+    if _BOUND_CALL_CONTRACT_REFS is not None:
+        generation = options.get("callContractRefs")
+        if generation != {
+            "catalogCid": _BOUND_CALL_CONTRACT_REFS.catalog_cid,
+            "tableCid": _BOUND_CALL_CONTRACT_REFS.table_cid,
+        }:
+            raise ValueError(
+                "semantic construction request has a stale call-contract-ref generation"
+            )
     # The audit frontier's factory census is deleted; auditFrontier now short-
     # circuits to an empty frontier (its R census re-homes onto the source
     # tree's reporter channel, not yet wired). allowedBrokenComponents was the
@@ -1529,7 +1575,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             return
         if level == "contract-demands":
             _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-                "rows": _context_manager_demand_rows(root)
+                "rows": _context_manager_demand_rows(root) + _call_contract_demand_rows(root)
             }})
             return
         if level == "legacy-membrane-tokens":
@@ -1764,9 +1810,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
                 construction_context = (
                     TreeConstructionContextV1(
-                        _BOUND_CONTRACT_REFS, _BOUND_WITH_MANAGER_AUTHORITIES
+                        _BOUND_CONTRACT_REFS,
+                        _BOUND_WITH_MANAGER_AUTHORITIES,
+                        call_contract_refs=_BOUND_CALL_CONTRACT_REFS,
+                        workspace_root=str(root),
                     )
-                    if _BOUND_CONTRACT_REFS is not None
+                    if _BOUND_CONTRACT_REFS is not None or _BOUND_CALL_CONTRACT_REFS is not None
                     else None
                 )
                 tree_file = _TreeSourceFile(
@@ -2261,6 +2310,20 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
             "tableCid": installed.table_cid,
             "withManagerAuthoritiesCid": authorities.table_cid,
         }})
+    elif method == BIND_CALL_CONTRACT_REFS_RPC_METHOD:
+        from sugar_lift_py_tests.call_contract_resolution import (
+            decode_resolved_call_contract_refs,
+        )
+
+        global _BOUND_CALL_CONTRACT_REFS
+        installed = decode_resolved_call_contract_refs(params)
+        if (
+            _BOUND_CALL_CONTRACT_REFS is not None
+            and _BOUND_CALL_CONTRACT_REFS.table_cid != installed.table_cid
+        ):
+            raise ValueError("call-contract-ref generation is already frozen")
+        _BOUND_CALL_CONTRACT_REFS = installed
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": {"tableCid": installed.table_cid}})
     elif method == ENUMERATE_RPC_METHOD:
         global _ENUMERATION_ACTIVE, _ENUMERATION_REQUEST_COUNT
         enumerate_started = time.monotonic()

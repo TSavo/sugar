@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass, field as dataclass_field
+from typing import Any
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -31,6 +32,8 @@ class CallSiteSugar(Sugar):
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
     keywords: tuple = ()  # (name, sugar) pairs, in source order
+    contract_ref: Any = dataclass_field(default=None, compare=False)
+    contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -46,6 +49,15 @@ class CallSiteSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.contract_resolution_gap is not None:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                observed=self.contract_resolution_gap,
+                requested="authenticated resolved-call contract reference",
+                fix="publish and resolve the imported target contract or keep the call loud",
+            )
         return self._collect(self.args, (), ctx)
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
@@ -85,6 +97,8 @@ class CallSiteSugar(Sugar):
                 else "coordinate"
             ),
         )
+        if self.contract_ref is not None:
+            return self._collect_bridged(positional)
         return Complete(
             CallSiteValue(
                 target_name=self.target_name,
@@ -95,3 +109,56 @@ class CallSiteSugar(Sugar):
                 site=self.site,
             )
         )
+
+    def _collect_bridged(self, positional: tuple) -> Outcome:
+        from sugar_lift_py_tests.floor.bridged_contract_value import BridgedContractValue
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import _Ctor, _free_vars_in_term, subst_var_in_term
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        reference = self.contract_ref
+        if len(reference.formals) != len(positional):
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                observed="signature mismatch",
+                requested="actual arguments matching the authenticated import signature",
+                fix="correct the call signature or keep the call loud",
+            )
+        term = reference.return_term
+        if term is None:
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                observed="authenticated contract has no exact return equality",
+                requested="exact structural return testimony",
+                fix="strengthen the contract or keep the imported value loud",
+            )
+        if not _free_vars_in_term(term) <= set(reference.formals):
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                observed="authenticated structural return contains an unbound projection",
+                requested="return variables authenticated by the target formal list",
+                fix="reject the stale or lying contract reference",
+            )
+        for formal, actual in zip(reference.formals, positional):
+            term = subst_var_in_term(term, formal, actual.to_term(owner=str(self.site)))
+        if not isinstance(term, _Ctor) or term.name not in {"tuple", "python:tuple", "python:list"}:
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                observed="authenticated contract has no exact structural return",
+                requested="structural return term carried by the target contract",
+                fix="strengthen the target contract or keep the imported value loud",
+            )
+        callsite = CallSiteValue(
+            target_name=self.target_name,
+            arg_values=positional,
+            parameters=reference.formals,
+            term=term,
+            body=None,
+            site=self.site,
+            target_contract_cid=reference.contract_cid,
+            authenticated_target_symbol=reference.bridge_source_symbol,
+        )
+        return Complete(BridgedContractValue(
+            term, reference.contract_cid, reference.member_cid, callsite
+        ))

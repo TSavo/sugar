@@ -1102,6 +1102,29 @@ pub fn contract_cid(args: &MintContractArgs) -> String {
     )
 }
 
+/// Semantic identity for a body-bearing ContractDecl. The body CID is a
+/// pointer inside the declaration preimage, never a substitute for the
+/// declaration CID. Attestation-only metadata is deliberately absent.
+pub fn body_contract_cid(args: &MintContractArgs, body_cid: &str) -> String {
+    let mut fields: Vec<(String, Arc<Value>)> = vec![
+        ("kind".into(), Value::string("contract")),
+        ("name".into(), Value::string(args.contract_name.clone())),
+        ("outBinding".into(), Value::string(args.out_binding.clone())),
+        ("bodyCid".into(), Value::string(body_cid.to_string())),
+    ];
+    if !args.formals.is_empty() || args.emit_empty_formals {
+        fields.push((
+            "formals".into(),
+            Value::array(args.formals.iter().cloned().map(Value::string).collect()),
+        ));
+        fields.push((
+            "formalSorts".into(),
+            Value::array(args.formal_sorts.clone()),
+        ));
+    }
+    blake3_512_of(encode_jcs(&Value::object(fields)).as_bytes())
+}
+
 /// Recompute the canonical content CID of a lifted IR contract decl exactly as
 /// `mint` would — extracting the same identity-bearing fields from the decl and
 /// funneling them through [`contract_cid_from_parts`]. Consumers (e.g. the lift
@@ -1254,7 +1277,10 @@ pub fn mint_contract_with_body_cid(
     let binding_hash = hash_value(&bh_obj);
 
     // Header: schemaVersion + kind + cid + kind-specific REQUIRED fields.
-    let header_cid = contract_content_cid(args);
+    let header_cid = body_cid
+        .filter(|cid| !cid.is_empty())
+        .map(|cid| body_contract_cid(args, cid))
+        .unwrap_or_else(|| contract_content_cid(args));
     let mut kind_specific: Vec<(String, Arc<Value>)> = vec![
         ("name".into(), Value::string(args.contract_name.clone())),
         ("outBinding".into(), Value::string(args.out_binding.clone())),

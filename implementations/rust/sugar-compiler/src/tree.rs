@@ -826,6 +826,19 @@ fn enumerate_rpc(
             "tableCid": table_cid,
         });
     }
+    if let Some((catalog_cid, table_cid)) =
+        conn.transport
+            .call_contract_ref_generation()
+            .map_err(|error| EnumerateError::Unavailable {
+                plugin: plugin.clone(),
+                reason: error.to_string(),
+            })?
+    {
+        options["callContractRefs"] = json!({
+            "catalogCid": catalog_cid,
+            "tableCid": table_cid,
+        });
+    }
     let response = conn
         .transport
         .request(&json!({

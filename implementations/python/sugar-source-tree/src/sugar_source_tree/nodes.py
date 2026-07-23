@@ -155,6 +155,18 @@ class SourceUnit:
             )
         return matches[0]
 
+    def is_module_level_function(self, name: str, lineno: int) -> bool:
+        """Whether this exact definition occupies an importable module slot."""
+        import ast
+
+        module = ast.parse(self.source, filename=self.filename)
+        return any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == name
+            and node.lineno == lineno
+            for node in module.body
+        )
+
 
 class Typeable:
     """The interface: you may ask me for my node type.
@@ -1068,11 +1080,28 @@ class FunctionDef(Statement):
                 # (stay free -> symbolic), locals thread/inline, phis -> IfExps.
                 substituted = self.substitute({})
             with reduction_span(sugar="Construct", role="construction", site=where):
+                bridge_source_symbol = None
+                context = self.unit.construction_context
+                workspace_root = getattr(context, "workspace_root", None)
+                if workspace_root is not None and self.unit.is_module_level_function(
+                    self.name, self.line_col_span().start_line
+                ):
+                    from pathlib import Path
+
+                    relative = Path(self.unit.filename).resolve().relative_to(
+                        Path(workspace_root).resolve()
+                    )
+                    module_parts = list(relative.with_suffix("").parts)
+                    if module_parts and module_parts[-1] == "__init__":
+                        module_parts.pop()
+                    module_name = ".".join(module_parts)
+                    bridge_source_symbol = f"python:{module_name}.{self.name}"
                 return FunctionUniverseSugar(
                     name=self.name,
                     formals=tuple(p.name for p in self.params),
                     statements=tuple(stmt.sugar() for stmt in substituted.body),
                     site=self.fragment,
+                    bridge_source_symbol=bridge_source_symbol,
                 )
 
 
@@ -3848,11 +3877,52 @@ class Call(Expression):
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
+            contract_ref = None
+            contract_resolution_gap = None
+            context = self.unit.construction_context
+            call_refs = getattr(context, "call_contract_refs", None)
+            if call_refs is not None:
+                from sugar_lift_py_tests.call_contract_resolution import (
+                    CallContractRefProtocolError,
+                    CallContractResolutionGapV1,
+                )
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    SourceFragmentCoordinateV1,
+                )
+
+                span = self.line_col_span()
+                coordinate = SourceFragmentCoordinateV1(
+                    self.unit.source_cid,
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                )
+                resolution = None
+                if coordinate in call_refs.enrolled_use_sites:
+                    try:
+                        resolution = call_refs.require(coordinate)
+                    except CallContractRefProtocolError as exc:
+                        from sugar_source_tree.panic import BackendDefect
+
+                        raise BackendDefect(
+                            owner="Call._construct_sugar",
+                            observed="enrolled call demand missing from resolution table",
+                            requested="one typed resolution row for every enrolled imported call",
+                            fix="repair call-contract preconstruction; never fall through to an ordinary call",
+                        ) from exc
+                if isinstance(resolution, CallContractResolutionGapV1):
+                    contract_resolution_gap = resolution.kind.value
+                elif resolution is not None:
+                    contract_ref = resolution
+
             return CallSiteSugar(
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 keywords=keyword_sugars,
+                contract_ref=contract_ref,
+                contract_resolution_gap=contract_resolution_gap,
             )
         if isinstance(self.func, Attribute):
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
