@@ -50,6 +50,7 @@ from .name_error_effect import NameErrorEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
+from .grouped_raise_effect import GroupedRaiseEffect, GroupedRaisePartition
 from .warning_effect import WarningEffect
 from .expectation_not_met_effect import ExpectationNotMetEffect
 from .loop_control_effect import LoopControlEffect
@@ -125,6 +126,8 @@ __all__ = [
     "OSExitRuntimeEffect",
     "PowerRuntimeEffect",
     "RaiseEffect",
+    "GroupedRaiseEffect",
+    "GroupedRaisePartition",
     "WarningEffect",
     "ExpectationNotMetEffect",
     "LoopControlEffect",

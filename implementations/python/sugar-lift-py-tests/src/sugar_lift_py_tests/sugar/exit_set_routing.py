@@ -14,11 +14,12 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 def is_hard_raise(entry) -> bool:
     """True when entry is a raise Incomplete that halts control flow."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
     if not isinstance(entry, Incomplete):
         return False
-    if not isinstance(entry.effect, RaiseEffect):
+    if not isinstance(entry.effect, (RaiseEffect, GroupedRaiseEffect)):
         return False
     return not entry.follow().continues
 

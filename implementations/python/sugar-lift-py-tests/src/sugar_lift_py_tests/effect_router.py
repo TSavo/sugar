@@ -95,6 +95,67 @@ class RoutedOutcome:
     bindings: tuple = ()  # EffectBinding, ...
 
 
+@dataclass(frozen=True)
+class GroupedRoutedOutcome:
+    matched: object
+    residual: object
+    bindings: tuple = ()
+
+
+def route_except_star(effect, expected, *, slot_id=None, site=None):
+    """Partition one grouped raise through the shared ExitSet effect router."""
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+
+    if not isinstance(effect, GroupedRaiseEffect):
+        return None
+    split = effect.partition(expected, site)
+    bindings = ()
+    if split.matched.children and slot_id is not None:
+        bindings = (
+            EffectBinding(slot_id, "grouped-raise", None, split.matched),
+        )
+    return GroupedRoutedOutcome(split.matched, split.residual, bindings)
+
+
+def regroup_except_star(original, effects):
+    """Regroup handler effects and residuals, restoring original topology when possible."""
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    effects = tuple(effects)
+    if not effects:
+        return None
+
+    def leaves(effect):
+        if isinstance(effect, RaiseEffect):
+            return {effect.occurrence_id}
+        if isinstance(effect, GroupedRaiseEffect):
+            result = set()
+            for child in effect.children:
+                result.update(leaves(child))
+            return result
+        return set()
+
+    original_leaves = leaves(original)
+    supplied = set().union(*(leaves(effect) for effect in effects))
+    if supplied and supplied <= original_leaves:
+        def retain(group):
+            children = []
+            for child in group.children:
+                if isinstance(child, GroupedRaiseEffect):
+                    kept = retain(child)
+                    if kept.children:
+                        children.append(kept)
+                elif child.occurrence_id in supplied:
+                    children.append(child)
+            return group.derive(tuple(children))
+        return retain(original)
+
+    # Newly raised handler effects and the residual remain distinct children.
+    # A residual group stays nested; it is never flattened into its leaves.
+    return original.derive(effects)
+
+
 def _observed_effect(entry):
     if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect):
         return "raise", entry.effect.exception_name, None, entry.effect
