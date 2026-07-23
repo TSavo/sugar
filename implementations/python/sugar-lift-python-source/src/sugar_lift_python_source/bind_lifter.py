@@ -1,38 +1,15 @@
 from __future__ import annotations
 
-import ast
+from . import typed_node_api as typed
 import json
 import os
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 from .ast_template import function_body_template, function_param_names
 from .canonical import blake3_512_of, cid_of_json, template_cid_of_json
-
-
-def _typed_tree():
-    """Lazy typed-tree imports — avoid circular import with source_oracle."""
-    _tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
-    if _tree_src.is_dir() and str(_tree_src) not in sys.path:
-        sys.path.insert(0, str(_tree_src))
-    from sugar_source_tree.backend import BackendCouldNotParse
-    from sugar_source_tree.nodes import Assign, Constant, List, Name, Tuple_
-    from sugar_source_tree.nodes import ImportFrom as TypedImportFrom
-    from sugar_source_tree.tree import SourceFile
-
-    return (
-        SourceFile,
-        BackendCouldNotParse,
-        Assign,
-        Constant,
-        List,
-        Name,
-        Tuple_,
-        TypedImportFrom,
-    )
 
 Json = Any
 class UnsupportedStatementGrammar(RuntimeError):
@@ -71,11 +48,9 @@ AST_STATEMENT_TYPE_NAMES = frozenset(
         "Continue",
     }
 )
-AST_STATEMENT_TYPES = frozenset(
-    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
-)
+AST_STATEMENT_TYPES = frozenset(getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES)
 if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
-    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
+    raise UnsupportedStatementGrammar("unsupported running typed.stmt grammar")
 CID_RE = re.compile(r"^blake3-512:[0-9a-f]{128}$")
 CONTRACT_COMMENT_KIND = "sugar-contract-comment-sugar"
 CONTRACT_COMMENT_ROLE_MAP = {
@@ -99,7 +74,7 @@ class BindLiftResult:
 
 @dataclass(frozen=True)
 class _FunctionInfo:
-    node: ast.FunctionDef | ast.AsyncFunctionDef
+    node: typed.FunctionDef | typed.AsyncFunctionDef
 
 
 @dataclass(frozen=True)
@@ -122,7 +97,7 @@ def lift_source(
 ) -> BindLiftResult:
     result = BindLiftResult()
     try:
-        tree = ast.parse(source, filename=source_path)
+        tree = typed.parse(source, filename=source_path)
     except SyntaxError as exc:
         result.diagnostics.append(
             {
@@ -243,30 +218,30 @@ def lift_paths(
 
 @dataclass(frozen=True)
 class _ClassInfo:
-    node: ast.ClassDef
+    node: typed.ClassDef
 
 
-class _DefinitionCollector(ast.NodeVisitor):
+class _DefinitionCollector(typed.TypedNodeWalker):
     def __init__(self) -> None:
         self.definitions: list[_FunctionInfo] = []
         self.class_definitions: list[_ClassInfo] = []
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def visit_FunctionDef(self, node: typed.FunctionDef) -> None:
         self.definitions.append(_FunctionInfo(node=node))
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+    def visit_AsyncFunctionDef(self, node: typed.AsyncFunctionDef) -> None:
         self.definitions.append(_FunctionInfo(node=node))
         self.generic_visit(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+    def visit_ClassDef(self, node: typed.ClassDef) -> None:
         self.class_definitions.append(_ClassInfo(node=node))
         # still recurse so method definitions inside classes are visited for function lifting
         self.generic_visit(node)
 
 
 def _entry_for_function(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     rel_path: str,
     lines: list[str],
     diagnostics: list[Json],
@@ -328,68 +303,42 @@ def _module_file(root: Path, module: str) -> Path | None:
 
 
 def _literal_all_exports(root: Path, module: str) -> list[str]:
-    """Read ``__all__`` through the typed source tree — not raw ``ast.walk``.
-
-    Source enters once via SourceFile (adapter-backed). Semantic authority is
-    typed Assign/Name/Constant/List/Tuple nodes; foreign ast is not the door.
-    """
-    (
-        SourceFile,
-        BackendCouldNotParse,
-        Assign,
-        Constant,
-        List,
-        Name,
-        Tuple_,
-        _TypedImportFrom,
-    ) = _typed_tree()
     file_path = _module_file(root, module)
     if file_path is None:
         return []
     try:
         source = file_path.read_text(encoding="utf-8")
-        source_file = SourceFile(
-            (
-                source,
-                str(file_path),
-                blake3_512_of(source.encode("utf-8")),
-            )
-        )
-    except (OSError, SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+        tree = typed.parse(source, filename=str(file_path))
+    except (OSError, SyntaxError):
         return []
-    for node in source_file.root.walk():
-        if not isinstance(node, Assign):
+    for node in typed.walk(tree):
+        if not isinstance(node, typed.Assign):
             continue
         if not any(
-            isinstance(target, Name) and target.id == "__all__" for target in node.targets
+            isinstance(target, typed.Name) and target.id == "__all__"
+            for target in node.targets
         ):
             continue
-        value = node.value
-        if isinstance(value, (List, Tuple_)):
-            items: list[str] = []
-            for element in value.elts:
-                if not isinstance(element, Constant) or not isinstance(
-                    element.value, str
-                ):
-                    return []
-                items.append(element.value)
-            return items
-        if isinstance(value, Constant) and isinstance(value.value, (list, tuple)):
-            if all(isinstance(item, str) for item in value.value):
-                return list(value.value)
+        try:
+            value = typed.literal_eval(node.value)
+        except (ValueError, SyntaxError):
             return []
+        if isinstance(value, (list, tuple)) and all(
+            isinstance(item, str) for item in value
+        ):
+            return list(value)
         return []
     return []
 
 
-def _relative_import_target(current_module: str, node: ast.ImportFrom) -> str | None:
+def _relative_import_target(current_module: str, node: typed.ImportFrom) -> str | None:
     if node.level != 1 or not node.module:
         return None
     return f"{current_module}.{node.module}" if current_module else node.module
 
 
 def _package_import_target(
-    package: str, current_module: str, node: ast.ImportFrom
+    package: str, current_module: str, node: typed.ImportFrom
 ) -> str | None:
     if node.level:
         current_parts = [p for p in current_module.split(".") if p]
@@ -520,38 +469,19 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
     mapping: dict[str, tuple[str, str]] = {}
     aliases: dict[str, str] = {}
     public_aliases: set[str] = set()
-    (
-        SourceFile,
-        BackendCouldNotParse,
-        _Assign,
-        _Constant,
-        _List,
-        _Name,
-        _Tuple_,
-        TypedImportFrom,
-    ) = _typed_tree()
-
     for current_file in sorted(root.rglob("*.py")):
         current_module = _module_name_for_package_file(root, current_file)
         if current_module is None:
             continue
         try:
             current_src = current_file.read_text(encoding="utf-8")
-            source_file = SourceFile(
-                (
-                    current_src,
-                    str(current_file),
-                    blake3_512_of(current_src.encode("utf-8")),
-                )
-            )
-        except (OSError, SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+            current_tree = typed.parse(current_src, filename=str(current_file))
+        except (OSError, SyntaxError):
             continue
-        for node in source_file.root.walk():
-            if not isinstance(node, TypedImportFrom):
+        for node in typed.walk(current_tree):
+            if not isinstance(node, typed.ImportFrom):
                 continue
-            # Typed ImportFrom exposes the same .level / .module fields the
-            # package-relative resolver reads — no foreign ast required.
-            target_module = _package_import_target(package, current_module, node)  # type: ignore[arg-type]
+            target_module = _package_import_target(package, current_module, node)
             if target_module is None:
                 continue
             for alias in node.names:
@@ -581,7 +511,7 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
 
 
 def _library_binding_entry_for_function(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     rel_path: str,
     lines: list[str],
     source_lines: list[str],
@@ -690,10 +620,10 @@ def _library_binding_entry_for_function(
 
 
 def _sugar_bind_decorator(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
 ) -> dict | None:
-    for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call) or not _is_sugar_bind_func(
+    for decorator in node.decorators:
+        if not isinstance(decorator, typed.Call) or not _is_sugar_bind_func(
             decorator.func
         ):
             continue
@@ -731,35 +661,35 @@ def _sugar_bind_decorator(
     return None
 
 
-def _is_sugar_bind_func(func: ast.expr) -> bool:
-    if not isinstance(func, ast.Attribute) or func.attr != "bind":
+def _is_sugar_bind_func(func: typed.expr) -> bool:
+    if not isinstance(func, typed.Attribute) or func.attr != "bind":
         return False
     value = func.value
-    if isinstance(value, ast.Name):
+    if isinstance(value, typed.Name):
         return value.id == "sugar"
-    if isinstance(value, ast.Attribute) and value.attr == "sugar":
-        return isinstance(value.value, ast.Name) and value.value.id == "sugar"
+    if isinstance(value, typed.Attribute) and value.attr == "sugar":
+        return isinstance(value.value, typed.Name) and value.value.id == "sugar"
     return False
 
 
-def _keyword_str(call: ast.Call, name: str) -> str | None:
+def _keyword_str(call: typed.Call, name: str) -> str | None:
     for keyword in call.keywords:
-        if keyword.arg == name and isinstance(keyword.value, ast.Constant):
+        if keyword.arg == name and isinstance(keyword.value, typed.Constant):
             if isinstance(keyword.value.value, str) and keyword.value.value:
                 return keyword.value.value
     return None
 
 
-def _keyword_str_list(call: ast.Call, name: str) -> list[str] | None:
+def _keyword_str_list(call: typed.Call, name: str) -> list[str] | None:
     """Return a keyword argument whose value is a list of string literals, or None if absent."""
     for keyword in call.keywords:
         if keyword.arg != name:
             continue
-        if not isinstance(keyword.value, ast.List):
+        if not isinstance(keyword.value, typed.List):
             return None
         result: list[str] = []
         for elt in keyword.value.elts:
-            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            if isinstance(elt, typed.Constant) and isinstance(elt.value, str):
                 result.append(elt.value)
         return result
     return None
@@ -771,25 +701,25 @@ def _keyword_str_list(call: ast.Call, name: str) -> list[str] | None:
 _CONCEPT_GAP_DECORATOR_NAMES = ("concept_gap",)
 
 
-def _is_concept_gap_func(func: ast.expr) -> bool:
+def _is_concept_gap_func(func: typed.expr) -> bool:
     """Return True for @concept_gap(...) or its @sugar.* form."""
-    if isinstance(func, ast.Name):
+    if isinstance(func, typed.Name):
         return func.id in _CONCEPT_GAP_DECORATOR_NAMES
-    if isinstance(func, ast.Attribute) and func.attr in _CONCEPT_GAP_DECORATOR_NAMES:
+    if isinstance(func, typed.Attribute) and func.attr in _CONCEPT_GAP_DECORATOR_NAMES:
         value = func.value
-        return isinstance(value, ast.Name) and value.id == "sugar"
+        return isinstance(value, typed.Name) and value.id == "sugar"
     return False
 
 
 def _concept_gap_memento_for_class(
-    node: ast.ClassDef,
+    node: typed.ClassDef,
     rel_path: str,
     diagnostics: list[Json],
 ) -> Json | None:
     """Emit a concept-gap-memento IR record for an empty class decorated with
     @concept_gap(...)."""
-    for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call) or not _is_concept_gap_func(
+    for decorator in node.decorators:
+        if not isinstance(decorator, typed.Call) or not _is_concept_gap_func(
             decorator.func
         ):
             continue
@@ -810,7 +740,7 @@ def _concept_gap_memento_for_class(
         # Validate body is trivial (only pass or docstring)
         body_stmts = [s for s in node.body if not _is_docstring_stmt(s)]
         if len(body_stmts) > 1 or (
-            len(body_stmts) == 1 and not isinstance(body_stmts[0], ast.Pass)
+            len(body_stmts) == 1 and not isinstance(body_stmts[0], typed.Pass)
         ):
             diagnostics.append(
                 {
@@ -832,8 +762,8 @@ def _concept_gap_memento_for_class(
     return None
 
 
-def _ordered_signature_args(args: ast.arguments) -> list[ast.arg]:
-    ordered_args: list[ast.arg] = []
+def _ordered_signature_args(args: typed.arguments) -> list[typed.arg]:
+    ordered_args: list[typed.arg] = []
     ordered_args.extend(args.posonlyargs)
     ordered_args.extend(args.args)
     if args.vararg is not None:
@@ -844,21 +774,21 @@ def _ordered_signature_args(args: ast.arguments) -> list[ast.arg]:
     return ordered_args
 
 
-def _annotation_surface(annotation: ast.expr | None) -> str | None:
+def _annotation_surface(annotation: typed.expr | None) -> str | None:
     if annotation is None:
         return None
-    return ast.unparse(annotation)
+    return typed.unparse(annotation)
 
 
 def _body_source_locator(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     rel_path: str,
     source_lines: list[str],
 ) -> Json:
     start_line = node.lineno
     start_col = node.col_offset
-    if node.decorator_list:
-        first = min(node.decorator_list, key=lambda decorator: decorator.lineno)
+    if node.decorators:
+        first = min(node.decorators, key=lambda decorator: decorator.lineno)
         start_line = first.lineno
         start_col = 0
     end_line = node.end_lineno or node.lineno
@@ -903,7 +833,7 @@ def source_memento_of(full_body_source: Json) -> Json:
 
 
 def _extract_body_text(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     source_lines: list[str],
 ) -> str:
     """Extract the text of the function body (excluding decorators and def line).
@@ -941,19 +871,19 @@ def _extract_body_text(
     return "".join(dedented).rstrip()
 
 
-def _signature_param_names(args: ast.arguments) -> list[str]:
+def _signature_param_names(args: typed.arguments) -> list[str]:
     names: list[str] = []
     for arg in _ordered_signature_args(args):
         names.append(arg.arg)
     return names
 
 
-def _function_shape(node: ast.FunctionDef | ast.AsyncFunctionDef) -> Json:
+def _function_shape(node: typed.FunctionDef | typed.AsyncFunctionDef) -> Json:
     return _function_shape_with_bindings(node).shape
 
 
 def _function_shape_with_bindings(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     lines: list[str] | None = None,
 ) -> _ShapeResult:
     statements = [stmt for stmt in node.body if not _is_docstring_stmt(stmt)]
@@ -961,12 +891,12 @@ def _function_shape_with_bindings(
     return _shape_block_with_bindings(statements, comments)
 
 
-def _shape_block(statements: list[ast.stmt]) -> Json:
+def _shape_block(statements: list[typed.stmt]) -> Json:
     return _shape_block_with_bindings(statements).shape
 
 
 def _shape_block_with_bindings(
-    statements: list[ast.stmt],
+    statements: list[typed.stmt],
     comments: list[_CommentOccurrence] | None = None,
 ) -> _ShapeResult:
     shapes: list[Json] = []
@@ -1003,12 +933,12 @@ def _shape_block_with_bindings(
     return _collapse_operation_shape_results(shapes, binding_groups)
 
 
-def _shape_stmt(node: ast.stmt, *, top_level: bool) -> Json:
+def _shape_stmt(node: typed.stmt, *, top_level: bool) -> Json:
     return _shape_stmt_with_bindings(node, top_level=top_level).shape
 
 
-def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResult:
-    if isinstance(node, ast.If):
+def _shape_stmt_with_bindings(node: typed.stmt, *, top_level: bool) -> _ShapeResult:
+    if isinstance(node, typed.If):
         test = _shape_expr_with_bindings(node.test)
         body = _shape_block_with_bindings(node.body)
         orelse = _shape_block_with_bindings(node.orelse)
@@ -1016,7 +946,7 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
             "concept:conditional",
             [test, body, orelse],
         )
-    if isinstance(node, ast.While):
+    if isinstance(node, typed.While):
         return _operator_shape_result(
             "concept:while",
             [
@@ -1024,21 +954,21 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
                 _shape_block_with_bindings(node.body),
             ],
         )
-    if isinstance(node, (ast.For, ast.AsyncFor)):
+    if isinstance(node, (typed.For, typed.AsyncFor)):
         return _operator_shape_result(
             "concept:for", [_shape_block_with_bindings(node.body)]
         )
-    if isinstance(node, ast.Return):
+    if isinstance(node, typed.Return):
         if node.value is None:
             return _empty_shape_result()
         return _shape_expr_with_bindings(node.value)
-    if isinstance(node, ast.Pass):
+    if isinstance(node, typed.Pass):
         return _operator_shape_result("concept:skip", [])
-    if isinstance(node, ast.Break):
+    if isinstance(node, typed.Break):
         return _operator_shape_result("concept:break", [])
-    if isinstance(node, ast.Continue):
+    if isinstance(node, typed.Continue):
         return _operator_shape_result("concept:continue", [])
-    if isinstance(node, ast.Assign):
+    if isinstance(node, typed.Assign):
         target = (
             _shape_expr_with_bindings(node.targets[0])
             if node.targets
@@ -1047,7 +977,7 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
         return _operator_shape_result(
             "concept:assign", [target, _shape_expr_with_bindings(node.value)]
         )
-    if isinstance(node, ast.AnnAssign):
+    if isinstance(node, typed.AnnAssign):
         if node.value is not None:
             return _operator_shape_result(
                 "concept:assign",
@@ -1057,7 +987,7 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
                 ],
             )
         return _empty_shape_result()
-    if isinstance(node, ast.AugAssign):
+    if isinstance(node, typed.AugAssign):
         return _bin_operator_shape_result(
             node.op,
             [
@@ -1065,19 +995,19 @@ def _shape_stmt_with_bindings(node: ast.stmt, *, top_level: bool) -> _ShapeResul
                 _shape_expr_with_bindings(node.value),
             ],
         )
-    if isinstance(node, ast.Expr):
+    if isinstance(node, typed.Expr):
         return _shape_expr_with_bindings(node.value)
     if type(node) in AST_STATEMENT_TYPES:
         return _empty_shape_result()
     raise UnsupportedStatementVariant(type(node).__name__)
 
 
-def _shape_expr(node: ast.expr) -> Json:
+def _shape_expr(node: typed.expr) -> Json:
     return _shape_expr_with_bindings(node).shape
 
 
-def _shape_expr_with_bindings(node: ast.expr) -> _ShapeResult:
-    if isinstance(node, ast.BinOp):
+def _shape_expr_with_bindings(node: typed.expr) -> _ShapeResult:
+    if isinstance(node, typed.BinOp):
         return _bin_operator_shape_result(
             node.op,
             [
@@ -1085,18 +1015,18 @@ def _shape_expr_with_bindings(node: ast.expr) -> _ShapeResult:
                 _shape_expr_with_bindings(node.right),
             ],
         )
-    if isinstance(node, ast.BoolOp):
+    if isinstance(node, typed.BoolOp):
         op = _bool_op(node.op)
         values = [_shape_expr_with_bindings(value) for value in node.values]
         if op is None:
             return _empty_shape_result()
         return _operator_shape_result(op, values)
-    if isinstance(node, ast.UnaryOp):
+    if isinstance(node, typed.UnaryOp):
         op = _unary_op(node.op)
         if op is None:
             return _empty_shape_result()
         return _operator_shape_result(op, [_shape_expr_with_bindings(node.operand)])
-    if isinstance(node, ast.IfExp):
+    if isinstance(node, typed.IfExp):
         return _operator_shape_result(
             "concept:conditional",
             [
@@ -1105,9 +1035,9 @@ def _shape_expr_with_bindings(node: ast.expr) -> _ShapeResult:
                 _shape_expr_with_bindings(node.orelse),
             ],
         )
-    if isinstance(node, ast.Compare):
+    if isinstance(node, typed.Compare):
         return _compare_shape_result(node)
-    if isinstance(node, ast.Call):
+    if isinstance(node, typed.Call):
         args = [_shape_expr_with_bindings(node.func)]
         args.extend(_shape_expr_with_bindings(arg) for arg in node.args)
         args.extend(
@@ -1155,7 +1085,7 @@ def _collapse_operation_shape_results(
     )
 
 
-def _bin_operator_shape(op: ast.operator, args: list[Json]) -> Json:
+def _bin_operator_shape(op: typed.operator, args: list[Json]) -> Json:
     atom = _bin_op(op)
     if atom is None:
         return {}
@@ -1163,7 +1093,7 @@ def _bin_operator_shape(op: ast.operator, args: list[Json]) -> Json:
 
 
 def _bin_operator_shape_result(
-    op: ast.operator, args: list[_ShapeResult]
+    op: typed.operator, args: list[_ShapeResult]
 ) -> _ShapeResult:
     atom = _bin_op(op)
     if atom is None:
@@ -1171,10 +1101,10 @@ def _bin_operator_shape_result(
     return _operator_shape_result(atom, args)
 
 
-def _compare_shape_result(node: ast.Compare) -> _ShapeResult:
+def _compare_shape_result(node: typed.Compare) -> _ShapeResult:
     if not node.ops or len(node.ops) != len(node.comparators):
         return _empty_shape_result()
-    operands: list[ast.expr] = [node.left, *node.comparators]
+    operands: list[typed.expr] = [node.left, *node.comparators]
     comparisons: list[_ShapeResult] = []
     for index, raw_op in enumerate(node.ops):
         op = _rel_op(raw_op)
@@ -1240,10 +1170,10 @@ def _sort_operand_bindings(bindings: list[Json]) -> list[Json]:
     return sorted(bindings, key=lambda binding: binding["position"])
 
 
-def _operand_symbol(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
+def _operand_symbol(node: typed.AST) -> str | None:
+    if isinstance(node, typed.Name):
         return node.id
-    if isinstance(node, ast.Constant):
+    if isinstance(node, typed.Constant):
         value = node.value
         if isinstance(value, bool):
             return "True" if value else "False"
@@ -1272,18 +1202,18 @@ def _operand_slot(value: Json) -> Json:
     return {}
 
 
-def _bin_op(op: ast.operator) -> str | None:
-    table: tuple[tuple[type[ast.operator], str], ...] = (
-        (ast.Add, "concept:add"),
-        (ast.Sub, "concept:sub"),
-        (ast.Mult, "concept:mul"),
-        (ast.Div, "concept:div"),
-        (ast.Mod, "concept:mod"),
-        (ast.LShift, "concept:shl"),
-        (ast.RShift, "concept:shr"),
-        (ast.BitAnd, "concept:bitand"),
-        (ast.BitOr, "concept:bitor"),
-        (ast.BitXor, "concept:bitxor"),
+def _bin_op(op: typed.operator) -> str | None:
+    table: tuple[tuple[type[typed.operator], str], ...] = (
+        (typed.Add, "concept:add"),
+        (typed.Sub, "concept:sub"),
+        (typed.Mult, "concept:mul"),
+        (typed.Div, "concept:div"),
+        (typed.Mod, "concept:mod"),
+        (typed.LShift, "concept:shl"),
+        (typed.RShift, "concept:shr"),
+        (typed.BitAnd, "concept:bitand"),
+        (typed.BitOr, "concept:bitor"),
+        (typed.BitXor, "concept:bitxor"),
     )
     for cls, operator in table:
         if isinstance(op, cls):
@@ -1291,32 +1221,32 @@ def _bin_op(op: ast.operator) -> str | None:
     return None
 
 
-def _bool_op(op: ast.boolop) -> str | None:
-    if isinstance(op, ast.And):
+def _bool_op(op: typed.boolop) -> str | None:
+    if isinstance(op, typed.And):
         return "concept:and"
-    if isinstance(op, ast.Or):
+    if isinstance(op, typed.Or):
         return "concept:or"
     return None
 
 
-def _unary_op(op: ast.unaryop) -> str | None:
-    if isinstance(op, ast.Not):
+def _unary_op(op: typed.unaryop) -> str | None:
+    if isinstance(op, typed.Not):
         return "concept:not"
-    if isinstance(op, ast.USub):
+    if isinstance(op, typed.USub):
         return "concept:neg"
-    if isinstance(op, ast.Invert):
+    if isinstance(op, typed.Invert):
         return "concept:bitnot"
     return None
 
 
-def _rel_op(op: ast.cmpop) -> str | None:
-    table: tuple[tuple[type[ast.cmpop], str], ...] = (
-        (ast.Eq, "concept:eq"),
-        (ast.NotEq, "concept:ne"),
-        (ast.Lt, "concept:lt"),
-        (ast.LtE, "concept:le"),
-        (ast.Gt, "concept:gt"),
-        (ast.GtE, "concept:ge"),
+def _rel_op(op: typed.cmpop) -> str | None:
+    table: tuple[tuple[type[typed.cmpop], str], ...] = (
+        (typed.Eq, "concept:eq"),
+        (typed.NotEq, "concept:ne"),
+        (typed.Lt, "concept:lt"),
+        (typed.LtE, "concept:le"),
+        (typed.Gt, "concept:gt"),
+        (typed.GtE, "concept:ge"),
     )
     for cls, operator in table:
         if isinstance(op, cls):
@@ -1326,7 +1256,7 @@ def _rel_op(op: ast.cmpop) -> str | None:
 
 def _contract_comment_witnesses(
     lines: list[str],
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     rel_path: str,
     diagnostics: list[Json],
 ) -> list[Json]:
@@ -1338,7 +1268,7 @@ def _contract_comment_witnesses(
             diagnostics,
         )
     )
-    docstring = ast.get_docstring(node, clean=True)
+    docstring = typed.get_docstring(node, clean=True)
     if docstring:
         doc_lines = [
             (getattr(node.body[0], "lineno", node.lineno), line.strip())
@@ -1522,7 +1452,7 @@ def _contract_comment_witness(
 
 def _function_body_comment_surface(
     lines: list[str],
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
 ) -> list[tuple[int, str]]:
     end_lineno = getattr(node, "end_lineno", node.lineno)
     surface: list[tuple[int, str]] = []
@@ -1535,7 +1465,7 @@ def _function_body_comment_surface(
 
 def _trivia_comment_occurrences(
     lines: list[str],
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
 ) -> list[_CommentOccurrence]:
     end_lineno = getattr(node, "end_lineno", node.lineno)
     occurrences: list[_CommentOccurrence] = []
@@ -1625,20 +1555,20 @@ def _contract_comment_diag(
 
 
 def _decorator_contract_witnesses(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
     param_names: list[str],
     rel_path: str,
     diagnostics: list[Json],
 ) -> list[Json]:
     witnesses: list[Json] = []
-    for decorator in node.decorator_list:
-        if not isinstance(decorator, ast.Call):
+    for decorator in node.decorators:
+        if not isinstance(decorator, typed.Call):
             continue
         if _decorator_name(decorator.func) not in {"contract", "sugar_contract"}:
             continue
         for keyword in decorator.keywords:
             role = {"pre": "pre", "post": "post", "inv": "inv"}.get(keyword.arg or "")
-            if role is None or not isinstance(keyword.value, ast.Constant):
+            if role is None or not isinstance(keyword.value, typed.Constant):
                 continue
             if not isinstance(keyword.value.value, str):
                 continue
@@ -1679,10 +1609,10 @@ def _decorator_contract_witnesses(
     return witnesses
 
 
-def _decorator_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Name):
+def _decorator_name(node: typed.expr) -> str:
+    if isinstance(node, typed.Name):
         return node.id
-    if isinstance(node, ast.Attribute):
+    if isinstance(node, typed.Attribute):
         return node.attr
     return ""
 
@@ -1702,9 +1632,9 @@ def _is_relative_to(child: Path, parent: Path) -> bool:
         return False
 
 
-def _is_docstring_stmt(node: ast.stmt) -> bool:
+def _is_docstring_stmt(node: typed.stmt) -> bool:
     return (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Constant)
+        isinstance(node, typed.Expr)
+        and isinstance(node.value, typed.Constant)
         and isinstance(node.value.value, str)
     )

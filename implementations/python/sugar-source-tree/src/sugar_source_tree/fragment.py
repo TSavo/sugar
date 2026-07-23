@@ -27,11 +27,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
-from sugar_lift_python_source.source_oracle import (
-    SourceUnavailable,
-    resolve_span_memento,
-)
-
 from .spans import LineColSpan, Span
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -180,6 +175,14 @@ def resolve_memento(
     that matches no node when the CIDs aligned is a loud source-unavailable result — the
     backend disagreed with itself, and that never becomes silence.
     """
+    # The oracle is the lower source authority, but its package also exposes
+    # consumer lifters.  Resolve lazily so initializing the typed tree never
+    # imports a consumer and cycles back into this module.
+    from sugar_lift_python_source.source_oracle import (
+        SourceUnavailable,
+        resolve_span_memento,
+    )
+
     from .tree import SourceFile
 
     resolved = resolve_span_memento(memento.to_dict(), project_root)
