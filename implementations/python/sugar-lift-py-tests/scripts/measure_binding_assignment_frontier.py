@@ -18,6 +18,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.audit_only.collect_construction_gaps import (
+    collect_construction_panic,
+)
 from sugar_source_tree.backend import BackendCouldNotParse, materialize
 from sugar_source_tree.cpython_adapter import _Handle
 from sugar_source_tree.nodes import SourceUnit
@@ -80,10 +83,72 @@ def _panic_key(panic: BaseException) -> str:
     return f"{owner}|{observed}|{requested}"
 
 
-def measure(root: Path, *, direct_only: bool = False) -> dict[str, object]:
+def _gap_key(info: dict[str, str]) -> str:
+    return "|".join(
+        info.get(field, "") for field in ("owner", "observed", "requested")
+    )
+
+
+def _plain_class_names(module: ast.Module) -> frozenset[str]:
+    forbidden = {
+        "__new__", "__getattr__", "__getattribute__", "__setattr__",
+        "__delattr__", "__getitem__", "__setitem__", "__delitem__",
+    }
+    return frozenset(
+        node.name
+        for node in module.body
+        if isinstance(node, ast.ClassDef)
+        and not node.bases
+        and not node.keywords
+        and not node.decorator_list
+        and all(isinstance(member, (ast.Pass, ast.FunctionDef)) for member in node.body)
+        and all(
+            not isinstance(member, ast.FunctionDef)
+            or (member.name not in forbidden and not member.decorator_list)
+            for member in node.body
+        )
+    )
+
+
+def _has_object_field_candidate(
+    function: ast.AST, plain_class_names: frozenset[str]
+) -> bool:
+    """Structural measurement label, never construction authority."""
+    constructed_names = {
+        target.id
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and (
+            isinstance(node.value, (ast.Dict, ast.List))
+            or (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id in plain_class_names
+            )
+        )
+        for target in node.targets
+    }
+    return any(
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], (ast.Attribute, ast.Subscript))
+        and isinstance(node.targets[0].value, ast.Name)
+        and node.targets[0].value.id in constructed_names
+        for node in ast.walk(function)
+    )
+
+
+def measure(
+    root: Path, *, direct_only: bool = False, object_field_only: bool = False
+) -> dict[str, object]:
     counts: Counter[str] = Counter()
     direct: dict[str, Counter[str]] = defaultdict(Counter)
     enclosing: dict[str, Counter[str]] = defaultdict(Counter)
+    enclosing_functions: Counter[str] = Counter()
+    object_field_enclosing: Counter[str] = Counter()
+    object_field_rows: list[dict[str, object]] = []
     roots: Counter[str] = Counter()
 
     for path in sorted(root.rglob("*.py")):
@@ -93,17 +158,20 @@ def measure(root: Path, *, direct_only: bool = False) -> dict[str, object]:
         try:
             source, filename, source_cid = path_source(path)
             parsed = ast.parse(source, filename=str(path))
+            plain_class_names = _plain_class_names(parsed)
             native_assignments = [node for node in ast.walk(parsed) if isinstance(node, ASSIGNMENT)]
             if not native_assignments:
                 counts["files_without_assignment"] += 1
                 continue
             unit = SourceUnit(filename=filename, source=source, source_cid=source_cid)
-            for native in native_assignments:
+            for native in (() if object_field_only else native_assignments):
                 shape = _shape(native)
                 direct[shape]["total"] += 1
                 node = materialize(unit, _Handle(unit, native))
                 try:
-                    node.sugar()
+                    _, gap = collect_construction_panic(
+                        f"{path}:{getattr(native, 'lineno', 0)}", node.sugar
+                    )
                 except SugarNotWritten as panic:
                     own = getattr(panic, "owner", "") in {
                         "Assign.sugar", "AnnAssign.sugar", "AugAssign.sugar"
@@ -114,30 +182,88 @@ def measure(root: Path, *, direct_only: bool = False) -> dict[str, object]:
                     direct[shape]["other_typed_loud"] += 1
                     roots[_panic_key(panic)] += 1
                 else:
-                    direct[shape]["built"] += 1
+                    if gap is None:
+                        direct[shape]["built"] += 1
+                    else:
+                        direct[shape]["construction_panic"] += 1
+                        roots[_gap_key(gap.info)] += 1
 
             functions = [] if direct_only else [
                 node for node in ast.walk(parsed)
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and any(isinstance(child, ASSIGNMENT) for child in ast.walk(node))
+                and (
+                    not object_field_only
+                    or _has_object_field_candidate(node, plain_class_names)
+                )
             ]
             for native_function in functions:
+                enclosing_functions["total"] += 1
+                object_field_candidate = _has_object_field_candidate(
+                    native_function, plain_class_names
+                )
+                if object_field_candidate:
+                    object_field_enclosing["total"] += 1
+                row = {
+                    "path": str(path.relative_to(root)),
+                    "line": native_function.lineno,
+                    "function": native_function.name,
+                }
                 shapes = sorted({_shape(node) for node in ast.walk(native_function) if isinstance(node, ASSIGNMENT)})
                 function = materialize(unit, _Handle(unit, native_function))
                 try:
-                    function.sugar()
+                    _, gap = collect_construction_panic(
+                        f"{path}:{native_function.lineno}", function.sugar
+                    )
                 except SourceTreePanic as panic:
+                    enclosing_functions["typed_loud"] += 1
+                    if object_field_candidate:
+                        object_field_enclosing["typed_loud"] += 1
+                        object_field_rows.append(
+                            {**row, "status": "typed_loud", "error": str(panic)}
+                        )
                     roots[_panic_key(panic)] += 1
                     for shape in shapes:
                         enclosing[shape]["loud"] += 1
                         enclosing[shape][f"root:{getattr(panic, 'owner', type(panic).__name__)}"] += 1
                 except Exception as panic:
+                    enclosing_functions["non_source_failure"] += 1
+                    if object_field_candidate:
+                        object_field_enclosing["non_source_failure"] += 1
+                        object_field_rows.append(
+                            {
+                                **row,
+                                "status": "non_source_failure",
+                                "error": f"{type(panic).__name__}: {panic}",
+                            }
+                        )
                     for shape in shapes:
                         enclosing[shape]["non_source_failure"] += 1
                         enclosing[shape][f"root:{type(panic).__name__}"] += 1
                 else:
-                    for shape in shapes:
-                        enclosing[shape]["built"] += 1
+                    if gap is None:
+                        enclosing_functions["built"] += 1
+                        if object_field_candidate:
+                            object_field_enclosing["built"] += 1
+                            object_field_rows.append({**row, "status": "built"})
+                        for shape in shapes:
+                            enclosing[shape]["built"] += 1
+                    else:
+                        owner = gap.info.get("owner", "ConstructionPanic")
+                        enclosing_functions["construction_panic"] += 1
+                        if object_field_candidate:
+                            object_field_enclosing["construction_panic"] += 1
+                            object_field_rows.append(
+                                {
+                                    **row,
+                                    "status": "construction_panic",
+                                    "error": gap.message,
+                                }
+                            )
+                        roots[_gap_key(gap.info)] += 1
+                        for shape in shapes:
+                            enclosing[shape]["construction_panic"] += 1
+                            enclosing[shape][f"root:{owner}"] += 1
             counts["files_completed"] += 1
         except BackendCouldNotParse:
             counts["files_could_not_parse"] += 1
@@ -151,6 +277,9 @@ def measure(root: Path, *, direct_only: bool = False) -> dict[str, object]:
         "counts": dict(sorted(counts.items())),
         "direct_by_shape": {key: dict(sorted(value.items())) for key, value in sorted(direct.items())},
         "enclosing_by_shape": {key: dict(sorted(value.items())) for key, value in sorted(enclosing.items())},
+        "enclosing_functions": dict(sorted(enclosing_functions.items())),
+        "object_field_enclosing": dict(sorted(object_field_enclosing.items())),
+        "object_field_rows": object_field_rows,
         "root_panics": dict(sorted(roots.items(), key=lambda item: (-item[1], item[0]))),
     }
 
@@ -159,10 +288,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path)
     parser.add_argument("--direct-only", action="store_true")
+    parser.add_argument("--object-field-only", action="store_true")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     root = (args.root or _installed_package_root("pandas")).resolve()
-    print(json.dumps(measure(root, direct_only=args.direct_only), indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            measure(
+                root,
+                direct_only=args.direct_only,
+                object_field_only=args.object_field_only,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

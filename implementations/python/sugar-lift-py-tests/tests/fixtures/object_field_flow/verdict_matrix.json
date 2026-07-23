@@ -29,6 +29,24 @@
       "requires": ["authenticated-alias-equivalence", "single-temporal-binding-model"]
     },
     {
+      "id": "version-flow",
+      "file": "version_flow.py",
+      "canonical": {"truthful": "truthful", "lying": "lying"},
+      "renamed": {"truthful": "renamed_truthful", "lying": "renamed_lying"},
+      "current": "typed-loud",
+      "target": {"truthful": "sat", "lying": "unsat"},
+      "requires": ["immutable-field-version-chain", "authenticated-alias-equivalence", "read-snapshot-stability"]
+    },
+    {
+      "id": "distinct-version-flow",
+      "file": "distinct_version_flow.py",
+      "canonical": {"truthful": "truthful", "lying": "lying"},
+      "renamed": {"truthful": "renamed_truthful", "lying": "renamed_lying"},
+      "current": "typed-loud",
+      "target": {"truthful": "sat", "lying": "unsat"},
+      "requires": ["construction-occurrence-discrimination", "immutable-field-version-chain", "no-cross-object-version-collision"]
+    },
+    {
       "id": "symbolic-receiver",
       "file": "symbolic_receiver.py",
       "canonical": "read_after_store",
