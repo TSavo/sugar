@@ -182,3 +182,55 @@ def test_downstream_binding_read_stays_loud_without_exact_guard_formulas():
 
     with pytest.raises(BindingStateWireGap, match="exact guard formula"):
         _construct_binding_projection(projection)
+
+
+def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
+    # A branch-joined GuardedBinding carried into a loop pre-state must seal
+    # through the ONE recursive projection -- not stay loud as a Node-only
+    # special case did (the pandas frame/indexing/blocks loop crashes).
+    from sugar_source_tree.binding_provenance import (
+        BoundBindingStateV1,
+        GuardedBindingStateV1,
+        _state_wire,
+    )
+    from sugar_source_tree.binding_state import GuardedBinding, branch_result_slot
+    from sugar_source_tree.live_loop_construction import (
+        _formula_cid,
+        _seal_runtime_state,
+    )
+    from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
+
+    _a, node_true, _e1 = _entry("def f():\n    y = 1\n")
+    _b, node_false, _e2 = _entry("def f():\n    y = 2\n")
+    _c, test_node, _e3 = _entry("def f():\n    t = 3\n")
+    slot = branch_result_slot(test_node)
+
+    sealed = _seal_runtime_state(GuardedBinding(slot, node_true, node_false))
+    assert isinstance(sealed, GuardedBindingStateV1)
+    # each arm addresses by the content CID of its OWN sealed state (recursion)
+    assert sealed.when_true_state_cid == cid_of_json(
+        _state_wire(_seal_runtime_state(node_true))
+    )
+    assert sealed.when_false_state_cid == cid_of_json(
+        _state_wire(_seal_runtime_state(node_false))
+    )
+    # the guard is the SAME branch-result guard the loop control faces use
+    assert sealed.guard_formula_cid == _formula_cid(
+        branch_result_guard(slot, slot)
+    )
+    # a constructed Node arm seals to a bound value, not a guard
+    assert isinstance(_seal_runtime_state(node_true), BoundBindingStateV1)
+
+    # Bad twin: a LoopProjectedBinding is a real state this projection does not
+    # yet implement -- it must stay LOUD, never silently pass.
+    target_cid = cid_of_json({"target": "loop"})
+    projected = LoopProjectedBinding(
+        target_cid,
+        (
+            LoopProjectedCompletedFace(
+                target_cid, "NormalExhaustion", cid_of_json({"g": "x"}), node_true
+            ),
+        ),
+    )
+    with pytest.raises(BindingStateWireGap):
+        _seal_runtime_state(projected)
