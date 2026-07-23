@@ -123,3 +123,37 @@ def test_control_effect_recensus_runs_source_derived_preconstruction(tmp_path) -
     assert isinstance(next(iter(refs.values())), SourceDerivedContextManagerRefV1)
     with_node = next(node for node in source_file.nodes() if isinstance(node, With))
     assert isinstance(with_node.sugar(), WithSourceResourceSugar)
+
+
+def test_unresolved_with_keeps_its_enrolled_coordinate_after_substitution(
+    tmp_path,
+) -> None:
+    module = _load("control_effect_recensus")
+    path = tmp_path / "consumer.py"
+    path.write_text(
+        "def use_resource(manager):\n"
+        "    with manager:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+
+    from sugar_source_tree.panic import (
+        BackendDefect,
+        ContextManagerResolutionConstructionGap,
+    )
+    from sugar_source_tree.reporter import CollectingReporter
+
+    source_file = module._production_source_file(
+        path, root=tmp_path, reporter=CollectingReporter(), distribution_index={}
+    )
+    function = next(source_file.functions())
+
+    with pytest.raises(ContextManagerResolutionConstructionGap):
+        function.sugar()
+    # The wrong behavior is a BackendDefect for a missing row at a rewritten
+    # span.  Reaching the typed resolution gap proves the original use-site
+    # coordinate survived temporal substitution.
+    assert not any(
+        isinstance(panic, BackendDefect)
+        for _node, panic in source_file.reporter.gaps
+    )

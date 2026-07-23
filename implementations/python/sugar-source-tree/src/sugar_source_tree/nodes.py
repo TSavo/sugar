@@ -1232,11 +1232,48 @@ class WithItem(Node):
     _child_fields = ("context_expr", "optional_vars")
 
     def substitute(self, scope):
-        """Substitute the context expr; optional_vars is a binding site."""
-        from .shadow import rewrite
+        """Substitute the manager while retaining its enrolled source locus.
+
+        A formal/temporal projection borrows the definition's span.  Contract
+        resolution is keyed by this With occurrence, so that rewritten span
+        must never replace the original manager use-site coordinate.
+        """
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode, rewrite
 
         new_ctx, d = self._substitute_field(self.context_expr, scope)
-        return self if not d else rewrite(self, context_expr=new_ctx)
+        rewritten = self if not d else rewrite(self, context_expr=new_ctx)
+        if hasattr(self, "manager_use_site_start_line"):
+            return rewritten
+        span = self.context_expr.line_col_span()
+        desc = rewritten.ref.describe()
+        return materialize(
+            self.unit,
+            ShadowNode(
+                desc.kind,
+                desc.raw_span or self.span,
+                (
+                    *desc.slots,
+                    ("manager_use_site_start_line", Leaf(span.start_line)),
+                    ("manager_use_site_start_col", Leaf(span.start_col)),
+                    ("manager_use_site_end_line", Leaf(span.end_line)),
+                    ("manager_use_site_end_col", Leaf(span.end_col)),
+                ),
+            ),
+            self.reporter,
+        )
+
+    def _manager_use_site_span(self):
+        """The immutable source occurrence used by preconstruction enrollment."""
+        if hasattr(self, "manager_use_site_start_line"):
+            return (
+                self.manager_use_site_start_line,
+                self.manager_use_site_start_col,
+                self.manager_use_site_end_line,
+                self.manager_use_site_end_col,
+            )
+        span = self.context_expr.line_col_span()
+        return span.start_line, span.start_col, span.end_line, span.end_col
 
     def _manager_slot_id(self) -> str:
         """Stable once-eval manager identity for this with-item."""
@@ -3290,13 +3327,13 @@ class With(Statement):
                 requested="the immutable prereq-2 contract-ref table",
                 fix="inject the decoded typed table before SourceFile construction",
             )
-        span = item.context_expr.line_col_span()
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
         coordinate = SourceFragmentCoordinateV1(
             self.unit.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
         )
         derived = context.source_derived_contract_refs.get(coordinate)
         if derived is not None:
