@@ -173,8 +173,9 @@ def test_symbolic_break_never_fabricates_a_whole_iterable_universal():
         "            break\n"
         "        assert renamed != stop\n"
     )
-    with pytest.raises(SugarNotWritten, match="For"):
-        function.sugar()
+    constructed = function.sugar()
+    assert type(constructed.statements[0]).__name__ == "LoopRecurrenceSugar"
+    assert "ForUniversalSugar" not in repr(constructed)
 
 
 def test_nested_break_is_consumed_only_by_the_inner_bounded_loop():

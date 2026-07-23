@@ -8,6 +8,7 @@ from sugar_lift_py_tests.ir import not_
 from sugar_lift_py_tests.outcome import ExitSet, Outcome, outcome_to_exitset
 from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
+    LoopGuardedProjection,
     UnboundProjection,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -18,6 +19,18 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         return outcome_to_exitset(state.desugar(ctx))
     if isinstance(state, UnboundProjection):
         return ExitSet.halted(NameErrorEffect(name=read_name, site=read_site))
+    if isinstance(state, LoopGuardedProjection):
+        exits = ExitSet(())
+        for face in state.completed_faces:
+            exits = exits.union(
+                read_binding(
+                    face.state,
+                    read_name=read_name,
+                    read_site=read_site,
+                    ctx=ctx,
+                ).guarded(face.guard_formula)
+            )
+        return exits.normalize()
     if not isinstance(state, GuardedProjection):
         raise TypeError(type(state))
 

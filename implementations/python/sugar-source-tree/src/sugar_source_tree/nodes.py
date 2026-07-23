@@ -1101,6 +1101,15 @@ class Node(Typed):
                 site=f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}",
             ):
                 new_stmt = stmt.substitute(scope)
+                live_loop_bindings = None
+                if isinstance(new_stmt, (For, While)):
+                    from .live_loop_construction import (
+                        construct_live_loop_recurrence,
+                    )
+
+                    live_loop = construct_live_loop_recurrence(new_stmt, scope)
+                    new_stmt = live_loop.statement
+                    live_loop_bindings = live_loop.bindings
             if new_stmt is not stmt:
                 changed = True
             # A statement may EXPAND into several: a `for` over a concrete
@@ -1113,7 +1122,11 @@ class Node(Typed):
             )
             for produced_stmt in produced:
                 new_items.append(produced_stmt)
-                binding = produced_stmt.substitution_binding(scope)
+                binding = (
+                    live_loop_bindings
+                    if live_loop_bindings is not None
+                    else produced_stmt.substitution_binding(scope)
+                )
                 if binding:
                     binding = produced_stmt._binding_entries(binding, scope)
                     binding = produced_stmt.refine_binding_entries(binding, scope)
@@ -6836,6 +6849,56 @@ class BindingCoordinateRef(Expression):
         return BindingCoordinateRefSugar(self.coordinate, self.fragment)
 
 
+class LoopBindingRef(Expression):
+    """Construction-owned reference to one guarded loop post-binding face."""
+
+    target_cid: str
+    binding_coordinate_cid: str
+    completion_kind: str
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+            LoopBindingRefSugar,
+        )
+
+        return LoopBindingRefSugar(
+            self.target_cid,
+            self.binding_coordinate_cid,
+            self.completion_kind,
+            self.fragment,
+        )
+
+
+class LoopRecurrenceStatement(Statement):
+    """A decoded live LoopConstructionV1 enrolled in the source statement list."""
+
+    loop: Statement
+    construction: object
+    target_cid: str
+    binding_coordinate_cids: tuple[str, ...]
+    _child_fields = ("loop",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+            LoopRecurrenceSugar,
+        )
+
+        return LoopRecurrenceSugar(
+            self.target_cid,
+            self.construction.loop_construction_cid,
+            self.binding_coordinate_cids,
+            self.fragment,
+        )
+
+
 class ConstructedReceiverRef(Expression):
     """Typed projection of the receiver constructed by this exact class call."""
 
@@ -6877,6 +6940,8 @@ class BranchResultRef(Expression):
 def _construct_binding_projection(state):
     from sugar_lift_py_tests.sugar.binding_projection import (
         GuardedProjection,
+        LoopGuardedCompletedFace,
+        LoopGuardedProjection,
         UnboundProjection,
     )
 
@@ -6892,9 +6957,20 @@ def _construct_binding_projection(state):
             _construct_binding_projection(state.when_false),
         )
     if isinstance(state, LoopProjectedBinding):
-        raise BindingStateWireGap(
-            "loop projected binding has CID-only guards; exact guard formula "
-            "testimony is required before downstream construction"
+        if any(face.guard_formula is None for face in state.completed_faces):
+            raise BindingStateWireGap(
+                "loop projected binding has CID-only guards; exact guard formula "
+                "testimony is required before downstream construction"
+            )
+        return LoopGuardedProjection(
+            tuple(
+                LoopGuardedCompletedFace(
+                    face.completion_kind,
+                    face.guard_formula,
+                    _construct_binding_projection(face.state),
+                )
+                for face in state.completed_faces
+            )
         )
     raise TypeError(type(state))
 
