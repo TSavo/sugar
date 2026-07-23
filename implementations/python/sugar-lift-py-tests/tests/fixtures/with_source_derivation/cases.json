@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "moduleGraph": [
+    "arbitrary_manager_module.py",
+    "arbitrary_native_module.py",
+    "consumer_cases.py"
+  ],
+  "consumerModule": "consumer_cases",
+  "expectedContracts": {
+    "arbitrary_manager_module.some_manager": {
+      "semanticVerb": "EffectBoundary",
+      "mode": "Expects",
+      "effectKind": "Raise",
+      "expectedTypeOperand": {"kind": "formal-argument", "position": 0},
+      "binding": "observation-slot",
+      "exitDisposition": "matching-effect-only"
+    },
+    "arbitrary_manager_module.some_resource": {
+      "semanticVerb": "ProtocolResource",
+      "enter": "total-result-projection",
+      "exit": "total",
+      "exitDisposition": "NeverSuppresses",
+      "binding": "simple-name"
+    },
+    "arbitrary_manager_module.lying_manager": {
+      "semanticVerb": "ProtocolResource",
+      "enter": "total-result-projection",
+      "exit": "total",
+      "exitDisposition": "NeverSuppresses",
+      "claimMustBeIgnored": "LyingGuard.claimed_suppression"
+    },
+    "arbitrary_native_module.some_manager": {
+      "semanticVerb": "Gap",
+      "gapKind": "source-unavailable"
+    }
+  },
+  "cases": [
+    {"function": "normal", "semanticVerb": "EffectBoundary", "verdict": "expectation-not-met"},
+    {"function": "raised_unsuppressed", "semanticVerb": "EffectBoundary", "verdict": "propagates"},
+    {"function": "raised_suppressed", "semanticVerb": "EffectBoundary", "verdict": "consumed"},
+    {"function": "exit_fails", "semanticVerb": "EffectBoundary", "verdict": "exit-failure-supersedes"},
+    {"function": "enter_fails", "semanticVerb": "EffectBoundary", "verdict": "enter-failure-skips-body"},
+    {"function": "returns_from_body", "semanticVerb": "EffectBoundary", "verdict": "exit-runs-on-return"},
+    {"function": "breaks_from_body", "semanticVerb": "EffectBoundary", "verdict": "exit-runs-on-break"},
+    {"function": "continues_from_body", "semanticVerb": "EffectBoundary", "verdict": "exit-runs-on-continue"},
+    {"function": "manager_evaluated_once", "semanticVerb": "EffectBoundary", "verdict": "manager-evaluated-once"},
+    {"function": "protocol_resource", "semanticVerb": "ProtocolResource", "verdict": "completed"},
+    {"function": "protocol_resource_does_not_suppress", "semanticVerb": "ProtocolResource", "verdict": "propagates"},
+    {"function": "lying_claim_does_not_suppress", "semanticVerb": "ProtocolResource", "verdict": "source-never-suppresses"},
+    {"function": "opaque_native", "semanticVerb": "Gap", "verdict": "typed-loud-source-unavailable"}
+  ]
+}
