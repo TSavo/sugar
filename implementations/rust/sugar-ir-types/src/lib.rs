@@ -4861,3 +4861,4 @@ mod witness_cid_stability_tests {
         assert_eq!(p1, p2, "attestation payload must be deterministic");
     }
 }
+pub mod binding_provenance;
