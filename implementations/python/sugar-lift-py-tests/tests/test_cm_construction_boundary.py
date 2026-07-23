@@ -1,53 +1,69 @@
 from pathlib import Path
 
+import pytest
 
-def test_tree_and_sugar_construction_have_no_linker_catalog_or_metadata_door():
-    python_root = Path(__file__).resolve().parents[2]
-    sugar_root = python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar"
-    tree_root = python_root / "sugar-source-tree/src/sugar_source_tree"
-    tree_construction = [
-        tree_root / "nodes.py",
-        tree_root / "backend.py",
-        *tree_root.glob("*_adapter.py"),
-    ]
-    files = [*sugar_root.rglob("*.py"), *tree_construction]
-    forbidden = (
-        "sugar_linker",
-        "sugar-linker",
-        "proof_catalog",
-        "member_envelope",
-        "decode_context_manager_contract",
-        "path_source(",
-        "installed_module_source(",
+from sugar_lift_py_tests.cm_boundary_detector import scan_construction_boundary
+
+
+def _write(root: Path, relative: str, source: str) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {
+            "sugar/direct.py": (
+                "from sugar_linker import resolve_context_manager_demand\n"
+                "def sugar():\n    return resolve_context_manager_demand()\n"
+            )
+        },
+        {
+            "sugar/nested.py": (
+                "from sugar_linker import resolve_context_manager_demand\n"
+                "def helper():\n    return resolve_context_manager_demand()\n"
+                "def sugar():\n    return helper()\n"
+            )
+        },
+        {
+            "sugar/aliased.py": (
+                "import sugar_linker as hidden\n"
+                "def sugar():\n    return hidden.resolve_context_manager_demand()\n"
+            )
+        },
+        {
+            "sugar/entry.py": (
+                "from sugar_source_tree.outside_helper import lookup\n"
+                "def sugar():\n    return lookup()\n"
+            ),
+            "sugar_source_tree/outside_helper.py": (
+                "from sugar_linker import resolve_context_manager_demand as lookup\n"
+            ),
+        },
+    ],
+    ids=("direct", "nested-helper", "aliased-import", "outside-helper"),
+)
+def test_planted_boundary_violations_each_raise_r(files, tmp_path):
+    for relative, source in files.items():
+        _write(tmp_path, relative, source)
+    report = scan_construction_boundary(
+        sugar_root=tmp_path / "sugar",
+        source_tree_root=tmp_path / "sugar_source_tree",
     )
-    offenders = []
-    for path in files:
-        text = path.read_text()
-        for needle in forbidden:
-            if needle in text:
-                offenders.append(f"{path.relative_to(python_root)}: {needle}")
-    assert offenders == [], "construction-law offenders:\n" + "\n".join(offenders)
+    assert report.r > 0, report
 
 
-def test_with_sugar_does_not_retain_raw_cm_json_or_invoke_resolution():
+def test_complete_real_roots_have_stable_zero_boundary_residue():
     python_root = Path(__file__).resolve().parents[2]
-    files = [
-        python_root / "sugar-source-tree/src/sugar_source_tree/nodes.py",
-        *(
-            python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar"
-        ).glob("with*_sugar.py"),
-    ]
-    forbidden = (
-        "resolve_context_manager",
-        "decode_context_manager",
-        "member_json",
-        "payload_json",
-        "catalog_json",
+    report = scan_construction_boundary(
+        sugar_root=python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
+        source_tree_root=python_root / "sugar-source-tree/src/sugar_source_tree",
     )
-    offenders = [
-        f"{path.name}: {needle}"
-        for path in files
-        for needle in forbidden
-        if needle in path.read_text()
-    ]
-    assert offenders == [], "With boundary offenders:\n" + "\n".join(offenders)
+    assert report.files_scanned == len(list(
+        (python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar").rglob("*.py")
+    )) + len(list(
+        (python_root / "sugar-source-tree/src/sugar_source_tree").rglob("*.py")
+    ))
+    assert report.r == 0, report.render()

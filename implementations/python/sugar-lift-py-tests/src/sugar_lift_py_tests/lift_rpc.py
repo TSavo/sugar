@@ -2058,6 +2058,13 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
     msg_id = msg.get("id")
     method = msg.get("method")
     params = msg.get("params", {})
+    sequence_path = os.environ.get("SUGAR_RPC_SEQUENCE_LOG")
+    if sequence_path:
+        suffix = ""
+        if method == ENUMERATE_RPC_METHOD and isinstance(params, dict):
+            suffix = f":{params.get('level', '')}"
+        with Path(sequence_path).open("a", encoding="utf-8") as sequence_log:
+            sequence_log.write(f"{method}{suffix}\n")
 
     if method == "initialize":
         _handle_initialize(msg_id)

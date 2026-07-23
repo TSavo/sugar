@@ -101,12 +101,14 @@ fn python_kit_manifest(dir: &Path) -> LiftManifest {
         .join("sugar-lift-python-source")
         .join("src");
     let script = dir.join("python-lift.sh");
+    let rpc_sequence = dir.join("rpc-sequence.log");
     write_executable(
         &script,
         &format!(
-            "#!/bin/sh\nexport PYTHONPATH=\"{}:{}${{PYTHONPATH:+:$PYTHONPATH}}\"\nexec python3 -m sugar_lift_py_tests.lift_rpc --rpc\n",
+            "#!/bin/sh\nexport PYTHONPATH=\"{}:{}${{PYTHONPATH:+:$PYTHONPATH}}\"\nexport SUGAR_RPC_SEQUENCE_LOG=\"{}\"\nexec python3 -m sugar_lift_py_tests.lift_rpc --rpc\n",
             py_tests_src.display(),
-            py_source_src.display()
+            py_source_src.display(),
+            rpc_sequence.display(),
         ),
     );
     LiftManifest::resolved(
@@ -182,6 +184,43 @@ fn runner_cfg(project_root: &Path) -> RunnerConfig {
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
         ..Default::default()
     }
+}
+
+fn validate_cm_preconstruction_sequence(sequence: &str) -> Result<(), String> {
+    let events: Vec<_> = sequence.lines().collect();
+    let position = |needle: &str| {
+        events
+            .iter()
+            .position(|event| *event == needle)
+            .ok_or_else(|| format!("missing {needle}; events={events:?}"))
+    };
+    let declarations = position("sugar.enumerate:contract-declarations")?;
+    let demands = position("sugar.enumerate:contract-demands")?;
+    let bind = position("sugar.plugin.bind_contract_refs")?;
+    let first_semantic = events
+        .iter()
+        .position(|event| {
+            event.starts_with("sugar.enumerate:")
+                && !event.ends_with(":contract-declarations")
+                && !event.ends_with(":contract-demands")
+        })
+        .ok_or_else(|| format!("missing semantic enumeration; events={events:?}"))?;
+    if declarations < demands && demands < bind && bind < first_semantic {
+        Ok(())
+    } else {
+        Err(format!("invalid CM preconstruction order: {events:?}"))
+    }
+}
+
+#[test]
+fn phase_order_detector_rejects_bind_after_first_semantic_enumeration() {
+    let planted = concat!(
+        "sugar.enumerate:contract-declarations\n",
+        "sugar.enumerate:contract-demands\n",
+        "sugar.enumerate:source_files\n",
+        "sugar.plugin.bind_contract_refs\n",
+    );
+    assert!(validate_cm_preconstruction_sequence(planted).is_err());
 }
 
 /// Sorted (property_name, status) pairs from a prove artifact — the gate
@@ -298,6 +337,10 @@ fn production_fold_installs_cm_ref_generation_before_semantic_enumeration() {
     )
     .expect("preconstruction bind must precede the first semantic enumerate request");
     assert!(pool.mementos.len() > 0);
+    let sequence = fs::read_to_string(dir.path().join("rpc-sequence.log"))
+        .expect("production kit must record the actual RPC sequence");
+    validate_cm_preconstruction_sequence(&sequence)
+        .expect("CM preconstruction RPC sequence must precede semantic enumeration");
 }
 
 /// Full door: prove_from_kit discharges the enumerate fixture; verdict rows

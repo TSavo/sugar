@@ -475,7 +475,13 @@ pub fn fold_kit_to_pool(
     }
 
     // 7-8. Local semantic construction occurs only after ref installation.
-    let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;
+    let local = if active_cm_preconstruction.is_some() {
+        // The declaration graph was already sealed into the preliminary pool;
+        // this pass is semantic construction only.
+        feed_from_tree::fold_claim_tree(kit, workspace_root)?
+    } else {
+        feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?
+    };
     let local_pool =
         pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
     pool.merge(local_pool);
