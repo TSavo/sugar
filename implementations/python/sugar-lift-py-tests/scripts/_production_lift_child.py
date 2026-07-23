@@ -57,13 +57,20 @@ def run_production_lift_child(path: Path, rel: str) -> int:
     (intentional) but does not stop scanning the rest. Any other exception is
     left to propagate -- that is the bare-exception signal.
     """
-    from sugar_source_tree.tree import SourceFile
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from _production_source_file import (
+        corpus_root_from_relative,
+        production_source_file,
+    )
 
     reporter = CollectingReporter()
-    sf = SourceFile.from_path(str(path), reporter=reporter)
+    sf = production_source_file(
+        path,
+        root=corpus_root_from_relative(path, rel),
+        reporter=reporter,
+    )
     typed_gap = False
     for fn in sf.functions():
         try:
