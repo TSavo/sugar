@@ -181,6 +181,70 @@ def test_effect_boundary_projects_real_call_actuals_and_routes_exitset(
         assert isinstance(face.effect, effect_type)
 
 
+def _effect_boundary_face(tmp_path, source):
+    path = tmp_path / "identity_boundary.py"
+    path.write_text(source)
+    from sugar_lift_python_source.source_oracle import path_source
+
+    sugar = _function_sugar(path_source(str(path)), _effect_resolved)
+    boundary = next(
+        statement
+        for statement in sugar.statements
+        if isinstance(statement, WithEffectBoundarySugar)
+    )
+    outcome = boundary.desugar()
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    return outcome.exits[0]
+
+
+def test_effect_boundary_matches_builtin_exception_alias_by_identity(tmp_path):
+    face = _effect_boundary_face(
+        tmp_path,
+        "from builtins import ValueError as VE\n"
+        "from pytest import raises\n"
+        "def f():\n"
+        "    with raises(VE):\n"
+        "        raise ValueError('boom')\n",
+    )
+    assert isinstance(face, Completed)
+
+
+def test_effect_boundary_does_not_match_distinct_same_spelling_type(tmp_path):
+    face = _effect_boundary_face(
+        tmp_path,
+        "from builtins import ValueError as BuiltinVE\n"
+        "from pytest import raises\n"
+        "class ValueError(Exception):\n"
+        "    pass\n"
+        "def f():\n"
+        "    with raises(ValueError):\n"
+        "        raise BuiltinVE('boom')\n",
+    )
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+
+
+def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
+    path = tmp_path / "unknown_identity.py"
+    path.write_text(
+        "from pytest import raises\n"
+        "def f(expected):\n"
+        "    with raises(expected):\n"
+        "        raise ValueError('boom')\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+
+    sugar = _function_sugar(path_source(str(path)), _effect_resolved)
+    boundary = next(
+        statement
+        for statement in sugar.statements
+        if isinstance(statement, WithEffectBoundarySugar)
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated exception-type identity"):
+        boundary.desugar()
+
+
 def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
     tmp_path, monkeypatch
 ):

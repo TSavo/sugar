@@ -62,6 +62,11 @@ class RaiseSugar(Sugar):
                     source_sha256=source_sha256,
                     # Occurrence is the raise site — not a type-level identity.
                     occurrence=blame,
+                    exception_type_coordinate=(
+                        raised_value.exception_type_identity()
+                        if hasattr(raised_value, "exception_type_identity")
+                        else getattr(raised_value, "exception_type_coordinate", None)
+                    ),
                     raised_value=raised_value,
                     cause_value=cause_value,
                 )

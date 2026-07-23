@@ -164,6 +164,98 @@ class SourceUnit:
             for node in module.body
         )
 
+    def exception_type_identity(self, node: "Name"):
+        """Return the authenticated exception-class coordinate reaching ``node``.
+
+        This is deliberately lexical and closed: the Python builtin vocabulary,
+        an exact ``from builtins import ...`` binding, or one source class
+        definition.  Ambiguous, reassigned, parameter, and computed bindings
+        have no identity coordinate and therefore stay loud at the consumer.
+        """
+        import ast
+
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_NAMES,
+        )
+
+        parsed = ast.parse(self.source, filename=self.filename)
+        span = node.line_col_span()
+        containing = []
+        for candidate in ast.walk(parsed):
+            if not isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            start = (candidate.lineno, candidate.col_offset)
+            end = (candidate.end_lineno, candidate.end_col_offset)
+            if start <= (span.start_line, span.start_col) <= end:
+                containing.append(candidate)
+        if containing:
+            owner = max(containing, key=lambda value: value.lineno)
+            table = self.function_symtable(owner.name, owner.lineno)
+            try:
+                symbol = table.lookup(node.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_parameter()
+                or symbol.is_local()
+                or symbol.is_free()
+                or symbol.is_nonlocal()
+            ):
+                return None
+
+        bindings = []
+        for statement in parsed.body:
+            if isinstance(statement, ast.ImportFrom):
+                for alias in statement.names:
+                    if (alias.asname or alias.name) == node.id:
+                        bindings.append(("import", statement.module, alias.name))
+            elif isinstance(statement, ast.ClassDef) and statement.name == node.id:
+                bindings.append(("class", statement))
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if statement.name == node.id:
+                    bindings.append(("other",))
+            elif isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                targets = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else (statement.target,)
+                )
+                if any(
+                    isinstance(target, ast.Name) and target.id == node.id
+                    for target in targets
+                ):
+                    bindings.append(("other",))
+
+        if not bindings and node.id in BUILTIN_EXCEPTION_NAMES:
+            return ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const(node.id)],
+            )
+        if len(bindings) != 1:
+            return None
+        binding = bindings[0]
+        if (
+            binding[0] == "import"
+            and binding[1] == "builtins"
+            and binding[2] in BUILTIN_EXCEPTION_NAMES
+        ):
+            return ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const(binding[2])],
+            )
+        if binding[0] == "class":
+            definition = binding[1]
+            coordinate = (
+                f"{self.source_cid}:{definition.lineno}:{definition.col_offset}:"
+                f"{definition.end_lineno}:{definition.end_col_offset}"
+            )
+            return ctor(
+                "python:exception_type_identity",
+                [str_const("source-class"), str_const(coordinate)],
+            )
+        return None
+
 
 class Typeable:
     """The interface: you may ask me for my node type.
@@ -2296,8 +2388,12 @@ class With(Statement):
                     )
                     self.reporter.report_gap(self, panic)
                     raise panic
+                manager_sugar = item.context_expr.sugar()
+                manager_sugar = self._authenticate_expected_exception_type(
+                    item.context_expr, manager_sugar, resolved_ref
+                )
                 return WithEffectBoundarySugar(
-                    manager=item.context_expr.sugar(),
+                    manager=manager_sugar,
                     body=tuple(stmt.sugar() for stmt in self.body),
                     semantics=resolved_ref.semantics,
                     contract_ref=resolved_ref,
@@ -2340,6 +2436,72 @@ class With(Statement):
         )
         self.reporter.report_gap(self, panic)
         raise panic
+
+    def _authenticate_expected_exception_type(self, manager, manager_sugar, reference):
+        """Attach the floor-owned identity to the selected real call operand."""
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.context_manager_contract import (
+            FormalArgumentProjectionV1,
+            KeywordOnlyV1,
+            PositionalOnlyV1,
+            PositionalOrKeywordV1,
+        )
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            AuthenticatedExceptionTypeSugar,
+        )
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        selector = reference.semantics.expected_type_operand
+        if not isinstance(selector, FormalArgumentProjectionV1):
+            return manager_sugar
+        if not isinstance(manager, Call) or not isinstance(
+            manager_sugar, CallSiteSugar
+        ):
+            return manager_sugar
+        positional = list(enumerate(manager.args))
+        keywords = {
+            keyword.arg: keyword.value for keyword in manager.keywords if keyword.arg
+        }
+        actual = None
+        actual_location = None
+        for index, parameter in enumerate(reference.import_signature.parameters):
+            if positional and isinstance(
+                parameter.passing, (PositionalOnlyV1, PositionalOrKeywordV1)
+            ):
+                position, value = positional.pop(0)
+                location = ("arg", position)
+            elif parameter.name in keywords and isinstance(
+                parameter.passing, (PositionalOrKeywordV1, KeywordOnlyV1)
+            ):
+                value = keywords[parameter.name]
+                location = ("keyword", parameter.name)
+            else:
+                continue
+            if index == selector.parameter_index:
+                actual, actual_location = value, location
+                break
+        if not isinstance(actual, Name):
+            return manager_sugar
+        identity = self.unit.exception_type_identity(actual)
+        if identity is None:
+            return manager_sugar
+        if actual_location[0] == "arg":
+            args = list(manager_sugar.args)
+            position = actual_location[1]
+            args[position] = AuthenticatedExceptionTypeSugar(
+                args[position], identity, actual.fragment
+            )
+            return replace(manager_sugar, args=tuple(args))
+        keywords_sugar = list(manager_sugar.keywords)
+        for position, (name, sugar) in enumerate(keywords_sugar):
+            if name == actual_location[1]:
+                keywords_sugar[position] = (
+                    name,
+                    AuthenticatedExceptionTypeSugar(sugar, identity, actual.fragment),
+                )
+                break
+        return replace(manager_sugar, keywords=tuple(keywords_sugar))
 
     def substitute(self, scope):
         """Rewrite a simple as-name to the resolved resource enter projection."""
@@ -2465,9 +2627,31 @@ class Raise(Statement):
             # outside this arm rather than fabricating an exception operand.
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            AuthenticatedExceptionTypeSugar,
+        )
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        identity = None
+        if isinstance(self.exc, Call) and isinstance(self.exc.func, Name):
+            identity = self.unit.exception_type_identity(self.exc.func)
+        elif isinstance(self.exc, Name):
+            identity = self.unit.exception_type_identity(self.exc)
+
+        exception_sugar = self.exc.sugar()
+        if identity is not None and isinstance(exception_sugar, CallSiteSugar):
+            exception_sugar = replace(
+                exception_sugar, exception_type_coordinate=identity
+            )
+        elif identity is not None:
+            exception_sugar = AuthenticatedExceptionTypeSugar(
+                exception_sugar, identity, self.exc.fragment
+            )
 
         return RaiseSugar(
-            exception=self.exc.sugar(),
+            exception=exception_sugar,
             cause=self.cause.sugar() if self.cause is not None else None,
             exception_name=self._exception_name(),
             site=self.fragment,

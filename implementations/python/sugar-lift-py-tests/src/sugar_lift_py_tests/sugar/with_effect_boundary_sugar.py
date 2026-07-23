@@ -185,10 +185,20 @@ def _bind_real_actuals(signature, manager_value):
 def _matches_raise(effect, expected, pattern) -> bool:
     import re
 
-    expected_term = expected.to_term(owner="effect-boundary expected type")
-    expected_name = getattr(expected_term, "name", None)
+    from sugar_source_tree.panic import SugarNotWritten
+
+    identity_reader = getattr(expected, "exception_type_identity", None)
+    expected_identity = identity_reader() if identity_reader is not None else None
+    raised_identity = effect.exception_type_coordinate
+    if expected_identity is None or raised_identity is None:
+        raise SugarNotWritten(
+            owner="WithEffectBoundarySugar._matches_raise",
+            observed="expected or raised exception lacks authenticated identity",
+            requested="authenticated exception-type identity on both operands",
+            fix="resolve both exception classes through their lexical floor coordinates",
+        )
     raised = effect.raised_value
-    if expected_name is None or getattr(raised, "target_name", None) != expected_name:
+    if expected_identity != raised_identity:
         return False
     if pattern is None:
         return True

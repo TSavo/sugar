@@ -14,18 +14,20 @@ fn cid(fill: char) -> Cid {
     Cid::from(format!("blake3-512:{}", fill.to_string().repeat(128)))
 }
 
-fn provider_member() -> Json {
+fn provider_member_for(provider_fill: char, signer_seed: u8, key_id: &str) -> Json {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
         .unwrap()
         .to_path_buf();
     let program = r#"
-import json
+import json, sys
 from sugar_lift_py_tests.context_manager_contract import *
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.signing import Signer
-provider = 'blake3-512:' + 'a' * 128
+provider = 'blake3-512:' + sys.argv[1] * 128
+seed = int(sys.argv[2])
+key_id = sys.argv[3]
 signature = ImportSignatureV2((
   CallParameterV1('expected_exception', PrimitiveSort('Value'), PositionalOrKeywordV1(), True, NoDefaultV1()),
   CallParameterV1('match', PrimitiveSort('String'), KeywordOnlyV1(), False, LiteralDefaultV1({'kind':'ctor','name':'None','args':[]})),
@@ -36,9 +38,9 @@ member = publish_effect_boundary_context_manager_contract(
   expected_type_operand=FormalArgumentProjectionV1(0),
   message_pattern_operand=OptionalFormalArgumentProjectionV1(1),
   binding=NoBindingV1(), source_warrants=(),
-  signer=Signer(bytes(range(32)), 'pytest-provider'),
+  signer=Signer(bytes((seed + i) % 256 for i in range(32)), 'pytest-provider'),
   declared_at='2026-07-23T00:00:00.000Z', provider_kit_cid=provider,
-  signer_key_id='pytest-provider-key-v1')
+  signer_key_id=key_id)
 raw = json.loads(member.canonical_bytes)
 print(json.dumps({'memberCid':member.cid,'canonicalMember':raw,'signer':raw['envelope']['signer']}))
 "#;
@@ -49,6 +51,9 @@ print(json.dumps({'memberCid':member.cid,'canonicalMember':raw,'signer':raw['env
         )
         .arg("-c")
         .arg(program)
+        .arg(provider_fill.to_string())
+        .arg(signer_seed.to_string())
+        .arg(key_id)
         .output()
         .unwrap();
     assert!(
@@ -57,6 +62,10 @@ print(json.dumps({'memberCid':member.cid,'canonicalMember':raw,'signer':raw['env
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn provider_member() -> Json {
+    provider_member_for('a', 0, "pytest-provider-key-v1")
 }
 
 fn use_site() -> SourceFragmentCoordinateV1 {
@@ -90,6 +99,33 @@ fn selection(raw: &Json, signer: &str) -> SelectedProviderKitsV1 {
         }],
     }])
     .unwrap()
+}
+
+fn selected_provider(
+    raw: &Json,
+    provider_fill: char,
+    component_fill: char,
+    key_id: &str,
+) -> SelectedProviderKitV1 {
+    let provider_kit_cid = cid(provider_fill);
+    let component_cid = cid(component_fill);
+    let binding = ProviderKitKeyBindingV1::new(
+        provider_kit_cid.clone(),
+        component_cid.clone(),
+        key_id.into(),
+        raw["signer"].as_str().unwrap().into(),
+        vec!["context-manager-contract".into()],
+    )
+    .unwrap();
+    SelectedProviderKitV1 {
+        component_cid,
+        provider_kit_cid,
+        key_binding: binding,
+        members: vec![SelectedProviderMemberV1 {
+            member_cid: Cid::from(raw["memberCid"].as_str().unwrap()),
+            canonical_member: raw["canonicalMember"].clone(),
+        }],
+    }
 }
 
 #[test]
@@ -168,4 +204,33 @@ fn absent_wrong_signer_and_shadowed_provider_paths_stay_loud() {
         panic!("gap")
     };
     assert_eq!(gap.kind, ContextManagerResolutionGapKindV1::RuntimeSelected);
+}
+
+#[test]
+fn competing_authenticated_providers_are_ambiguous_and_loud() {
+    let first = provider_member_for('a', 0, "pytest-provider-key-v1");
+    let second = provider_member_for('b', 32, "pytest-provider-key-v2");
+    let selected = SelectedProviderKitsV1::new(vec![
+        selected_provider(&first, 'a', 'c', "pytest-provider-key-v1"),
+        selected_provider(&second, 'b', 'd', "pytest-provider-key-v2"),
+    ])
+    .unwrap();
+    let catalog = AuthenticatedContextManagerCatalog::freeze_selected(&selected).unwrap();
+    let signature: ImportSignatureV2 =
+        serde_json::from_value(first["canonicalMember"]["header"]["importSignature"].clone())
+            .unwrap();
+    let demand = ContextManagerContractDemandV1::new(
+        use_site(),
+        cid('i'),
+        None,
+        "pytest.raises".into(),
+        signature,
+    );
+    let ContextManagerResolutionV1::Unresolved(gap) =
+        resolve_context_manager_demand(&demand, &catalog)
+    else {
+        panic!("competing providers must remain loud")
+    };
+    assert_eq!(gap.kind, ContextManagerResolutionGapKindV1::AmbiguousSymbol);
+    assert_eq!(gap.candidate_member_cids.len(), 2);
 }
