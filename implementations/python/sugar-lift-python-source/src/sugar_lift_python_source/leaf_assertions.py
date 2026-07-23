@@ -30,19 +30,39 @@ fabricates a callsite it cannot faithfully lift.
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass, field
+from pathlib import Path
+import sys
 from typing import Any
+
+_tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
+if _tree_src.is_dir() and str(_tree_src) not in sys.path:
+    sys.path.insert(0, str(_tree_src))
+
+from sugar_source_tree.backend import BackendCouldNotParse
+from sugar_source_tree.nodes import (
+    Assert,
+    Call,
+    Compare,
+    Constant,
+    Expression,
+    FunctionDef,
+    Name,
+    UnaryOp,
+)
+from sugar_source_tree.tree import SourceFile
+
+from .canonical import blake3_512_of
 
 Json = dict[str, Any]
 
-_CMP: dict[type[ast.cmpop], str] = {
-    ast.Eq: "=",
-    ast.NotEq: "≠",
-    ast.Lt: "<",
-    ast.LtE: "≤",
-    ast.Gt: ">",
-    ast.GtE: "≥",
+_CMP: dict[str, str] = {
+    "Eq": "=",
+    "NotEq": "≠",
+    "Lt": "<",
+    "LtE": "≤",
+    "Gt": ">",
+    "GtE": "≥",
 }
 
 
@@ -60,20 +80,22 @@ class _Unsupported(Exception):
 def harvest_source(source: str, source_path: str) -> HarvestResult:
     result = HarvestResult()
     try:
-        tree = ast.parse(source, filename=source_path)
-    except SyntaxError as exc:
+        source_file = SourceFile(
+            (source, source_path, blake3_512_of(source.encode("utf-8")))
+        )
+    except (SyntaxError, BackendCouldNotParse) as exc:
         result.diagnostics.append(
             {
                 "kind": "parse-error",
-                "message": exc.msg,
+                "message": getattr(exc, "msg", str(exc)),
                 "path": source_path,
-                "line": exc.lineno,
+                "line": getattr(exc, "lineno", None),
             }
         )
         return result
 
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
+    for node in source_file.root.body:
+        if not isinstance(node, FunctionDef):
             continue
         if not node.name.startswith("test_") and not node.name.startswith("test"):
             # Only pytest test functions harvest callsites. (Match `test*`.)
@@ -81,7 +103,7 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
                 continue
         atoms: list[Json] = []
         for stmt in node.body:
-            if not isinstance(stmt, ast.Assert):
+            if not isinstance(stmt, Assert):
                 continue
             try:
                 atoms.append(_lift_assert(stmt))
@@ -94,7 +116,7 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
                         "kind": "leaf-assertion-skipped",
                         "message": str(exc),
                         "path": source_path,
-                        "line": getattr(stmt, "lineno", node.lineno),
+                        "line": stmt.line_col_span().start_line,
                     }
                 )
         if not atoms:
@@ -113,7 +135,7 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
 
 
 def _call_edges(
-    stmt: ast.Assert, source_path: str, *, source_contract: str
+    stmt: Assert, source_path: str, *, source_contract: str
 ) -> list[Json]:
     """Project the call coordinates already admitted by ``_lift_assert``.
 
@@ -123,9 +145,10 @@ def _call_edges(
     EUF coordinate stamped as ``bridgeSourceSymbol`` by ``verify_dialect``.
     """
     edges: list[Json] = []
-    for node in ast.walk(stmt.test):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+    for node in stmt.test.walk():
+        if not isinstance(node, Call) or not isinstance(node.func, Name):
             continue
+        span = node.line_col_span()
         edges.append(
             {
                 "kind": "call-edge",
@@ -133,41 +156,41 @@ def _call_edges(
                 "targetSymbol": node.func.id,
                 "callSiteLocus": {
                     "file": source_path,
-                    "line": node.lineno,
-                    "column": node.col_offset,
+                    "line": span.start_line,
+                    "column": span.start_col,
                 },
             }
         )
     return edges
 
 
-def _lift_assert(stmt: ast.Assert) -> Json:
+def _lift_assert(stmt: Assert) -> Json:
     test = stmt.test
-    if not isinstance(test, ast.Compare):
+    if not isinstance(test, Compare):
         raise _Unsupported("assert is not a comparison")
     if len(test.ops) != 1 or len(test.comparators) != 1:
         raise _Unsupported("only single-comparison asserts are harvested")
     lhs = _translate_term(test.left)
     rhs = _translate_term(test.comparators[0])
 
-    if isinstance(test.ops[0], (ast.Is, ast.IsNot)):
+    if test.ops[0].kind in ("Is", "IsNot"):
         if _is_none_ctor(lhs) == _is_none_ctor(rhs):
             raise _Unsupported("identity comparison is only supported against None")
-        op = "=" if isinstance(test.ops[0], ast.Is) else "≠"
+        op = "=" if test.ops[0].kind == "Is" else "≠"
         return _comparison_with_none_guard(op, lhs, rhs)
 
-    op = _CMP.get(type(test.ops[0]))
+    op = _CMP.get(test.ops[0].kind)
     if op is None:
         raise _Unsupported(
-            f"comparison op {type(test.ops[0]).__name__} not in whitelist"
+            f"comparison op {test.ops[0].kind} not in whitelist"
         )
     return _comparison(op, lhs, rhs)
 
 
-def _translate_term(node: ast.expr) -> Json:
-    if isinstance(node, ast.Name):
+def _translate_term(node: Expression) -> Json:
+    if isinstance(node, Name):
         return {"kind": "var", "name": node.id}
-    if isinstance(node, ast.Constant):
+    if isinstance(node, Constant):
         value = node.value
         if isinstance(value, bool):
             return {
@@ -190,10 +213,10 @@ def _translate_term(node: ast.expr) -> Json:
         if value is None:
             return {"kind": "ctor", "name": "None", "args": []}
         raise _Unsupported(f"unsupported constant {type(value).__name__}")
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+    if isinstance(node, UnaryOp) and node.op.kind == "USub":
         operand = node.operand
         if (
-            isinstance(operand, ast.Constant)
+            isinstance(operand, Constant)
             and isinstance(operand.value, int)
             and not isinstance(operand.value, bool)
         ):
@@ -203,10 +226,10 @@ def _translate_term(node: ast.expr) -> Json:
                 "sort": {"kind": "primitive", "name": "Int"},
             }
         raise _Unsupported("unary minus only on int literals")
-    if isinstance(node, ast.Call):
+    if isinstance(node, Call):
         # Single-arg bare call f(arg) -> ctor("f", [<arg>]); the ctor name is
         # the bare function symbol the auto-bridge sourceSymbol uses.
-        if not isinstance(node.func, ast.Name):
+        if not isinstance(node.func, Name):
             raise _Unsupported("call callee is not a bare identifier")
         if node.keywords:
             raise _Unsupported("call has keyword arguments")
