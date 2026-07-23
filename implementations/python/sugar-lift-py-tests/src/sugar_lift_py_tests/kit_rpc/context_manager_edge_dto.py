@@ -1,4 +1,4 @@
-"""Closed context-manager occurrence edge for the dedicated report lane."""
+"""Closed edge from a With occurrence to a construction-derived CM summary."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 from typing import Any
 
 from sugar_lift_py_tests.context_manager_contract import (
-    ImportSignatureV2,
     EffectBoundarySemanticsV1,
+    ImportSignatureV2,
     NeverSuppressesDispositionV1,
     ProtocolResourceSemanticsV1,
     TotalCompletionV1,
@@ -20,7 +20,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     _hash_json,
 )
-from sugar_lift_py_tests.ir import PrimitiveSort, sort_to_value
+from sugar_lift_py_tests.ir import PrimitiveSort
 
 
 class ContextManagerEdgeTransportError(ValueError):
@@ -29,12 +29,7 @@ class ContextManagerEdgeTransportError(ValueError):
 
 def _json(value) -> Any:
     from sugar_lift_py_tests.canonicalizer import encode_jcs
-
     return json.loads(encode_jcs(value))
-
-
-def _signature_wire(signature: ImportSignatureV2) -> dict[str, Any]:
-    return _json(import_signature_to_value(signature))
 
 
 def _admitted(reference: ContextManagerContractRefV1) -> bool:
@@ -54,99 +49,51 @@ def _admitted(reference: ContextManagerContractRefV1) -> bool:
 @dataclass(frozen=True)
 class ContextManagerEdgeDtoV1:
     edge_cid: str
-    use_site: SourceFragmentCoordinateV1
-    authenticated_import_use_cid: str
-    import_binding_cid: str
-    provider_kit_cid: str
-    provider_export_cid: str
-    bridge_source_symbol: str
-    import_signature: ImportSignatureV2
-    target_contract_cid: str
-    payload_cid: str
-    demand_cid: str
-    resolution_cid: str
-    catalog_cid: str
-    source_warrant_cids: tuple[str, ...]
-    semantics: object
+    reference: ContextManagerContractRefV1
     kind: str = "context-manager-edge"
-    schema_version: str = "1"
+    schema_version: str = "derived-1"
 
     @classmethod
     def from_resolved(cls, reference, use_site) -> "ContextManagerEdgeDtoV1":
         if not isinstance(reference, ContextManagerContractRefV1):
             raise ContextManagerEdgeTransportError(
-                "context-manager edge requires a resolved authenticated ref"
+                "context-manager edge requires an authenticated derived ref"
             )
         if use_site != reference.use_site:
-            raise ContextManagerEdgeTransportError(
-                "context-manager edge use-site mismatch"
-            )
+            raise ContextManagerEdgeTransportError("context-manager edge use-site mismatch")
         if not _admitted(reference):
             raise ContextManagerEdgeTransportError(
-                "context-manager edge requires admitted typed NeverSuppresses semantics"
+                "context-manager edge requires admitted closed semantics"
             )
-        warrants = tuple(sorted(reference.source_warrant_cids))
-        if len(warrants) != len(set(warrants)):
-            raise ContextManagerEdgeTransportError(
-                "context-manager edge warrant CIDs must be unique"
-            )
-        values = {
+        values = cls._values(reference)
+        return cls(_hash_json(values), reference)
+
+    @staticmethod
+    def _values(reference: ContextManagerContractRefV1) -> dict[str, Any]:
+        return {
             "kind": "context-manager-edge",
-            "schemaVersion": "1",
-            "useSite": use_site.wire(),
+            "schemaVersion": "derived-1",
+            "useSite": reference.use_site.wire(),
+            "useSiteCid": reference.use_site_cid,
             "authenticatedImportUseCid": reference.authenticated_import_use_cid,
             "importBindingCid": reference.import_binding_cid,
-            "providerKitCid": reference.provider_kit_cid,
-            "providerExportCid": reference.provider_export_cid,
-            "managerIdentity": {
-                "bridgeSourceSymbol": reference.bridge_source_symbol,
-                "importSignature": _signature_wire(reference.import_signature),
-            },
-            "targetContractCid": reference.member_cid,
+            "constructionContextGenerationCid": reference.construction_context_generation_cid,
+            "targetContractCid": reference.contract_cid,
             "payloadCid": reference.payload_cid,
+            "provenanceCid": reference.provenance_cid,
+            "distributionArtifactCid": reference.distribution_artifact_cid,
+            "dependencyArtifactGraphCid": reference.dependency_artifact_graph_cid,
+            "moduleSourceCid": reference.module_source_cid,
+            "resolvedDefinitionCid": reference.resolved_definition_cid,
+            "managerConstructionCid": reference.manager_construction_cid,
+            "enterTestimonyCid": reference.enter_testimony_cid,
+            "exitTestimonyCid": reference.exit_testimony_cid,
             "demandCid": reference.demand_cid,
             "resolutionCid": reference.resolution_cid,
-            "catalogCid": reference.catalog_cid,
-            "sourceWarrantCids": list(warrants),
+            "importSignature": _json(import_signature_to_value(reference.import_signature)),
             "semantics": _json(semantics_to_value(reference.semantics)),
         }
-        return cls(
-            edge_cid=_hash_json(values),
-            use_site=use_site,
-            authenticated_import_use_cid=reference.authenticated_import_use_cid,
-            import_binding_cid=reference.import_binding_cid,
-            provider_kit_cid=reference.provider_kit_cid,
-            provider_export_cid=reference.provider_export_cid,
-            bridge_source_symbol=reference.bridge_source_symbol,
-            import_signature=reference.import_signature,
-            target_contract_cid=reference.member_cid,
-            payload_cid=reference.payload_cid,
-            demand_cid=reference.demand_cid,
-            resolution_cid=reference.resolution_cid,
-            catalog_cid=reference.catalog_cid,
-            source_warrant_cids=warrants,
-            semantics=reference.semantics,
-        )
 
     def to_rpc(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "schemaVersion": self.schema_version,
-            "edgeCid": self.edge_cid,
-            "useSite": self.use_site.wire(),
-            "authenticatedImportUseCid": self.authenticated_import_use_cid,
-            "importBindingCid": self.import_binding_cid,
-            "providerKitCid": self.provider_kit_cid,
-            "providerExportCid": self.provider_export_cid,
-            "managerIdentity": {
-                "bridgeSourceSymbol": self.bridge_source_symbol,
-                "importSignature": _signature_wire(self.import_signature),
-            },
-            "targetContractCid": self.target_contract_cid,
-            "payloadCid": self.payload_cid,
-            "demandCid": self.demand_cid,
-            "resolutionCid": self.resolution_cid,
-            "catalogCid": self.catalog_cid,
-            "sourceWarrantCids": list(self.source_warrant_cids),
-            "semantics": _json(semantics_to_value(self.semantics)),
-        }
+        values = self._values(self.reference)
+        return {**values, "edgeCid": self.edge_cid}

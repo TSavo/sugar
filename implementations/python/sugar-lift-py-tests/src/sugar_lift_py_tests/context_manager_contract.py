@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
+from typing import Any, Optional, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -236,87 +236,6 @@ class LiteralDefaultV1:
 
 
 @dataclass(frozen=True)
-class ProviderValueRefV1:
-    value_ref_cid: str
-    sort: Sort
-    kind: str = "provider-value-ref"
-
-    def __post_init__(self) -> None:
-        if (
-            not isinstance(self.value_ref_cid, str)
-            or re.fullmatch(r"blake3-512:[0-9a-f]{128}", self.value_ref_cid) is None
-        ):
-            raise ContextManagerContractError(
-                "provider default valueRefCid must be a CID"
-            )
-
-
-@dataclass(frozen=True)
-class ProviderKitKeyBindingV1:
-    provider_kit_cid: str
-    signer_key_id: str
-    signer_public_key: str
-
-    def __post_init__(self) -> None:
-        if re.fullmatch(r"blake3-512:[0-9a-f]{128}", self.provider_kit_cid) is None:
-            raise ContextManagerContractError(
-                "provider key binding requires a provider kit CID"
-            )
-        if not self.signer_key_id or not self.signer_public_key.startswith("ed25519:"):
-            raise ContextManagerContractError(
-                "provider key binding requires an authorized signer"
-            )
-
-
-@dataclass(frozen=True)
-class ProviderValueCatalogMemberV1:
-    member_cid: str
-    canonical_bytes: bytes
-
-    def __post_init__(self) -> None:
-        if re.fullmatch(
-            r"blake3-512:[0-9a-f]{128}", self.member_cid
-        ) is None or not isinstance(self.canonical_bytes, bytes):
-            raise ContextManagerContractError(
-                "provider value catalog member is malformed"
-            )
-
-
-@dataclass(frozen=True)
-class AuthenticatedProviderValueCatalogV1:
-    key_binding: ProviderKitKeyBindingV1
-    members_by_value_cid: Mapping[str, ProviderValueCatalogMemberV1]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.key_binding, ProviderKitKeyBindingV1):
-            raise ContextManagerContractError(
-                "provider value catalog requires a key binding"
-            )
-        if not isinstance(self.members_by_value_cid, Mapping):
-            raise ContextManagerContractError(
-                "provider value catalog requires canonical members"
-            )
-        for cid, member in self.members_by_value_cid.items():
-            if re.fullmatch(r"blake3-512:[0-9a-f]{128}", cid) is None or not isinstance(
-                member, ProviderValueCatalogMemberV1
-            ):
-                raise ContextManagerContractError(
-                    "provider value catalog member is malformed"
-                )
-
-
-@dataclass(frozen=True)
-class ResolvedProviderValueV1:
-    """Opaque projection verified from one provider-signed canonical member."""
-
-    member_cid: str
-    payload_cid: str
-    provider_kit_cid: str
-    sort: Sort
-    value_jcs: str
-
-
-@dataclass(frozen=True)
 class CallParameterV1:
     name: str
     sort: Sort
@@ -328,7 +247,7 @@ class CallParameterV1:
         | VariadicKeywordV1
     )
     required: bool
-    default: NoDefaultV1 | LiteralDefaultV1 | ProviderValueRefV1
+    default: NoDefaultV1 | LiteralDefaultV1
 
     def __post_init__(self) -> None:
         _validate_call_parameter_v1(self)
@@ -366,10 +285,6 @@ def _validate_call_parameter_v1(parameter: CallParameterV1) -> None:
             raise ContextManagerContractError(
                 "literal default sort must equal parameter sort"
             )
-    if isinstance(self.default, ProviderValueRefV1) and self.default.sort != self.sort:
-        raise ContextManagerContractError(
-            "provider default sort must equal parameter sort"
-        )
 
 
 @dataclass(frozen=True)
@@ -544,39 +459,34 @@ def project_formal_selector_v1(
     raise ContextManagerContractError("unknown formal selector")
 
 
-def resolve_parameter_default_v1(
-    parameter: CallParameterV1,
-    provider_catalog: AuthenticatedProviderValueCatalogV1,
-):
-    default = parameter.default
-    if isinstance(default, NoDefaultV1):
-        raise ContextManagerContractError("parameter has no authenticated default")
-    if isinstance(default, LiteralDefaultV1):
-        return default.value
-    if isinstance(default, ProviderValueRefV1):
-        if not isinstance(provider_catalog, AuthenticatedProviderValueCatalogV1):
-            raise ContextManagerContractError(
-                "provider default requires an authenticated provider catalog"
-            )
-        resolved = _resolve_provider_value_member_v1(
-            default.value_ref_cid, provider_catalog
-        )
-        if resolved.sort != default.sort or resolved.sort != parameter.sort:
-            raise ContextManagerContractError("provider default sort mismatch")
-        return resolved
-    raise ContextManagerContractError("unknown authenticated default")
+@dataclass(frozen=True)
+class ContextManagerDerivationProvenanceV1:
+    distribution_artifact_cid: str
+    dependency_artifact_graph_cid: str
+    module_identity_cid: str
+    module_source_cid: str
+    re_export_warrant_cids: tuple[str, ...]
+    resolved_definition: "SourceFragmentCoordinateV1"
+    resolved_definition_cid: str
+    manager_construction_cid: str
+    enter_testimony_cid: str
+    exit_testimony_cid: str
+    use_site: "SourceFragmentCoordinateV1"
+    use_site_cid: str
+    derivation_algorithm_cid: str
+    derivation_cid: str
+    kind: str = "python-context-manager-derivation"
+    schema_version: str = "1"
 
 
 @dataclass(frozen=True)
-class PublishedContextManagerContractV1:
-    bridge_source_symbol: str
+class DerivedContextManagerContractV1:
     import_signature: ImportSignatureV2
     semantics: ContextManagerSemanticsV1
-    source_warrants: tuple[str, ...]
     payload_cid: str
-    provider_kit_cid: str | None = None
-    provider_export_cid: str | None = None
-    signer_key_id: str | None = None
+    provenance: ContextManagerDerivationProvenanceV1
+    provenance_cid: str
+    contract_cid: str
 
 
 class ContextManagerContractError(ValueError):
@@ -736,318 +646,121 @@ def semantics_to_value(semantics: ContextManagerSemanticsV1):
     raise ContextManagerContractError("unknown context-manager semantics variant")
 
 
-def publish_never_suppresses_context_manager_contract(
-    *,
-    bridge_source_symbol: str,
-    import_signature: Any,
-    enter_result_sort: Sort,
-    source_warrants: Sequence[str],
-    signer: Signer,
-    declared_at: str,
-) -> ClaimEnvelope:
-    semantics = ProtocolResourceSemanticsV1(
-        enter=EnterResultContractV1(sort=enter_result_sort),
-        exit=ExitContractV1(disposition=NeverSuppressesDispositionV1()),
+def _cid_of_json(value: Any) -> str:
+    return blake3_512_of(encode_jcs(_json_value(value)).encode())
+
+
+def derivation_provenance_to_dict(
+    provenance: ContextManagerDerivationProvenanceV1,
+) -> dict[str, Any]:
+    return {
+        "kind": provenance.kind,
+        "schemaVersion": provenance.schema_version,
+        "distributionArtifactCid": provenance.distribution_artifact_cid,
+        "dependencyArtifactGraphCid": provenance.dependency_artifact_graph_cid,
+        "moduleIdentityCid": provenance.module_identity_cid,
+        "moduleSourceCid": provenance.module_source_cid,
+        "reExportWarrantCids": list(provenance.re_export_warrant_cids),
+        "resolvedDefinition": provenance.resolved_definition.wire(),
+        "resolvedDefinitionCid": provenance.resolved_definition_cid,
+        "managerConstructionCid": provenance.manager_construction_cid,
+        "enterTestimonyCid": provenance.enter_testimony_cid,
+        "exitTestimonyCid": provenance.exit_testimony_cid,
+        "useSite": provenance.use_site.wire(),
+        "useSiteCid": provenance.use_site_cid,
+        "derivationAlgorithmCid": provenance.derivation_algorithm_cid,
+        "derivationCid": provenance.derivation_cid,
+    }
+
+
+def validate_derivation_provenance_v1(
+    provenance: ContextManagerDerivationProvenanceV1,
+) -> None:
+    if not isinstance(provenance, ContextManagerDerivationProvenanceV1):
+        raise ContextManagerContractError("derived CM contract requires typed provenance")
+    if provenance.kind != "python-context-manager-derivation" or provenance.schema_version != "1":
+        raise ContextManagerContractError("unsupported CM derivation provenance")
+    wire = derivation_provenance_to_dict(provenance)
+    cid_fields = (
+        "distributionArtifactCid",
+        "dependencyArtifactGraphCid",
+        "moduleIdentityCid",
+        "moduleSourceCid",
+        "resolvedDefinitionCid",
+        "managerConstructionCid",
+        "enterTestimonyCid",
+        "exitTestimonyCid",
+        "useSiteCid",
+        "derivationAlgorithmCid",
+        "derivationCid",
     )
-    return publish_context_manager_contract(
-        bridge_source_symbol=bridge_source_symbol,
-        import_signature=import_signature,
-        semantics=semantics,
-        source_warrants=source_warrants,
-        signer=signer,
-        declared_at=declared_at,
-    )
+    if any(
+        not isinstance(wire[field], str) or not wire[field].startswith("blake3-512:")
+        for field in cid_fields
+    ):
+        raise ContextManagerContractError("CM derivation provenance requires CIDs")
+    if any(
+        not isinstance(cid, str) or not cid.startswith("blake3-512:")
+        for cid in provenance.re_export_warrant_cids
+    ):
+        raise ContextManagerContractError("re-export warrants must be ordered CIDs")
+    if provenance.resolved_definition.source_cid != provenance.module_source_cid:
+        raise ContextManagerContractError("resolved definition is outside module source")
+    if _cid_of_json(wire["resolvedDefinition"]) != provenance.resolved_definition_cid:
+        raise ContextManagerContractError("resolved definition CID mismatch")
+    if _cid_of_json(wire["useSite"]) != provenance.use_site_cid:
+        raise ContextManagerContractError("use-site CID mismatch")
+    derivation_preimage = {key: value for key, value in wire.items() if key != "derivationCid"}
+    if _cid_of_json(derivation_preimage) != provenance.derivation_cid:
+        raise ContextManagerContractError("derivation CID mismatch")
 
 
-def publish_effect_boundary_context_manager_contract(
+def seal_derived_context_manager_contract(
     *,
-    bridge_source_symbol: str,
-    import_signature: ImportSignatureV2,
-    mode: ExpectsModeV1 | SuppressesModeV1,
-    effect_kind: RaiseEffectKindV1 | WarningEffectKindV1,
-    expected_type_operand: (
-        FormalArgumentProjectionV1
-        | VariadicPositionalElementProjectionV1
-        | VariadicKeywordEntryProjectionV1
-    ),
-    message_pattern_operand: (
-        NoMessagePatternV1
-        | OptionalFormalArgumentProjectionV1
-        | VariadicPositionalElementProjectionV1
-        | VariadicKeywordEntryProjectionV1
-    ),
-    binding: NoBindingV1 | ExceptionInfoBindingV1 | WarningObservationBindingV1,
-    source_warrants: Sequence[str],
-    signer: Signer,
-    declared_at: str,
-    provider_kit_cid: str | None = None,
-    signer_key_id: str | None = None,
-) -> ClaimEnvelope:
-    """Publish a provider-owned EffectBoundary through the sole CM envelope door."""
-    return publish_context_manager_contract(
-        bridge_source_symbol=bridge_source_symbol,
-        import_signature=import_signature,
-        semantics=EffectBoundarySemanticsV1(
-            mode=mode,
-            effect_kind=effect_kind,
-            expected_type_operand=expected_type_operand,
-            message_pattern_operand=message_pattern_operand,
-            binding=binding,
-        ),
-        source_warrants=source_warrants,
-        signer=signer,
-        declared_at=declared_at,
-        provider_kit_cid=provider_kit_cid,
-        signer_key_id=signer_key_id,
-    )
-
-
-def publish_context_manager_contract(
-    *,
-    bridge_source_symbol: str,
     import_signature: ImportSignatureV2,
     semantics: ContextManagerSemanticsV1,
-    source_warrants: Sequence[str],
+    provenance: ContextManagerDerivationProvenanceV1,
     signer: Signer,
     declared_at: str,
-    provider_kit_cid: str | None = None,
-    signer_key_id: str | None = None,
 ) -> ClaimEnvelope:
-    if not bridge_source_symbol:
-        raise ContextManagerContractError("bridgeSourceSymbol must be non-empty")
+    """Seal a checked construction summary; the signer grants no CM semantics."""
     if not isinstance(import_signature, ImportSignatureV2):
         raise ContextManagerContractError("ImportSignatureV2 required")
-    if not all(
-        isinstance(w, str) and w.startswith("blake3-512:") for w in source_warrants
-    ):
-        raise ContextManagerContractError("sourceWarrants must be CID references")
+    validate_derivation_provenance_v1(provenance)
     payload = semantics_to_value(semantics)
     decoded_payload = json.loads(encode_jcs(payload))
-    if (
-        decode_context_manager_semantics_v1(decoded_payload, import_signature)
-        != semantics
-    ):
-        raise ContextManagerContractError(
-            "context-manager semantics failed canonical validation"
-        )
+    if decode_context_manager_semantics_v1(decoded_payload, import_signature) != semantics:
+        raise ContextManagerContractError("context-manager semantics failed canonical validation")
     payload_cid = blake3_512_of(encode_jcs(payload).encode())
-    sorted_inputs = sorted(source_warrants)
-    provider_fields = ()
-    schema_version = "1.2"
-    if provider_kit_cid is not None or signer_key_id is not None:
-        if not isinstance(provider_kit_cid, str) or not provider_kit_cid.startswith(
-            "blake3-512:"
-        ):
-            raise ContextManagerContractError(
-                "providerKitCid must be an authenticated CID"
-            )
-        if not isinstance(signer_key_id, str) or not signer_key_id:
-            raise ContextManagerContractError("provider member requires signerKeyId")
-        provider_export_cid = blake3_512_of(
-            encode_jcs(
-                vobj(
-                    [
-                        ("kind", vstr("provider-export")),
-                        ("schemaVersion", vstr("1")),
-                        ("providerKitCid", vstr(provider_kit_cid)),
-                        ("bridgeSourceSymbol", vstr(bridge_source_symbol)),
-                        (
-                            "importSignature",
-                            import_signature_to_value(import_signature),
-                        ),
-                    ]
-                )
-            ).encode()
-        )
-        schema_version = "1.3"
-        provider_fields = (
-            ("providerKitCid", vstr(provider_kit_cid)),
-            ("providerExportCid", vstr(provider_export_cid)),
-            ("signerKeyId", vstr(signer_key_id)),
-        )
-    header = vobj(
-        [
-            ("schemaVersion", vstr(schema_version)),
-            ("kind", vstr("context-manager-contract")),
-            ("cid", vstr(payload_cid)),
-            ("payloadCid", vstr(payload_cid)),
-            ("bridgeSourceSymbol", vstr(bridge_source_symbol)),
-            ("importSignature", import_signature_to_value(import_signature)),
-            ("payload", payload),
-            ("sourceWarrants", varr([vstr(v) for v in source_warrants])),
-            ("inputCids", varr([vstr(v) for v in sorted_inputs])),
-            *provider_fields,
-        ]
-    )
-    metadata = vobj(
-        [
-            (
-                "authoring",
-                vobj(
-                    [
-                        ("producerKind", vstr("kit-author")),
-                        ("author", vstr(signer.producer_id)),
-                    ]
-                ),
-            ),
-            ("producedBy", vstr(signer.producer_id)),
-            ("producedAt", vstr(declared_at)),
-        ]
-    )
-    return _assemble_layered(header, metadata, declared_at, signer.seed, payload_cid)
-
-
-def publish_provider_value_v1(
-    *,
-    provider_kit_cid: str,
-    signer_key_id: str,
-    sort: Sort,
-    value: Mapping[str, object],
-    signer: Signer,
-    declared_at: str,
-) -> ClaimEnvelope:
-    """Seal one provider-owned opaque value coordinate for signature defaults."""
-    if re.fullmatch(r"blake3-512:[0-9a-f]{128}", provider_kit_cid) is None:
-        raise ContextManagerContractError("provider value requires a provider kit CID")
-    if not signer_key_id or not isinstance(value, Mapping):
-        raise ContextManagerContractError(
-            "provider value requires a signer key and value preimage"
-        )
-    payload = vobj(
-        [
-            ("kind", vstr("provider-value")),
-            ("schemaVersion", vstr("1")),
-            ("sort", sort_to_value(sort)),
-            ("value", _json_value(dict(value))),
-        ]
-    )
-    payload_cid = blake3_512_of(encode_jcs(payload).encode())
-    header = vobj(
-        [
-            ("schemaVersion", vstr("1")),
-            ("kind", vstr("provider-value")),
-            ("cid", vstr(payload_cid)),
-            ("payloadCid", vstr(payload_cid)),
-            ("providerKitCid", vstr(provider_kit_cid)),
-            ("signerKeyId", vstr(signer_key_id)),
-            ("sort", sort_to_value(sort)),
-            ("payload", payload),
-            ("inputCids", varr([])),
-        ]
-    )
-    metadata = vobj(
-        [
-            (
-                "authoring",
-                vobj(
-                    [
-                        ("producerKind", vstr("kit-author")),
-                        ("author", vstr(signer.producer_id)),
-                    ]
-                ),
-            ),
-            ("producedBy", vstr(signer.producer_id)),
-            ("producedAt", vstr(declared_at)),
-        ]
-    )
-    return _assemble_layered(header, metadata, declared_at, signer.seed, payload_cid)
-
-
-def _resolve_provider_value_member_v1(
-    requested_cid: str,
-    catalog: AuthenticatedProviderValueCatalogV1,
-) -> ResolvedProviderValueV1:
-    try:
-        catalog_member = catalog.members_by_value_cid[requested_cid]
-    except KeyError as exc:
-        raise ContextManagerContractError("unresolved provider default") from exc
-    canonical_bytes = catalog_member.canonical_bytes
-    try:
-        raw = json.loads(canonical_bytes)
-    except (TypeError, ValueError) as exc:
-        raise ContextManagerContractError(
-            "provider default member is not canonical JSON"
-        ) from exc
-    if not isinstance(raw, dict) or set(raw) != {"envelope", "header", "metadata"}:
-        raise ContextManagerContractError("provider default member is malformed")
-    envelope, header, metadata = raw["envelope"], raw["header"], raw["metadata"]
-    if (
-        not isinstance(envelope, dict)
-        or not isinstance(header, dict)
-        or not isinstance(metadata, dict)
-    ):
-        raise ContextManagerContractError(
-            "provider default member layers are malformed"
-        )
-    actual_member_cid = blake3_512_of(encode_jcs(_json_value(envelope)).encode())
-    if actual_member_cid != catalog_member.member_cid:
-        raise ContextManagerContractError("provider default member CID is stale")
-    expected_header = {
-        "schemaVersion",
-        "kind",
-        "cid",
-        "payloadCid",
-        "providerKitCid",
-        "signerKeyId",
-        "sort",
-        "payload",
-        "inputCids",
+    provenance_wire = derivation_provenance_to_dict(provenance)
+    provenance_cid = _cid_of_json(provenance_wire)
+    contract_preimage = {
+        "kind": "context-manager-contract",
+        "schemaVersion": "derived-1",
+        "importSignature": json.loads(encode_jcs(import_signature_to_value(import_signature))),
+        "semantics": decoded_payload,
+        "payloadCid": payload_cid,
+        "provenance": provenance_wire,
+        "provenanceCid": provenance_cid,
     }
-    if (
-        set(header) != expected_header
-        or header.get("schemaVersion") != "1"
-        or header.get("kind") != "provider-value"
-        or header.get("inputCids") != []
-    ):
-        raise ContextManagerContractError("provider default member header is malformed")
-    payload = header["payload"]
-    if (
-        not isinstance(payload, dict)
-        or set(payload) != {"kind", "schemaVersion", "sort", "value"}
-        or payload.get("kind") != "provider-value"
-        or payload.get("schemaVersion") != "1"
-    ):
-        raise ContextManagerContractError("provider default payload is malformed")
-    payload_cid = blake3_512_of(encode_jcs(_json_value(payload)).encode())
-    if (
-        requested_cid != payload_cid
-        or header.get("cid") != payload_cid
-        or header.get("payloadCid") != payload_cid
-    ):
-        raise ContextManagerContractError(
-            "provider default content CID does not match preimage"
-        )
-    binding = catalog.key_binding
-    if (
-        header.get("providerKitCid") != binding.provider_kit_cid
-        or header.get("signerKeyId") != binding.signer_key_id
-        or envelope.get("signer") != binding.signer_public_key
-    ):
-        raise ContextManagerContractError(
-            "provider default provider signer is not authorized"
-        )
-    signing = vobj(
+    contract_cid = _cid_of_json(contract_preimage)
+    header = _json_value({**contract_preimage, "cid": contract_cid, "contractCid": contract_cid})
+    metadata = vobj(
         [
-            ("header", _json_value(header)),
-            ("metadata", _json_value(metadata)),
+            (
+                "authoring",
+                vobj(
+                    [
+                        ("producerKind", vstr("construction-derivation")),
+                        ("author", vstr(signer.producer_id)),
+                    ]
+                ),
+            ),
+            ("producedBy", vstr(signer.producer_id)),
+            ("producedAt", vstr(declared_at)),
         ]
     )
-    if not ed25519_verify_string(
-        binding.signer_public_key,
-        envelope.get("signature", ""),
-        encode_jcs(signing).encode(),
-    ):
-        raise ContextManagerContractError("provider default signature does not verify")
-    sort = _decode_sort(payload["sort"])
-    if _decode_sort(header["sort"]) != sort:
-        raise ContextManagerContractError("provider default sort testimony disagrees")
-    return ResolvedProviderValueV1(
-        member_cid=catalog_member.member_cid,
-        payload_cid=payload_cid,
-        provider_kit_cid=binding.provider_kit_cid,
-        sort=sort,
-        value_jcs=encode_jcs(_json_value(payload["value"])),
-    )
+    return _assemble_layered(header, metadata, declared_at, signer.seed, contract_cid)
 
 
 def _json_value(value: Any):
@@ -1124,14 +837,6 @@ def import_signature_to_value(signature: ImportSignatureV2):
                     ("value", _json_value(parameter.default.value)),
                 ]
             )
-        elif isinstance(parameter.default, ProviderValueRefV1):
-            default = vobj(
-                [
-                    ("kind", vstr("provider-value-ref")),
-                    ("valueRefCid", vstr(parameter.default.value_ref_cid)),
-                    ("sort", sort_to_value(parameter.default.sort)),
-                ]
-            )
         else:
             raise ContextManagerContractError("unknown authenticated default")
         rows.append(
@@ -1189,14 +894,6 @@ def decode_import_signature_v2(raw: Any) -> ImportSignatureV2:
             "value",
         }:
             default = LiteralDefaultV1(raw_default["value"])
-        elif raw_default.get("kind") == "provider-value-ref" and set(raw_default) == {
-            "kind",
-            "valueRefCid",
-            "sort",
-        }:
-            default = ProviderValueRefV1(
-                raw_default["valueRefCid"], _decode_sort(raw_default["sort"])
-            )
         else:
             raise ContextManagerContractError(
                 "unknown or malformed authenticated default"
@@ -1418,92 +1115,110 @@ def decode_context_manager_semantics_v1(
 
 def decode_context_manager_contract(
     canonical_bytes: bytes, member_cid: str
-) -> PublishedContextManagerContractV1:
+) -> DerivedContextManagerContractV1:
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
     try:
         raw = json.loads(canonical_bytes)
     except (TypeError, ValueError) as exc:
         raise ContextManagerContractError("member is not JSON") from exc
     if not isinstance(raw, dict) or set(raw) != {"envelope", "header", "metadata"}:
         raise ContextManagerContractError("CM contract must be a layered member")
-    envelope, header = raw["envelope"], raw["header"]
-    if not isinstance(raw["metadata"], dict):
-        raise ContextManagerContractError("layered metadata must be an object")
+    envelope, header, metadata = raw["envelope"], raw["header"], raw["metadata"]
+    if not all(isinstance(value, dict) for value in (envelope, header, metadata)):
+        raise ContextManagerContractError("CM contract layers must be objects")
     if blake3_512_of(encode_jcs(_json_value(envelope)).encode()) != member_cid:
-        raise ContextManagerContractError(
-            "member attestation CID does not match envelope"
-        )
-    signing = vobj(
-        [("header", _json_value(header)), ("metadata", _json_value(raw["metadata"]))]
-    )
+        raise ContextManagerContractError("member attestation CID does not match envelope")
+    signing = vobj([("header", _json_value(header)), ("metadata", _json_value(metadata))])
     if not ed25519_verify_string(
         envelope.get("signer", ""),
         envelope.get("signature", ""),
         encode_jcs(signing).encode(),
     ):
         raise ContextManagerContractError("member signature does not verify")
-    common = {
-        "schemaVersion",
+    expected_header = {
         "kind",
+        "schemaVersion",
         "cid",
-        "payloadCid",
-        "bridgeSourceSymbol",
+        "contractCid",
         "importSignature",
-        "payload",
-        "sourceWarrants",
-        "inputCids",
+        "semantics",
+        "payloadCid",
+        "provenance",
+        "provenanceCid",
     }
-    provider = {"providerKitCid", "providerExportCid", "signerKeyId"}
     if (
-        not isinstance(header, dict)
+        set(header) != expected_header
         or header.get("kind") != "context-manager-contract"
-        or (header.get("schemaVersion") == "1.2" and set(header) != common)
-        or (header.get("schemaVersion") == "1.3" and set(header) != common | provider)
-        or header.get("schemaVersion") not in {"1.2", "1.3"}
+        or header.get("schemaVersion") != "derived-1"
     ):
-        raise ContextManagerContractError("malformed context-manager-contract header")
+        raise ContextManagerContractError("malformed derived context-manager contract")
     signature = decode_import_signature_v2(header["importSignature"])
-    semantics = decode_context_manager_semantics_v1(header["payload"], signature)
-    payload_cid = blake3_512_of(encode_jcs(semantics_to_value(semantics)).encode())
-    if header["cid"] != payload_cid or header["payloadCid"] != payload_cid:
-        raise ContextManagerContractError(
-            "context-manager payload CID does not match semantics"
+    semantics = decode_context_manager_semantics_v1(header["semantics"], signature)
+    payload_cid = _cid_of_json(header["semantics"])
+    if header["payloadCid"] != payload_cid:
+        raise ContextManagerContractError("context-manager payload CID mismatch")
+    p = header["provenance"]
+    expected_provenance = {
+        "kind",
+        "schemaVersion",
+        "distributionArtifactCid",
+        "dependencyArtifactGraphCid",
+        "moduleIdentityCid",
+        "moduleSourceCid",
+        "reExportWarrantCids",
+        "resolvedDefinition",
+        "resolvedDefinitionCid",
+        "managerConstructionCid",
+        "enterTestimonyCid",
+        "exitTestimonyCid",
+        "useSite",
+        "useSiteCid",
+        "derivationAlgorithmCid",
+        "derivationCid",
+    }
+    if not isinstance(p, dict) or set(p) != expected_provenance:
+        raise ContextManagerContractError("malformed CM derivation provenance")
+    provenance = ContextManagerDerivationProvenanceV1(
+        distribution_artifact_cid=p["distributionArtifactCid"],
+        dependency_artifact_graph_cid=p["dependencyArtifactGraphCid"],
+        module_identity_cid=p["moduleIdentityCid"],
+        module_source_cid=p["moduleSourceCid"],
+        re_export_warrant_cids=tuple(p["reExportWarrantCids"]),
+        resolved_definition=SourceFragmentCoordinateV1.decode(p["resolvedDefinition"]),
+        resolved_definition_cid=p["resolvedDefinitionCid"],
+        manager_construction_cid=p["managerConstructionCid"],
+        enter_testimony_cid=p["enterTestimonyCid"],
+        exit_testimony_cid=p["exitTestimonyCid"],
+        use_site=SourceFragmentCoordinateV1.decode(p["useSite"]),
+        use_site_cid=p["useSiteCid"],
+        derivation_algorithm_cid=p["derivationAlgorithmCid"],
+        derivation_cid=p["derivationCid"],
+    )
+    validate_derivation_provenance_v1(provenance)
+    provenance_cid = _cid_of_json(p)
+    if header["provenanceCid"] != provenance_cid:
+        raise ContextManagerContractError("CM provenance CID mismatch")
+    preimage = {
+        key: header[key]
+        for key in (
+            "kind",
+            "schemaVersion",
+            "importSignature",
+            "semantics",
+            "payloadCid",
+            "provenance",
+            "provenanceCid",
         )
-    warrants = header["sourceWarrants"]
-    if not isinstance(warrants, list) or not all(
-        isinstance(v, str) and v.startswith("blake3-512:") for v in warrants
-    ):
-        raise ContextManagerContractError("sourceWarrants must be CID references")
-    if header["inputCids"] != sorted(warrants):
-        raise ContextManagerContractError("inputCids do not match sourceWarrants")
-    symbol = header["bridgeSourceSymbol"]
-    if not isinstance(symbol, str) or not symbol:
-        raise ContextManagerContractError("bridgeSourceSymbol must be non-empty")
-    provider_kit_cid = header.get("providerKitCid")
-    provider_export_cid = header.get("providerExportCid")
-    signer_key_id = header.get("signerKeyId")
-    if header["schemaVersion"] == "1.3":
-        expected_export = blake3_512_of(
-            encode_jcs(
-                vobj(
-                    [
-                        ("kind", vstr("provider-export")),
-                        ("schemaVersion", vstr("1")),
-                        ("providerKitCid", vstr(provider_kit_cid)),
-                        ("bridgeSourceSymbol", vstr(symbol)),
-                        ("importSignature", import_signature_to_value(signature)),
-                    ]
-                )
-            ).encode()
-        )
-        if provider_export_cid != expected_export or not signer_key_id:
-            raise ContextManagerContractError("provider export identity mismatch")
-    return PublishedContextManagerContractV1(
-        bridge_source_symbol=symbol,
+    }
+    contract_cid = _cid_of_json(preimage)
+    if header["cid"] != contract_cid or header["contractCid"] != contract_cid:
+        raise ContextManagerContractError("CM contract CID mismatch")
+    return DerivedContextManagerContractV1(
         import_signature=signature,
         semantics=semantics,
-        source_warrants=tuple(warrants),
         payload_cid=payload_cid,
-        provider_kit_cid=provider_kit_cid,
-        provider_export_cid=provider_export_cid,
-        signer_key_id=signer_key_id,
+        provenance=provenance,
+        provenance_cid=provenance_cid,
+        contract_cid=contract_cid,
     )

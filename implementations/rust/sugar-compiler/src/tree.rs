@@ -1472,23 +1472,6 @@ impl Kit {
         )?)
     }
 
-    pub fn context_manager_declarations(
-        &self,
-        workspace_root: &Path,
-    ) -> Result<Vec<Value>, KitError> {
-        Ok(preconstruction_rows_rpc(
-            &self.enumerate_conn(workspace_root),
-            Level::ContractDeclarations,
-        )?)
-    }
-
-    pub fn provider_contract_members(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
-        Ok(preconstruction_rows_rpc(
-            &self.enumerate_conn(workspace_root),
-            Level::ProviderContractMembers,
-        )?)
-    }
-
     pub fn context_manager_demands(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
         Ok(preconstruction_rows_rpc(
             &self.enumerate_conn(workspace_root),

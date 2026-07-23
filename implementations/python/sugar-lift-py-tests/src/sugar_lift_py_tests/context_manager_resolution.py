@@ -64,17 +64,22 @@ class ContextManagerContractRefV1:
     resolution_cid: str
     demand_cid: str
     use_site: SourceFragmentCoordinateV1
+    use_site_cid: str
     authenticated_import_use_cid: str
     import_binding_cid: str
-    provider_kit_cid: str
-    provider_export_cid: str
-    catalog_cid: str
-    member_cid: str
+    construction_context_generation_cid: str
+    contract_cid: str
     payload_cid: str
-    bridge_source_symbol: str
+    provenance_cid: str
+    distribution_artifact_cid: str
+    dependency_artifact_graph_cid: str
+    module_source_cid: str
+    resolved_definition_cid: str
+    manager_construction_cid: str
+    enter_testimony_cid: str
+    exit_testimony_cid: str
     import_signature: ImportSignatureV2
     semantics: ContextManagerSemanticsV1
-    source_warrant_cids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -123,8 +128,8 @@ _GAP_KINDS = frozenset(
         "unauthenticated-member",
         "payload-cid-mismatch",
         "unsupported-cm-schema",
-        "provider-not-selected",
-        "wrong-provider",
+        "no-derived-contract",
+        "stale-derived-contract",
     }
 )
 
@@ -149,17 +154,22 @@ def _resolution_cid_preimage(raw: dict[str, Any]) -> dict[str, Any]:
             "schemaVersion",
             "demandCid",
             "useSite",
-            "catalogCid",
-            "memberCid",
+            "useSiteCid",
             "authenticatedImportUseCid",
             "importBindingCid",
-            "providerKitCid",
-            "providerExportCid",
+            "constructionContextGenerationCid",
+            "contractCid",
             "payloadCid",
-            "bridgeSourceSymbol",
+            "provenanceCid",
+            "distributionArtifactCid",
+            "dependencyArtifactGraphCid",
+            "moduleSourceCid",
+            "resolvedDefinitionCid",
+            "managerConstructionCid",
+            "enterTestimonyCid",
+            "exitTestimonyCid",
             "importSignature",
             "semantics",
-            "sourceWarrantCids",
         )
     }
 
@@ -175,17 +185,22 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
         "resolutionCid",
         "demandCid",
         "useSite",
+        "useSiteCid",
         "authenticatedImportUseCid",
         "importBindingCid",
-        "providerKitCid",
-        "providerExportCid",
-        "catalogCid",
-        "memberCid",
+        "constructionContextGenerationCid",
+        "contractCid",
         "payloadCid",
-        "bridgeSourceSymbol",
+        "provenanceCid",
+        "distributionArtifactCid",
+        "dependencyArtifactGraphCid",
+        "moduleSourceCid",
+        "resolvedDefinitionCid",
+        "managerConstructionCid",
+        "enterTestimonyCid",
+        "exitTestimonyCid",
         "importSignature",
         "semantics",
-        "sourceWarrantCids",
     }
     if not isinstance(raw, dict) or set(raw) != expected:
         raise ContractRefProtocolError("malformed context-manager contract ref")
@@ -199,24 +214,29 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
         semantics = decode_context_manager_semantics_v1(raw["semantics"], signature)
     except ContextManagerContractError as exc:
         raise ContractRefProtocolError("unsupported context-manager semantics") from exc
-    warrants = raw["sourceWarrantCids"]
-    if not isinstance(warrants, list):
-        raise ContractRefProtocolError("sourceWarrantCids must be a list")
+    use_site = SourceFragmentCoordinateV1.decode(raw["useSite"])
+    if _hash_json(use_site.wire()) != _cid(raw["useSiteCid"], "useSiteCid"):
+        raise ContractRefProtocolError("use-site CID mismatch")
     return ContextManagerContractRefV1(
         resolution_cid,
         _cid(raw["demandCid"], "demandCid"),
-        SourceFragmentCoordinateV1.decode(raw["useSite"]),
+        use_site,
+        _cid(raw["useSiteCid"], "useSiteCid"),
         _cid(raw["authenticatedImportUseCid"], "authenticatedImportUseCid"),
         _cid(raw["importBindingCid"], "importBindingCid"),
-        _cid(raw["providerKitCid"], "providerKitCid"),
-        _cid(raw["providerExportCid"], "providerExportCid"),
-        _cid(raw["catalogCid"], "catalogCid"),
-        _cid(raw["memberCid"], "memberCid"),
+        _cid(raw["constructionContextGenerationCid"], "constructionContextGenerationCid"),
+        _cid(raw["contractCid"], "contractCid"),
         _cid(raw["payloadCid"], "payloadCid"),
-        raw["bridgeSourceSymbol"],
+        _cid(raw["provenanceCid"], "provenanceCid"),
+        _cid(raw["distributionArtifactCid"], "distributionArtifactCid"),
+        _cid(raw["dependencyArtifactGraphCid"], "dependencyArtifactGraphCid"),
+        _cid(raw["moduleSourceCid"], "moduleSourceCid"),
+        _cid(raw["resolvedDefinitionCid"], "resolvedDefinitionCid"),
+        _cid(raw["managerConstructionCid"], "managerConstructionCid"),
+        _cid(raw["enterTestimonyCid"], "enterTestimonyCid"),
+        _cid(raw["exitTestimonyCid"], "exitTestimonyCid"),
         signature,
         semantics,
-        tuple(_cid(value, "sourceWarrantCid") for value in warrants),
     )
 
 
@@ -251,8 +271,8 @@ def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
             "reference",
         }:
             value: ContextManagerResolutionV1 = _decode_ref(resolution["reference"])
-            if value.use_site != use_site or value.catalog_cid != catalog_cid:
-                raise ContractRefProtocolError("resolution coordinate/catalog mismatch")
+            if value.use_site != use_site:
+                raise ContractRefProtocolError("resolution coordinate mismatch")
         elif resolution.get("kind") == "unresolved" and set(resolution) == {
             "kind",
             "gap",

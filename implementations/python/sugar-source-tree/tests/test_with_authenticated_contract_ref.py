@@ -28,6 +28,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
+    _hash_json,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
@@ -82,17 +83,22 @@ def _resolved(use_site) -> ContextManagerContractRefV1:
         resolution_cid=_cid("r"),
         demand_cid=_cid("d"),
         use_site=use_site,
+        use_site_cid=_hash_json(use_site.wire()),
         authenticated_import_use_cid=_cid("u"),
         import_binding_cid=_cid("i"),
-        provider_kit_cid=_cid("k"),
-        provider_export_cid=_cid("e"),
-        catalog_cid=_cid("c"),
-        member_cid=_cid("m"),
+        construction_context_generation_cid=_cid("g"),
+        contract_cid=_cid("m"),
         payload_cid=_cid("p"),
-        bridge_source_symbol="context-manager:dependency.manager",
+        provenance_cid=_cid("v"),
+        distribution_artifact_cid=_cid("a"),
+        dependency_artifact_graph_cid=_cid("b"),
+        module_source_cid=_cid("s"),
+        resolved_definition_cid=_cid("f"),
+        manager_construction_cid=_cid("n"),
+        enter_testimony_cid=_cid("1"),
+        exit_testimony_cid=_cid("2"),
         import_signature=ImportSignatureV2(()),
         semantics=semantics,
-        source_warrant_cids=(_cid("w"),),
     )
 
 
@@ -124,14 +130,20 @@ def _effect_resolved(use_site) -> ContextManagerContractRefV1:
         resolution_cid=_cid("r"),
         demand_cid=_cid("d"),
         use_site=use_site,
+        use_site_cid=_hash_json(use_site.wire()),
         authenticated_import_use_cid=_cid("u"),
         import_binding_cid=_cid("i"),
-        provider_kit_cid=_cid("k"),
-        provider_export_cid=_cid("e"),
-        catalog_cid=_cid("c"),
-        member_cid=_cid("m"),
+        construction_context_generation_cid=_cid("g"),
+        contract_cid=_cid("m"),
         payload_cid=_cid("p"),
-        bridge_source_symbol="pytest.raises",
+        provenance_cid=_cid("v"),
+        distribution_artifact_cid=_cid("a"),
+        dependency_artifact_graph_cid=_cid("b"),
+        module_source_cid=_cid("s"),
+        resolved_definition_cid=_cid("f"),
+        manager_construction_cid=_cid("n"),
+        enter_testimony_cid=_cid("1"),
+        exit_testimony_cid=_cid("2"),
         import_signature=signature,
         semantics=EffectBoundarySemanticsV1(
             ExpectsModeV1(),
@@ -140,7 +152,6 @@ def _effect_resolved(use_site) -> ContextManagerContractRefV1:
             OptionalFormalArgumentProjectionV1(1),
             ExceptionInfoBindingV1(),
         ),
-        source_warrant_cids=(),
     )
 
 
@@ -280,7 +291,7 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
         for statement in sugar.statements
         if isinstance(statement, WithResourceSugar)
     )
-    assert resource.contract_ref.member_cid == _cid("m")
+    assert resource.contract_ref.contract_cid == _cid("m")
     assert resource.contract_ref.payload_cid == _cid("p")
     assert resource.enter_slot_id == f"{resource.manager_slot_id}#enter_result"
     assert len(manager_constructions) == 1

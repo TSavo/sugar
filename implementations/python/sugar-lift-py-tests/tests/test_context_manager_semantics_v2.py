@@ -14,11 +14,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     VariadicKeywordV1,
     NoDefaultV1,
     LiteralDefaultV1,
-    ProviderValueRefV1,
-    AuthenticatedProviderValueCatalogV1,
-    ProviderKitKeyBindingV1,
-    ProviderValueCatalogMemberV1,
-    ResolvedProviderValueV1,
     PositionalOrKeywordV1,
     NoMessagePatternV1,
     OptionalFormalArgumentProjectionV1,
@@ -28,8 +23,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     VariadicKeywordActualV1,
     ConstructedOperandOccurrenceV1,
     project_formal_selector_v1,
-    resolve_parameter_default_v1,
-    publish_provider_value_v1,
     ProtocolResourceSemanticsV1,
     ReturnTruthinessDispositionV1,
     TotalCompletionV1,
@@ -40,14 +33,9 @@ from sugar_lift_py_tests.context_manager_contract import (
     decode_import_signature_v2,
     import_signature_to_value,
     semantics_to_value,
-    publish_context_manager_contract,
-    publish_effect_boundary_context_manager_contract,
-    decode_context_manager_contract,
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.signing import Signer
-from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1
 
 
 def _cid(fill: str) -> str:
@@ -149,62 +137,6 @@ def test_effect_boundary_unknown_field_is_loud():
         decode_context_manager_semantics_v1(wire, _signature())
 
 
-def test_effect_boundary_seals_and_recomputes_payload_cid_through_existing_envelope():
-    sealed = publish_context_manager_contract(
-        bridge_source_symbol="context-manager:any_provider.renamed",
-        import_signature=_signature(),
-        semantics=_effect_boundary(),
-        source_warrants=(),
-        signer=Signer(bytes(range(32)), "fixture-provider"),
-        declared_at="2026-07-23T00:00:00.000Z",
-    )
-    decoded = decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
-    assert decoded.semantics == _effect_boundary()
-    assert decoded.payload_cid.startswith("blake3-512:")
-
-
-def test_provider_publishes_effect_boundary_through_named_production_door():
-    sealed = publish_effect_boundary_context_manager_contract(
-        bridge_source_symbol="context-manager:fixture_provider.expect",
-        import_signature=_signature(),
-        mode=ExpectsModeV1(),
-        effect_kind=RaiseEffectKindV1(),
-        expected_type_operand=FormalArgumentProjectionV1(0),
-        message_pattern_operand=OptionalFormalArgumentProjectionV1(1),
-        binding=ExceptionInfoBindingV1(),
-        source_warrants=(),
-        signer=Signer(bytes(range(32)), "fixture-provider"),
-        declared_at="2026-07-23T00:00:00.000Z",
-    )
-    decoded = decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
-    assert decoded.bridge_source_symbol == "context-manager:fixture_provider.expect"
-    assert decoded.import_signature == _signature()
-    assert decoded.semantics == _effect_boundary()
-
-
-def test_provider_kit_effect_boundary_member_uses_the_closed_union_payload():
-    member = ContextManagerContractIrV1.effect_boundary(
-        bridge_source_symbol="context-manager:fixture_provider.expect",
-        import_signature=_signature(),
-        mode=ExpectsModeV1(),
-        effect_kind=RaiseEffectKindV1(),
-        expected_type_operand=FormalArgumentProjectionV1(0),
-        message_pattern_operand=OptionalFormalArgumentProjectionV1(1),
-        binding=ExceptionInfoBindingV1(),
-        source_warrants=(),
-    )
-    wire = member.to_rpc_with_term_table(None)
-    assert wire["payload"] == _wire(_effect_boundary())
-    assert wire["importSignature"]["parameters"][0]["sort"] == {
-        "kind": "primitive",
-        "name": "Value",
-    }
-    assert wire["importSignature"]["parameters"][1]["sort"] == {
-        "kind": "primitive",
-        "name": "String",
-    }
-
-
 def test_effect_boundary_selectors_are_positions_not_privileged_formal_names():
     renamed = ImportSignatureV2(
         (
@@ -258,32 +190,6 @@ def test_effect_boundary_lying_selector_for_an_unrelated_formal_is_loud():
     )
     with pytest.raises(ContextManagerContractError, match="Value formal"):
         decode_context_manager_semantics_v1(_wire(_effect_boundary()), signature)
-
-
-def test_effect_boundary_publisher_does_not_sign_a_lying_selector():
-    with pytest.raises(ContextManagerContractError, match="Value formal"):
-        publish_effect_boundary_context_manager_contract(
-            bridge_source_symbol="context-manager:fixture_provider.expect",
-            import_signature=ImportSignatureV2(
-                (
-                    CallParameterV1(
-                        "unrelated",
-                        PrimitiveSort("String"),
-                        PositionalOrKeywordV1(),
-                        True,
-                        NoDefaultV1(),
-                    ),
-                )
-            ),
-            mode=ExpectsModeV1(),
-            effect_kind=RaiseEffectKindV1(),
-            expected_type_operand=FormalArgumentProjectionV1(0),
-            message_pattern_operand=NoMessagePatternV1(),
-            binding=ExceptionInfoBindingV1(),
-            source_warrants=(),
-            signer=Signer(bytes(range(32)), "fixture-provider"),
-            declared_at="2026-07-23T00:00:00.000Z",
-        )
 
 
 def test_variadic_signature_and_selectors_round_trip_exhaustively():
@@ -618,214 +524,6 @@ def test_malformed_variadic_signature_is_loud(mutation):
         decode_import_signature_v2(wire)
 
 
-def test_authenticated_defaults_round_trip_and_provider_refs_resolve_only_from_catalog():
-    provider_cid = "blake3-512:" + "d" * 128
-    signature = ImportSignatureV2(
-        (
-            CallParameterV1(
-                "mode",
-                PrimitiveSort("String"),
-                KeywordOnlyV1(),
-                False,
-                LiteralDefaultV1(
-                    {
-                        "kind": "const",
-                        "value": "r",
-                        "sort": {"kind": "primitive", "name": "String"},
-                    }
-                ),
-            ),
-            CallParameterV1(
-                "category",
-                PrimitiveSort("Value"),
-                KeywordOnlyV1(),
-                False,
-                ProviderValueRefV1(provider_cid, PrimitiveSort("Value")),
-            ),
-        )
-    )
-    wire = json.loads(encode_jcs(import_signature_to_value(signature)))
-    assert decode_import_signature_v2(wire) == signature
-    from sugar_lift_py_tests.signing import Signer
-
-    signer = Signer(bytes(range(32)), "provider")
-    sealed = publish_provider_value_v1(
-        provider_kit_cid=_cid("a"),
-        signer_key_id="provider-key",
-        sort=PrimitiveSort("Value"),
-        value={"kind": "provider-coordinate", "export": "Warning"},
-        signer=signer,
-        declared_at="2026-07-23T00:00:00.000Z",
-    )
-    value_cid = json.loads(sealed.canonical_bytes)["header"]["payloadCid"]
-    parameter = CallParameterV1(
-        "category",
-        PrimitiveSort("Value"),
-        KeywordOnlyV1(),
-        False,
-        ProviderValueRefV1(value_cid, PrimitiveSort("Value")),
-    )
-    binding = ProviderKitKeyBindingV1(_cid("a"), "provider-key", signer.pubkey_string())
-    member = ProviderValueCatalogMemberV1(sealed.cid, sealed.canonical_bytes)
-    catalog = AuthenticatedProviderValueCatalogV1(binding, {value_cid: member})
-    resolved = resolve_parameter_default_v1(parameter, catalog)
-    assert isinstance(resolved, ResolvedProviderValueV1)
-    assert resolved.member_cid == sealed.cid
-    assert resolved.provider_kit_cid == _cid("a")
-    with pytest.raises(
-        ContextManagerContractError, match="unresolved provider default"
-    ):
-        resolve_parameter_default_v1(
-            parameter, AuthenticatedProviderValueCatalogV1(binding, {})
-        )
-
-
-def test_forged_stale_and_wrong_provider_defaults_are_loud():
-    from sugar_lift_py_tests.signing import Signer
-
-    signer = Signer(bytes(range(32)), "provider")
-    sealed = publish_provider_value_v1(
-        provider_kit_cid=_cid("a"),
-        signer_key_id="provider-key",
-        sort=PrimitiveSort("Value"),
-        value={"kind": "provider-coordinate", "export": "Warning"},
-        signer=signer,
-        declared_at="2026-07-23T00:00:00.000Z",
-    )
-    value_cid = json.loads(sealed.canonical_bytes)["header"]["payloadCid"]
-    parameter = CallParameterV1(
-        "category",
-        PrimitiveSort("Value"),
-        KeywordOnlyV1(),
-        False,
-        ProviderValueRefV1(value_cid, PrimitiveSort("Value")),
-    )
-    binding = ProviderKitKeyBindingV1(_cid("a"), "provider-key", signer.pubkey_string())
-
-    forged = json.loads(sealed.canonical_bytes)
-    forged["header"]["payload"]["value"]["export"] = "Forged"
-    with pytest.raises(ContextManagerContractError, match="content CID"):
-        resolve_parameter_default_v1(
-            parameter,
-            AuthenticatedProviderValueCatalogV1(
-                binding,
-                {
-                    value_cid: ProviderValueCatalogMemberV1(
-                        sealed.cid, json.dumps(forged).encode()
-                    )
-                },
-            ),
-        )
-
-    stale_cid = _cid("b")
-    stale_parameter = CallParameterV1(
-        "category",
-        PrimitiveSort("Value"),
-        KeywordOnlyV1(),
-        False,
-        ProviderValueRefV1(stale_cid, PrimitiveSort("Value")),
-    )
-    with pytest.raises(ContextManagerContractError, match="content CID"):
-        resolve_parameter_default_v1(
-            stale_parameter,
-            AuthenticatedProviderValueCatalogV1(
-                binding,
-                {
-                    stale_cid: ProviderValueCatalogMemberV1(
-                        sealed.cid, sealed.canonical_bytes
-                    )
-                },
-            ),
-        )
-
-    wrong_signer = Signer(bytes([9] * 32), "other-provider")
-    wrong_binding = ProviderKitKeyBindingV1(
-        _cid("a"), "provider-key", wrong_signer.pubkey_string()
-    )
-    with pytest.raises(ContextManagerContractError, match="provider signer"):
-        resolve_parameter_default_v1(
-            parameter,
-            AuthenticatedProviderValueCatalogV1(
-                wrong_binding,
-                {
-                    value_cid: ProviderValueCatalogMemberV1(
-                        sealed.cid, sealed.canonical_bytes
-                    )
-                },
-            ),
-        )
-
-    wrong_sort_member = publish_provider_value_v1(
-        provider_kit_cid=_cid("a"),
-        signer_key_id="provider-key",
-        sort=PrimitiveSort("String"),
-        value={"kind": "provider-coordinate", "export": "Warning"},
-        signer=signer,
-        declared_at="2026-07-23T00:00:00.000Z",
-    )
-    wrong_sort_cid = json.loads(wrong_sort_member.canonical_bytes)["header"][
-        "payloadCid"
-    ]
-    wrong_sort_parameter = CallParameterV1(
-        "category",
-        PrimitiveSort("Value"),
-        KeywordOnlyV1(),
-        False,
-        ProviderValueRefV1(wrong_sort_cid, PrimitiveSort("Value")),
-    )
-    with pytest.raises(ContextManagerContractError, match="provider default sort"):
-        resolve_parameter_default_v1(
-            wrong_sort_parameter,
-            AuthenticatedProviderValueCatalogV1(
-                binding,
-                {
-                    wrong_sort_cid: ProviderValueCatalogMemberV1(
-                        wrong_sort_member.cid, wrong_sort_member.canonical_bytes
-                    )
-                },
-            ),
-        )
-
-
-def test_optional_expected_and_value_message_formals_rely_on_authenticated_actual_or_default():
-    provider_cid = "blake3-512:" + "e" * 128
-    signature = ImportSignatureV2(
-        (
-            CallParameterV1(
-                "expected",
-                PrimitiveSort("Value"),
-                PositionalOrKeywordV1(),
-                False,
-                ProviderValueRefV1(provider_cid, PrimitiveSort("Value")),
-            ),
-            CallParameterV1(
-                "match",
-                PrimitiveSort("Value"),
-                PositionalOrKeywordV1(),
-                False,
-                LiteralDefaultV1({"kind": "ctor", "name": "None", "args": []}),
-            ),
-        )
-    )
-    semantics = EffectBoundarySemanticsV1(
-        ExpectsModeV1(),
-        RaiseEffectKindV1(),
-        FormalArgumentProjectionV1(0),
-        OptionalFormalArgumentProjectionV1(1),
-        ExceptionInfoBindingV1(),
-    )
-    assert decode_context_manager_semantics_v1(_wire(semantics), signature) == semantics
-    with pytest.raises(
-        ContextManagerContractError, match="unresolved provider default"
-    ):
-        resolve_parameter_default_v1(
-            signature.parameters[0],
-            AuthenticatedProviderValueCatalogV1(
-                ProviderKitKeyBindingV1(_cid("e"), "missing", "ed25519:" + "A" * 44), {}
-            ),
-        )
-
-
 def test_optional_parameter_without_authenticated_default_is_loud():
     with pytest.raises(ContextManagerContractError, match="optional fixed parameter"):
         CallParameterV1(
@@ -845,6 +543,29 @@ def test_optional_parameter_without_authenticated_default_is_loud():
                 }
             ),
         )
+
+
+def test_provider_value_ref_default_is_not_a_derivation_provenance_value():
+    wire = {
+        "parameters": [
+            {
+                "name": "match",
+                "sort": {"kind": "primitive", "name": "String"},
+                "passing": {"kind": "keyword-only"},
+                "required": False,
+                "default": {
+                    "kind": "provider-value-ref",
+                    "valueRefCid": "blake3-512:" + "1" * 128,
+                    "sort": {"kind": "primitive", "name": "String"},
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(
+        ContextManagerContractError, match="unknown or malformed authenticated default"
+    ):
+        decode_import_signature_v2(wire)
 
 
 def test_mutated_literal_default_cannot_be_signed_as_authenticated_testimony():

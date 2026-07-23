@@ -2314,11 +2314,11 @@ class With(Statement):
         if not (admitted_resource or admitted_boundary):
             panic = UnsupportedContextManagerSemantics(
                 demand_cid=resolution.demand_cid,
-                member_cid=resolution.member_cid,
+                member_cid=resolution.contract_cid,
                 owner="With._construct_sugar",
                 observed=(
                     "authenticated CM member carries unsupported enter/exit semantics "
-                    f"at {resolution.member_cid}"
+                    f"at {resolution.contract_cid}"
                 ),
                 requested="total Value/NeverSuppresses resource or typed Expects/Raise boundary",
                 fix="leave unsupported authenticated semantics loud; never upgrade testimony",

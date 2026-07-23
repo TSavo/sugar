@@ -20,14 +20,12 @@ use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{encode_jcs, json_to_value, Value as CValue};
 use sugar_claim_envelope::{
     body_discharge_default_for_kind, body_discharge_policy_from_fields_with_default, mint_bridge,
-    mint_context_manager_contract, mint_contract_with_body_cid, Authoring, MintBridgeArgs,
-    MintContextManagerContractArgs, MintContractArgs,
+    mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
 };
 use sugar_proof_envelope::Speaker;
 use sugar_proof_envelope::{
-    ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento,
-    ContextManagerContractMemento, ContractBody, ContractMementoRef, Ed25519Seed, FlatAtom,
-    ImportSignatureV2, ProofGraph, SourceMemento,
+    ed25519_pubkey_string, ed25519_sign_string, BridgeMemento, ClaimContractMemento, ContractBody,
+    ContractMementoRef, Ed25519Seed, FlatAtom, ProofGraph, SourceMemento,
 };
 
 use crate::kit::{Kit, KitError};
@@ -78,83 +76,11 @@ fn true_formula() -> Json {
     json!({"kind": "atomic", "name": "true", "args": []})
 }
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextManagerContractIrWire {
-    kind: String,
-    #[serde(rename = "schemaVersion")]
-    schema_version: String,
-    #[serde(rename = "bridgeSourceSymbol")]
-    bridge_source_symbol: String,
-    #[serde(rename = "importSignature")]
-    import_signature: ImportSignatureV2,
-    payload: Json,
-    #[serde(rename = "sourceWarrants")]
-    source_warrants: Vec<String>,
-}
-
-/// Production declaration/feed door for bodyless context-manager contracts.
-/// Registers exactly one signed member and no formula atom or ContractBody.
-pub fn graph_from_context_manager_contract_ir(ir: &Json) -> Result<ProofGraph, FeedError> {
-    let row: ContextManagerContractIrWire =
-        serde_json::from_value(ir.clone()).map_err(|e| FeedError::Incomplete {
-            what: "context_manager_contract_ir",
-            detail: e.to_string(),
-        })?;
-    if row.kind != "context-manager-contract" || row.schema_version != "1" {
-        return Err(FeedError::Incomplete {
-            what: "context_manager_contract_ir",
-            detail: "unsupported declaration schema/kind".into(),
-        });
-    }
-    if row.bridge_source_symbol.is_empty() {
-        return Err(FeedError::Incomplete {
-            what: "context_manager_contract_ir",
-            detail: "invalid binding coordinate or import signature".into(),
-        });
-    }
-    let semantics = sugar_proof_envelope::decode_context_manager_semantics_v1(
-        &row.payload,
-        &row.import_signature,
-    )
-    .map_err(|detail| FeedError::Incomplete {
-        what: "context_manager_contract_ir",
-        detail,
-    })?;
-    let minted = mint_context_manager_contract(&MintContextManagerContractArgs {
-        bridge_source_symbol: row.bridge_source_symbol,
-        import_signature: row.import_signature,
-        semantics,
-        source_warrants: row.source_warrants,
-        produced_by: FEED_PRODUCED_BY.into(),
-        produced_at: FEED_PRODUCED_AT.into(),
-        authoring: Authoring::KitAuthor {
-            author: FEED_PRODUCED_BY.into(),
-            note: Some("bodyless CM declaration feed".into()),
-        },
-        signer_seed: FEED_SIGNER_SEED,
-    })
-    .map_err(|e| FeedError::Mint {
-        what: "mint_context_manager_contract",
-        detail: e.to_string(),
-    })?;
-    let mut graph = ProofGraph::new();
-    graph.push_context_manager_contract(ContextManagerContractMemento::new(minted.canonical_bytes));
-    Ok(graph)
-}
-
-/// Production kit-declaration intake. Every typed declaration is dispatched
-/// through its dedicated member arm before any source-tree construction.
+/// Kit declarations carry transport capabilities only. CM summaries enter
+/// through authenticated construction derivation, never this admission lane.
 pub fn graph_from_kit_declaration(declaration: &KitDeclaration) -> Result<ProofGraph, FeedError> {
-    let mut graph = ProofGraph::empty();
-    for row in &declaration.contract_declarations {
-        let wire = serde_json::to_value(row).map_err(|error| FeedError::Incomplete {
-            what: "kit_contract_declaration",
-            detail: error.to_string(),
-        })?;
-        graph = graph.feed(graph_from_context_manager_contract_ir(&wire)?);
-    }
-    Ok(graph)
+    let _ = declaration;
+    Ok(ProofGraph::empty())
 }
 
 /// Optional IR fields that mint threads onto function-contract / claim members.

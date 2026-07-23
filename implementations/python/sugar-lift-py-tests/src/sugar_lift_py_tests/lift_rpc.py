@@ -38,7 +38,6 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import (
-    ContextManagerContractIrV1,
     EffectDto,
     LiftReportPayloadDto,
     RecoveredEffectDto,
@@ -71,23 +70,6 @@ _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
-_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS: tuple[ContextManagerContractIrV1, ...] = ()
-
-
-def publish_context_manager_declaration(
-    declaration: ContextManagerContractIrV1,
-) -> None:
-    """Publish a typed bodyless member on the live kit declaration."""
-    global _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
-    if _BOUND_CONTRACT_REFS is not None:
-        raise RuntimeError(
-            "context-manager declarations are frozen for this generation"
-        )
-    if not isinstance(declaration, ContextManagerContractIrV1):
-        raise ValueError("typed context-manager declaration required")
-    _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS += (declaration,)
-
-
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll with-site import coordinates without constructing any Sugar."""
     from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
@@ -709,10 +691,7 @@ def _kit_declaration_result() -> Dict[str, Any]:
             "rpcMethod": "sugar.plugin.resolve_dependency_proofs",
         },
         "residueCategories": [],
-        "contractDeclarations": [
-            row.to_rpc_with_term_table(None)
-            for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
-        ],
+        "contractDeclarations": [],
     }
 
 
@@ -1514,12 +1493,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "result": {
-                        "rows": [
-                            row.to_rpc_with_term_table(None)
-                            for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
-                        ]
-                    },
+                    "result": {"rows": []},
                 }
             )
             return
