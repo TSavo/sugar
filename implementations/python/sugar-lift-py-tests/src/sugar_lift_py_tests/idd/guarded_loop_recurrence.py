@@ -40,6 +40,27 @@ def scan_guarded_loop_recurrence(
                 name = node.func.id if isinstance(node.func, ast.Name) else None
                 rendered = ast.unparse(node)
                 if (
+                    name == "BindingStateWireGap"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    typed_loud_teeth = {
+                        "live loop else requires exhaustion-path body state production": (
+                            "missing-loop-else-exhaustion-state",
+                            "exhaustion face sequenced through else body state",
+                        ),
+                        "live loop outward halted face requires path-state production": (
+                            "missing-loop-outward-halted-state",
+                            "guarded outward halted face with exact runtime state",
+                        ),
+                    }
+                    named = typed_loud_teeth.get(node.args[0].value)
+                    if named is not None:
+                        findings.append(
+                            _finding(path, root, node.lineno, named[0], named[1])
+                        )
+                if (
                     "py.fold." in rendered
                     and isinstance(node.func, ast.Attribute)
                     and node.func.attr == "_make_call"

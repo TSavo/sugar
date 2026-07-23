@@ -53,6 +53,22 @@ value = node_from_cid(completed_face.state_c_id)
     }
 
 
+def test_instrument_names_typed_loud_live_loop_face_teeth(tmp_path: Path) -> None:
+    (tmp_path / "live_loop_construction.py").write_text(
+        '''
+raise BindingStateWireGap("live loop else requires exhaustion-path body state production")
+raise BindingStateWireGap("live loop outward halted face requires path-state production")
+'''
+    )
+
+    findings = scan_guarded_loop_recurrence(tmp_path)
+
+    assert {finding.code for finding in findings} == {
+        "missing-loop-else-exhaustion-state",
+        "missing-loop-outward-halted-state",
+    }
+
+
 def test_instrument_reports_numeric_r_and_lawful_projection_is_silent(
     tmp_path: Path,
 ) -> None:

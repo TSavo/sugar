@@ -30,6 +30,13 @@ class LiveLoopProjectionV1:
     bindings: BindingMap
 
 
+@dataclass(frozen=True)
+class LiveOutwardHaltedFaceV1:
+    statement_sugar: object
+    guard: object
+    state: tuple[BindingEntryV1, ...]
+
+
 def _formula_cid(formula) -> str:
     import json
 
@@ -65,12 +72,14 @@ def _combine(outer, inner):
     return inner if outer is None else and_([outer, inner])
 
 
-def _control_guards(statements, outer=None):
-    """Return exact owned break/continue guards; reject other halted faces."""
+def _control_guards(statements, scope, outer=None):
+    """Return exact owned control guards, including outward halted faces."""
     from .nodes import Break, Continue, For, If, Raise, Return, While
 
     breaks = []
     continues = []
+    halted = []
+    current = dict(scope)
     for statement in statements:
         if isinstance(statement, Break):
             breaks.append(outer)
@@ -79,27 +88,34 @@ def _control_guards(statements, outer=None):
             continues.append(outer)
             continue
         if isinstance(statement, (Return, Raise)):
-            raise BindingStateWireGap(
-                "live loop outward halted face requires path-state production"
-            )
+            halted.append((statement, outer, current))
+            continue
         if isinstance(statement, If):
             guard = branch_result_guard(
                 branch_result_slot(statement.test), statement.test.fragment
             )
-            b, c = _control_guards(statement.body, _combine(outer, guard))
-            breaks.extend(b)
-            continues.extend(c)
-            b, c = _control_guards(
-                statement.orelse, _combine(outer, not_(guard))
+            b, c, h = _control_guards(
+                statement.body, current, _combine(outer, guard)
             )
             breaks.extend(b)
             continues.extend(c)
-            continue
+            halted.extend(h)
+            b, c, h = _control_guards(
+                statement.orelse, current, _combine(outer, not_(guard))
+            )
+            breaks.extend(b)
+            continues.extend(c)
+            halted.extend(h)
         # A nested loop owns its control effects; its recurrence is constructed
         # independently and is not attributed to this target.
         if isinstance(statement, (For, While)):
             continue
-    return breaks, continues
+        binding = statement.substitution_binding(current)
+        if binding:
+            binding = statement._binding_entries(binding, current)
+            binding = statement.refine_binding_entries(binding, current)
+            current.update(binding)
+    return breaks, continues, halted
 
 
 def _guard_union(guards, fallback):
@@ -130,7 +146,7 @@ def _make_loop_ref(loop, entry, completion_kind):
     )
 
 
-def _make_statement(loop, construction, binding_coordinate_cids):
+def _make_statement(loop, construction, binding_coordinate_cids, outward_faces):
     from .backend import Child, Leaf, materialize
     from .shadow import ShadowNode, _handle_of
 
@@ -144,6 +160,7 @@ def _make_statement(loop, construction, binding_coordinate_cids):
                 ("construction", Leaf(construction)),
                 ("target_cid", Leaf(construction.target.target_cid)),
                 ("binding_coordinate_cids", Leaf(binding_coordinate_cids)),
+                ("outward_faces", Leaf(outward_faces)),
             ),
         ),
         loop.reporter,
@@ -161,15 +178,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
 
     if not isinstance(loop, (For, While)) or loop.owned_loop_target is None:
         raise BindingStateWireGap("live loop producer requires an owned For/While")
-    if loop.orelse:
-        raise BindingStateWireGap(
-            "live loop else requires exhaustion-path body state production"
-        )
-
     carried_names = tuple(
         sorted(
             name
-            for name in For._stmts_bound_names(loop.body)
+            for name in For._stmts_bound_names((*loop.body, *loop.orelse))
             if isinstance(scope.get(name), BindingEntryV1)
         )
     )
@@ -181,7 +193,9 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     true_guard = atomic(
         "python.loop.reachable", [str_const(target_cid)]
     )
-    break_guards, continue_guards = _control_guards(loop.body)
+    break_guards, continue_guards, halted_specs = _control_guards(
+        loop.body, scope
+    )
     break_guard = _guard_union(break_guards, true_guard)
     continue_guard = _guard_union(continue_guards, true_guard)
 
@@ -239,8 +253,49 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         face_records.append(face)
         face_snapshots[completion_kind] = (face, state_record, runtime_snapshot)
 
+    outward_faces = []
+    outward_face_cids = []
+    outward_records = []
+    for statement, guard, halted_scope in halted_specs:
+        live_guard = guard if guard is not None else true_guard
+        projected_entries = tuple(
+            replace(
+                halted_scope.get(name, entry),
+                coordinate=entry.coordinate,
+                sealed_state=BoundBindingStateV1(None),
+            )
+            for name, entry in zip(carried_names, pre_entries, strict=True)
+        )
+        state_record, runtime_snapshot = _sealed_state(projected_entries)
+        if all(
+            prior["stateCid"] != state_record["stateCid"]
+            for prior in state_records
+        ):
+            state_records.append(state_record)
+        runtime_states[state_record["stateCid"]] = runtime_snapshot
+        guard_cid = _formula_cid(live_guard)
+        live_guards[guard_cid] = live_guard
+        statement_sugar = statement.sugar()
+        effect_cid = cid_of_json(_constructed_preimage(statement_sugar))
+        face = _record(
+            {
+                "kind": "loop-outward-halted-face",
+                "schemaVersion": "1",
+                "targetCid": target_cid,
+                "effectCid": effect_cid,
+                "guardFormulaCid": guard_cid,
+                "stateCid": state_record["stateCid"],
+            },
+            "outwardHaltedFaceCid",
+        )
+        outward_records.append(face)
+        outward_face_cids.append(face["outwardHaltedFaceCid"])
+        outward_faces.append(
+            LiveOutwardHaltedFaceV1(statement_sugar, live_guard, runtime_snapshot)
+        )
+
     body_face = face_snapshots["BodyFallthrough"][0]
-    records = [*state_records, *face_records]
+    records = [*state_records, *face_records, *outward_records]
     body_exit_cid = cid_of_json(
         {"loopBodyExitSet": loop.body[0].fragment.seal().cid if loop.body else target_cid}
     )
@@ -361,6 +416,73 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     )
     records.append(exhaustion)
 
+    post_exhaustion_face = face_snapshots["NormalExhaustion"]
+    else_body_cid = None
+    else_obligation_cid = None
+    if loop.orelse:
+        exhaustion_scope = dict(scope)
+        exhaustion_runtime = face_snapshots["NormalExhaustion"][2]
+        for name, entry in zip(carried_names, exhaustion_runtime, strict=True):
+            exhaustion_scope[name] = entry
+        _else_statements, _changed, else_net = loop._substitute_body_tracked(
+            loop.orelse, exhaustion_scope
+        )
+        else_runtime = tuple(
+            replace(else_net[name], coordinate=pre_entry.coordinate)
+            for name, pre_entry in zip(carried_names, pre_entries, strict=True)
+        )
+        else_state, else_runtime = _sealed_state(else_runtime)
+        if all(
+            prior["stateCid"] != else_state["stateCid"]
+            for prior in state_records
+        ):
+            state_records.append(else_state)
+            records.append(else_state)
+        runtime_states[else_state["stateCid"]] = else_runtime
+        else_output = _record(
+            {
+                "kind": "loop-completed-face",
+                "schemaVersion": "1",
+                "targetCid": target_cid,
+                "completionKind": "NormalExhaustion",
+                "guardFormulaCid": _formula_cid(exhaustion_guard),
+                "stateCid": else_state["stateCid"],
+            },
+            "completedFaceCid",
+        )
+        records.append(else_output)
+        face_records.append(else_output)
+        else_body = _record(
+            {
+                "kind": "loop-body-transform",
+                "schemaVersion": "1",
+                "targetCid": target_cid,
+                "inputStateCid": exhaustion_face["stateCid"],
+                "binderTransformCid": successor_cid,
+                "bodySourceFragmentCid": loop.orelse[0].fragment.seal().cid,
+                "bodyExitTemplateCid": cid_of_json(
+                    {"loopElseExitSet": loop.orelse[0].fragment.seal().cid}
+                ),
+            },
+            "bodyTransformCid",
+        )
+        records.append(else_body)
+        else_obligation = _record(
+            {
+                "kind": "loop-else-exhaustion-obligation",
+                "schemaVersion": "1",
+                "targetCid": target_cid,
+                "inputCompletedFaceCid": exhaustion_face["completedFaceCid"],
+                "elseBodyTransformCid": else_body["bodyTransformCid"],
+                "outputCompletedFaceCid": else_output["completedFaceCid"],
+            },
+            "elseExhaustionObligationCid",
+        )
+        records.append(else_obligation)
+        post_exhaustion_face = (else_output, else_state, else_runtime)
+        else_body_cid = else_body["bodyTransformCid"]
+        else_obligation_cid = else_obligation["elseExhaustionObligationCid"]
+
     post_records = []
     completed_post_kinds = (
         ("BreakExit", "NormalExhaustion")
@@ -368,7 +490,11 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         else ("NormalExhaustion",)
     )
     for completion_kind in completed_post_kinds:
-        face, state_record, _snapshot = face_snapshots[completion_kind]
+        face, state_record, _snapshot = (
+            post_exhaustion_face
+            if completion_kind == "NormalExhaustion"
+            else face_snapshots[completion_kind]
+        )
         for entry in pre_entries:
             post = _record(
                 {
@@ -393,9 +519,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             "continueLatchObligationCids": continue_obligations,
             "breakExitObligationCids": break_obligations,
             "exhaustionExitObligationCid": exhaustion["exhaustionExitObligationCid"],
-            "elseBodyCid": None, "elseExhaustionObligationCid": None,
+            "elseBodyCid": else_body_cid,
+            "elseExhaustionObligationCid": else_obligation_cid,
             "completedFaceCids": [face["completedFaceCid"] for face in face_records],
-            "outwardHaltedFaceCids": [],
+            "outwardHaltedFaceCids": outward_face_cids,
             "postBindingObligationCids": post_records,
         }, "loopConstructionCid"
     )
@@ -415,9 +542,14 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             loop,
             construction,
             tuple(entry.coordinate.cid for entry in pre_entries),
+            tuple(outward_faces),
         ),
         bindings,
     )
 
 
-__all__ = ["LiveLoopProjectionV1", "construct_live_loop_recurrence"]
+__all__ = [
+    "LiveLoopProjectionV1",
+    "LiveOutwardHaltedFaceV1",
+    "construct_live_loop_recurrence",
+]
