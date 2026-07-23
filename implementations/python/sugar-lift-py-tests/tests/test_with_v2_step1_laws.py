@@ -14,12 +14,12 @@ def authority_inventory(files):
                 wire=ast.unparse(n.annotation)
                 if ("Authority" in wire or "AlternateRef" in wire) and "ContextManagerContractRefV1" not in wire:
                     rows.append((path,n.lineno,"secondary-union"))
-            if isinstance(n, ast.FunctionDef):
-                for child in ast.walk(n):
-                    if isinstance(child, ast.Return) and child.value is not None:
-                        value=ast.unparse(child.value)
-                if ("With" in value or "AlternateRef" in value) and "ContextManagerContractRefV1" not in value:
-                            rows.append((path,child.lineno,"secondary-success-branch"))
+                if isinstance(n, ast.FunctionDef):
+                    for child in ast.walk(n):
+                        if isinstance(child, ast.Return) and child.value is not None:
+                            value=ast.unparse(child.value)
+                            if ("With" in value or "AlternateRef" in value) and "ContextManagerContractRefV1" not in value:
+                                rows.append((path,child.lineno,"secondary-success-branch"))
     return rows
 
 def consumer_enrollment_inventory(files):
@@ -39,6 +39,8 @@ def consumer_enrollment_inventory(files):
             if isinstance(n,ast.Assign) and isinstance(n.value,ast.Dict) and n.targets:
                 if any(isinstance(k,ast.Constant) and isinstance(k.value,str) for k in n.value.keys):
                     rows.append((path,n.lineno,"semantic-table"))
+            if isinstance(n,ast.Name) and "semantic_contract" in n.id:
+                rows.append((path,n.lineno,"rpc-semantic-lane"))
     return rows
 
 @pytest.mark.xfail(strict=True, reason="current secondary With authority is migration debt")
