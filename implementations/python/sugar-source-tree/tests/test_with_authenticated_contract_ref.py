@@ -267,7 +267,6 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
         "        return entered\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
-    import sugar_lift_py_tests.exit_disposition_proof as source_proof
     from sugar_source_tree.nodes import Call
 
     manager_constructions = []
@@ -280,11 +279,7 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
 
     monkeypatch.setattr(Call, "sugar", count_original_manager)
 
-    monkeypatch.setattr(
-        source_proof,
-        "prove_exit_disposition_from_manager_expr",
-        lambda *_: (_ for _ in ()).throw(AssertionError("source proof invoked")),
-    )
+    # Authenticated contract-ref path only — raw-AST exit_disposition_proof is gone.
     sugar = _function_sugar(path_source(str(path)), _resolved)
     resource = next(
         statement
@@ -300,7 +295,7 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
     assert bound_return.value.projection == "enter-result"
 
 
-def test_unresolved_ref_stays_typed_loud(tmp_path, monkeypatch):
+def test_unresolved_ref_stays_typed_loud(tmp_path):
     path = tmp_path / "unresolved.py"
     path.write_text(
         "from dependency import manager\n"
@@ -309,13 +304,6 @@ def test_unresolved_ref_stays_typed_loud(tmp_path, monkeypatch):
         "        pass\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
-    import sugar_lift_py_tests.exit_disposition_proof as source_proof
-
-    monkeypatch.setattr(
-        source_proof,
-        "prove_exit_disposition_from_manager_expr",
-        lambda *_: pytest.fail("source proof invoked"),
-    )
 
     def unresolved(use_site):
         return ContextManagerResolutionGapV1(
