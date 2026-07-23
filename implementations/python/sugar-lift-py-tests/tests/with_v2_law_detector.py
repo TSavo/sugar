@@ -392,7 +392,7 @@ class Interpreter:
         if isinstance(expr, ast.Call):
             if isinstance(expr.func, ast.Attribute) and expr.args:
                 table = self.eval_expr(module, expr.func.value, env, chain, sink_slice=sink_slice)
-                if table.entries or table.has("UnknownOnAdmissionSlice"):
+                if table.entries:
                     key = self.eval_expr(module, expr.args[0], env, chain, sink_slice=sink_slice)
                     return self._lookup(table, key, f"selection at {site.path}:{site.line}")
             callee = self.index.resolve(module, expr.func)
@@ -408,15 +408,10 @@ class Interpreter:
             if callee in self.index.classes:
                 atom = Atom("Instance", callee, self.index.classes[callee].site, chain + (f"construct {callee}",))
                 value = AbstractValue(frozenset({atom}))
-                if self.index.is_sugar(callee) or any(
-                    arg.has("AdmissionLookup")
-                    or arg.has("LookupConstructed")
-                    or arg.has("UnknownOnAdmissionSlice")
-                    for arg in args
-                ):
+                for arg in args:
+                    value = value.join(arg)
+                if self.index.is_sugar(callee):
                     value = value.with_atom(Atom("SuccessSugar", callee, site, chain + (f"success {callee}",)))
-                    for arg in args:
-                        value = value.join(arg)
                 return value
             if callee in self.index.functions:
                 return self.call(callee, args, chain, sink_slice=sink_slice)
@@ -458,7 +453,10 @@ class Interpreter:
             result = result.stepped(label, rpc=rpc)
             result = result.with_atom(Atom("AdmissionLookup", chain=(label,), rpc=rpc))
         elif table.has("UnknownOnAdmissionSlice"):
-            result = table.with_atom(Atom("AdmissionLookup", chain=(label,), rpc=rpc))
+            unknown = sorted((atom for atom in table.atoms if atom.kind == "UnknownOnAdmissionSlice"), key=repr)[0]
+            result = table.with_atom(
+                Atom("LookupUnknown", unknown.identity, unknown.origin, unknown.chain + (label,), rpc or unknown.rpc)
+            ).with_atom(Atom("AdmissionLookup", chain=(label,), rpc=rpc))
         return result
 
     def authority_rows(self) -> tuple[ReportRow, ...]:
@@ -529,8 +527,8 @@ class Interpreter:
                 origin = sorted(constructed, key=repr)[0]
                 reason = "consumer-enrollment-rpc-lane" if any(a.rpc for a in constructed + admission_lookup) else "consumer-spelling-enrollment"
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, origin, reason))
-            elif result.has("UnknownOnAdmissionSlice") and admission_lookup:
-                atom = sorted((a for a in result.atoms if a.kind == "UnknownOnAdmissionSlice"), key=repr)[0]
+            elif result.has("LookupUnknown") and admission_lookup:
+                atom = sorted((a for a in result.atoms if a.kind == "LookupUnknown"), key=repr)[0]
                 rows.append(self._row("R_consumer_manager_enrollment", fn.site, atom, "opaque-consumer-enrollment-flow"))
         if not rows:
             rows.extend(self._structural_consumer_debt_rows())

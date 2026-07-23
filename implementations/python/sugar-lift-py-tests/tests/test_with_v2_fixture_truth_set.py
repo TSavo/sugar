@@ -31,6 +31,7 @@ ENROLLMENT_CASES = {
     "enrollment_opaque": ("enrollment_opaque.py",),
     "enrollment_generic_rename": ("enrollment_generic_rename.py",),
     "enrollment_boundary_b": ("enrollment_boundary_b.py",),
+    "enrollment_lookup_only_coexists_with_sugar": ("enrollment_lookup_only_coexists_with_sugar.py",),
     "enrollment_ordinary_dict": ("enrollment_ordinary_dict.py",),
     "enrollment_ordinary_get": ("enrollment_ordinary_get.py",),
     "enrollment_string_dict": ("enrollment_string_dict.py",),
@@ -85,6 +86,7 @@ def test_no_consumer_enrollment_planted_detector_cases():
         "enrollment_ordinary_get",
         "enrollment_string_dict",
         "enrollment_semantics_unreachable",
+        "enrollment_lookup_only_coexists_with_sugar",
     ):
         assert analyze_consumer_enrollment(graph(ENROLLMENT_CASES[case])) == (), case
 
@@ -97,7 +99,7 @@ def test_truth_set_reports_zero_false_negatives_and_false_positives():
         verdicts[case] = bool(analyze_consumer_enrollment(graph(names)))
     expected = {
         **{name: name not in {"authority_legitimate", "authority_data", "authority_zero", "authority_gap", "authority_rpc_data"} for name in AUTHORITY_CASES},
-        **{name: name not in {"enrollment_ordinary_dict", "enrollment_ordinary_get", "enrollment_string_dict", "enrollment_semantics_unreachable"} for name in ENROLLMENT_CASES},
+        **{name: name not in {"enrollment_ordinary_dict", "enrollment_ordinary_get", "enrollment_string_dict", "enrollment_semantics_unreachable", "enrollment_lookup_only_coexists_with_sugar"} for name in ENROLLMENT_CASES},
     }
     false_negatives = sum(expected[name] and not verdicts[name] for name in expected)
     false_positives = sum(not expected[name] and verdicts[name] for name in expected)
