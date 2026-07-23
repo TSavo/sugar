@@ -778,6 +778,7 @@ impl ResolvedCallContractRefsV1 {
     }
 
     fn identity_value(&self) -> Json {
+        let enrolled_use_sites = self.by_use_site.keys().collect::<Vec<_>>();
         let rows = self
             .by_use_site
             .iter()
@@ -792,6 +793,7 @@ impl ResolvedCallContractRefsV1 {
             "kind": "resolved-call-contract-refs",
             "schemaVersion": "1",
             "catalogCid": self.catalog_cid,
+            "enrolledUseSites": enrolled_use_sites,
             "byUseSite": rows,
         })
     }

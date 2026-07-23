@@ -16,7 +16,7 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests import lift_rpc
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 
 
 CID = "blake3-512:" + "1" * 128
@@ -25,6 +25,97 @@ CATALOG_CID = "blake3-512:" + "3" * 128
 DEMAND_CID = "blake3-512:" + "4" * 128
 RESOLUTION_CID = "blake3-512:" + "5" * 128
 TABLE_CID = "blake3-512:" + "6" * 128
+
+
+def _site(line: int = 2) -> dict:
+    return {
+        "sourceCid": CID,
+        "startLine": line,
+        "startCol": 4,
+        "endLine": line,
+        "endCol": 11,
+    }
+
+
+def _gap_row(line: int = 2) -> dict:
+    return {
+        "useSite": _site(line),
+        "resolution": {
+            "kind": "unresolved",
+            "gap": {
+                "demandCid": DEMAND_CID,
+                "useSite": _site(line),
+                "importBindingCid": CATALOG_CID,
+                "targetSymbol": "python:producer.pair",
+                "kind": "no-authenticated-contract",
+                "candidateMemberCids": [],
+            },
+        },
+    }
+
+
+def _table(rows: list[dict], enrolled: list[dict] | None = None) -> dict:
+    from sugar_lift_py_tests.call_contract_resolution import _hash_json
+
+    value = {
+        "kind": "resolved-call-contract-refs",
+        "schemaVersion": "1",
+        "catalogCid": CATALOG_CID,
+        "enrolledUseSites": enrolled if enrolled is not None else [row["useSite"] for row in rows],
+        "byUseSite": rows,
+    }
+    return {**value, "tableCid": _hash_json(value)}
+
+
+def test_decoder_rejects_duplicate_rows_and_row_identity_mismatches():
+    row = _gap_row()
+    with pytest.raises(CallContractRefProtocolError, match="duplicate use-site"):
+        decode_resolved_call_contract_refs(_table([row, row], enrolled=[_site()]))
+
+    mismatched_gap = _gap_row()
+    mismatched_gap["resolution"]["gap"]["useSite"] = _site(3)
+    with pytest.raises(CallContractRefProtocolError, match="row use-site"):
+        decode_resolved_call_contract_refs(_table([mismatched_gap]))
+
+
+def test_decoder_rejects_missing_enrolled_row():
+    with pytest.raises(CallContractRefProtocolError, match="enrolled call demand missing"):
+        decode_resolved_call_contract_refs(_table([], enrolled=[_site()]))
+
+
+def test_call_distinguishes_non_enrolled_local_call_from_missing_enrolled_row(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ResolvedContractRefsV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.nodes import Call
+    from sugar_source_tree.tree import SourceFile
+
+    path = tmp_path / "consumer.py"
+    path.write_text("local(value)\nimported(value)\n")
+    source = path_source(str(path))
+    source_cid = source[2]
+    local_site = SourceFragmentCoordinateV1(source_cid, 1, 0, 1, 12)
+    imported_site = SourceFragmentCoordinateV1(source_cid, 2, 0, 2, 15)
+    call_refs = ResolvedCallContractRefsV1(
+        CATALOG_CID,
+        TABLE_CID,
+        MappingProxyType({}),
+        frozenset({imported_site}),
+    )
+    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
+    tree = SourceFile(
+        source,
+        construction_context=TreeConstructionContextV1(cm_refs, call_contract_refs=call_refs),
+    )
+    calls = list(node for node in tree.nodes() if isinstance(node, Call))
+
+    assert local_site not in call_refs.enrolled_use_sites
+    assert calls[0].sugar().contract_ref is None
+    with pytest.raises(BackendDefect, match="enrolled call demand missing"):
+        calls[1].sugar()
 
 
 def _reference() -> ResolvedCallContractRefV1:
@@ -96,6 +187,7 @@ def test_fabricated_or_unauthenticated_reference_fails_decode():
         "schemaVersion": "1",
         "catalogCid": CATALOG_CID,
         "tableCid": TABLE_CID,
+        "enrolledUseSites": [_site()],
         "byUseSite": [
             {
                 "useSite": {
@@ -240,6 +332,46 @@ def test_import_binding_is_lexical_and_shadowing_never_inherits_import(tmp_path)
     assert "shadowed-non-import" in outcomes.values()
     assert "no-lexical-binding" in outcomes.values()
     assert "ambiguous-lexical-binding" in outcomes.values()
+
+
+def test_global_and_method_lookup_never_inherit_enclosing_or_class_import(tmp_path):
+    (tmp_path / "consumer.py").write_text(
+        "from right import pair\n"
+        "def outer():\n"
+        "    from wrong import pair\n"
+        "    def inner():\n"
+        "        global pair\n"
+        "        return pair(1)\n"
+        "    return inner\n"
+        "class C:\n"
+        "    from wrong import pair\n"
+        "    def method(self):\n"
+        "        return pair(2)\n"
+    )
+
+    rows = [
+        row
+        for row in lift_rpc._call_contract_demand_rows(tmp_path)
+        if row["kind"] == "call-contract-demand"
+    ]
+
+    assert [row["targetSymbol"] for row in rows] == [
+        "python:right.pair",
+        "python:right.pair",
+    ]
+
+
+def test_shadowed_reexport_is_not_published(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.import_binding import authenticated_module_exports
+
+    public = tmp_path / "public.py"
+    public.write_text("from provider import pair\npair = lambda x: x\n")
+    source, _filename, source_cid = path_source(str(public))
+
+    rows = authenticated_module_exports(tmp_path, public, source, source_cid)
+
+    assert not any(row["exportedSymbol"] == "python:public.pair" for row in rows)
 
 
 def test_spelling_without_authenticated_import_use_has_no_authority(tmp_path):

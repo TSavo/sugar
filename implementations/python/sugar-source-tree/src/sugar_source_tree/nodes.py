@@ -3883,6 +3883,7 @@ class Call(Expression):
             call_refs = getattr(context, "call_contract_refs", None)
             if call_refs is not None:
                 from sugar_lift_py_tests.call_contract_resolution import (
+                    CallContractRefProtocolError,
                     CallContractResolutionGapV1,
                 )
                 from sugar_lift_py_tests.context_manager_resolution import (
@@ -3897,7 +3898,19 @@ class Call(Expression):
                     span.end_line,
                     span.end_col,
                 )
-                resolution = call_refs.by_use_site.get(coordinate)
+                resolution = None
+                if coordinate in call_refs.enrolled_use_sites:
+                    try:
+                        resolution = call_refs.require(coordinate)
+                    except CallContractRefProtocolError as exc:
+                        from sugar_source_tree.panic import BackendDefect
+
+                        raise BackendDefect(
+                            owner="Call._construct_sugar",
+                            observed="enrolled call demand missing from resolution table",
+                            requested="one typed resolution row for every enrolled imported call",
+                            fix="repair call-contract preconstruction; never fall through to an ordinary call",
+                        ) from exc
                 if isinstance(resolution, CallContractResolutionGapV1):
                     contract_resolution_gap = resolution.kind.value
                 elif resolution is not None:

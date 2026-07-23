@@ -46,9 +46,15 @@ class _ImportDef:
     payload_jcs: str
 
 
+@dataclass(frozen=True)
+class _ModuleFunctionDef:
+    target_symbol: str
+    definition_site: tuple[int, int, int, int]
+
+
 _NON_IMPORT = "non-import"
 _UNBOUND = "unbound"
-Definition = _ImportDef | str
+Definition = _ImportDef | _ModuleFunctionDef | str
 State = dict[str, frozenset[Definition]]
 
 
@@ -94,12 +100,23 @@ def _import_from_module(current: str, node: ast.ImportFrom) -> str | None:
 
 
 class _Pass:
-    def __init__(self, *, source_cid: str, module_name: str, module_identities: dict[str, dict[str, Any]]):
+    def __init__(
+        self,
+        *,
+        source_cid: str,
+        module_name: str,
+        module_identities: dict[str, dict[str, Any]],
+        module_state: State | None = None,
+        analyze_nested: bool = True,
+    ):
         self.source_cid = source_cid
         self.module_name = module_name
         self.module_identities = module_identities
         self.rows: list[dict[str, Any]] = []
         self.outcomes: dict[tuple[int, int, int, int], str] = {}
+        self.module_state = module_state or {}
+        self.analyze_nested = analyze_nested
+        self.class_outer_states: dict[int, State] = {}
 
     def expression(self, node: ast.AST | None, state: State, scope: ast.AST) -> None:
         if node is None:
@@ -242,8 +259,22 @@ class _Pass:
                 self.expression(deco, state, scope)
             for default in (*node.args.defaults, *(d for d in node.args.kw_defaults if d)):
                 self.expression(default, state, scope)
-            state[node.name] = frozenset({_NON_IMPORT})
-            inner = dict(state)
+            if isinstance(scope, ast.Module):
+                state[node.name] = frozenset({
+                    _ModuleFunctionDef(
+                        f"python:{self.module_name}.{node.name}",
+                        (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset),
+                    )
+                })
+            else:
+                state[node.name] = frozenset({_NON_IMPORT})
+            if not self.analyze_nested:
+                return state
+            inner = dict(
+                self.class_outer_states.get(id(scope), state)
+                if isinstance(scope, ast.ClassDef)
+                else state
+            )
             local_names = _function_locals(node)
             for name in local_names:
                 inner[name] = frozenset({_UNBOUND})
@@ -253,12 +284,18 @@ class _Pass:
                 inner[node.args.vararg.arg] = frozenset({_NON_IMPORT})
             if node.args.kwarg:
                 inner[node.args.kwarg.arg] = frozenset({_NON_IMPORT})
+            globals_, _nonlocals = _function_declarations(node)
+            for name in globals_:
+                inner[name] = self.module_state.get(name, frozenset({_UNBOUND}))
             self.statements(node.body, inner, node)
             return state
         if isinstance(node, ast.ClassDef):
             for expr in (*node.decorator_list, *node.bases):
                 self.expression(expr, state, scope)
             state[node.name] = frozenset({_NON_IMPORT})
+            if not self.analyze_nested:
+                return state
+            self.class_outer_states[id(node)] = dict(state)
             self.statements(node.body, dict(state), node)
             return state
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
@@ -359,14 +396,72 @@ def _function_locals(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return collector.names - collector.globals - collector.nonlocals
 
 
+def _function_declarations(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[set[str], set[str]]:
+    class Collector(ast.NodeVisitor):
+        def __init__(self):
+            self.globals: set[str] = set()
+            self.nonlocals: set[str] = set()
+
+        def visit_Global(self, child):
+            self.globals.update(child.names)
+
+        def visit_Nonlocal(self, child):
+            self.nonlocals.update(child.names)
+
+        def visit_FunctionDef(self, child):
+            if child is node:
+                for statement in child.body:
+                    self.visit(statement)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, child):
+            return
+
+        def visit_Lambda(self, child):
+            return
+
+    collector = Collector()
+    collector.visit(node)
+    return collector.globals, collector.nonlocals
+
+
+def _final_module_state(
+    *,
+    module: ast.Module,
+    source_cid: str,
+    module_name: str,
+    module_identities: dict[str, dict[str, Any]],
+) -> State:
+    prepass = _Pass(
+        source_cid=source_cid,
+        module_name=module_name,
+        module_identities=module_identities,
+        analyze_nested=False,
+    )
+    return prepass.statements(module.body, {}, module)
+
+
 def authenticated_import_uses(
     root: Path, path: Path, source: str, source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
     module = ast.parse(source, filename=str(path))
+    module_name = module_name_for_path(root, path)
+    identities = module_identities or {}
+    module_state = _final_module_state(
+        module=module,
+        source_cid=source_cid,
+        module_name=module_name,
+        module_identities=identities,
+    )
     runner = _Pass(
-        source_cid=source_cid, module_name=module_name_for_path(root, path),
-        module_identities=module_identities or {},
+        source_cid=source_cid,
+        module_name=module_name,
+        module_identities=identities,
+        module_state=module_state,
     )
     runner.statements(module.body, {}, module)
     return runner.rows, runner.outcomes
@@ -378,26 +473,40 @@ def authenticated_module_exports(
     """Source-authenticated module-slot declarations for the frozen catalog."""
     module_name = module_name_for_path(root, path)
     module = ast.parse(source, filename=str(path))
+    final_state = _final_module_state(
+        module=module,
+        source_cid=source_cid,
+        module_name=module_name,
+        module_identities={},
+    )
     rows: list[dict[str, Any]] = []
-    for node in module.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            exported = target = f"python:{module_name}.{node.name}"
+    for local, reaching in sorted(final_state.items()):
+        if len(reaching) != 1:
+            continue
+        definition = next(iter(reaching))
+        if isinstance(definition, _ModuleFunctionDef):
+            exported = target = definition.target_symbol
+            start_line, start_col, end_line, end_col = definition.definition_site
             rows.append({
                 "kind": "call-contract-export", "schemaVersion": "1",
-                "sourceCid": source_cid, "definitionSite": _site(source_cid, node),
+                "sourceCid": source_cid,
+                "definitionSite": {
+                    "sourceCid": source_cid,
+                    "startLine": start_line,
+                    "startCol": start_col,
+                    "endLine": end_line,
+                    "endCol": end_col,
+                },
                 "exportedSymbol": exported, "targetSymbol": target,
             })
-        elif isinstance(node, ast.ImportFrom):
-            target_module = _import_from_module(module_name, node)
-            if target_module is None:
-                continue
-            for alias in node.names:
-                if alias.name == "*":
-                    continue
-                rows.append({
-                    "kind": "call-contract-export", "schemaVersion": "1",
-                    "sourceCid": source_cid, "definitionSite": _site(source_cid, node),
-                    "exportedSymbol": f"python:{module_name}.{alias.asname or alias.name}",
-                    "targetSymbol": f"python:{target_module}.{alias.name}",
-                })
+        elif isinstance(definition, _ImportDef):
+            payload = json.loads(definition.payload_jcs)
+            rows.append({
+                "kind": "call-contract-export",
+                "schemaVersion": "1",
+                "sourceCid": source_cid,
+                "definitionSite": payload["definitionSite"],
+                "exportedSymbol": f"python:{module_name}.{local}",
+                "targetSymbol": definition.target_symbol,
+            })
     return rows

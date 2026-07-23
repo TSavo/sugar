@@ -102,3 +102,56 @@ fn wrong_provider_is_loud_through_python_construction() {
     assert!(verdict["gap"].as_str().unwrap().contains("wrong-provider"));
     assert!(verdict["edge"].is_null());
 }
+
+#[test]
+fn python_intake_rejects_duplicate_and_misbound_resolution_rows() {
+    let repo = support::repo();
+    let demand = support::enrolled_demand(&repo, SOURCE);
+    let mut catalog = support::catalog(&[7]);
+    catalog.install_exports(vec![AuthenticatedCallExportV1 {
+        exported_symbol: "python:pandas.public.pair".into(),
+        target_symbol: "python:pandas.fixture.pair".into(),
+        provider_id: "fixture".into(),
+    }]);
+    let table = ResolvedCallContractRefsV1::new(&catalog, &[demand]);
+    let wire = table.to_wire_value();
+
+    let mut duplicate = wire.clone();
+    duplicate["byUseSite"]
+        .as_array_mut()
+        .unwrap()
+        .push(wire["byUseSite"][0].clone());
+    let verdict = support::python_chain_verdict(&repo, SOURCE, &duplicate);
+    assert_eq!(verdict["stage"], "intake");
+    assert!(verdict["gap"]
+        .as_str()
+        .unwrap()
+        .contains("duplicate use-site"));
+
+    let mut wrong_row = wire.clone();
+    wrong_row["byUseSite"][0]["useSite"]["startLine"] = serde_json::json!(9);
+    wrong_row["enrolledUseSites"][0]["startLine"] = serde_json::json!(9);
+    let verdict = support::python_chain_verdict(&repo, SOURCE, &wrong_row);
+    assert_eq!(verdict["stage"], "intake");
+    assert!(verdict["gap"]
+        .as_str()
+        .unwrap()
+        .contains("row use-site mismatch"));
+
+    let mut wrong_catalog = wire;
+    let replacement = if wrong_catalog["catalogCid"] == support::cid('f').to_string() {
+        support::cid('e')
+    } else {
+        support::cid('f')
+    };
+    wrong_catalog["catalogCid"] = serde_json::json!(replacement.to_string());
+    let verdict = support::python_chain_verdict(&repo, SOURCE, &wrong_catalog);
+    assert_eq!(verdict["stage"], "intake");
+    assert!(
+        verdict["gap"]
+            .as_str()
+            .unwrap()
+            .contains("catalog CID mismatch"),
+        "{verdict}"
+    );
+}
