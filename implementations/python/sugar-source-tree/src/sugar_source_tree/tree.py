@@ -71,32 +71,44 @@ class SourceFile:
         reporter: AuditReporter = NULL_REPORTER,
         construction_context: object | None = None,
     ) -> None:
+        from sugar_lift_py_tests.engine_log import reduction_span
+
         source, filename, source_cid = identity
-        self.unit = SourceUnit(
-            filename=filename,
-            source=source,
-            source_cid=source_cid,
-            construction_context=construction_context,
-        )
-        self.backend = backend if backend is not None else _default_backend()
-        # The reporter enters the whole tree here: the root carries it and
-        # hands it to every child it resolves. An audit walk passes a
-        # CollectingReporter; everyone else takes the do-nothing default.
-        self.reporter = reporter
-        root = materialize(self.unit, self.backend.root(self.unit), reporter)
-        if not isinstance(root, Module):
-            backend_defect(
-                owner="tree.SourceFile",
-                observed=f"backend root constructed as {type(root).__name__}",
-                requested="a Module at the root",
-                fix="the backend must hand up a module root",
-            )
-            raise AssertionError("unreachable")
-        self.root: Module = root
-        # Identity queries on SourceUnit (module-level function slots,
-        # exception-type lexical bindings) read this already-materialized
-        # Module — never a second source parse as semantic authority.
-        self.unit.bind_typed_module(root)
+        site = filename
+        with reduction_span(sugar="SourceFile", role="file", site=site):
+            with reduction_span(sugar="SourceUnit", role="file", site=site):
+                self.unit = SourceUnit(
+                    filename=filename,
+                    source=source,
+                    source_cid=source_cid,
+                    construction_context=construction_context,
+                )
+            with reduction_span(sugar="BackendSelect", role="file", site=site):
+                self.backend = (
+                    backend if backend is not None else _default_backend()
+                )
+            # The reporter enters the whole tree here: the root carries it and
+            # hands it to every child it resolves. An audit walk passes a
+            # CollectingReporter; everyone else takes the do-nothing default.
+            self.reporter = reporter
+            with reduction_span(sugar="BackendRoot", role="file", site=site):
+                backend_root = self.backend.root(self.unit)
+            with reduction_span(sugar="MaterializeRoot", role="file", site=site):
+                root = materialize(self.unit, backend_root, reporter)
+            if not isinstance(root, Module):
+                backend_defect(
+                    owner="tree.SourceFile",
+                    observed=f"backend root constructed as {type(root).__name__}",
+                    requested="a Module at the root",
+                    fix="the backend must hand up a module root",
+                )
+                raise AssertionError("unreachable")
+            self.root: Module = root
+            # Identity queries on SourceUnit (module-level function slots,
+            # exception-type lexical bindings) read this already-materialized
+            # Module — never a second source parse as semantic authority.
+            with reduction_span(sugar="BindTypedModule", role="file", site=site):
+                self.unit.bind_typed_module(root)
 
     @classmethod
     def from_path(
@@ -107,9 +119,13 @@ class SourceFile:
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
         is the oracle's loud ``SourceUnavailable``, never a swallow."""
+        from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_python_source.source_oracle import path_source
 
-        return cls(path_source(str(path)), backend=backend, reporter=reporter)
+        path_s = str(path)
+        with reduction_span(sugar="OraclePathSource", role="file", site=path_s):
+            identity = path_source(path_s)
+        return cls(identity, backend=backend, reporter=reporter)
 
     @classmethod
     def from_module(
@@ -158,11 +174,22 @@ class SourceFile:
         nodes — typed, in source order. Laziness stays honest one level
         down: a function yields nothing further until asked.
         """
+        from sugar_lift_py_tests.engine_log import reduction_span
         from .nodes import AsyncFunctionDef, FunctionDef
 
-        for node in self.root.walk():
-            if isinstance(node, (FunctionDef, AsyncFunctionDef)):
-                yield node
+        # First full walk materializes the typed tree (field data memo).
+        # Span names that cost so file-level exclusive heat is not a black box.
+        with reduction_span(
+            sugar="EnumerateFunctions",
+            role="file",
+            site=self.unit.filename,
+        ):
+            found = [
+                node
+                for node in self.root.walk()
+                if isinstance(node, (FunctionDef, AsyncFunctionDef))
+            ]
+        yield from found
 
     def nodes(self) -> Iterator[Node]:
         """Every node of this file, pre-order, iterative."""
