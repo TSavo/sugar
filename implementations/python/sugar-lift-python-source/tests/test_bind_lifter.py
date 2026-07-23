@@ -1239,8 +1239,8 @@ def test_sugar_body_emits_ast_template_alongside_body_text() -> None:
         "    return json.loads(payload)\n"
     )
 
-    import ast as _ast
     from sugar_lift_python_source.ast_template import function_body_template
+    from sugar_lift_python_source import typed_node_api as typed
 
     entry = _single_sugar_entry(source)
     body_source = entry["body_source"]
@@ -1250,7 +1250,11 @@ def test_sugar_body_emits_ast_template_alongside_body_text() -> None:
     assert body_source["param_names"] == ["payload"]
     # the SourceMemento PINS the template by cid; recomputing it from the source
     # reproduces that cid (the oracle reconstructs the exact dict on demand).
-    fn = next(n for n in _ast.parse(source).body if isinstance(n, _ast.FunctionDef))
+    fn = next(
+        n
+        for n in typed.parse(source, filename="json_parse.py").body
+        if isinstance(n, typed.FunctionDef)
+    )
     expected = function_body_template(fn)
     assert expected == {
         "kind": "block",

@@ -12,13 +12,10 @@ holds by construction: candidates == admitted + boundaries.
 
 from __future__ import annotations
 
-import ast
+from . import typed_node_api as typed
 from dataclasses import dataclass, field
-from pathlib import Path
-import sys
 from typing import Iterator
 
-from .canonical import blake3_512_of
 from .ir import (
     Json,
     bool_const,
@@ -31,36 +28,6 @@ from .ir import (
     none_const,
     str_const,
 )
-
-
-def _typed_tree():
-    """Lazy typed-tree import — value_pins is still dual-body residual overall."""
-    tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
-    if tree_src.is_dir() and str(tree_src) not in sys.path:
-        sys.path.insert(0, str(tree_src))
-    from sugar_source_tree.backend import BackendCouldNotParse
-    from sugar_source_tree.nodes import (
-        AnnAssign,
-        Assign,
-        Attribute,
-        AugAssign,
-        Delete,
-        Global,
-        Name,
-    )
-    from sugar_source_tree.tree import SourceFile
-
-    return (
-        SourceFile,
-        BackendCouldNotParse,
-        Assign,
-        AnnAssign,
-        AugAssign,
-        Delete,
-        Attribute,
-        Name,
-        Global,
-    )
 
 VALUE_PIN_BOUNDARY_KIND = "value-pin-boundary"
 ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
@@ -101,28 +68,26 @@ AST_STATEMENT_TYPE_NAMES = frozenset(
         "Continue",
     }
 )
-AST_STATEMENT_TYPES = frozenset(
-    statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
-)
+AST_STATEMENT_TYPES = frozenset(getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES)
 if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
-    raise UnsupportedStatementGrammar("unsupported running ast.stmt grammar")
+    raise UnsupportedStatementGrammar("unsupported running typed.stmt grammar")
 
 # Scope boundaries: bindings inside these do not bind module names.
 # (Plain assignment in a function is a local; `global`-declaring functions
 # are handled separately and conservatively below.)
 _SCOPE_BOUNDARY_NODES = (
-    ast.FunctionDef,
-    ast.AsyncFunctionDef,
-    ast.ClassDef,
-    ast.Lambda,
-    ast.ListComp,
-    ast.SetComp,
-    ast.DictComp,
-    ast.GeneratorExp,
+    typed.FunctionDef,
+    typed.AsyncFunctionDef,
+    typed.ClassDef,
+    typed.Lambda,
+    typed.ListComp,
+    typed.SetComp,
+    typed.DictComp,
+    typed.GeneratorExp,
 )
 
-_TRY_NODES: tuple = (ast.Try, ast.TryStar) if hasattr(ast, "TryStar") else (ast.Try,)
-_TYPE_ALIAS_NODE = getattr(ast, "TypeAlias", None)
+_TRY_NODES: tuple = (typed.Try, typed.TryStar) if hasattr(typed, "TryStar") else (typed.Try,)
+_TYPE_ALIAS_NODE = getattr(typed, "TypeAlias", None)
 
 
 @dataclass(frozen=True)
@@ -173,33 +138,29 @@ class _BindingEvent:
 @dataclass(frozen=True)
 class _Candidate:
     name: str
-    value: ast.expr
+    value: typed.expr
     line: int
     confession: str | None
     col: int = 0
 
 
 def scan_module_value_pins(
-    tree: ast.Module,
+    tree: typed.Module,
     *,
     source: str | None = None,
-    source_path: str = "<value-pins>",
+    source_path: str | None = None,
 ) -> ValuePinScan:
-    """Scan module-level value pins.
-
-    ``source`` (when provided) routes attribute-write and ``global`` puncture
-    detection through SourceFile / typed Nodes. Residual candidate/event
-    admission still walks the dual-body ``ast.Module`` until that half is
-    drained.
-    """
+    # Transitional caller testimony is accepted only when it is byte-identical
+    # to the typed module's authenticated SourceUnit.  It grants no authority
+    # and is never reparsed.
+    if source is not None and source != tree.unit.source:
+        raise ValueError("value-pin source does not match the typed module preimage")
+    if source_path is not None and source_path != tree.unit.filename:
+        raise ValueError("value-pin source path does not match the typed module seat")
     scan = ValuePinScan()
     candidates = _collect_candidates(tree)
     events = list(_binding_events(tree))
-    global_decls = (
-        _global_declarations_typed(source, source_path)
-        if source is not None
-        else _global_declarations(tree)
-    )
+    global_decls = _global_declarations(tree)
     events_by_name: dict[str, list[_BindingEvent]] = {}
     for event in events:
         events_by_name.setdefault(event.name, []).append(event)
@@ -236,7 +197,7 @@ def scan_module_value_pins(
             line=candidate.line,
             confession=candidate.confession,
         )
-    _scan_enum_member_pins(tree, scan, source=source, source_path=source_path)
+    _scan_enum_member_pins(tree, scan)
     assert scan.totality_holds()
     return scan
 
@@ -245,12 +206,12 @@ _VALUE_ENUM_BASES = ("IntEnum", "StrEnum")
 _PLAIN_ENUM_BASES = ("Enum", "Flag", "IntFlag")
 
 
-def _enum_base_kind(node: ast.ClassDef) -> Optional[str]:
+def _enum_base_kind(node: typed.ClassDef) -> Optional[str]:
     for base in node.bases:
         name = None
-        if isinstance(base, ast.Name):
+        if isinstance(base, typed.Name):
             name = base.id
-        elif isinstance(base, ast.Attribute):
+        elif isinstance(base, typed.Attribute):
             name = base.attr
         if name in _VALUE_ENUM_BASES:
             return "value"
@@ -259,13 +220,7 @@ def _enum_base_kind(node: ast.ClassDef) -> Optional[str]:
     return None
 
 
-def _scan_enum_member_pins(
-    tree: ast.Module,
-    scan: ValuePinScan,
-    *,
-    source: str | None = None,
-    source_path: str = "<value-pins>",
-) -> None:
+def _scan_enum_member_pins(tree: typed.Module, scan: ValuePinScan) -> None:
     """Class-attribute pins for enum members, keyed 'ClassName.MEMBER'.
 
     The == dispatch gate decides the scope: a plain Enum member is NOT
@@ -276,22 +231,18 @@ def _scan_enum_member_pins(
     strongest pins in the language; the scan still refuses on any
     syntactic write to ClassName.MEMBER or cls.MEMBER in the module
     (belt and suspenders)."""
-    attr_writes = (
-        _class_attr_writes_typed(source, source_path)
-        if source is not None
-        else _class_attr_writes(tree)
-    )
+    attr_writes = _class_attr_writes(tree)
     for stmt in tree.body:
-        if not isinstance(stmt, ast.ClassDef):
+        if not isinstance(stmt, typed.ClassDef):
             continue
         kind = _enum_base_kind(stmt)
         if kind is None:
             continue
         for class_stmt in stmt.body:
             if not (
-                isinstance(class_stmt, ast.Assign)
+                isinstance(class_stmt, typed.Assign)
                 and len(class_stmt.targets) == 1
-                and isinstance(class_stmt.targets[0], ast.Name)
+                and isinstance(class_stmt.targets[0], typed.Name)
             ):
                 continue
             member = class_stmt.targets[0].id
@@ -305,7 +256,7 @@ def _scan_enum_member_pins(
                 confession=f"enum.{kind}",
             )
             scan.candidates += 1
-            if stmt.decorator_list:
+            if stmt.decorators:
                 # A decorated ClassDef is NOT the runtime class: the name
                 # binds whatever the decorator returns (caught live
                 # 2026-06-12: a class decorator swapping the enum ran
@@ -386,74 +337,44 @@ def _scan_enum_member_pins(
             )
 
 
-def _class_attr_writes_typed(source: str, source_path: str) -> dict:
-    """Typed-tree puncture scan: writes of shape ``<Name>.<attr>``.
+def _class_attr_writes(tree: typed.Module) -> dict:
+    """Every syntactic write target of the shape <Name>.<attr> anywhere in
+    the module (assignment, augmented assignment, deletion), keyed
+    'Name.attr' -> first line. Covers ClassName.MEMBER = ... and
+    cls.MEMBER = ... punctures."""
 
-    SourceFile is the parse door; semantic authority is typed Assign /
-    AnnAssign / AugAssign / Delete nodes — not ``ast.NodeVisitor``.
-    """
-    (
-        SourceFile,
-        BackendCouldNotParse,
-        Assign,
-        AnnAssign,
-        AugAssign,
-        Delete,
-        Attribute,
-        Name,
-        _Global,
-    ) = _typed_tree()
-    try:
-        source_file = SourceFile(
-            (source, source_path, blake3_512_of(source.encode("utf-8")))
-        )
-    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
-        return {}
-    writes: dict[str, int] = {}
+    class WriteVisitor(typed.TypedNodeWalker):
+        def __init__(self) -> None:
+            self.writes: dict[str, int] = {}
 
-    def record(lineno: int, targets) -> None:
-        for target in targets:
-            if isinstance(target, Attribute) and isinstance(target.value, Name):
-                writes.setdefault(f"{target.value.id}.{target.attr}", lineno)
+        def record(self, node: typed.stmt, targets: list[typed.expr]) -> None:
+            for target in targets:
+                if isinstance(target, typed.Attribute) and isinstance(
+                    target.value, typed.Name
+                ):
+                    self.writes.setdefault(
+                        f"{target.value.id}.{target.attr}", node.lineno
+                    )
 
-    for node in source_file.root.walk():
-        lineno = node.line_col_span().start_line
-        if isinstance(node, Assign):
-            record(lineno, node.targets)
-        elif isinstance(node, AnnAssign):
-            record(lineno, (node.target,))
-        elif isinstance(node, AugAssign):
-            record(lineno, (node.target,))
-        elif isinstance(node, Delete):
-            record(lineno, node.targets)
-    return writes
+        def visit_Assign(self, node: typed.Assign) -> None:
+            self.record(node, node.targets)
+            self.generic_visit(node)
 
+        def visit_AnnAssign(self, node: typed.AnnAssign) -> None:
+            self.record(node, [node.target])
+            self.generic_visit(node)
 
-def _class_attr_writes(tree: ast.Module) -> dict:
-    """Residual dual-body puncture scan (no source text available).
+        def visit_AugAssign(self, node: typed.AugAssign) -> None:
+            self.record(node, [node.target])
+            self.generic_visit(node)
 
-    Prefer ``_class_attr_writes_typed`` when the module source is in hand.
-    """
-    writes: dict[str, int] = {}
+        def visit_Delete(self, node: typed.Delete) -> None:
+            self.record(node, node.targets)
+            self.generic_visit(node)
 
-    def record(node: ast.stmt, targets: list[ast.expr]) -> None:
-        for target in targets:
-            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
-                writes.setdefault(f"{target.value.id}.{target.attr}", node.lineno)
-
-    stack: list[ast.AST] = [tree]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Assign):
-            record(node, list(node.targets))
-        elif isinstance(node, ast.AnnAssign):
-            record(node, [node.target])
-        elif isinstance(node, ast.AugAssign):
-            record(node, [node.target])
-        elif isinstance(node, ast.Delete):
-            record(node, list(node.targets))
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
-    return writes
+    visitor = WriteVisitor()
+    visitor.visit(tree)
+    return visitor.writes
 
 
 def _pin_boundary(
@@ -525,19 +446,19 @@ def _admission_failure(
     return None
 
 
-def _collect_candidates(tree: ast.Module) -> dict[str, _Candidate]:
+def _collect_candidates(tree: typed.Module) -> dict[str, _Candidate]:
     candidates: dict[str, _Candidate] = {}
     duplicate_names: set[str] = set()
     for stmt in tree.body:
-        name_node: ast.Name | None = None
-        value: ast.expr | None = None
+        name_node: typed.Name | None = None
+        value: typed.expr | None = None
         confession: str | None = None
-        if isinstance(stmt, ast.Assign):
-            if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+        if isinstance(stmt, typed.Assign):
+            if len(stmt.targets) == 1 and isinstance(stmt.targets[0], typed.Name):
                 name_node = stmt.targets[0]
                 value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            if isinstance(stmt.target, ast.Name) and stmt.value is not None:
+        elif isinstance(stmt, typed.AnnAssign):
+            if isinstance(stmt.target, typed.Name) and stmt.value is not None:
                 name_node = stmt.target
                 value = stmt.value
                 if _is_final_annotation(stmt.annotation):
@@ -565,25 +486,25 @@ def _collect_candidates(tree: ast.Module) -> dict[str, _Candidate]:
     return candidates
 
 
-def _is_final_annotation(annotation: ast.expr) -> bool:
+def _is_final_annotation(annotation: typed.expr) -> bool:
     target = annotation
-    if isinstance(target, ast.Subscript):
+    if isinstance(target, typed.Subscript):
         target = target.value
-    if isinstance(target, ast.Name):
+    if isinstance(target, typed.Name):
         return target.id == "Final"
-    if isinstance(target, ast.Attribute):
+    if isinstance(target, typed.Attribute):
         return target.attr == "Final"
     return False
 
 
-def _is_literal_shaped(node: ast.expr) -> bool:
-    if isinstance(node, ast.Constant):
+def _is_literal_shaped(node: typed.expr) -> bool:
+    if isinstance(node, typed.Constant):
         return True
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        return isinstance(node.operand, ast.Constant)
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+    if isinstance(node, typed.UnaryOp) and isinstance(node.op, (typed.UAdd, typed.USub)):
+        return isinstance(node.operand, typed.Constant)
+    if isinstance(node, (typed.Tuple, typed.List, typed.Set)):
         return all(_is_literal_shaped(element) for element in node.elts)
-    if isinstance(node, ast.Dict):
+    if isinstance(node, typed.Dict):
         return all(
             key is not None and _is_literal_shaped(key) and _is_literal_shaped(val)
             for key, val in zip(node.keys, node.values)
@@ -591,21 +512,21 @@ def _is_literal_shaped(node: ast.expr) -> bool:
     return False
 
 
-def _direct_mutable_kind(node: ast.expr) -> str | None:
-    if isinstance(node, ast.List):
+def _direct_mutable_kind(node: typed.expr) -> str | None:
+    if isinstance(node, typed.List):
         return "list"
-    if isinstance(node, ast.Dict):
+    if isinstance(node, typed.Dict):
         return "dict"
-    if isinstance(node, ast.Set):
+    if isinstance(node, typed.Set):
         return "set"
     return None
 
 
-def _render_value_term(node: ast.expr) -> Json:
+def _render_value_term(node: typed.expr) -> Json:
     """Render an admissible immutable literal to the same term shape the
     emitter produces for the literal written inline. That identity IS the
     pin: a pinned name is indistinguishable from its value."""
-    if isinstance(node, ast.Constant):
+    if isinstance(node, typed.Constant):
         value = node.value
         if isinstance(value, bool):
             return bool_const(value)
@@ -624,26 +545,26 @@ def _render_value_term(node: ast.expr) -> Json:
         if value is None:
             return none_const()
         raise _NotAdmissible(f"no IR term shape for {type(value).__name__} constants")
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+    if isinstance(node, typed.UnaryOp) and isinstance(node.op, (typed.UAdd, typed.USub)):
         operand = node.operand
-        if isinstance(operand, ast.Constant) and type(operand.value) is int:
+        if isinstance(operand, typed.Constant) and type(operand.value) is int:
             value = operand.value
-            if isinstance(node.op, ast.USub):
+            if isinstance(node.op, typed.USub):
                 value = -value
             return int_const(value)
         raise _NotAdmissible("unsupported unary literal")
-    if isinstance(node, ast.Tuple):
+    if isinstance(node, typed.Tuple):
         return ctor(
             "python:tuple",
             *[_render_value_term(element) for element in node.elts],
         )
-    if isinstance(node, (ast.List, ast.Set, ast.Dict)):
+    if isinstance(node, (typed.List, typed.Set, typed.Dict)):
         kind = type(node).__name__.lower()
         raise _NotAdmissible(f"mutable value ({kind}) cannot pin")
     raise _NotAdmissible(f"unsupported value shape: {type(node).__name__}")
 
 
-def _binding_events(tree: ast.Module) -> Iterator[_BindingEvent]:
+def _binding_events(tree: typed.Module) -> Iterator[_BindingEvent]:
     """Every module-scope binding event, exhaustively.
 
     Walks the module statement tree, recursing through compound statements
@@ -654,7 +575,7 @@ def _binding_events(tree: ast.Module) -> Iterator[_BindingEvent]:
         yield from _statement_binding_events(stmt)
 
 
-def _iter_module_scope_statements(stmts: list[ast.stmt]) -> Iterator[ast.stmt]:
+def _iter_module_scope_statements(stmts) -> Iterator[typed.stmt]:
     for stmt in stmts:
         yield stmt
         if isinstance(stmt, _SCOPE_BOUNDARY_NODES):
@@ -663,47 +584,47 @@ def _iter_module_scope_statements(stmts: list[ast.stmt]) -> Iterator[ast.stmt]:
             yield from _iter_module_scope_statements(child_list)
 
 
-def _child_statement_lists(stmt: ast.stmt) -> Iterator[list[ast.stmt]]:
-    for field_name, value in ast.iter_fields(stmt):
-        if isinstance(value, list):
-            statements = [item for item in value if isinstance(item, ast.stmt)]
+def _child_statement_lists(stmt: typed.stmt) -> Iterator[tuple[typed.stmt, ...]]:
+    for field_name, value in typed.iter_fields(stmt):
+        if isinstance(value, (list, tuple)):
+            statements = tuple(item for item in value if isinstance(item, typed.stmt))
             if statements:
                 yield statements
             for item in value:
-                if isinstance(item, ast.ExceptHandler):
+                if isinstance(item, typed.ExceptHandler):
                     yield item.body
-                if isinstance(item, ast.match_case):
+                if isinstance(item, typed.match_case):
                     yield item.body
 
 
-def _statement_binding_events(stmt: ast.stmt) -> Iterator[_BindingEvent]:
-    if isinstance(stmt, ast.Assign):
+def _statement_binding_events(stmt: typed.stmt) -> Iterator[_BindingEvent]:
+    if isinstance(stmt, typed.Assign):
         for target in stmt.targets:
             for name, line in _target_names(target):
                 yield _BindingEvent(name, line, "assignment")
-    elif isinstance(stmt, ast.AnnAssign):
+    elif isinstance(stmt, typed.AnnAssign):
         if stmt.value is not None:
             for name, line in _target_names(stmt.target):
                 yield _BindingEvent(name, line, "assignment")
-    elif isinstance(stmt, ast.AugAssign):
+    elif isinstance(stmt, typed.AugAssign):
         for name, line in _target_names(stmt.target):
             yield _BindingEvent(name, line, "augmented assignment")
-    elif isinstance(stmt, ast.Delete):
+    elif isinstance(stmt, typed.Delete):
         for target in stmt.targets:
             for name, line in _target_names(target):
                 yield _BindingEvent(name, line, "deletion")
-    elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
+    elif isinstance(stmt, (typed.Import, typed.ImportFrom)):
         for alias in stmt.names:
             bound = alias.asname or alias.name.split(".")[0]
             yield _BindingEvent(bound, stmt.lineno, "import rebinding")
-    elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    elif isinstance(stmt, (typed.FunctionDef, typed.AsyncFunctionDef)):
         yield _BindingEvent(stmt.name, stmt.lineno, "function definition")
-    elif isinstance(stmt, ast.ClassDef):
+    elif isinstance(stmt, typed.ClassDef):
         yield _BindingEvent(stmt.name, stmt.lineno, "class definition")
-    elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+    elif isinstance(stmt, (typed.For, typed.AsyncFor)):
         for name, line in _target_names(stmt.target):
             yield _BindingEvent(name, line, "for-loop target binding")
-    elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+    elif isinstance(stmt, (typed.With, typed.AsyncWith)):
         for item in stmt.items:
             if item.optional_vars is not None:
                 for name, line in _target_names(item.optional_vars):
@@ -712,11 +633,11 @@ def _statement_binding_events(stmt: ast.stmt) -> Iterator[_BindingEvent]:
         for handler in stmt.handlers:
             if handler.name:
                 yield _BindingEvent(handler.name, handler.lineno, "except-as binding")
-    elif isinstance(stmt, ast.Match):
+    elif isinstance(stmt, typed.Match):
         for case in stmt.cases:
             yield from _match_pattern_bindings(case.pattern)
     elif _TYPE_ALIAS_NODE is not None and isinstance(stmt, _TYPE_ALIAS_NODE):
-        if isinstance(stmt.name, ast.Name):
+        if isinstance(stmt.name, typed.Name):
             yield _BindingEvent(stmt.name.id, stmt.lineno, "type-alias definition")
     if type(stmt) in AST_STATEMENT_TYPES:
         # Walrus targets anywhere in this statement's expressions, outside
@@ -726,92 +647,60 @@ def _statement_binding_events(stmt: ast.stmt) -> Iterator[_BindingEvent]:
     raise UnsupportedStatementVariant(type(stmt).__name__)
 
 
-def _match_pattern_bindings(pattern: ast.pattern) -> Iterator[_BindingEvent]:
-    if isinstance(pattern, ast.MatchAs) and pattern.name:
+def _match_pattern_bindings(pattern: typed.pattern) -> Iterator[_BindingEvent]:
+    if isinstance(pattern, typed.MatchAs) and pattern.name:
         yield _BindingEvent(pattern.name, pattern.lineno, "match capture binding")
-    if isinstance(pattern, ast.MatchStar) and pattern.name:
+    if isinstance(pattern, typed.MatchStar) and pattern.name:
         yield _BindingEvent(pattern.name, pattern.lineno, "match capture binding")
-    if isinstance(pattern, ast.MatchMapping) and pattern.rest:
+    if isinstance(pattern, typed.MatchMapping) and pattern.rest:
         yield _BindingEvent(pattern.rest, pattern.lineno, "match capture binding")
-    for child in ast.iter_child_nodes(pattern):
-        if isinstance(child, ast.pattern):
+    for child in typed.iter_child_nodes(pattern):
+        if isinstance(child, typed.pattern):
             yield from _match_pattern_bindings(child)
 
 
-def _walrus_bindings(stmt: ast.stmt) -> Iterator[_BindingEvent]:
-    stack: list[ast.AST] = [stmt]
+def _walrus_bindings(stmt: typed.stmt) -> Iterator[_BindingEvent]:
+    stack: list[typed.AST] = [stmt]
     while stack:
         node = stack.pop()
         if node is not stmt and isinstance(node, _SCOPE_BOUNDARY_NODES):
             continue
-        if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+        if isinstance(node, typed.NamedExpr) and isinstance(node.target, typed.Name):
             yield _BindingEvent(node.target.id, node.lineno, "walrus rebinding")
         # Child statements are visited by the scope iterator themselves;
         # descending into them here would double-count their walrus events.
         stack.extend(
             child
-            for child in ast.iter_child_nodes(node)
-            if not isinstance(child, ast.stmt)
+            for child in typed.iter_child_nodes(node)
+            if not isinstance(child, typed.stmt)
         )
 
 
-def _target_names(target: ast.expr) -> Iterator[tuple[str, int]]:
-    if isinstance(target, ast.Name):
+def _target_names(target: typed.expr) -> Iterator[tuple[str, int]]:
+    if isinstance(target, typed.Name):
         yield target.id, target.lineno
-    elif isinstance(target, ast.Starred):
+    elif isinstance(target, typed.Starred):
         yield from _target_names(target.value)
-    elif isinstance(target, (ast.Tuple, ast.List)):
+    elif isinstance(target, (typed.Tuple, typed.List)):
         for element in target.elts:
             yield from _target_names(element)
     # Attribute/Subscript targets mutate objects, not module name bindings.
 
 
-def _global_declarations_typed(source: str, source_path: str) -> dict[str, int]:
-    """Typed-tree ``global`` puncture scan — not ``ast.walk``."""
-    (
-        SourceFile,
-        BackendCouldNotParse,
-        _Assign,
-        _AnnAssign,
-        _AugAssign,
-        _Delete,
-        _Attribute,
-        _Name,
-        Global,
-    ) = _typed_tree()
-    try:
-        source_file = SourceFile(
-            (source, source_path, blake3_512_of(source.encode("utf-8")))
-        )
-    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
-        return {}
+def _global_declarations(tree: typed.Module) -> dict[str, int]:
     declarations: dict[str, int] = {}
-    for node in source_file.root.walk():
-        if isinstance(node, Global):
-            lineno = node.line_col_span().start_line
-            for name in node.names:
-                declarations.setdefault(name, lineno)
-    return declarations
-
-
-def _global_declarations(tree: ast.Module) -> dict[str, int]:
-    """Residual dual-body ``global`` scan when source text is unavailable."""
-    declarations: dict[str, int] = {}
-    stack: list[ast.AST] = [tree]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Global):
+    for node in typed.walk(tree):
+        if isinstance(node, typed.Global):
             for name in node.names:
                 declarations.setdefault(name, node.lineno)
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
     return declarations
 
 
 # ── THE STRUCTURAL FLOOR ─────────────────────────────────────────────────
 # The binding-event scan must be TOTAL over this interpreter's statement
 # grammar, and the totality must be readable off the module rather than
-# sworn by the sweep: ast.NodeVisitor's generic_visit is an asserted
-# silence in structural costume. Every ast.stmt subclass the running
+# sworn by the sweep: typed.TypedNodeWalker's generic_visit is an asserted
+# silence in structural costume. Every typed.stmt subclass the running
 # interpreter knows is classified below as either BINDING-HANDLED
 # (produces events in _statement_binding_events) or DECLARED-NONBINDING
 # (cannot bind a module name directly; compound bodies are recursed
@@ -824,34 +713,38 @@ def _global_declarations(tree: ast.Module) -> dict[str, int]:
 
 
 def _grammar_classes(base: type) -> frozenset:
-    return frozenset(
-        cls
-        for name in dir(ast)
-        if isinstance(cls := getattr(ast, name), type)
-        and issubclass(cls, base)
-        and cls is not base
-    )
+    if base is typed.stmt:
+        return AST_STATEMENT_TYPES
+    found: set[type] = set()
+    pending = list(base.__subclasses__())
+    while pending:
+        cls = pending.pop()
+        if cls in found:
+            continue
+        found.add(cls)
+        pending.extend(cls.__subclasses__())
+    return frozenset(found)
 
 
 _BINDING_HANDLED_STMT = frozenset(
     cls
     for cls in (
-        ast.Assign,
-        ast.AnnAssign,
-        ast.AugAssign,
-        ast.Delete,
-        ast.Import,
-        ast.ImportFrom,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-        ast.For,
-        ast.AsyncFor,
-        ast.With,
-        ast.AsyncWith,
-        ast.Try,
-        ast.Match,
-        getattr(ast, "TryStar", None),
+        typed.Assign,
+        typed.AnnAssign,
+        typed.AugAssign,
+        typed.Delete,
+        typed.Import,
+        typed.ImportFrom,
+        typed.FunctionDef,
+        typed.AsyncFunctionDef,
+        typed.ClassDef,
+        typed.For,
+        typed.AsyncFor,
+        typed.With,
+        typed.AsyncWith,
+        typed.Try,
+        typed.Match,
+        getattr(typed, "TryStar", None),
         _TYPE_ALIAS_NODE,
     )
     if cls is not None
@@ -859,28 +752,28 @@ _BINDING_HANDLED_STMT = frozenset(
 
 _DECLARED_NONBINDING_STMT = frozenset(
     (
-        ast.Expr,
-        ast.Return,
-        ast.Raise,
-        ast.Assert,
-        ast.Pass,
-        ast.Break,
-        ast.Continue,
-        ast.If,
-        ast.While,
+        typed.Expr,
+        typed.Return,
+        typed.Raise,
+        typed.Assert,
+        typed.Pass,
+        typed.Break,
+        typed.Continue,
+        typed.If,
+        typed.While,
         # Global/Nonlocal do not bind at module scope themselves; Global is
         # consumed by the dedicated _global_declarations puncture scan.
-        ast.Global,
-        ast.Nonlocal,
+        typed.Global,
+        typed.Nonlocal,
     )
 )
 
-_BINDING_HANDLED_PATTERN = frozenset((ast.MatchAs, ast.MatchStar, ast.MatchMapping))
+_BINDING_HANDLED_PATTERN = frozenset((typed.MatchAs, typed.MatchStar, typed.MatchMapping))
 
 _DECLARED_NONBINDING_PATTERN = frozenset(
     # Children are recursed generically in _match_pattern_bindings via
     # iter_child_nodes; these kinds carry no name binding of their own.
-    (ast.MatchValue, ast.MatchSingleton, ast.MatchSequence, ast.MatchClass, ast.MatchOr)
+    (typed.MatchValue, typed.MatchSingleton, typed.MatchSequence, typed.MatchClass, typed.MatchOr)
 )
 
 
@@ -891,12 +784,12 @@ def _unaccounted_grammar() -> dict[str, list[str]]:
     trusted."""
     unaccounted: dict[str, list[str]] = {}
     stmt_holes = (
-        _grammar_classes(ast.stmt) - _BINDING_HANDLED_STMT - _DECLARED_NONBINDING_STMT
+        _grammar_classes(typed.stmt) - _BINDING_HANDLED_STMT - _DECLARED_NONBINDING_STMT
     )
     if stmt_holes:
         unaccounted["stmt"] = sorted(c.__name__ for c in stmt_holes)
     pattern_holes = (
-        _grammar_classes(ast.pattern)
+        _grammar_classes(typed.pattern)
         - _BINDING_HANDLED_PATTERN
         - _DECLARED_NONBINDING_PATTERN
     )
@@ -908,7 +801,7 @@ def _unaccounted_grammar() -> dict[str, list[str]]:
 _FLOOR_HOLES = _unaccounted_grammar()
 if _FLOOR_HOLES:
     raise RuntimeError(
-        "value_pins binding scan is not total over this interpreter's ast "
+        "value_pins binding scan is not total over the typed source grammar "
         f"grammar: unaccounted node kinds {_FLOOR_HOLES}. Classify each as "
         "binding-handled or declared-nonbinding before any pin is admissible; "
         "a best-effort total is an asserted silence and is inadmissible."

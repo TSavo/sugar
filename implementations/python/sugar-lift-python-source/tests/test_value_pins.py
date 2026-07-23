@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import sys
 import textwrap
 from pathlib import Path
@@ -18,6 +17,7 @@ from sugar_lift_python_source.ir import (
     str_const,
 )
 from sugar_lift_python_source.lifter import lift_source
+from sugar_lift_python_source import typed_node_api as typed
 from sugar_lift_python_source.value_pins import (
     VALUE_PIN_BOUNDARY_KIND,
     scan_module_value_pins,
@@ -27,8 +27,9 @@ ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
 
 
 def _scan(source: str):
-    text = textwrap.dedent(source)
-    return scan_module_value_pins(ast.parse(text), source=text)
+    return scan_module_value_pins(
+        typed.parse(textwrap.dedent(source), filename="value_pins.py")
+    )
 
 
 def _lift(source: str):

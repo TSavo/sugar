@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import ast
-
 import pytest
 
 from sugar_lift_python_source import ast_template, bind_lifter, lifter, value_pins
+from sugar_lift_python_source import typed_node_api as typed
 
 
-class RenamedFutureStatement(ast.stmt):
-    _fields: tuple[str, ...] = ()
+class RenamedFutureStatement(typed.stmt):
+    _child_fields: tuple[str, ...] = ()
 
 
 def test_every_statement_consumer_is_total_and_future_variants_are_loud() -> None:
-    node = RenamedFutureStatement()
+    node = object.__new__(RenamedFutureStatement)
 
     with pytest.raises(ast_template.UnsupportedStatementVariant):
         ast_template.stmt_to_template(node, [])
@@ -32,7 +31,7 @@ def test_every_statement_consumer_is_total_and_future_variants_are_loud() -> Non
 
 def test_current_statement_grammar_is_the_explicit_partition() -> None:
     running = frozenset(
-        statement for statement in ast.stmt.__subclasses__() if statement.__module__ == "ast"
+        getattr(typed, name) for name in lifter.AST_STATEMENT_TYPE_NAMES
     )
     assert ast_template.AST_STATEMENT_TYPES == running
     assert ast_template.AST_STATEMENT_TYPE_NAMES == {item.__name__ for item in running}
@@ -46,6 +45,28 @@ def test_current_statement_grammar_is_the_explicit_partition() -> None:
     assert issubclass(bind_lifter.UnsupportedStatementGrammar, RuntimeError)
     assert issubclass(lifter.UnsupportedStatementGrammar, RuntimeError)
     assert issubclass(value_pins.UnsupportedStatementGrammar, RuntimeError)
+
+
+def test_renamed_nonvendor_lifters_share_the_typed_source_door(monkeypatch) -> None:
+    seen: list[typed.Module] = []
+    parse = typed.parse
+
+    def recording_parse(source: str, *, filename: str) -> typed.Module:
+        module = parse(source, filename=filename)
+        assert isinstance(module, typed.Module)
+        assert all(isinstance(node, typed.AST) for node in module.walk())
+        seen.append(module)
+        return module
+
+    monkeypatch.setattr(typed, "parse", recording_parse)
+    source = "def renamed_nonvendor(operand):\n    return operand\n"
+
+    ordinary = lifter.lift_source(source, "renamed_nonvendor.py")
+    binding = bind_lifter.lift_source(source, "renamed_nonvendor.py")
+
+    assert ordinary.ir
+    assert binding.ir
+    assert len(seen) == 2
 
 
 def test_renamed_external_values_and_decorators_receive_no_spelling_authority() -> None:

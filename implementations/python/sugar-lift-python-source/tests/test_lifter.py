@@ -25,13 +25,12 @@ from sugar_lift_python_source.ir import int_const, str_const
 from sugar_lift_python_source.lifter import (
     _EffectSet,
     _Emitter,
+    _ClassCollector,
+    _DefinitionCollector,
     _UnsupportedSyntax,
-    _collect_classes,
-    _collect_classes_dual,
-    _collect_definitions,
-    _collect_definitions_dual,
     lift_source,
 )
+from sugar_lift_python_source import typed_node_api as typed
 from sugar_lift_python_source.rpc import dispatch, initialize_result
 
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
@@ -637,8 +636,11 @@ def _constant_dispatch_refusal_reason(value: object) -> str:
 
 
 def _subscript_index_for(expr_source: str) -> dict[str, object]:
-    node = ast.parse(expr_source, mode="eval").body
-    assert isinstance(node, ast.Subscript)
+    module = typed.parse(f"__probe = {expr_source}\n", filename="slice.py")
+    statement = module.body[0]
+    assert isinstance(statement, typed.Assign)
+    node = statement.value
+    assert isinstance(node, typed.Subscript)
     emitter = _Emitter(
         fn_name="slice.f",
         locals_={"xs", "i"},
@@ -1370,10 +1372,10 @@ def test_empty_dict_literal_lifts_to_empty_dict_term() -> None:
 
 
 def test_dict_floor_discriminates_other_unhandled_expression_kinds() -> None:
-    result = lift_source("def f(x):\n    return (await x)\n", "await_expr.py")
+    result = lift_source("async def f(x):\n    return (await x)\n", "await_expr.py")
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "await expressions are refused"
+        "async functions are refused"
     ]
 
 
@@ -1386,16 +1388,16 @@ def test_set_literal_lifts_to_set_term_without_refusal() -> None:
 
 def test_set_literal_element_refusal_propagates_without_swallowing() -> None:
     result = lift_source(
-        "def f(xs):\n    return {(await xs)}\n",
+        "async def f(xs):\n    return {(await xs)}\n",
         "set_literal_element_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "set_literal_element_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
 
@@ -1510,10 +1512,10 @@ def test_nested_fstring_in_formatted_value_lifts_recursively() -> None:
 
 
 def test_fstring_floor_discriminates_other_unhandled_expression_kinds() -> None:
-    result = lift_source("def f(x):\n    return (await x)\n", "await_expr.py")
+    result = lift_source("async def f(x):\n    return (await x)\n", "await_expr.py")
 
     assert [refusal["reason"] for refusal in result.refusals] == [
-        "await expressions are refused"
+        "async functions are refused"
     ]
 
 
@@ -2078,8 +2080,16 @@ def test_subscript_index_lifts_slice_bounds_and_omissions() -> None:
 
 
 def test_subscript_index_slice_bound_refusal_propagates() -> None:
-    node = ast.parse("xs[1:(await i)]", mode="eval").body
-    assert isinstance(node, ast.Subscript)
+    module = typed.parse(
+        "async def probe(xs, i):\n    return xs[1:(await i)]\n",
+        filename="slice.py",
+    )
+    function = module.body[0]
+    assert isinstance(function, typed.AsyncFunctionDef)
+    statement = function.body[0]
+    assert isinstance(statement, typed.Return)
+    node = statement.value
+    assert isinstance(node, typed.Subscript)
     emitter = _Emitter(
         fn_name="slice.f",
         locals_={"xs", "i"},
@@ -3049,16 +3059,16 @@ def test_annotation_non_bitor_binop_stays_refused() -> None:
 
 def test_annotation_union_arm_refusal_propagates() -> None:
     result = lift_source(
-        "def f():\n    x: int | (await str)\n    return x\n",
+        "async def f():\n    x: int | (await str)\n    return x\n",
         "annotation_union_arm_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
-            "function": "annotation_union_arm_refusal.f",
+            "kind": "syntax-error",
+            "function": None,
             "line": 2,
-            "reason": "await expressions are refused",
+            "reason": "await expression cannot be used within an annotation",
         }
     ]
 
@@ -4399,7 +4409,7 @@ def test_delete_target_refusal_propagates_and_plain_function_gets_no_delete_pani
     None
 ):
     refused = lift_source(
-        "def f(xs, key):\n    del xs[(await key)]\n",
+        "async def f(xs, key):\n    del xs[(await key)]\n",
         "delete_target_refusal.py",
     )
     plain = lift_source("def g(x):\n    return x\n", "no_delete.py")
@@ -4407,10 +4417,10 @@ def test_delete_target_refusal_propagates_and_plain_function_gets_no_delete_pani
     plain_contract = _contract(plain.ir, ".g")
     assert refused.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "delete_target_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert plain.refusals == []
@@ -4788,16 +4798,16 @@ def test_starred_call_argument_and_expression_position_keep_distinct_ctors() -> 
 
 def test_starred_expression_inner_refusal_propagates_without_shape() -> None:
     result = lift_source(
-        "def f(xs):\n    return [*(await xs)]\n",
+        "async def f(xs):\n    return [*(await xs)]\n",
         "starred_expr_inner_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "starred_expr_inner_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
 
@@ -4831,16 +4841,16 @@ def test_plain_call_does_not_get_starred_unresolved_effect() -> None:
 
 def test_starred_call_argument_inner_refusal_propagates_without_shape() -> None:
     result = lift_source(
-        "def f(xs):\n    return make(*(await xs))\n",
+        "async def f(xs):\n    return make(*(await xs))\n",
         "starred_inner_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "starred_inner_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
 
@@ -4999,16 +5009,16 @@ def test_subscripted_receiver_method_callee_lifts_as_expression_call() -> None:
 
 def test_subscript_callee_inner_refusal_propagates_without_swallowing() -> None:
     result = lift_source(
-        "def f(factory, ys):\n    return factory[(await ys)](1)\n",
+        "async def f(factory, ys):\n    return factory[(await ys)](1)\n",
         "subscript_callee_inner_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "subscript_callee_inner_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
 
@@ -5191,16 +5201,16 @@ def test_listcomp_target_binding_does_not_leak_to_following_statement() -> None:
 
 def test_listcomp_floor_discriminates_other_unhandled_expression_kinds() -> None:
     result = lift_source(
-        "def f(xs):\n    return [x for x in (await xs)]\n",
+        "async def f(xs):\n    return [x for x in (await xs)]\n",
         "listcomp_await_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "listcomp_await_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
 
@@ -5294,16 +5304,16 @@ def test_generatorexp_lifts_call_argument_and_records_opaque_loop_effect() -> No
 
 def test_generatorexp_element_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(rows):\n    return sum((await row) for row in rows)\n",
+        "async def f(rows):\n    return sum((await row) for row in rows)\n",
         "generatorexp_element_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "generatorexp_element_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5311,16 +5321,16 @@ def test_generatorexp_element_refusal_propagates_without_opaque_term() -> None:
 
 def test_generatorexp_iterable_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(xs):\n    return sum(x for x in (await xs))\n",
+        "async def f(xs):\n    return sum(x for x in (await xs))\n",
         "generatorexp_iter_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "generatorexp_iter_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5388,16 +5398,16 @@ def test_setcomp_lifts_element_generator_and_opaque_loop_effect() -> None:
 
 def test_setcomp_element_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(xs):\n    return {(await x) for x in xs}\n",
+        "async def f(xs):\n    return {(await x) for x in xs}\n",
         "setcomp_element_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "setcomp_element_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5405,16 +5415,16 @@ def test_setcomp_element_refusal_propagates_without_opaque_term() -> None:
 
 def test_setcomp_iterable_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(xs):\n    return {x for x in (await xs)}\n",
+        "async def f(xs):\n    return {x for x in (await xs)}\n",
         "setcomp_iter_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "setcomp_iter_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5486,16 +5496,16 @@ def test_dictcomp_lifts_key_value_generator_and_opaque_loop_effect() -> None:
 
 def test_dictcomp_key_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(items):\n    return {(await k): v for k, v in items}\n",
+        "async def f(items):\n    return {(await k): v for k, v in items}\n",
         "dictcomp_key_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "dictcomp_key_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5503,16 +5513,16 @@ def test_dictcomp_key_refusal_propagates_without_opaque_term() -> None:
 
 def test_dictcomp_value_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(items):\n    return {k: (await v) for k, v in items}\n",
+        "async def f(items):\n    return {k: (await v) for k, v in items}\n",
         "dictcomp_value_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "dictcomp_value_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5520,16 +5530,16 @@ def test_dictcomp_value_refusal_propagates_without_opaque_term() -> None:
 
 def test_dictcomp_iterable_refusal_propagates_without_opaque_term() -> None:
     result = lift_source(
-        "def f(items):\n    return {k: v for k, v in (await items)}\n",
+        "async def f(items):\n    return {k: v for k, v in (await items)}\n",
         "dictcomp_iter_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "dictcomp_iter_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
     assert result.opacity_report == []
@@ -5985,16 +5995,16 @@ def test_lambda_variadic_parameters_are_carried_and_bound() -> None:
 
 def test_lambda_body_refusal_propagates_without_swallowing_outer() -> None:
     result = lift_source(
-        "def f(xs):\n    return lambda x: (await x)\n",
+        "async def f(xs):\n    return lambda x: (await x)\n",
         "lambda_body_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
-            "function": "lambda_body_refusal.f",
+            "kind": "syntax-error",
+            "function": None,
             "line": 2,
-            "reason": "unhandled expression kind: Await",
+            "reason": "'await' outside async function",
         }
     ]
 
@@ -6027,16 +6037,16 @@ def test_ifexp_lifts_explicit_ternary_condition_and_branches() -> None:
 
 def test_ifexp_subexpression_refusal_propagates_without_swallowing_outer() -> None:
     result = lift_source(
-        "def f(cond, x, ys):\n    return x if cond else (await ys)\n",
+        "async def f(cond, x, ys):\n    return x if cond else (await ys)\n",
         "ifexp_else_refusal.py",
     )
 
     assert result.refusals == [
         {
-            "kind": "unhandled-syntax",
+            "kind": "async-refused",
             "function": "ifexp_else_refusal.f",
-            "line": 2,
-            "reason": "await expressions are refused",
+            "line": 1,
+            "reason": "async functions are refused",
         }
     ]
 
@@ -6140,7 +6150,7 @@ def test_compile_lift_roundtrip_preserves_cf_guarded_none_if_body() -> None:
 
 
 def test_refuses_unhandled_syntax_without_unknown_ops() -> None:
-    source = "def bad(xs):\n    return (await xs)\n"
+    source = "async def bad(xs):\n    return (await xs)\n"
 
     result = lift_source(source, "badmodule.py")
 
@@ -6150,20 +6160,20 @@ def test_refuses_unhandled_syntax_without_unknown_ops() -> None:
     assert result.ir[0]["post"]["args"][1]["args"][1]["name"] == "python:pass"
     assert len(result.refusals) == 1
     refusal = result.refusals[0]
-    assert refusal["kind"] == "unhandled-syntax"
+    assert refusal["kind"] == "async-refused"
     assert refusal["function"] == "badmodule.bad"
-    assert refusal["line"] == 2
-    assert "await expressions are refused" == refusal["reason"]
+    assert refusal["line"] == 1
+    assert "async functions are refused" == refusal["reason"]
     assert "python:unknown" not in _canon(result.refusals)
     assert "python:skip" not in _canon(result.refusals)
 
 
 def test_await_expression_refusal_does_not_fire_different_variant() -> None:
-    source = "def bad(xs):\n    return (await xs)\n"
+    source = "async def bad(xs):\n    return (await xs)\n"
 
     result = lift_source(source, "badmodule.py")
 
-    assert [refusal["kind"] for refusal in result.refusals] == ["unhandled-syntax"]
+    assert [refusal["kind"] for refusal in result.refusals] == ["async-refused"]
     assert "syntax-error" not in _canon(result.refusals)
 
 
@@ -6691,28 +6701,20 @@ async def top_async():
 """
     path = "collector_twins.py"
     module_path = "collector_twins"
-    tree = ast.parse(source, filename=path)
+    tree = typed.parse(source, filename=path)
 
-    typed_defs = _collect_definitions(source, path, module_path, tree)
-    dual_defs = _collect_definitions_dual(tree, module_path)
-    assert [(d.qualname, d.fn_name, d.node.name, d.node.lineno) for d in typed_defs] == [
-        (d.qualname, d.fn_name, d.node.name, d.node.lineno) for d in dual_defs
-    ]
-    assert [d.qualname for d in typed_defs] == [
+    definitions = _DefinitionCollector(module_path)
+    definitions.visit(tree)
+    assert [d.qualname for d in definitions.definitions] == [
         "outer",
         "Outer.method",
         "Outer.Nested.amethod",
         "top_async",
     ]
 
-    typed_classes = _collect_classes(source, path, module_path, tree)
-    dual_classes = _collect_classes_dual(tree, module_path)
-    assert [
-        (c.qualname, c.class_name, c.node.name, c.node.lineno) for c in typed_classes
-    ] == [
-        (c.qualname, c.class_name, c.node.name, c.node.lineno) for c in dual_classes
-    ]
-    assert [c.qualname for c in typed_classes] == [
+    classes = _ClassCollector(module_path)
+    classes.visit(tree)
+    assert [c.qualname for c in classes.classes] == [
         "outer.<locals>.Inner",
         "Outer",
         "Outer.Nested",

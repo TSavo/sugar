@@ -30,12 +30,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
-from sugar_lift_python_source.source_oracle import (
-    SourceUnavailable,
-    installed_module_source,
-    path_source,
-)
-
 from .backend import Backend, materialize
 from .fragment import SourceFragment
 from .nodes import Module, Node, SourceUnit
@@ -113,6 +107,8 @@ class SourceFile:
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
         is the oracle's loud ``SourceUnavailable``, never a swallow."""
+        from sugar_lift_python_source.source_oracle import path_source
+
         return cls(path_source(str(path)), backend=backend, reporter=reporter)
 
     @classmethod
@@ -123,6 +119,11 @@ class SourceFile:
         reporter: AuditReporter = NULL_REPORTER,
     ) -> "SourceFile":
         """Through the oracle's installed-module door."""
+        from sugar_lift_python_source.source_oracle import (
+            SourceUnavailable,
+            installed_module_source,
+        )
+
         identity = installed_module_source(module_name)
         if identity is None:
             raise SourceUnavailable(
@@ -208,6 +209,7 @@ class SourceTree:
         from .fragment import SourceFragment
         from .nodes import SourceUnit
         from .spans import Span
+        from sugar_lift_python_source.source_oracle import path_source
 
         source, filename, cid = path_source(str(path))
         unit = SourceUnit(filename=filename, source=source, source_cid=cid)
@@ -234,6 +236,8 @@ class SourceTree:
         record-and-continue catches the three contract types plus
         ``SourceUnavailable`` per file (see corpus.py); nothing here
         swallows."""
+        from sugar_lift_python_source.source_oracle import path_source
+
         for path in self.paths():
             yield SourceFile(path_source(str(path)), backend=self.backend)
 

@@ -859,6 +859,25 @@ class Node(Typed):
     def line_col_span(self) -> LineColSpan:
         return self.unit.line_table.project(self.span)
 
+    # Stable source-location projections for consumers migrating off backend
+    # AST objects.  These are computed from our span currency; they never read
+    # or retain a backend-native node.
+    @property
+    def lineno(self) -> int:
+        return self.line_col_span().start_line
+
+    @property
+    def col_offset(self) -> int:
+        return self.line_col_span().start_col
+
+    @property
+    def end_lineno(self) -> int:
+        return self.line_col_span().end_line
+
+    @property
+    def end_col_offset(self) -> int:
+        return self.line_col_span().end_col
+
     def children(self) -> Iterator[tuple[str, Optional[int], "Node"]]:
         """Yield (field_name, index-or-None, child) in declared grammar order."""
         for name in type(self)._child_fields:
@@ -919,6 +938,11 @@ class Param(Node):
     param_kind: str
     _child_fields = ("annotation", "default")
 
+    @property
+    def arg(self) -> str:
+        """The formal's identifier, projected from the typed binding site."""
+        return self.name
+
     def substitute(self, scope):
         """A parameter's NAME is a binding site (a str, not a reference), so it
         is never captured; its annotation and default are ordinary expressions
@@ -935,6 +959,39 @@ class Param(Node):
         from sugar_lift_py_tests.sugar.param_sugar import ParamSugar
 
         return ParamSugar(name=self.name, site=self.fragment)
+
+
+@dataclass(frozen=True)
+class ArgumentsProjection:
+    """Read-only signature projection derived from typed ``Param`` nodes."""
+
+    posonlyargs: Tuple[Param, ...]
+    args: Tuple[Param, ...]
+    vararg: Optional[Param]
+    kwonlyargs: Tuple[Param, ...]
+    kw_defaults: Tuple[Optional[Expression], ...]
+    kwarg: Optional[Param]
+    defaults: Tuple[Expression, ...]
+
+
+def _arguments_projection(params: Tuple[Param, ...]) -> ArgumentsProjection:
+    positional_only = tuple(p for p in params if p.param_kind == "positional_only")
+    positional = tuple(p for p in params if p.param_kind == "positional_or_keyword")
+    vararg = next((p for p in params if p.param_kind == "vararg"), None)
+    keyword_only = tuple(p for p in params if p.param_kind == "keyword_only")
+    kwarg = next((p for p in params if p.param_kind == "kwarg"), None)
+    positional_defaults = tuple(
+        p.default for p in (*positional_only, *positional) if p.default is not None
+    )
+    return ArgumentsProjection(
+        posonlyargs=positional_only,
+        args=positional,
+        vararg=vararg,
+        kwonlyargs=keyword_only,
+        kw_defaults=tuple(p.default for p in keyword_only),
+        kwarg=kwarg,
+        defaults=positional_defaults,
+    )
 
 
 class Keyword(Node):
@@ -997,6 +1054,10 @@ class ExceptHandler(Node):
     name: Optional[str]
     body: Tuple[Statement, ...]
     _child_fields = ("type_", "body")
+
+    @property
+    def type(self) -> Optional[Expression]:
+        return self.type_
 
     def substitute(self, scope):
         """except <type> as <name>: rewrite name → EffectRef(slot) in the body.
@@ -1174,6 +1235,10 @@ class FunctionDef(Statement):
     returns: Optional[Expression]
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
+
+    @property
+    def args(self):
+        return _arguments_projection(self.params)
 
     def source_visible_call_frame(self):
         """Construct this callable body through the ordinary node/Sugar door.
@@ -1353,6 +1418,10 @@ class AsyncFunctionDef(Statement):
     returns: Optional[Expression]
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
+
+    @property
+    def args(self):
+        return _arguments_projection(self.params)
 
     def substitute(self, scope):
         """Same scope shape as FunctionDef (identical fields): masks its
@@ -3537,6 +3606,10 @@ class Lambda(Expression):
     body: Expression
     _child_fields = ("params", "body")
 
+    @property
+    def args(self):
+        return _arguments_projection(self.params)
+
     def substitute(self, scope):
         """Mask formals and mark the result as substitution-authenticated."""
         from .shadow import rewrite
@@ -3609,6 +3682,14 @@ class IfExp(Expression):
 class Dict(Expression):
     items: Tuple[DictItem, ...]
     _child_fields = ("items",)
+
+    @property
+    def keys(self) -> Tuple[Optional[Expression], ...]:
+        return tuple(item.key for item in self.items)
+
+    @property
+    def values(self) -> Tuple[Expression, ...]:
+        return tuple(item.value for item in self.items)
 
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
