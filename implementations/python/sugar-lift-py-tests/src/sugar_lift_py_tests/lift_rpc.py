@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import collections
 import dataclasses
 import gc
@@ -71,47 +70,63 @@ _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
-    """Enroll with-site import coordinates without constructing any Sugar."""
-    from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
-    from sugar_source_tree.tree import SourceTree
+    """Enroll with-site import coordinates without constructing any Sugar.
+
+    Enumeration is SourceOracle → SourceFile → typed Nodes only
+    (Import / ImportFrom / With / AsyncWith / Call / Name / Attribute).
+    No raw ``ast.parse`` / ``ast.walk`` side door.
+    """
+    from sugar_lift_python_source.source_oracle import SourceUnavailable
+    from sugar_source_tree.nodes import (
+        AsyncWith,
+        Attribute,
+        Call,
+        Import,
+        ImportFrom,
+        Name,
+        With,
+    )
+    from sugar_source_tree.tree import SourceFile, SourceTree
 
     rows: List[Dict[str, Any]] = []
     for path in SourceTree(root).paths():
         try:
-            source, _filename, source_cid = path_source(str(path))
+            source_file = SourceFile.from_path(path)
         except SourceUnavailable:
             continue
-        module = ast.parse(source, filename=str(path))
         imports: Dict[str, str] = {}
-        for node in ast.walk(module):
-            if isinstance(node, ast.ImportFrom) and node.module:
+        with_nodes: List[With | AsyncWith] = []
+        for node in source_file.nodes():
+            if isinstance(node, ImportFrom) and node.module:
                 for alias in node.names:
                     imports[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-            elif isinstance(node, ast.Import):
+            elif isinstance(node, Import):
                 for alias in node.names:
                     imports[alias.asname or alias.name.split(".")[0]] = alias.name
-        for node in ast.walk(module):
-            if not isinstance(node, (ast.With, ast.AsyncWith)):
-                continue
+            elif isinstance(node, (With, AsyncWith)):
+                with_nodes.append(node)
+        source_cid = source_file.unit.source_cid
+        for node in with_nodes:
             for item in node.items:
                 expression = item.context_expr
                 target = None
-                if isinstance(expression, ast.Call):
+                if isinstance(expression, Call):
                     callee = expression.func
-                    if isinstance(callee, ast.Name):
+                    if isinstance(callee, Name):
                         target = imports.get(callee.id)
-                    elif isinstance(callee, ast.Attribute) and isinstance(
-                        callee.value, ast.Name
+                    elif isinstance(callee, Attribute) and isinstance(
+                        callee.value, Name
                     ):
                         base = imports.get(callee.value.id)
                         if base:
                             target = f"{base}.{callee.attr}"
+                span = expression.line_col_span()
                 coordinate = {
                     "sourceCid": source_cid,
-                    "startLine": expression.lineno,
-                    "startCol": expression.col_offset,
-                    "endLine": expression.end_lineno,
-                    "endCol": expression.end_col_offset,
+                    "startLine": span.start_line,
+                    "startCol": span.start_col,
+                    "endLine": span.end_line,
+                    "endCol": span.end_col,
                 }
                 rows.append(
                     {
