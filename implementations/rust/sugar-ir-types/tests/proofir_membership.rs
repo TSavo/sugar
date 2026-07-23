@@ -422,3 +422,53 @@ fn python_generator_expression_stays_lazy_after_rust_parse() {
     );
     assert_eq!(free_vars(lazy), ["xs".to_string()].into());
 }
+
+#[test]
+fn nested_python_comprehension_lambdas_survive_rust_parse() {
+    let term = document_post_term(python_comprehension_document(
+        "[[f(x, y, z) for y in ys] for x in xs]",
+        "xs, ys, z",
+    ));
+    let Term::Ctor { name, args } = &term else {
+        panic!("outer comprehension must remain a constructor coordinate")
+    };
+    assert_eq!(name, "py.listcomp");
+    let Some(Term::Lambda { body, .. }) = args.get(1) else {
+        panic!("outer transform must remain a real lambda binder")
+    };
+    let Term::Ctor {
+        name: inner_name,
+        args: inner_args,
+    } = body.as_ref()
+    else {
+        panic!("nested comprehension must remain inside the outer transform")
+    };
+    assert_eq!(inner_name, "py.listcomp");
+    assert!(matches!(inner_args.get(1), Some(Term::Lambda { .. })));
+    assert_eq!(
+        free_vars(term),
+        ["xs".to_string(), "ys".to_string(), "z".to_string()].into()
+    );
+}
+
+#[test]
+fn nested_python_generator_coordinates_stay_lazy_after_rust_parse() {
+    let term = document_post_term(python_comprehension_document(
+        "((f(x, y) for y in ys) for x in xs)",
+        "xs, ys",
+    ));
+    let Term::Ctor { name, args } = &term else {
+        panic!("outer generator must remain a constructor coordinate")
+    };
+    assert_eq!(name, "py.generatorexp");
+    let Some(Term::Lambda { body, .. }) = args.get(1) else {
+        panic!("outer generator transform must remain a real lambda binder")
+    };
+    assert!(matches!(
+        body.as_ref(),
+        Term::Ctor { name, args }
+            if name == "py.generatorexp"
+                && matches!(args.get(1), Some(Term::Lambda { .. }))
+    ));
+    assert_eq!(free_vars(term), ["xs".to_string(), "ys".to_string()].into());
+}

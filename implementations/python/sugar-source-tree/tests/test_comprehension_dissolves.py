@@ -150,6 +150,96 @@ def test_nested_lambda_same_name_does_not_escape_comprehension_transform():
     assert _free_vars_in_ir_term(term) == frozenset({"xs"})
 
 
+def test_nested_symbolic_listcomp_builds_composed_lambda_binders():
+    term = _out(
+        "def A(xs, ys, z):\n"
+        "    return [[f(x, y, z) for y in ys] for x in xs]\n"
+    )
+
+    assert term.name == "py.listcomp"
+    assert term.args[1].param_name == "x"
+    inner = term.args[1].body
+    assert inner.name == "py.listcomp"
+    assert inner.args[1].param_name == "y"
+    assert inner.args[1].body.name == "call:f"
+    assert _free_vars_in_ir_term(term) == frozenset({"xs", "ys", "z"})
+
+
+def test_nested_comprehension_iterable_builds_without_flattening():
+    term = _out(
+        "def A(ys):\n"
+        "    return [f(x) for x in [g(y) for y in ys]]\n"
+    )
+
+    assert term.name == "py.listcomp"
+    assert term.args[0].name == "py.listcomp"
+    assert term.args[0].args[1].param_name == "y"
+    assert term.args[1].param_name == "x"
+    assert _free_vars_in_ir_term(term) == frozenset({"ys"})
+
+
+def test_nested_generator_expression_retains_both_lazy_coordinates():
+    term = _out(
+        "def A(xs, ys):\n"
+        "    return ((f(x, y) for y in ys) for x in xs)\n"
+    )
+
+    assert term.name == "py.generatorexp"
+    assert term.args[1].param_name == "x"
+    inner = term.args[1].body
+    assert inner.name == "py.generatorexp"
+    assert inner.args[1].param_name == "y"
+    assert _free_vars_in_ir_term(term) == frozenset({"xs", "ys"})
+
+
+@pytest.mark.parametrize(
+    ("source", "outer", "inner", "free"),
+    [
+        (
+            "[{f(y) for y in ys} for x in xs]",
+            "py.listcomp",
+            "py.setcomp",
+            {"xs", "ys"},
+        ),
+        (
+            "({y: f(y) for y in ys} for x in xs)",
+            "py.generatorexp",
+            "py.dictcomp",
+            {"xs", "ys"},
+        ),
+        ("[x for x in {f(y) for y in ys}]", "py.listcomp", "py.setcomp", {"ys"}),
+    ],
+)
+def test_nested_arm_composes_already_built_comprehension_kinds(
+    source, outer, inner, free
+):
+    term = _out(f"def A(xs, ys):\n    return {source}\n")
+
+    assert term.name == outer
+    assert inner in {term.args[0].name, term.args[1].body.name}
+    assert _free_vars_in_ir_term(term) == frozenset(free)
+
+
+def test_nested_comprehension_does_not_admit_an_inner_filtered_gap():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(xs, ys):\n"
+            "    return [[y for y in ys if keep(y)] for x in xs]\n"
+        ).sugar()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{x for x in [y for y in ys]}",
+        "{x: x for x in [y for y in ys]}",
+    ],
+)
+def test_list_generator_nested_arm_does_not_widen_set_or_dict(source):
+    with pytest.raises(SugarNotWritten):
+        _fn(f"def A(ys):\n    return {source}\n").sugar()
+
+
 def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
     term = _out(
         "def A(xs):\n"
@@ -238,8 +328,6 @@ def test_every_filter_must_be_ground_decidable():
 @pytest.mark.parametrize(
     "source",
     [
-        "[y for x in [[1]] for y in x]",
-        "[[y for y in [1]] for x in [1]]",
         "[(y := x) for x in [1]]",
     ],
 )
@@ -248,7 +336,7 @@ def test_unsupported_comprehension_structures_stay_loud(source):
         _fn(f"def A():\n    return {source}\n").sugar()
 
 
-def test_nested_comprehension_substitutes_outer_capture_before_own_gap():
+def test_nested_comprehension_substitutes_outer_capture_before_building():
     fn = _fn(
         "def A():\n"
         "    values = [1]\n"
@@ -257,8 +345,10 @@ def test_nested_comprehension_substitutes_outer_capture_before_own_gap():
     expression = fn.substitute({}).body[-1].value
     nested = expression.elt
     assert nested.generators[0].iter.kind == "List"
-    with pytest.raises(SugarNotWritten):
-        expression.sugar()
+    value = expression.sugar().desugar().value
+    assert value.term.name == "py.listcomp"
+    assert value.term.args[1].body.name == "py.listcomp"
+    assert value.term.args[1].body.args[0].name == "array"
 
 
 def test_walrus_comprehension_substitutes_outer_capture_before_own_gap():
