@@ -191,7 +191,6 @@ def construct_manager_behavior(
         ),
         body=frame.body,
         source_call_frame_cid=frame.frame_cid,
-        formal_coordinate_cids=(),
     )
     result = call.force_floor(
         None, owner="construct_manager_behavior", project_callsite=False
