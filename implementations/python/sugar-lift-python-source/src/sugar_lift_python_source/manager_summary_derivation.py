@@ -383,6 +383,7 @@ def populate_source_derived_resource_refs(
     path,
     distribution_index=None,
     artifact_graph_cache: dict | None = None,
+    source_frame_cache: dict | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows."""
     import importlib.metadata
@@ -464,13 +465,13 @@ def populate_source_derived_resource_refs(
         if len(distributions) != 1:
             _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
             continue
-        distribution = (
-            importlib.metadata.distribution(distributions[0])
-            if distribution_index is None
-            else distribution_index[top_level]
-        )
         graph = graphs.get(top_level)
         if graph is None:
+            distribution = (
+                importlib.metadata.distribution(distributions[0])
+                if distribution_index is None
+                else distribution_index[top_level]
+            )
             graph = DependencyArtifactGraph.authenticate(distribution)
             graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph)
@@ -529,6 +530,7 @@ def populate_source_derived_resource_refs(
             actuals=tuple(actuals),
             keyword_actuals=tuple(keyword_actuals),
             call_site=call.fragment,
+            source_frame_cache=source_frame_cache,
         )
         from .manager_construction import ConstructedManagerBehaviorV1
         from .manager_protocol_construction import ConstructedManagerProtocolV1

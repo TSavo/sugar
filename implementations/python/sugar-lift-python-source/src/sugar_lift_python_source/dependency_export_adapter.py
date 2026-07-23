@@ -10,6 +10,7 @@ this adapter (same residual pattern as ``source_tables_adapter``).
 from __future__ import annotations
 
 import ast
+import functools
 from typing import Any, Literal
 
 from .canonical import blake3_512_of
@@ -52,13 +53,10 @@ def resolve_export(
         return _gap(
             "artifact-module-absent", binding_cid, graph, module_name, exported_name
         )
-    tree = parsed_tree(module.source, module.source_seat)
-    binding = _export_block(tree.body, exported_name, None)
-    dynamic_getattr = any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "__getattr__"
-        for node in tree.body
-    )
+    selected = _module_export(module, exported_name)
+    if selected is None:
+        return _gap("opaque-source", binding_cid, graph, module_name, exported_name)
+    binding, dynamic_getattr = selected
     if binding is not None and binding[0] == "definition":
         definition = _definition(module, binding[1])
         return ResolvedPythonObjectV1(
@@ -128,6 +126,22 @@ def resolve_export(
         module_name,
         exported_name,
     )
+
+
+@functools.lru_cache(maxsize=512)
+def _module_export(module, exported_name: str):
+    """Content-keyed finite cache of one module's structural export transfer."""
+    try:
+        tree = parsed_tree(module.source, module.source_seat)
+    except (SyntaxError, ValueError):
+        return None
+    binding = _export_block(tree.body, exported_name, None)
+    dynamic_getattr = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "__getattr__"
+        for node in tree.body
+    )
+    return binding, dynamic_getattr
 
 
 def _definition(
@@ -276,10 +290,16 @@ def _export_block(statements, name, initial):
 
 
 def _suite_binds_export(statements, name: str) -> bool:
+    return _suite_binds_export_cached(tuple(statements), name)
+
+
+@functools.lru_cache(maxsize=8192)
+def _suite_binds_export_cached(statements: tuple[ast.stmt, ...], name: str) -> bool:
     marker = object()
     return _export_block(statements, name, marker) is not marker
 
 
+@functools.lru_cache(maxsize=4096)
 def _statement_contains_module_init_raise(statement: ast.AST) -> bool:
     stack: list[ast.AST] = [statement]
     while stack:
@@ -440,8 +460,10 @@ def _pattern_binds(pattern: ast.pattern, name: str) -> bool:
     )
 
 
-def _statement_walrus_binds(statement: ast.AST, name: str) -> bool:
-    """Find module-scope named expressions without entering nested scopes/suites."""
+@functools.lru_cache(maxsize=4096)
+def _statement_walrus_bound_names(statement: ast.AST) -> frozenset[str]:
+    """Find all module-scope named-expression bindings in one structural scan."""
+    names: set[str] = set()
     stack = list(ast.iter_child_nodes(statement))
     while stack:
         node = stack.pop()
@@ -451,10 +473,15 @@ def _statement_walrus_binds(statement: ast.AST, name: str) -> bool:
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
         ):
             continue
-        if isinstance(node, ast.NamedExpr) and _target_binds(node.target, name):
-            return True
+        if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
         stack.extend(ast.iter_child_nodes(node))
-    return False
+    return frozenset(names)
+
+
+def _statement_walrus_binds(statement: ast.AST, name: str) -> bool:
+    """Test a lexical lookup key against the statement's structural bindings."""
+    return name in _statement_walrus_bound_names(statement)
 
 
 def _cannot_raise_during_module_init(statement: ast.AST) -> bool:
@@ -478,7 +505,3 @@ def _cannot_raise_during_module_init(statement: ast.AST) -> bool:
         or any(parameter.annotation is not None for parameter in parameters)
         or getattr(statement, "type_params", ())
     )
-
-
-
-

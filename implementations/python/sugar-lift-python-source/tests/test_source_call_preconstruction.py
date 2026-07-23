@@ -121,6 +121,40 @@ def test_renamed_cross_file_call_installs_source_frame_and_constructs_return(
     assert nested_result.statements == (ReturnValue(TermValue(17)),)
 
 
+def test_repeated_calls_reuse_one_authenticated_distribution_lookup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "def arbitrary_helper(value=17):\n    return value\n",
+    )
+    path, source_file, _context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper\n"
+        "arbitrary_helper()\n"
+        "arbitrary_helper()\n",
+    )
+    lookups = 0
+
+    monkeypatch.setattr(
+        importlib.metadata,
+        "packages_distributions",
+        lambda: {"unprivileged": ("unprivileged-dist",)},
+    )
+
+    def selected_distribution(name: str):
+        nonlocal lookups
+        lookups += 1
+        assert name == "unprivileged-dist"
+        return distribution
+
+    monkeypatch.setattr(importlib.metadata, "distribution", selected_distribution)
+
+    populate_source_visible_call_frames(source_file, root=tmp_path, path=path)
+
+    assert lookups == 1
+
+
 def test_source_visible_function_with_opaque_child_stays_typed_loud(
     tmp_path: Path,
 ) -> None:

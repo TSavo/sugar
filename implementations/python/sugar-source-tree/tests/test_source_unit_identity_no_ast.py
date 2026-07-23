@@ -127,13 +127,36 @@ def test_exception_type_identity_truthful_arms():
     identity = sf.unit.exception_type_identity(name)
     assert identity is not None
     assert identity.args[0].value == "source-class"
-    class_def = next(n for n in sf.root.walk() if n.kind == "ClassDef" and n.name == "MyErr")
+    class_def = next(
+        n for n in sf.root.walk() if n.kind == "ClassDef" and n.name == "MyErr"
+    )
     lc = class_def.line_col_span()
     expected = (
         f"{sf.unit.source_cid}:{lc.start_line}:{lc.start_col}:"
         f"{lc.end_line}:{lc.end_col}"
     )
     assert identity.args[1].value == expected
+
+
+def test_exception_identity_reuses_content_local_structural_testimony(monkeypatch):
+    sf, name = _raise_name("def arbitrary():\n    raise ValueError\n", "ValueError")
+    node_type = type(sf.root).__mro__[1]
+    original = node_type.walk
+    walks = 0
+
+    def counted(self):
+        nonlocal walks
+        if self is sf.root:
+            walks += 1
+        return original(self)
+
+    monkeypatch.setattr(node_type, "walk", counted)
+    first = sf.unit.exception_type_identity(name)
+    assert first is not None
+    assert walks == 1
+    second = sf.unit.exception_type_identity(name)
+    assert second == first
+    assert walks == 1
 
 
 def test_exception_type_identity_lying_arms_stay_loud():

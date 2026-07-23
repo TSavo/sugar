@@ -39,6 +39,7 @@ def populate_source_visible_call_frames(
     path: Path,
     distribution_index=None,
     artifact_graph_cache: dict | None = None,
+    source_frame_cache: dict | None = None,
 ) -> None:
     """Populate exact-use source frames and one closed classification row."""
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
@@ -77,13 +78,13 @@ def populate_source_visible_call_frames(
                 SourceCallPreconstructionGapV1(kind, coordinate, top_level)
             )
             continue
-        distribution = (
-            importlib.metadata.distribution(distributions[0])
-            if distribution_index is None
-            else distribution_index[top_level]
-        )
         graph = graphs.get(top_level)
         if graph is None:
+            distribution = (
+                importlib.metadata.distribution(distributions[0])
+                if distribution_index is None
+                else distribution_index[top_level]
+            )
             try:
                 graph = DependencyArtifactGraph.authenticate(distribution)
             except DependencyArtifactAuthenticationError as exc:
@@ -112,7 +113,9 @@ def populate_source_visible_call_frames(
         from sugar_source_tree.panic import SugarNotWritten
 
         try:
-            frame_result = resolve_source_visible_frame(resolved, graph=graph)
+            frame_result = resolve_source_visible_frame(
+                resolved, graph=graph, frame_cache=source_frame_cache
+            )
         except SugarNotWritten as exc:
             context.source_call_resolutions[coordinate] = (
                 SourceCallPreconstructionGapV1("source-body-gap", coordinate, str(exc))

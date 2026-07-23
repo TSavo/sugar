@@ -37,19 +37,23 @@ def production_source_file(
     source_file = SourceFile(
         path_source(str(path)), reporter=reporter, construction_context=context
     )
+    graphs = {} if artifact_graph_cache is None else artifact_graph_cache
+    frames = {}
     populate_source_visible_call_frames(
         source_file,
         root=root,
         path=path,
         distribution_index=distribution_index,
-        artifact_graph_cache=artifact_graph_cache,
+        artifact_graph_cache=graphs,
+        source_frame_cache=frames,
     )
     populate_source_derived_resource_refs(
         source_file,
         root=root,
         path=path,
         distribution_index=distribution_index,
-        artifact_graph_cache=artifact_graph_cache,
+        artifact_graph_cache=graphs,
+        source_frame_cache=frames,
     )
     _install_unresolved_source_derived_gaps(source_file)
     return source_file

@@ -152,6 +152,9 @@ class SourceUnit:
     # Bound by SourceFile after the backend materializes the Module — the sole
     # structural authority for module-body identity. Never a second parse.
     typed_module: object = field(init=False, default=None)
+    _exception_identity_cache: dict[tuple, object | None] = field(
+        init=False, default_factory=dict, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -263,6 +266,24 @@ class SourceUnit:
         Structural authority is the already-materialized typed Module plus the
         unit's CPython ``symtable`` (function scope flags). No second parse.
         """
+        span = node.line_col_span()
+        cache_key = (
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+            node.id,
+        )
+        missing = object()
+        cached = self._exception_identity_cache.get(cache_key, missing)
+        if cached is not missing:
+            return cached
+        result = self._exception_type_identity_uncached(node)
+        self._exception_identity_cache[cache_key] = result
+        return result
+
+    def _exception_type_identity_uncached(self, node: "Name"):
+        """Compute identity from this unit's authenticated typed tree once."""
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             BUILTIN_EXCEPTION_NAMES,

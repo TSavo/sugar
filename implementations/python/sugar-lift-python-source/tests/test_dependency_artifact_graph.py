@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import ast
 from dataclasses import replace
 import importlib.metadata
 import json
@@ -137,6 +138,128 @@ def test_dynamic_export_stays_a_typed_loud_gap(tmp_path: Path) -> None:
     assert result.kind == "dynamic-export"
     assert result.import_binding_cid.startswith("blake3-512:")
     assert result.distribution_artifact_cid == graph.distribution_artifact_cid
+
+
+def test_unrelated_unparseable_module_does_not_poison_authenticated_export(
+    tmp_path: Path,
+) -> None:
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="def build(value):\n    return value\n",
+        implementation_source="def broken(:\n",
+    )
+
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "example_pkg"
+    assert graph.modules["example_pkg.implementation"].source_cid.startswith(
+        "blake3-512:"
+    )
+
+
+def test_selected_unparseable_module_is_typed_loud_not_a_raw_parser_crash(
+    tmp_path: Path,
+) -> None:
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source="def build(:\n",
+    )
+
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "opaque-source"
+
+
+def test_repeated_export_resolution_reuses_content_keyed_transfer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sugar_lift_python_source.dependency_export_adapter as adapter
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="def build(value):\n    return value\n",
+        implementation_source="def other(value):\n    return value\n",
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    demand = _demand(tmp_path)
+    original = adapter._export_block
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    adapter._module_export.cache_clear()
+    monkeypatch.setattr(adapter, "_export_block", counted)
+
+    assert isinstance(resolve_import_binding(demand, graph=graph), ResolvedPythonObjectV1)
+    assert isinstance(resolve_import_binding(demand, graph=graph), ResolvedPythonObjectV1)
+    assert calls == 1
+
+
+def test_walrus_binding_scan_is_reused_for_every_export_name(monkeypatch) -> None:
+    import sugar_lift_python_source.dependency_export_adapter as adapter
+
+    statement = ast.parse("payload = [(bound := item) for item in values]").body[0]
+    original = adapter.ast.iter_child_nodes
+    calls = 0
+
+    def counted(node):
+        nonlocal calls
+        calls += 1
+        return original(node)
+
+    monkeypatch.setattr(adapter.ast, "iter_child_nodes", counted)
+    assert adapter._statement_walrus_binds(statement, "bound")
+    after_first = calls
+    assert not adapter._statement_walrus_binds(statement, "unrelated")
+    assert calls == after_first
+
+
+def test_module_init_raise_scan_is_reused_for_every_export_name(monkeypatch) -> None:
+    import sugar_lift_python_source.dependency_export_adapter as adapter
+
+    statement = ast.parse("if enabled:\n    raise RuntimeError()\n").body[0]
+    original = adapter.ast.iter_child_nodes
+    calls = 0
+
+    def counted(node):
+        nonlocal calls
+        calls += 1
+        return original(node)
+
+    adapter._statement_contains_module_init_raise.cache_clear()
+    monkeypatch.setattr(adapter.ast, "iter_child_nodes", counted)
+    assert adapter._statement_contains_module_init_raise(statement)
+    after_first = calls
+    assert adapter._statement_contains_module_init_raise(statement)
+    assert calls == after_first
+
+
+def test_exceptional_suffix_transfer_is_reused(monkeypatch) -> None:
+    import sugar_lift_python_source.dependency_export_adapter as adapter
+
+    statements = tuple(ast.parse("if enabled:\n    exported = build()\n").body)
+    original = adapter._export_block
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    adapter._suite_binds_export_cached.cache_clear()
+    monkeypatch.setattr(adapter, "_export_block", counted)
+    assert adapter._suite_binds_export(statements, "exported")
+    after_first = calls
+    assert adapter._suite_binds_export(statements, "exported")
+    assert calls == after_first
 
 
 def test_real_pytest_reexport_resolves_without_manager_name_recognition(

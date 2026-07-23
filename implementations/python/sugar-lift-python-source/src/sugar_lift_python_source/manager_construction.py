@@ -111,6 +111,7 @@ def construct_manager_behavior(
     actuals: tuple[ConstructedCallActualV1, ...],
     keyword_actuals: tuple[tuple[str, ConstructedCallActualV1], ...] = (),
     call_site: object | None = None,
+    source_frame_cache: dict | None = None,
 ) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
     """Construct one resolved callable through SourceFile -> Node -> Sugar only."""
     if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
@@ -123,7 +124,9 @@ def construct_manager_behavior(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
 
-    frame_result = resolve_source_visible_frame(resolved, graph=graph)
+    frame_result = resolve_source_visible_frame(
+        resolved, graph=graph, frame_cache=source_frame_cache
+    )
     if isinstance(frame_result, ManagerConstructionGapV1):
         return frame_result
     frame, _target = frame_result
@@ -216,6 +219,7 @@ def resolve_source_visible_frame(
     resolved: ResolvedPythonObjectV1,
     *,
     graph: DependencyArtifactGraph,
+    frame_cache: dict | None = None,
 ) -> tuple[object, Node] | ManagerConstructionGapV1:
     """Resolve one authenticated definition into the ordinary source frame.
 
@@ -231,6 +235,8 @@ def resolve_source_visible_frame(
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
+    if frame_cache is not None and resolved.cid in frame_cache:
+        return frame_cache[resolved.cid]
     context = TreeConstructionContextV1.for_source_call_construction()
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
@@ -245,8 +251,12 @@ def resolve_source_visible_frame(
         (item for item in definitions if _matches_definition(item, resolved)), None
     )
     if target is None:
-        return ManagerConstructionGapV1(
-            "definition-missing", resolved.cid, "resolved definition coordinate"
+        return _remember_frame_result(
+            frame_cache,
+            resolved.cid,
+            ManagerConstructionGapV1(
+                "definition-missing", resolved.cid, "resolved definition coordinate"
+            ),
         )
 
     definition_names = {item.name for item in definitions}
@@ -257,8 +267,12 @@ def resolve_source_visible_frame(
             if call.func.id not in definition_names
         )
         if opaque:
-            return ManagerConstructionGapV1(
-                "opaque-call-target", resolved.cid, opaque[0]
+            return _remember_frame_result(
+                frame_cache,
+                resolved.cid,
+                ManagerConstructionGapV1(
+                    "opaque-call-target", resolved.cid, opaque[0]
+                ),
             )
 
     frames: dict[str, object] = {}
@@ -290,8 +304,12 @@ def resolve_source_visible_frame(
                 if call.func.id not in definition_names
             )
             if opaque:
-                return ManagerConstructionGapV1(
-                    "opaque-call-target", resolved.cid, opaque[0]
+                return _remember_frame_result(
+                    frame_cache,
+                    resolved.cid,
+                    ManagerConstructionGapV1(
+                        "opaque-call-target", resolved.cid, opaque[0]
+                    ),
                 )
             unresolved = tuple(
                 call.func.id
@@ -308,15 +326,32 @@ def resolve_source_visible_frame(
             pending.remove(function)
             progressed = True
         if not progressed:
-            return ManagerConstructionGapV1(
-                "opaque-call-target", resolved.cid, "recursive source call graph"
+            return _remember_frame_result(
+                frame_cache,
+                resolved.cid,
+                ManagerConstructionGapV1(
+                    "opaque-call-target", resolved.cid, "recursive source call graph"
+                ),
             )
     frame = frames.get(target.name)
     if frame is None:
-        return ManagerConstructionGapV1(
-            "definition-missing", resolved.cid, "ordinary source call frame"
+        return _remember_frame_result(
+            frame_cache,
+            resolved.cid,
+            ManagerConstructionGapV1(
+                "definition-missing", resolved.cid, "ordinary source call frame"
+            ),
         )
-    return frame, target
+    result = (frame, target)
+    if frame_cache is not None:
+        frame_cache[resolved.cid] = result
+    return result
+
+
+def _remember_frame_result(frame_cache, resolved_cid, result):
+    if frame_cache is not None:
+        frame_cache[resolved_cid] = result
+    return result
 
 
 def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:
