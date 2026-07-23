@@ -6880,6 +6880,7 @@ class LoopRecurrenceStatement(Statement):
     construction: object
     target_cid: str
     binding_coordinate_cids: tuple[str, ...]
+    outward_faces: tuple[object, ...]
     _child_fields = ("loop",)
 
     def substitute(self, scope):
@@ -6895,6 +6896,8 @@ class LoopRecurrenceStatement(Statement):
             self.target_cid,
             self.construction.loop_construction_cid,
             self.binding_coordinate_cids,
+            self.outward_faces,
+            self.construction,
             self.fragment,
         )
 

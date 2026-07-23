@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import SymbolicValue
-from sugar_lift_py_tests.ir import atomic, ctor, str_const
+from sugar_lift_py_tests.ir import atomic, ctor, not_, or_, str_const
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
@@ -41,6 +41,8 @@ class LoopRecurrenceSugar(Sugar):
     target_cid: str
     loop_construction_cid: str
     binding_coordinate_cids: tuple[str, ...]
+    outward_faces: tuple[object, ...]
+    construction: object = field(compare=False)
     site: object = field(compare=False)
 
     @classmethod
@@ -48,7 +50,6 @@ class LoopRecurrenceSugar(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        del ctx
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
@@ -65,4 +66,35 @@ class LoopRecurrenceSugar(Sugar):
                 symbol_kind="coordinate",
             )
             recurrences.append(InvValue(atomic("=", [h, step]), self.site))
-        return Complete(BlockValue(tuple(recurrences), can_fall_through=True))
+        recurrence = BlockValue(tuple(recurrences), can_fall_through=True)
+        if not self.outward_faces:
+            return Complete(recurrence)
+
+        from sugar_lift_py_tests.floor import ReturnValue
+        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, Incomplete
+
+        halted_guards = [face.guard for face in self.outward_faces]
+        completed_guard = not_(
+            halted_guards[0]
+            if len(halted_guards) == 1
+            else or_(halted_guards)
+        )
+        exits = [Completed(completed_guard, recurrence)]
+        for face in self.outward_faces:
+            outcome = face.statement_sugar.desugar(ctx)
+            if isinstance(outcome, Complete) and isinstance(outcome.value, ReturnValue):
+                exits.append(
+                    Completed(
+                        face.guard,
+                        BlockValue((outcome.value,), can_fall_through=False),
+                    )
+                )
+            elif isinstance(outcome, Incomplete):
+                exits.append(Halted(face.guard, outcome.effect, recurrence))
+            else:
+                from sugar_source_tree.binding_state import BindingStateWireGap
+
+                raise BindingStateWireGap(
+                    "loop outward face did not construct return or raise testimony"
+                )
+        return ExitSet(tuple(exits)).normalize()
