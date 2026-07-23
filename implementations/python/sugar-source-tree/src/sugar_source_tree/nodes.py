@@ -56,14 +56,17 @@ from .panic import (
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import LineColSpan, LineTable, Span
 from .binding_state import (
+    BindingEntryV1,
     BindingMap,
     BindingState,
     BranchResultSlot,
     GuardedBinding,
+    RuntimeBindingEntryFactoryV1,
     UnboundBinding,
     binding_state_read_node,
     branch_result_slot,
     join_binding_state,
+    unwrap_binding_state,
 )
 
 # Scope metadata travels beside temporal bindings under an unforgeable key.
@@ -71,12 +74,13 @@ from .binding_state import (
 # formal without substituting a fake value for that formal.
 _LEXICALLY_BOUND_NAMES = object()
 _FUNCTION_PARAMETERS = object()
+_BINDING_ENTRY_FACTORY = object()
 _MISSING = object()
 
 
 def _explicit_state(name: str, state, make_formal_ref):
     if name in state:
-        return state[name]
+        return unwrap_binding_state(state[name])
     if name in state.get(_FUNCTION_PARAMETERS, frozenset()):
         return make_formal_ref(name)
     return _MISSING
@@ -651,6 +655,52 @@ class Node(Typed):
         new_items, changed, _net = self._substitute_body_tracked(statements, scope)
         return new_items, changed
 
+    def _binding_entries(self, binding, scope: BindingMap):
+        if not binding:
+            return binding
+        factory = scope.get(_BINDING_ENTRY_FACTORY)
+        if not isinstance(factory, RuntimeBindingEntryFactoryV1):
+            # External/unit callers may substitute isolated expressions without
+            # opening a function binding scope.  They do not create a runtime
+            # BindingMap; production function substitution always has a factory.
+            return binding
+        wrapped = {}
+        for local_index, (name, state) in enumerate(binding.items()):
+            if isinstance(state, BindingEntryV1):
+                wrapped[name] = state
+                continue
+            site, path = self._binding_site_and_path(name, local_index)
+            wrapped[name] = factory.mint_entry(
+                binding_site=site,
+                projection_path=path,
+                state=state,
+            )
+        return wrapped
+
+    def _binding_site_and_path(self, name: str, ordinal: int):
+        candidates = []
+        targets = getattr(self, "targets", None)
+        if isinstance(targets, tuple):
+            for target_index, target in enumerate(targets):
+                for projection_index, node in enumerate(target.walk()):
+                    if isinstance(node, Name) and node.id == name:
+                        candidates.append(
+                            (
+                                node.fragment,
+                                ("targets", target_index, "projection", projection_index),
+                            )
+                        )
+        target = getattr(self, "target", None)
+        if isinstance(target, Node):
+            for projection_index, node in enumerate(target.walk()):
+                if isinstance(node, Name) and node.id == name:
+                    candidates.append(
+                        (node.fragment, ("target", "projection", projection_index))
+                    )
+        if ordinal < len(candidates):
+            return candidates[ordinal]
+        return self.fragment, ("constructed-projection", ordinal)
+
     def _substitute_body_tracked(self, statements: tuple, scope: BindingMap):
         """Substitute a statement sequence, THREADING each statement's binding:
         an assignment binds its name to its substituted rhs for the rest of the
@@ -688,6 +738,7 @@ class Node(Typed):
                 new_items.append(produced_stmt)
                 binding = produced_stmt.substitution_binding(scope)
                 if binding:
+                    binding = produced_stmt._binding_entries(binding, scope)
                     scope = {**scope, **binding}
                 # walrus bindings nested in the statement's expressions leak out
                 # to the enclosing block (their scope is the containing function).
@@ -695,9 +746,11 @@ class Node(Typed):
                     if node.kind == "NamedExpr":
                         wb = node.substitution_binding(scope)
                         if wb:
+                            wb = node._binding_entries(wb, scope)
                             scope = {**scope, **wb}
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
-                scope = {**scope, **new_stmt.bindings}
+                projected = stmt._binding_entries(new_stmt.bindings, scope)
+                scope = {**scope, **projected}
         net = {k: v for k, v in scope.items() if initial.get(k) is not v}
         return (tuple(new_items) if changed else statements), changed, net
 
@@ -1248,7 +1301,22 @@ class FunctionDef(Statement):
             with reduction_span(sugar="Substitute", role="temporal", site=where):
                 # Substitute the body against an empty scope: formals are masked
                 # (stay free -> symbolic), locals thread/inline, phis -> IfExps.
-                substituted = self.substitute({})
+                from sugar_lift_python_source.canonical import cid_of_json
+
+                scope_owner_cid = cid_of_json(
+                    {
+                        "kind": "binding-scope-owner",
+                        "schemaVersion": "1",
+                        "source": self.fragment.seal().to_dict(),
+                    }
+                )
+                substituted = self.substitute(
+                    {
+                        _BINDING_ENTRY_FACTORY: RuntimeBindingEntryFactoryV1(
+                            scope_owner_cid
+                        )
+                    }
+                )
             with reduction_span(sugar="Construct", role="construction", site=where):
                 bridge_source_symbol = None
                 context = self.unit.construction_context
@@ -1607,6 +1675,7 @@ class AugAssign(Statement):
             return None
         name = self.target.id
         old_state = scope.get(name, self.target)
+        old_state = unwrap_binding_state(old_state)
         old_read = binding_state_read_node(
             old_state,
             make_read=self.target._make_binding_read,
@@ -1904,6 +1973,7 @@ class For(Statement):
         init = scope.get(name.id)
         if init is None:
             return None  # no pre-loop value to seed the fold
+        init = unwrap_binding_state(init)
         op = value.op.kind
         fold = self._make_call(self._make_name(f"py.fold.{op}"), (init, self.iter))
         return {name.id: fold}
@@ -4465,6 +4535,7 @@ class Name(Expression):
         bound = scope.get(self.id, _MISSING)
         if bound is _MISSING:
             return self
+        bound = unwrap_binding_state(bound)
         if isinstance(bound, Node):
             return bound
         return self._make_binding_read(bound)
@@ -4532,6 +4603,7 @@ def _construct_binding_projection(state):
         UnboundProjection,
     )
 
+    state = unwrap_binding_state(state)
     if isinstance(state, Node):
         return state.sugar()
     if isinstance(state, UnboundBinding):
