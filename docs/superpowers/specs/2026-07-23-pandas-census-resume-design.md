@@ -54,4 +54,3 @@ or host interruption and is not rebased or restarted when later changes merge.
    crash did not abort the run.
 3. Foreign-CID, duplicate, malformed, and incomplete checkpoints remain loud.
 4. Reconciliation refuses divergent manifests or any incomplete floor.
-
