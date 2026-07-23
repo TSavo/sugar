@@ -176,13 +176,19 @@ class AuthenticatedImportUseV1:
                 raise ValueError(f"authenticated demand has stale {key}")
 
     def revalidate(self) -> None:
-        """Re-run #6090 and demand byte identity at the resolution door."""
-        rows, outcomes = authenticated_import_uses(
+        """Demand byte identity against one shared #6090 snapshot per module.
+
+        Full-module lexical recompute is amortized: many receipts from one
+        consumer module share one ``authenticated_import_uses`` pass.  Byte
+        identity is unchanged — only recompute frequency (see
+        docs/audits/pandas-recensus-latency-bisect.md).
+        """
+        rows, outcomes = _lexical_revalidation_snapshot(
             self.root,
             self.path,
             self.source,
             self.source_cid,
-            module_identities=self.module_identities,
+            self.module_identities,
         )
         site = self.use["useSite"]
         key = (
@@ -666,6 +672,48 @@ def _final_module_state(
         analyze_nested=False,
     )
     return prepass.statements(module.body, {}, module)
+
+
+# Shared #6090 snapshot for revalidation only.  Keyed by consumer module
+# content + identities map so many receipts share one full-module pass.
+# See docs/audits/pandas-recensus-latency-bisect.md.
+_REVALIDATION_SNAPSHOTS: dict[
+    tuple[str, str, str, str],
+    tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]],
+] = {}
+
+
+def clear_lexical_revalidation_snapshots() -> None:
+    """Drop amortized revalidation snapshots (tests / hermetic process reuse)."""
+    _REVALIDATION_SNAPSHOTS.clear()
+
+
+def _lexical_revalidation_snapshot(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
+    """One full-module #6090 pass per consumer module for revalidation."""
+    cache_key = (
+        str(root.resolve()),
+        str(path.resolve()),
+        source_cid,
+        _hash(module_identities),
+    )
+    hit = _REVALIDATION_SNAPSHOTS.get(cache_key)
+    if hit is not None:
+        return hit
+    rows, outcomes = authenticated_import_uses(
+        root,
+        path,
+        source,
+        source_cid,
+        module_identities=module_identities,
+    )
+    _REVALIDATION_SNAPSHOTS[cache_key] = (rows, outcomes)
+    return rows, outcomes
 
 
 def authenticated_import_uses(
