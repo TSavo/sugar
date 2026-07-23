@@ -475,10 +475,7 @@ pub fn fold_kit_to_pool(
             .map(context_manager_demand_from_wire)
             .collect::<Result<Vec<_>, _>>()?;
         let table = ResolvedContractRefsV1::new(&catalog, &demands);
-        let legacy_membrane_refs = kit
-            .legacy_membrane_tokens(workspace_root)
-            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
-        kit.bind_contract_refs(&table.to_wire_value(), &legacy_membrane_refs)
+        kit.bind_contract_refs(&table.to_wire_value())
             .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
         active_cm_preconstruction = Some((catalog, table));
     }

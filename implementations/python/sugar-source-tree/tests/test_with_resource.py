@@ -16,7 +16,7 @@ import pytest
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
-from with_authority_fixture import source_file_with_preconstruction
+from with_resolution_fixture import source_file_with_preconstruction
 
 
 def _fn(src: str):
@@ -24,10 +24,6 @@ def _fn(src: str):
         f.write("import pytest\nimport contextlib\n" + src)
         path = f.name
     return next(source_file_with_preconstruction(Path(path)).functions())
-
-
-def _val(src: str):
-    return _fn(src).sugar().desugar().value
 
 
 def test_resource_open_is_runtime_selected_named_residual():
@@ -55,23 +51,22 @@ def test_resource_named_residual_distinct_from_bare_sugar_not_written():
     assert issubclass(type(ei.value), SugarNotWritten)
 
 
-def test_assertion_manager_pytest_raises_still_lifts():
-    v = _val(
-        "def A(z):\n    with pytest.raises(ValueError):\n        raise ValueError\n"
-        "    return z\n"
-    )
-    inv = v.invs()[0]
-    assert inv.name == "="
-    assert inv.args[0].value == inv.args[1].value == "ValueError"
-    assert v.post().args[1].name == "z"
+def test_assertion_manager_without_provider_contract_is_typed_loud():
+    with pytest.raises(SugarNotWritten) as caught:
+        _fn(
+            "def A(z):\n    with pytest.raises(ValueError):\n        raise ValueError\n"
+            "    return z\n"
+        ).sugar()
+    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
 
 
-def test_suppress_manager_still_lifts():
-    v = _val(
-        "def A(z):\n    with contextlib.suppress(KeyError):\n        raise KeyError\n"
-        "    return z\n"
-    )
-    assert v.invs() == () and v.post().args[1].name == "z"
+def test_suppress_manager_without_provider_contract_is_typed_loud():
+    with pytest.raises(SugarNotWritten) as caught:
+        _fn(
+            "def A(z):\n    with contextlib.suppress(KeyError):\n        raise KeyError\n"
+            "    return z\n"
+        ).sugar()
+    assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
 
 
 def test_with_item_parametric_exit_uses_manager_ref_and_exit_refs():

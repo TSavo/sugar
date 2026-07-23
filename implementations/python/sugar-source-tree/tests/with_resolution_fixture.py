@@ -1,4 +1,4 @@
-"""Test-only driver for the production preconstruction With authority boundary."""
+"""Test-only driver for the sole preconstruction With resolution table."""
 
 from types import MappingProxyType
 from pathlib import Path
@@ -13,14 +13,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
     _hash_json,
 )
-from sugar_lift_py_tests.lift_rpc import (
-    _context_manager_demand_rows,
-    _legacy_membrane_token_rows,
-)
-from sugar_lift_py_tests.with_manager_authority import (
-    WithManagerAuthoritiesV1,
-    _decode_legacy_ref,
-)
+from sugar_lift_py_tests.lift_rpc import _context_manager_demand_rows
 from sugar_source_tree.tree import SourceFile
 
 
@@ -29,7 +22,7 @@ def _cid(fill: str) -> str:
 
 
 def source_file_with_preconstruction(path):
-    isolated = Path(tempfile.mkdtemp(prefix="sugar-with-authority-")) / path.name
+    isolated = Path(tempfile.mkdtemp(prefix="sugar-with-resolution-")) / path.name
     shutil.copyfile(path, isolated)
     path = isolated
     resolutions = {}
@@ -45,9 +38,7 @@ def source_file_with_preconstruction(path):
     refs = ResolvedContractRefsV1(
         _cid("c"), _cid("t"), MappingProxyType(resolutions)
     )
-    tokens = tuple(_decode_legacy_ref(row) for row in _legacy_membrane_token_rows(path.parent))
-    authorities = WithManagerAuthoritiesV1.assemble(refs, tokens)
     return SourceFile(
         path_source(str(path)),
-        construction_context=TreeConstructionContextV1(refs, authorities),
+        construction_context=TreeConstructionContextV1(refs),
     )

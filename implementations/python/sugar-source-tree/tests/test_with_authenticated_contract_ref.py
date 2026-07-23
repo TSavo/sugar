@@ -20,12 +20,6 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-from sugar_lift_py_tests.sugar.with_contract_sugar import WithContractSugar
-from sugar_lift_py_tests.context_manager_contract import EffectMatcher, Expects
-from sugar_lift_py_tests.with_manager_authority import (
-    AuthenticatedLegacyMembraneRefV1,
-    WithManagerAuthoritiesV1,
-)
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -96,7 +90,6 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(tmp_p
     )
     from sugar_lift_python_source.source_oracle import path_source
     import sugar_lift_py_tests.exit_disposition_proof as source_proof
-    import sugar_lift_py_tests.manifest_membrane as membrane
     from sugar_source_tree.nodes import Call
 
     manager_constructions = []
@@ -114,12 +107,6 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(tmp_p
         "prove_exit_disposition_from_manager_expr",
         lambda *_: (_ for _ in ()).throw(AssertionError("source proof invoked")),
     )
-    monkeypatch.setattr(
-        membrane,
-        "contract_for_manager",
-        lambda *_: (_ for _ in ()).throw(AssertionError("membrane invoked")),
-    )
-
     sugar = _function_sugar(path_source(str(path)), _resolved)
     resource = next(statement for statement in sugar.statements if isinstance(statement, WithResourceSugar))
     assert resource.contract_ref.member_cid == _cid("m")
@@ -141,9 +128,6 @@ def test_unresolved_ref_stays_typed_loud(tmp_path, monkeypatch):
     )
     from sugar_lift_python_source.source_oracle import path_source
     import sugar_lift_py_tests.exit_disposition_proof as source_proof
-    import sugar_lift_py_tests.manifest_membrane as membrane
-
-    monkeypatch.setattr(membrane, "contract_for_manager", lambda *_: pytest.fail("membrane invoked"))
     monkeypatch.setattr(source_proof, "prove_exit_disposition_from_manager_expr", lambda *_: pytest.fail("source proof invoked"))
 
     def unresolved(use_site):
@@ -159,47 +143,6 @@ def test_unresolved_ref_stays_typed_loud(tmp_path, monkeypatch):
         _function_sugar(path_source(str(path)), unresolved)
     assert type(caught.value).__name__ == "ContextManagerResolutionConstructionGap"
     assert caught.value.kind == "unresolved-symbol"
-
-
-def test_authenticated_legacy_token_routes_without_tree_name_lookup(tmp_path, monkeypatch):
-    path = tmp_path / "aliased.py"
-    path.write_text(
-        "from community import enrolled as renamed\n"
-        "def f():\n"
-        "    with renamed(ValueError) as caught:\n"
-        "        return caught\n"
-    )
-    from sugar_lift_python_source.source_oracle import path_source
-    import sugar_lift_py_tests.manifest_membrane as membrane
-
-    identity = path_source(str(path))
-    first = SourceFile(identity)
-    with_node = next(node for node in first.nodes() if node.kind == "With")
-    site = _coordinate(with_node.items[0].context_expr)
-    gap = ContextManagerResolutionGapV1(
-        _cid("d"), site, "context-manager:community.enrolled",
-        "unresolved-symbol", (),
-    )
-    refs = ResolvedContractRefsV1(
-        _cid("c"), _cid("t"), MappingProxyType({site: gap})
-    )
-    token = AuthenticatedLegacyMembraneRefV1.mint_from_authenticated_identity(
-        demand_cid=_cid("d"), use_site=site, manifest_cid=_cid("m"),
-        enrollment_cid=_cid("e"),
-        contract=Expects(EffectMatcher("raise", "ValueError"), "exception_info"),
-    )
-    authorities = WithManagerAuthoritiesV1.assemble(refs, (token,))
-    monkeypatch.setattr(
-        membrane, "contract_for_manager", lambda *_: pytest.fail("name lookup invoked")
-    )
-    source = SourceFile(
-        identity,
-        construction_context=TreeConstructionContextV1(refs, authorities),
-    )
-    sugar = next(source.functions()).sugar()
-    routed = next(stmt for stmt in sugar.statements if isinstance(stmt, WithContractSugar))
-    assert routed.contract == token.contract
-    assert routed.slot_id is not None
 
 
 def test_unsupported_semantics_gap_does_not_construct_resource(tmp_path):
