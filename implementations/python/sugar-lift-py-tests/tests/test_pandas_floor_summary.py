@@ -99,3 +99,15 @@ def test_different_corpus_identity_cannot_reconcile() -> None:
 
     assert result["measurement"] == "unmeasurable"
     assert "five floors do not name one identical corpus manifest" in result["errors"]
+
+
+def test_expected_denominator_and_exact_file_rows_are_required() -> None:
+    reports = {name: _floor(name) for name in RECONCILE.FLOORS}
+    reports["silent"]["rows"] = [
+        {"file": "renamed/other.py", "category": "completed"}
+    ]
+
+    result = RECONCILE.reconcile(reports, expected_files=1415)
+
+    assert "silent: per-site row identity failure" in result["errors"]
+    assert "silent: expected 1415 corpus files, got 1" in result["errors"]
