@@ -8,9 +8,14 @@ Construction IS correctness. The sole path is:
 Prebound authenticated contract refs may enter as construction context.
 **Green only when meaning is tree + prebound refs only.**
 
+Currency above adapters is only BackendNode / our Node / SourceFragment /
+prebound contract refs — never stdlib ``ast.AST``, never libcst nodes, never
+parser objects.
+
 This instrument names every current construction-path side door. There is no
 baseline, threshold, or allowlist. Exit 1 while R > 0. Prefer larger honest
-red over hollow green.
+red over hollow green. Do not allowlist remaining offenders (including
+``import_binding`` / ``contract_expression``) — they stay red until killed.
 
 Measure axes (combined R; every offender named by class):
 
@@ -18,21 +23,28 @@ Measure axes (combined R; every offender named by class):
    meaning via spelling membrane, ``community_context_managers.json``,
    ``contract_for_manager`` / ``default_community_manifest`` /
    ``manifest_membrane`` / ``row_for_spelling`` (or equivalent).
-2. **ast-semantic-above-adapter** — production code outside ``*_adapter.py``
-   using ``import ast`` / ``ast.parse`` / ``ast.walk`` / ``ast.NodeVisitor``
-   for semantic resolve/admit. Adapters may use ast. Scripts/audit/idd may
-   use ast only when they never feed construction (excluded by scan root).
-3. **dual-old-lifter** (optional axis) — production enumerate path still
-   imports the old ``lifter`` / ``bind_lifter`` construction door.
+2. **foreign-ast-import** — any ``import ast`` / ``from ast`` in production
+   packages outside ``*_adapter*.py`` under sugar-source-tree, sugar-lift-py-
+   tests (construction path; idd/audit_only excluded only as non-construction
+   audit surfaces), and sugar-lift-python-source while that body still feeds
+   lift_rpc / production. Each file with a foreign ast import is an offender
+   locus so R tells the truth about finishing construction.
+3. **ast-semantic-above-adapter** — production code outside ``*_adapter*.py``
+   using ``ast.parse`` / ``ast.walk`` / ``ast.NodeVisitor`` for semantic
+   resolve/admit after a foreign import. Adapters may use ast.
+4. **dual-old-lifter** — production enumerate path still imports the old
+   ``lifter`` / ``bind_lifter`` construction door.
 
-Self-test (``--self-test``) plants both membrane and ast twins and proves
-clean trees stay quiet. Live scan prints JSON with R and named offenders.
+Self-test (``--self-test``) plants membrane, foreign-ast-import, and
+ast-semantic twins and proves clean trees / adapters stay quiet. Live scan
+prints JSON with R and named offenders.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import json
 import sys
 import tempfile
@@ -81,7 +93,7 @@ _SIDE_DOOR_KINDS = frozenset(
     {
         "membrane-admission-api",
         "membrane-spelling-manifest",
-        "ast-semantic-import",
+        "foreign-ast-import",
         "ast-semantic-parse",
         "ast-semantic-walk",
         "ast-semantic-visitor",
@@ -100,7 +112,9 @@ _SKIP_DIR_NAMES = frozenset(
     }
 )
 
-_ADAPTER_SUFFIX = "_adapter.py"
+# Adapters may hold foreign parser objects. Match *_adapter*.py (not only
+# the trailing _adapter.py form) so tree_sitter_python_adapter etc. stay free.
+_ADAPTER_GLOB = "*_adapter*.py"
 
 
 def _rel_path(root: Path, path: Path) -> str:
@@ -128,7 +142,7 @@ def _qualified_name(node: ast.AST) -> str:
 
 
 def _is_adapter_path(path: Path) -> bool:
-    return path.name.endswith(_ADAPTER_SUFFIX)
+    return fnmatch.fnmatch(path.name, _ADAPTER_GLOB)
 
 
 def _should_skip_dir(path: Path) -> bool:
@@ -222,13 +236,16 @@ def _membrane_name_hits(node: ast.AST) -> list[tuple[str, str]]:
     return hits
 
 
-def _ast_semantic_hits(node: ast.AST) -> list[tuple[str, str]]:
-    """Return (kind-suffix, expression) for semantic-ast loci on this node."""
-    hits: list[tuple[str, str]] = []
+def _foreign_ast_import_expression(node: ast.AST) -> str | None:
+    """Return the import expression when node is import-ast / from-ast."""
     if _import_is_ast(node):
-        hits.append(("import", _safe_unparse(node)))
-        return hits
+        return _safe_unparse(node)
+    return None
 
+
+def _ast_semantic_hits(node: ast.AST) -> list[tuple[str, str]]:
+    """Return (kind-suffix, expression) for semantic-ast use (not the import)."""
+    hits: list[tuple[str, str]] = []
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
@@ -325,8 +342,24 @@ def scan_file(path: Path, *, rel: str) -> list[SideDoorOffender]:
                     )
                 )
 
-            # --- ast semantic above adapter ---
+            # --- foreign ast import / ast semantic above adapter ---
             if not is_adapter:
+                foreign_import = _foreign_ast_import_expression(node)
+                if foreign_import is not None:
+                    offenders.append(
+                        SideDoorOffender(
+                            path=rel,
+                            line=getattr(node, "lineno", 0) or 0,
+                            kind="foreign-ast-import",
+                            axis="foreign-ast-import",
+                            expression=foreign_import,
+                            note=(
+                                "currency above adapters is BackendNode / our Node / "
+                                "SourceFragment / prebound contract refs only — never "
+                                "stdlib ast; keep import ast behind *_adapter*.py"
+                            ),
+                        )
+                    )
                 for marker, expression in _ast_semantic_hits(node):
                     kind = f"ast-semantic-{marker}"
                     offenders.append(
@@ -474,7 +507,11 @@ def scan_roots(roots: Sequence[Path]) -> list[SideDoorOffender]:
 
 
 def default_production_roots(repo: Path | None = None) -> list[Path]:
-    """Production construction packages on the sole path (and its parasites)."""
+    """Production construction packages on the sole path (and its parasites).
+
+    Includes sugar-lift-python-source while that package still feeds lift_rpc /
+    production construction so every foreign-ast import there is named.
+    """
     kit = Path(__file__).resolve().parents[1]
     py = kit.parent
     # kit = .../sugar-lift-py-tests; py = .../python
@@ -484,6 +521,7 @@ def default_production_roots(repo: Path | None = None) -> list[Path]:
     return [
         kit / "src" / "sugar_lift_py_tests",
         py / "sugar-source-tree" / "src" / "sugar_source_tree",
+        py / "sugar-lift-python-source" / "src" / "sugar_lift_python_source",
     ]
 
 
@@ -498,6 +536,7 @@ def r_auditor_errors(offenders: Sequence[SideDoorOffender]) -> int:
 def r_by_axis(offenders: Sequence[SideDoorOffender]) -> dict[str, int]:
     axes = {
         "membrane-admission": 0,
+        "foreign-ast-import": 0,
         "ast-semantic-above-adapter": 0,
         "dual-old-lifter": 0,
     }
@@ -513,6 +552,7 @@ def format_report(offenders: Sequence[SideDoorOffender]) -> str:
     lines = [
         f"R_construction_side_doors = {r}",
         f"R_membrane_admission = {axes['membrane-admission']}",
+        f"R_foreign_ast_import = {axes['foreign-ast-import']}",
         f"R_ast_semantic_above_adapter = {axes['ast-semantic-above-adapter']}",
         f"R_dual_old_lifter = {axes['dual-old-lifter']}",
         f"auditor_errors = {r_auditor_errors(offenders)}",
@@ -546,7 +586,7 @@ def offenders_to_jsonable(offenders: Sequence[SideDoorOffender]) -> list[dict[st
 
 
 def discrimination_self_test() -> bool:
-    """Planted membrane + ast twins trip; clean trees stay quiet."""
+    """Planted membrane + foreign-ast + ast-semantic twins trip; clean stays quiet."""
     membrane_plant = '''
 from sugar_lift_py_tests.manifest_membrane import contract_for_manager
 
@@ -568,6 +608,12 @@ def resolve_exit(source: str):
             return node
     return None
 '''
+    from_ast_plant = '''
+from ast import parse, walk, NodeVisitor
+
+def resolve(source: str):
+    return parse(source)
+'''
     dual_plant = '''
 from sugar_lift_python_source.lifter import lift_source
 
@@ -584,39 +630,54 @@ def sugar_from_tree(node, prebound_refs):
         root.mkdir()
         (root / "membrane_door.py").write_text(membrane_plant, encoding="utf-8")
         (root / "ast_door.py").write_text(ast_plant, encoding="utf-8")
+        (root / "from_ast_door.py").write_text(from_ast_plant, encoding="utf-8")
         # dual-old-lifter only fires on enumerate-path basenames
         (root / "lift_rpc.py").write_text(dual_plant, encoding="utf-8")
         (root / "clean.py").write_text(clean, encoding="utf-8")
-        # adapter may use ast — must not trip
+        # adapter may use ast — must not trip (including *_adapter*.py form)
         (root / "cpython_adapter.py").write_text(
             "import ast\n\ndef parse(src):\n    return ast.parse(src)\n",
+            encoding="utf-8",
+        )
+        (root / "tree_sitter_python_adapter.py").write_text(
+            "import ast as _pyast\n\ndef parse(src):\n    return _pyast.parse(src)\n",
             encoding="utf-8",
         )
         planted = scan_roots((root,))
         r = r_construction_side_doors(planted)
         kinds = {row.kind for row in planted}
         axes = {row.axis for row in planted if row.kind in _SIDE_DOOR_KINDS}
+        axis_counts = r_by_axis(planted)
         clean_only = scan_file(root / "clean.py", rel="pkg/clean.py")
         adapter_only = scan_file(
             root / "cpython_adapter.py", rel="pkg/cpython_adapter.py"
         )
-        adapter_ast = [
-            row for row in adapter_only if row.kind.startswith("ast-semantic-")
+        adapter_mid = scan_file(
+            root / "tree_sitter_python_adapter.py",
+            rel="pkg/tree_sitter_python_adapter.py",
+        )
+        adapter_foreign = [
+            row
+            for row in adapter_only + adapter_mid
+            if row.kind == "foreign-ast-import"
+            or row.kind.startswith("ast-semantic-")
         ]
     return (
-        r >= 3
+        r >= 4
         and "membrane-admission-api" in kinds
         and "membrane-spelling-manifest" in kinds
-        and "ast-semantic-import" in kinds
+        and "foreign-ast-import" in kinds
         and "ast-semantic-parse" in kinds
         and "ast-semantic-walk" in kinds
         and "ast-semantic-visitor" in kinds
         and "dual-old-lifter" in kinds
         and "membrane-admission" in axes
+        and "foreign-ast-import" in axes
         and "ast-semantic-above-adapter" in axes
         and "dual-old-lifter" in axes
+        and axis_counts["foreign-ast-import"] >= 2  # import ast + from ast
         and r_construction_side_doors(clean_only) == 0
-        and adapter_ast == []
+        and adapter_foreign == []
         and r_auditor_errors(planted) == 0
     )
 
@@ -684,6 +745,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ok": r == 0 and err == 0,
         "R_construction_side_doors": r,
         "R_membrane_admission": axes["membrane-admission"],
+        "R_foreign_ast_import": axes["foreign-ast-import"],
         "R_ast_semantic_above_adapter": axes["ast-semantic-above-adapter"],
         "R_dual_old_lifter": axes["dual-old-lifter"],
         "auditor_errors": err,
@@ -696,6 +758,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "CONSTRUCTION-SIDE-DOOR LAW RED: "
             f"R={r}"
             f" membrane={axes['membrane-admission']}"
+            f" foreign_ast_import={axes['foreign-ast-import']}"
             f" ast_above_adapter={axes['ast-semantic-above-adapter']}"
             f" dual_old_lifter={axes['dual-old-lifter']}"
             + (f"; auditor_errors={err}" if err else "")
