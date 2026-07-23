@@ -1008,7 +1008,7 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
 /// fold adds the demanded SourceMemento and complete owner identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RecoveredFactoryPanicWire {
+struct RecoveredConstructionPanicWire {
     kind: String,
     status: String,
     reason: String,
@@ -1044,7 +1044,7 @@ struct RecoveredAuditLeafWire {
     kind: String,
     recovery_override: bool,
     status: String,
-    panics: Vec<RecoveredFactoryPanicWire>,
+    panics: Vec<RecoveredConstructionPanicWire>,
     effects: Vec<RecoveredEffectLeafWire>,
     suppressed_descendants: Vec<SuppressedAuditLocusLeafWire>,
 }
@@ -1106,7 +1106,7 @@ struct RecoveredPanicOwnerIdentity {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RecoveredFactoryPanicRow {
+struct RecoveredConstructionPanicRow {
     kind: String,
     status: String,
     reason: String,
@@ -1457,9 +1457,9 @@ fn merge_recovered_audit_core(
     }
     let demanded_body = demanded_body.to_json();
     for panic in leaf.panics {
-        if panic.kind != "FactoryPanic" || panic.status != "mandatory-panic" {
+        if panic.kind != "ConstructionPanic" || panic.status != "mandatory-panic" {
             return Err(malformed(
-                "recovered panic row must be a mandatory FactoryPanic".to_string(),
+                "recovered panic row must be a mandatory ConstructionPanic".to_string(),
             ));
         }
         if panic.locus.is_empty() || panic.demanded_source.is_empty() {
@@ -1497,7 +1497,7 @@ fn merge_recovered_audit_core(
                 "duplicate recovered panic owner identity: {owner_identity_value}"
             )));
         }
-        let row = RecoveredFactoryPanicRow {
+        let row = RecoveredConstructionPanicRow {
             kind: panic.kind,
             status: panic.status,
             reason: panic.reason,
@@ -2115,7 +2115,7 @@ mod tests {
 
     fn recovered_panic(demand: &str) -> Value {
         json!({
-            "kind": "FactoryPanic",
+            "kind": "ConstructionPanic",
             "status": "mandatory-panic",
             "reason": "unbound propagated dependency name",
             "locus": "consumer.py:1:0",
@@ -2164,6 +2164,31 @@ mod tests {
         assert_eq!(panics[0]["gap"], panics[1]["gap"]);
         assert_ne!(panics[0]["demandedBody"], panics[1]["demandedBody"]);
         assert_eq!(panics[0]["terminalGapLocus"], "typing.py:753:11");
+    }
+
+    #[test]
+    fn recovered_panic_rejects_stale_factory_panic_kind() {
+        // The producer emits ConstructionPanic since factory retirement (#6028).
+        // A row carrying the stale "FactoryPanic" kind must stay loud, not decode.
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let owner = recovered_owner("consumer.py", "<module>", 1);
+        let mut stale = recovered_panic("pandas._typing.A");
+        stale["kind"] = json!("FactoryPanic");
+
+        let error = merge_recovered_audit_leaf(
+            "fixture",
+            &owner,
+            recovered_leaf(vec![stale]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect_err("stale FactoryPanic kind must be rejected");
+
+        assert!(error.to_string().contains("mandatory ConstructionPanic"));
+        assert!(panics.is_empty());
     }
 
     #[test]
