@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import csv
 import ast
+import threading
+import time
 from dataclasses import replace
 import importlib.metadata
 import json
@@ -220,6 +222,43 @@ def test_walrus_binding_scan_is_reused_for_every_export_name(monkeypatch) -> Non
     after_first = calls
     assert not adapter._statement_walrus_binds(statement, "unrelated")
     assert calls == after_first
+
+
+def test_artifact_file_authentication_preserves_order_under_bounded_overlap(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sugar_lift_python_source.dependency_artifact as dependency_artifact
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source="def build(value):\n    return value\n",
+    )
+    original = dependency_artifact.dependency_artifact_file
+    lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    def observed(path: str):
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.01)
+        try:
+            return original(path)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(dependency_artifact, "dependency_artifact_file", observed)
+
+    graph = DependencyArtifactGraph.authenticate(distribution)
+
+    assert maximum_active > 1
+    assert tuple(item.source_seat for item in graph.files) == tuple(
+        sorted(item.source_seat for item in graph.files)
+    )
 
 
 def test_module_init_raise_scan_is_reused_for_every_export_name(monkeypatch) -> None:

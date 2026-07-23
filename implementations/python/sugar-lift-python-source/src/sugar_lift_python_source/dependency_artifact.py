@@ -8,7 +8,9 @@ imports and re-exports.  It never imports or executes a target module.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 from email.parser import BytesParser
+from functools import partial
 import importlib.metadata
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
@@ -418,19 +420,17 @@ class DependencyArtifactGraph:
             )
         authenticated_files: list[AuthenticatedArtifactFileV1] = []
         modules: dict[str, AuthenticatedModuleSourceV1] = {}
-        for recorded in sorted(files, key=lambda item: str(item)):
-            relative = PurePosixPath(str(recorded))
-            if relative.is_absolute():
-                raise DependencyArtifactAuthenticationError(
-                    "distribution manifest contains an absolute file seat"
+        recorded_files = tuple(sorted(files, key=lambda item: str(item)))
+        if recorded_files:
+            workers = min(8, len(recorded_files))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                authenticated = executor.map(
+                    partial(_authenticate_recorded_file, distribution), recorded_files
                 )
-            path = Path(distribution.locate_file(recorded))
-            try:
-                content, _seat, content_cid = dependency_artifact_file(str(path))
-            except SourceUnavailable as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"cannot read recorded distribution file {relative}"
-                ) from exc
+                authenticated = tuple(authenticated)
+        else:
+            authenticated = ()
+        for relative, content, content_cid in authenticated:
             authenticated_files.append(
                 AuthenticatedArtifactFileV1(
                     source_seat=relative.as_posix(),
@@ -491,6 +491,23 @@ class DependencyArtifactGraph:
             modules=MappingProxyType(modules),
             _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
+
+
+def _authenticate_recorded_file(distribution, recorded):
+    """Read and hash one independent manifest seat; callers preserve file order."""
+    relative = PurePosixPath(str(recorded))
+    if relative.is_absolute():
+        raise DependencyArtifactAuthenticationError(
+            "distribution manifest contains an absolute file seat"
+        )
+    path = Path(distribution.locate_file(recorded))
+    try:
+        content, _seat, content_cid = dependency_artifact_file(str(path))
+    except SourceUnavailable as exc:
+        raise DependencyArtifactAuthenticationError(
+            f"cannot read recorded distribution file {relative}"
+        ) from exc
+    return relative, content, content_cid
 
 
 def resolve_import_binding(
