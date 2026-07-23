@@ -135,6 +135,19 @@ def test_repeated_calls_reuse_one_authenticated_distribution_lookup(
         "arbitrary_helper()\n",
     )
     lookups = 0
+    import sugar_lift_py_tests.import_binding as import_binding
+
+    lexical_passes = 0
+    original_import_uses = import_binding.authenticated_import_uses
+
+    def counted_import_uses(*args, **kwargs):
+        nonlocal lexical_passes
+        lexical_passes += 1
+        return original_import_uses(*args, **kwargs)
+
+    monkeypatch.setattr(
+        import_binding, "authenticated_import_uses", counted_import_uses
+    )
 
     monkeypatch.setattr(
         importlib.metadata,
@@ -153,6 +166,44 @@ def test_repeated_calls_reuse_one_authenticated_distribution_lookup(
     populate_source_visible_call_frames(source_file, root=tmp_path, path=path)
 
     assert lookups == 1
+    # One mint pass plus one independent final-check pass for the whole batch.
+    assert lexical_passes == 2
+
+
+def test_distinct_callees_in_one_module_share_one_constructed_frame_graph(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sugar_lift_python_source.manager_construction as manager_construction
+
+    distribution = _distribution(
+        tmp_path,
+        "def first(value=1):\n    return value\n\n"
+        "def second(value=2):\n    return value\n",
+    )
+    path, source_file, _context = _consumer(
+        tmp_path,
+        "from unprivileged.helpers import first, second\nfirst()\nsecond()\n",
+    )
+    original = manager_construction.SourceFile
+    constructions = 0
+
+    def counted_source_file(*args, **kwargs):
+        nonlocal constructions
+        constructions += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(manager_construction, "SourceFile", counted_source_file)
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+        artifact_graph_cache={},
+        source_frame_cache={},
+    )
+
+    assert constructions == 1
 
 
 def test_source_visible_function_with_opaque_child_stays_typed_loud(

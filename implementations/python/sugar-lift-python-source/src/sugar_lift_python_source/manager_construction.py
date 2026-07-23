@@ -215,6 +215,18 @@ def construct_manager_behavior(
     )
 
 
+@dataclass(frozen=True)
+class _SourceDefinitionGraphV1:
+    context: object = field(compare=False)
+    definitions: tuple[Node, ...] = field(compare=False)
+
+
+@dataclass(frozen=True)
+class _SourceFrameGraphV1:
+    frames: tuple[tuple[str, object], ...] = field(compare=False)
+    gap: tuple[str, str] | None = None
+
+
 def resolve_source_visible_frame(
     resolved: ResolvedPythonObjectV1,
     *,
@@ -237,16 +249,18 @@ def resolve_source_visible_frame(
         )
     if frame_cache is not None and resolved.cid in frame_cache:
         return frame_cache[resolved.cid]
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source_file = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
-        construction_context=context,
+    definition_key = (
+        "source-definition-graph-v1",
+        graph.distribution_artifact_cid,
+        resolved.module_name,
+        module.source_cid,
     )
-    definitions = tuple(
-        item
-        for item in source_file.root.body
-        if isinstance(item, (FunctionDef, ClassDef))
-    )
+    definition_graph = None if frame_cache is None else frame_cache.get(definition_key)
+    if definition_graph is None:
+        definition_graph = _construct_source_definition_graph(module)
+        if frame_cache is not None:
+            frame_cache[definition_key] = definition_graph
+    definitions = definition_graph.definitions
     target = next(
         (item for item in definitions if _matches_definition(item, resolved)), None
     )
@@ -274,7 +288,61 @@ def resolve_source_visible_frame(
                     "opaque-call-target", resolved.cid, opaque[0]
                 ),
             )
+    module_key = (
+        "source-frame-graph-v1",
+        graph.distribution_artifact_cid,
+        resolved.module_name,
+        module.source_cid,
+    )
+    frame_graph = None if frame_cache is None else frame_cache.get(module_key)
+    if frame_graph is None:
+        frame_graph = _construct_source_frame_graph(definition_graph)
+        if frame_cache is not None:
+            frame_cache[module_key] = frame_graph
+    if frame_graph.gap is not None:
+        kind, detail = frame_graph.gap
+        return _remember_frame_result(
+            frame_cache,
+            resolved.cid,
+            ManagerConstructionGapV1(kind, resolved.cid, detail),
+        )
+    frame = dict(frame_graph.frames).get(target.name)
+    if frame is None:
+        return _remember_frame_result(
+            frame_cache,
+            resolved.cid,
+            ManagerConstructionGapV1(
+                "definition-missing", resolved.cid, "ordinary source call frame"
+            ),
+        )
+    result = (frame, target)
+    if frame_cache is not None:
+        frame_cache[resolved.cid] = result
+    return result
 
+
+def _construct_source_definition_graph(module) -> _SourceDefinitionGraphV1:
+    """Materialize one authenticated module's direct definitions once."""
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    definitions = tuple(
+        item
+        for item in source_file.root.body
+        if isinstance(item, (FunctionDef, ClassDef))
+    )
+    return _SourceDefinitionGraphV1(context, definitions)
+
+
+def _construct_source_frame_graph(
+    definition_graph: _SourceDefinitionGraphV1,
+) -> _SourceFrameGraphV1:
+    """Construct every direct definition frame once per authenticated module CID."""
+    context = definition_graph.context
+    definitions = definition_graph.definitions
+    definition_names = {item.name for item in definitions}
     frames: dict[str, object] = {}
     reaching_classes: dict[str, ClassDef] = {}
     for item in definitions:
@@ -304,12 +372,9 @@ def resolve_source_visible_frame(
                 if call.func.id not in definition_names
             )
             if opaque:
-                return _remember_frame_result(
-                    frame_cache,
-                    resolved.cid,
-                    ManagerConstructionGapV1(
-                        "opaque-call-target", resolved.cid, opaque[0]
-                    ),
+                return _SourceFrameGraphV1(
+                    (),
+                    ("opaque-call-target", opaque[0]),
                 )
             unresolved = tuple(
                 call.func.id
@@ -326,26 +391,11 @@ def resolve_source_visible_frame(
             pending.remove(function)
             progressed = True
         if not progressed:
-            return _remember_frame_result(
-                frame_cache,
-                resolved.cid,
-                ManagerConstructionGapV1(
-                    "opaque-call-target", resolved.cid, "recursive source call graph"
-                ),
+            return _SourceFrameGraphV1(
+                (),
+                ("opaque-call-target", "recursive source call graph"),
             )
-    frame = frames.get(target.name)
-    if frame is None:
-        return _remember_frame_result(
-            frame_cache,
-            resolved.cid,
-            ManagerConstructionGapV1(
-                "definition-missing", resolved.cid, "ordinary source call frame"
-            ),
-        )
-    result = (frame, target)
-    if frame_cache is not None:
-        frame_cache[resolved.cid] = result
-    return result
+    return _SourceFrameGraphV1(tuple(frames.items()))
 
 
 def _remember_frame_result(frame_cache, resolved_cid, result):

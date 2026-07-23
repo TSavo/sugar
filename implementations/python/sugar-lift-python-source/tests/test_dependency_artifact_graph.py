@@ -348,6 +348,10 @@ def test_final_checked_import_use_rejects_fabricated_definition_coordinate(
         )
     )
     receipt = _demand(tmp_path)
+    assert isinstance(
+        resolve_import_binding(receipt, graph=graph),
+        ResolvedPythonObjectV1,
+    )
     binding_value = receipt.import_binding.to_value()
     binding_value["definitionSite"]["startLine"] = 999
     binding_cid = cid_of_json(binding_value)
