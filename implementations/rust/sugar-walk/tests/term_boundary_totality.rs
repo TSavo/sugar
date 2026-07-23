@@ -240,6 +240,30 @@ fn ir_terms_round_trip_through_term_boundary_byte_identically() {
 }
 
 #[test]
+fn python_formatted_value_operands_round_trip_in_reference_order() {
+    let original = ctor(
+        "python:fstring_value",
+        vec![
+            var("x"),
+            string_const("r"),
+            ctor("python:fstring", vec![string_const(">10")]),
+        ],
+    );
+
+    let raised = raise_ir(&lower_ir(&original));
+
+    assert_same_term_json_bytes("python:fstring_value", &original, &raised);
+    let ir::Term::Ctor { name, args } = raised else {
+        panic!("formatted value did not remain a ctor");
+    };
+    assert_eq!(name, "python:fstring_value");
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[0], var("x"));
+    assert_eq!(args[1], string_const("r"));
+    assert_eq!(args[2], ctor("python:fstring", vec![string_const(">10")]));
+}
+
+#[test]
 fn ir_formulas_round_trip_through_term_boundary_byte_identically() {
     let corpus = formula_corpus();
     for (label, original) in &corpus {
