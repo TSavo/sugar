@@ -142,8 +142,19 @@ def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(src, encoding="utf-8")
-    tree = ast.parse(src, filename=rel)
-    fn = next(n for n in ast.walk(tree) if getattr(n, "name", "") == "get_signature")
+    # Mint body source through typed SourceFile — same door as bind_lifter.
+    tree_src = Path(__file__).resolve().parents[2] / "sugar-source-tree" / "src"
+    if str(tree_src) not in sys.path:
+        sys.path.insert(0, str(tree_src))
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source_file = SourceFile((src, rel, blake3_512_of(src.encode("utf-8"))))
+    fn = next(
+        n
+        for n in source_file.root.walk()
+        if isinstance(n, (FunctionDef, AsyncFunctionDef)) and n.name == "get_signature"
+    )
     full = _body_source_locator(fn, rel, src.splitlines(keepends=True))
     memento = dict(source_memento_of(full))
     memento["source_function_name"] = "Algo.get_signature"

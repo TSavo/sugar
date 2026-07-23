@@ -261,20 +261,19 @@ def resolve_source_memento(
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SourceUnavailable(f"cannot read source `{path}`: {exc}") from exc
-    try:
-        tree = parsed_tree(source, filename=str(path))
-    except SyntaxError as exc:
-        raise SourceUnavailable(f"cannot parse source `{path}`: {exc}") from exc
-
-    node = _locate_function(tree, function_name, span)
-    if node is None:
-        raise SourceUnavailable(
-            f"source function `{function_name}` not found in `{file}` near line "
-            f"{span.get('start_line')}"
-        )
 
     rel = file.replace(os.sep, "/")
     if memento.get("source_kind") in {"python.ast-stmt", "python.ast-expr"}:
+        try:
+            tree = parsed_tree(source, filename=str(path))
+        except SyntaxError as exc:
+            raise SourceUnavailable(f"cannot parse source `{path}`: {exc}") from exc
+        node = _locate_function(tree, function_name, span)
+        if node is None:
+            raise SourceUnavailable(
+                f"source function `{function_name}` not found in `{file}` near line "
+                f"{span.get('start_line')}"
+            )
         recomputed = _node_source_locator(
             node,
             rel,
@@ -283,6 +282,14 @@ def resolve_source_memento(
             str(memento.get("source_kind")),
         )
     else:
+        # Function-body mementos recompute through SourceFile typed nodes so
+        # bind_lifter._body_source_locator stays on the sole construction currency.
+        node = _locate_function_typed(source, str(path), function_name, span)
+        if node is None:
+            raise SourceUnavailable(
+                f"source function `{function_name}` not found in `{file}` near line "
+                f"{span.get('start_line')}"
+            )
         recomputed = _body_source_locator(node, rel, list(source_splitlines(source)))
     # The Source Oracle's whole job is to RECONSTRUCT source + ast_template from
     # disk. Function mementos resolve to whole bodies; statement/expression
@@ -449,6 +456,50 @@ def importlib_library_dir(library_tag: str) -> str | None:
         return str(Path(next(iter(locations))))
     origin = getattr(spec, "origin", None)
     return str(Path(origin).parent) if origin else None
+
+
+def _locate_function_typed(
+    source: str,
+    filename: str,
+    function_name: Any,
+    span: dict[str, Any],
+):
+    """Find a typed FunctionDef matching name (and span when ambiguous)."""
+    SourceFile, BackendCouldNotParse = _source_file_cls()
+    try:
+        source_file = SourceFile(
+            (source, filename, blake3_512_of(source.encode("utf-8")))
+        )
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
+        return None
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+
+    start = span.get("start_line")
+    function_leaf = (
+        function_name.rsplit(".", 1)[-1] if isinstance(function_name, str) else None
+    )
+    matches = [
+        n
+        for n in source_file.root.walk()
+        if isinstance(n, (FunctionDef, AsyncFunctionDef))
+        and (
+            function_name is None or n.name == function_name or n.name == function_leaf
+        )
+    ]
+    if not matches:
+        return None
+    if isinstance(start, int) and len(matches) > 1:
+        for n in matches:
+            decorators = n.decorators
+            n_start = (
+                min((d.line_col_span().start_line for d in decorators), default=n.line_col_span().start_line)
+                if decorators
+                else n.line_col_span().start_line
+            )
+            n_end = n.line_col_span().end_line
+            if n_start <= start <= n_end:
+                return n
+    return matches[0]
 
 
 def _locate_function(
