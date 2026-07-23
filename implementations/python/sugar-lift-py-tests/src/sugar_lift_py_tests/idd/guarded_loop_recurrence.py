@@ -117,6 +117,44 @@ def scan_guarded_loop_recurrence(
                     "LoopProjectedBinding inside BindingEntryV1.state",
                 )
             )
+    comprehension_sugar = next(
+        (path for path in python_files if path.name == "comprehension_sugar.py"),
+        None,
+    )
+    if comprehension_sugar is not None:
+        text = comprehension_sugar.read_text()
+        tree = ast.parse(text, filename=str(comprehension_sugar))
+        legacy = any(
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "target"
+            for node in ast.walk(tree)
+        )
+        if legacy or "python:loop.flat_map" not in text or "python:loop.filter_guard" not in text:
+            findings.append(
+                _finding(
+                    comprehension_sugar,
+                    root,
+                    1,
+                    "single-generator-comprehension-transform",
+                    "nested guarded flat-map recurrence with explicit exhaustion",
+                )
+            )
+    nodes_path = next((path for path in python_files if path.name == "nodes.py"), None)
+    if (
+        nodes_path is not None
+        and binding_state is not None
+        and "project_loop_post_binding(" not in nodes_path.read_text()
+    ):
+        findings.append(
+            _finding(
+                nodes_path,
+                root,
+                1,
+                "missing-source-loop-recurrence-projection",
+                "sequence LoopConstructionV1 before downstream substitution",
+            )
+        )
     return tuple(sorted(findings))
 
 
