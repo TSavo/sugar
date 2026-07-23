@@ -24,9 +24,6 @@ class WithSourceResourceSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.context_manager_contract import (
-            NeverSuppressesDispositionV1,
-        )
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -72,7 +69,8 @@ class WithSourceResourceSugar(Sugar):
                         self.exit_face_id, body_face
                     ).to_facts(site=self.site, guard=body_face.guard)
                     routed = ExitSet((body_face,)).and_exit(
-                        exit_es, disposition=NeverSuppressesDispositionV1()
+                        exit_es,
+                        disposition=self.summary.semantics.exit.disposition,
                     )
                     parts.append(
                         prepend_facts_to_exitset(
