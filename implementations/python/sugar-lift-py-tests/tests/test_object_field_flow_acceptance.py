@@ -403,6 +403,20 @@ def test_custom_setitem_receiver_stays_loud(tmp_path):
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 
 
+def test_custom_getitem_receiver_stays_loud(tmp_path):
+    path = tmp_path / "getitem.py"
+    path.write_text(
+        "class Vessel:\n"
+        "    def __getitem__(self, key):\n"
+        "        return 7\n\n"
+        "def boundary():\n"
+        "    item = Vessel()\n"
+        "    item[0] = 7\n"
+        "    return item[0]\n"
+    )
+    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+
+
 def test_plain_object_subscript_store_then_read_uses_same_field_map(tmp_path):
     path = tmp_path / "plain_object_subscript.py"
     path.write_text(
@@ -416,6 +430,31 @@ def test_plain_object_subscript_store_then_read_uses_same_field_map(tmp_path):
     states = _object_states(path, "boundary")
     assert states[-1].selectors
     assert states[-1].field(states[-1].selectors[0]) is not None
+
+
+def test_subscript_aliases_share_identity_and_immutable_versions(tmp_path):
+    path = tmp_path / "subscript_alias_versions.py"
+    path.write_text(
+        "class Vessel:\n    pass\n\n"
+        "def boundary():\n"
+        "    item = Vessel()\n"
+        "    alias = item\n"
+        "    item[0] = 7\n"
+        "    first = alias[0]\n"
+        "    alias[0] = 11\n"
+        "    return item[0]\n"
+    )
+    assert not _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    states = _object_states(path, "boundary")
+    assert {state.object_identity_cid for state in states} == {
+        states[0].object_identity_cid
+    }
+    final = states[-1]
+    assert len(final.selectors) == 1
+    assert len(final.version_cids) == 1
+    assert final.prior_version_cids[0] is not None
+    assert final.prior_version_cids[0] != final.version_cids[0]
+    assert final.field(final.selectors[0]) is not None
 
 
 def test_distinct_constructed_subscript_keys_do_not_collide(tmp_path):
@@ -442,6 +481,18 @@ def test_symbolic_subscript_key_stays_typed_loud(tmp_path):
         "    item = Vessel()\n"
         "    item[key] = 7\n"
         "    return item[key]\n"
+    )
+    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+
+
+def test_unhashable_subscript_key_stays_typed_loud(tmp_path):
+    path = tmp_path / "unhashable_subscript_key.py"
+    path.write_text(
+        "class Vessel:\n    pass\n\n"
+        "def boundary():\n"
+        "    item = Vessel()\n"
+        "    item[[]] = 7\n"
+        "    return item[[]]\n"
     )
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 

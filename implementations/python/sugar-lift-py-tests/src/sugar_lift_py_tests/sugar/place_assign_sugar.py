@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 class PlaceAssignSugar(Sugar):
     receiver: Sugar
     selector_kind: str
-    selector: str
+    selector: object
     value: Sugar
     site: object = field(compare=False)
 
@@ -29,10 +29,20 @@ class PlaceAssignSugar(Sugar):
 
         def with_receiver(receiver):
             def with_value(value):
-                if self.selector_kind != "attribute":
+                if self.selector_kind == "attribute":
+                    selector = self.selector
+                elif self.selector_kind == "subscript":
+                    return self.selector.desugar(ctx).and_then(
+                        lambda selector: Complete(
+                            PlaceAssignValue(
+                                receiver, "subscript", selector, value
+                            )
+                        )
+                    )
+                else:
                     raise ValueError("typed place selector mismatch")
                 return Complete(
-                    PlaceAssignValue(receiver, "attribute", self.selector, value)
+                    PlaceAssignValue(receiver, "attribute", selector, value)
                 )
 
             return self.value.desugar(ctx).and_then(with_value)

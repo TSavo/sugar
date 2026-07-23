@@ -2621,8 +2621,17 @@ class Assign(Statement):
         ):
             target = self.targets[0]
             receiver, receiver_changed = self._substitute_field(target.value, scope)
-            if receiver_changed:
-                changes["targets"] = (rewrite(target, value=receiver),)
+            target_changes = {"value": receiver} if receiver_changed else {}
+            if isinstance(target, Subscript):
+                index, index_changed = self._substitute_field(target.slice_, scope)
+                if index_changed:
+                    target_changes["slice_"] = index
+                if isinstance(receiver, ObjectPlaceStateV1):
+                    projected = receiver.subscript_key_projection(index)
+                    if projected is not None:
+                        target_changes["slice_"] = projected
+            if target_changes:
+                changes["targets"] = (rewrite(target, **target_changes),)
         if not changes:
             return self
         return rewrite(self, **changes)
@@ -2737,6 +2746,23 @@ class Assign(Statement):
             ):
                 updated = target.value.with_attribute_store(
                     target.attr, self.value, self.fragment
+                )
+                if updated is None:
+                    return None
+                return {
+                    name: replace(entry, state=updated)
+                    for name, entry in scope.items()
+                    if isinstance(name, str)
+                    and isinstance(entry, BindingEntryV1)
+                    and isinstance(entry.state, ObjectPlaceStateV1)
+                    and entry.state.object_identity_cid
+                    == target.value.object_identity_cid
+                }
+            if isinstance(target, Subscript) and isinstance(
+                target.value, ObjectPlaceStateV1
+            ):
+                updated = target.value.with_subscript_store(
+                    target.slice_, self.value, self.fragment
                 )
                 if updated is None:
                     return None
@@ -2899,7 +2925,9 @@ class Assign(Statement):
                 from .shadow import rewrite
 
                 return rewrite(self, value=entry.state)
-        if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
+        if len(self.targets) != 1 or not isinstance(
+            self.targets[0], (Attribute, Subscript)
+        ):
             return self
         prior = self.targets[0].value
         if not isinstance(prior, ObjectPlaceStateV1):
@@ -2919,7 +2947,11 @@ class Assign(Statement):
         from .shadow import rewrite
 
         target = self.targets[0]
-        projected = updated.attribute_field(target.attr)
+        projected = (
+            updated.attribute_field(target.attr)
+            if isinstance(target, Attribute)
+            else updated.subscript_field(target.slice_)
+        )
         if projected is None:
             return self
         return rewrite(
@@ -3065,7 +3097,17 @@ class Assign(Statement):
 
         if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
             if isinstance(self.targets[0].value, ObjectPlaceStateV1):
-                return super()._construct_sugar()
+                from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                    PlaceAssignSugar,
+                )
+
+                return PlaceAssignSugar(
+                    receiver=self.targets[0].value.sugar(),
+                    selector_kind="subscript",
+                    selector=self.targets[0].slice_.sugar(),
+                    value=self.value.sugar(),
+                    site=self.fragment,
+                )
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 SubscriptStoreEffectSugar,
             )
@@ -6684,17 +6726,75 @@ class ObjectPlaceStateV1(Expression):
             occurrence,
         )
 
+    @staticmethod
+    def subscript_key_projection(key):
+        if isinstance(key, ConstructedValueProjectionV1):
+            key.validate_testimony()
+            constructed = (key.constructed_value, key.construction_testimony)
+        else:
+            constructed = Assign._constructed_floor_value(key)
+        if constructed is None:
+            return None
+        floor_value, testimony = constructed
+        from sugar_lift_py_tests.floor import StringValue, TermValue
+
+        supported = isinstance(floor_value, StringValue) or (
+            isinstance(floor_value, TermValue) and type(floor_value.value) is int
+        )
+        if not supported:
+            return None
+        if isinstance(key, ConstructedValueProjectionV1):
+            return key
+        return ConstructedValueProjectionV1.create(key, floor_value, testimony)
+
+    def _subscript_coordinate(self, key):
+        projected = self.subscript_key_projection(key)
+        if projected is None:
+            return None
+        from sugar_lift_py_tests.ir import _term_content_cid
+        from .object_identity import (
+            SubscriptFieldCoordinateV1,
+            SubscriptKeyCoordinateV1,
+        )
+
+        key_coordinate = SubscriptKeyCoordinateV1.mint(
+            constructed_value_cid=_term_content_cid(
+                projected.constructed_value.to_term(owner="subscript-key")
+            ),
+            construction_testimony_cid=projected.construction_testimony.cid,
+        )
+        return SubscriptFieldCoordinateV1.mint(
+            self.object_coordinate, key_coordinate
+        )
+
+    def with_subscript_store(self, key, value, occurrence):
+        selector = self._subscript_coordinate(key)
+        if selector is None:
+            return None
+        return self._with_store(selector, value, occurrence)
+
     def _with_store(self, selector, value, occurrence, *, constructed=None):
         self.validate_identity()
         constructed = constructed or Assign._constructed_floor_value(value)
         if constructed is None:
             return None
         floor_value, testimony = constructed
-        projected = ConstructedValueProjectionV1.create(value, floor_value, testimony)
-        from .object_identity import AttributeFieldVersionV1
+        projected = ConstructedValueProjectionV1.create(
+            value, floor_value, testimony
+        )
+        from .object_identity import (
+            AttributeFieldCoordinateV1,
+            AttributeFieldVersionV1,
+            SubscriptFieldVersionV1,
+        )
 
         prior = self.version(selector)
-        version = AttributeFieldVersionV1.mint(
+        version_type = (
+            AttributeFieldVersionV1
+            if isinstance(selector, AttributeFieldCoordinateV1)
+            else SubscriptFieldVersionV1
+        )
+        version = version_type.mint(
             owner=self.object_coordinate,
             field=selector,
             store_occurrence=occurrence,
@@ -6745,6 +6845,10 @@ class ObjectPlaceStateV1(Expression):
 
         return self.field(AttributeFieldCoordinateV1.mint(self.object_coordinate, name))
 
+    def subscript_field(self, key):
+        selector = self._subscript_coordinate(key)
+        return None if selector is None else self.field(selector)
+
     def field(self, selector):
         self.validate_identity()
         if self.invalidated_by_opaque_call:
@@ -6757,7 +6861,11 @@ class ObjectPlaceStateV1(Expression):
             BindingProvenanceGap,
             ConstructedValueTestimonyV1,
         )
-        from .object_identity import AttributeFieldVersionV1
+        from .object_identity import (
+            AttributeFieldCoordinateV1,
+            AttributeFieldVersionV1,
+            SubscriptFieldVersionV1,
+        )
 
         testimony = self.value_testimonies[index]
         ConstructedValueTestimonyV1.decode(testimony.wire())
@@ -6767,7 +6875,12 @@ class ObjectPlaceStateV1(Expression):
         projected.validate_testimony()
         if projected.construction_testimony != testimony:
             raise BindingProvenanceGap("field value testimony mismatch")
-        version = AttributeFieldVersionV1.decode(self.version_records[index].wire())
+        version_type = (
+            AttributeFieldVersionV1
+            if isinstance(selector, AttributeFieldCoordinateV1)
+            else SubscriptFieldVersionV1
+        )
+        version = version_type.decode(self.version_records[index].wire())
         if (
             version.cid != self.version_cids[index]
             or version.owner.cid != self.object_coordinate.cid
@@ -6941,6 +7054,12 @@ class Subscript(Expression):
 
         receiver, receiver_changed = self._substitute_field(self.value, scope)
         index, index_changed = self._substitute_field(self.slice_, scope)
+        if isinstance(receiver, ObjectPlaceStateV1):
+            projected_key = receiver.subscript_key_projection(index)
+            if projected_key is not None:
+                projected = receiver.subscript_field(projected_key)
+                if projected is not None:
+                    return projected
         if not receiver_changed and not index_changed:
             return self
         return rewrite(self, value=receiver, slice_=index)
@@ -6949,6 +7068,8 @@ class Subscript(Expression):
         """`<value>[<slice_>]` constructs SubscriptSugar WITH the receiver's and
         index's sugars. A Slice index reduces to its own gap through the
         recursion (slice_.sugar()), never silently handled here."""
+        if isinstance(self.value, OpaqueObjectStateV1):
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
 
         return SubscriptSugar(
