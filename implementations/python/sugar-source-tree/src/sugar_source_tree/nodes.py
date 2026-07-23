@@ -6089,6 +6089,13 @@ class OpaqueObjectStateV1(Expression):
         del scope
         return self
 
+    def _construct_sugar(self):
+        """Identity is transparent until a consumer asks for unproved behavior."""
+        from .object_identity import decode_object_coordinate_v1
+
+        decode_object_coordinate_v1(self.object_coordinate.wire())
+        return self.base.sugar()
+
 
 class ObjectPlaceStateV1(Expression):
     """Immutable field versions carried only inside runtime BindingEntryV1.
@@ -6376,6 +6383,8 @@ class Attribute(Expression):
     def _construct_sugar(self):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
         The attr name is a static identifier carried onto the coordinate."""
+        if isinstance(self.value, OpaqueObjectStateV1):
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
