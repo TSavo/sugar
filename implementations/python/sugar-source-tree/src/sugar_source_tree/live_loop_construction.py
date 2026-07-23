@@ -13,12 +13,17 @@ from sugar_lift_py_tests.loop_construction import (
     seal_loop_record,
 )
 
+from .binding_provenance import _state_wire
 from .binding_state import (
     BindingEntryV1,
     BindingMap,
     BindingStateWireGap,
     BoundBindingStateV1,
     ConstructedValueTestimonyV1,
+    GuardedBinding,
+    GuardedBindingStateV1,
+    UnboundBinding,
+    UnboundBindingStateV1,
     _constructed_preimage,
     branch_result_slot,
 )
@@ -46,20 +51,50 @@ def _formula_cid(formula) -> str:
     return cid_of_json(json.loads(encode_jcs(formula_to_value(formula))))
 
 
+def _seal_runtime_state(state):
+    """Seal ONE live BindingState into its authenticated SealedBindingStateV1.
+
+    The single recursive projection for every runtime binding state, not a
+    Node-only special case: a constructed Node mints its value testimony; an
+    unbound name carries its cause; a branch-joined GuardedBinding recurses into
+    both arms and pins them under the same branch-result guard the loop control
+    faces use. A guarded arm's identity is the content CID of its own sealed
+    state, so nested guards/joins address by construction.
+    """
+    from .nodes import Node
+
+    if isinstance(state, Node):
+        constructed = state.sugar()
+        testimony = ConstructedValueTestimonyV1.mint(
+            state.fragment, cid_of_json(_constructed_preimage(constructed))
+        )
+        return BoundBindingStateV1(testimony)
+    if isinstance(state, UnboundBinding):
+        return UnboundBindingStateV1(state.cause.seal().cid)
+    if isinstance(state, GuardedBinding):
+        # `site` is unused in the branch-result term (it carries only
+        # `slot.slot_id`), so the guard formula CID matches the loop control
+        # guard for the same slot; pass the slot itself as the site owner.
+        guard_cid = _formula_cid(branch_result_guard(state.slot, state.slot))
+        when_true = _seal_runtime_state(state.when_true)
+        when_false = _seal_runtime_state(state.when_false)
+        return GuardedBindingStateV1(
+            guard_cid,
+            cid_of_json(_state_wire(when_true)),
+            cid_of_json(_state_wire(when_false)),
+        )
+    raise BindingStateWireGap(
+        f"live loop state has no authenticated sealed projection: "
+        f"{type(state).__name__}"
+    )
+
+
 def _testified(entry: BindingEntryV1) -> BindingEntryV1:
     if entry.constructed_value_testimony is not None:
         return entry
-    from .nodes import Node
-
-    if not isinstance(entry.state, Node):
-        raise BindingStateWireGap(
-            "live loop state lacks constructed Node testimony"
-        )
-    constructed = entry.state.sugar()
-    testimony = ConstructedValueTestimonyV1.mint(
-        entry.state.fragment, cid_of_json(_constructed_preimage(constructed))
-    )
-    return entry.with_testimony(testimony)
+    if isinstance(entry.sealed_state, (UnboundBindingStateV1, GuardedBindingStateV1)):
+        return entry
+    return replace(entry, sealed_state=_seal_runtime_state(entry.state))
 
 
 def _sealed_state(snapshot: tuple[BindingEntryV1, ...]):
