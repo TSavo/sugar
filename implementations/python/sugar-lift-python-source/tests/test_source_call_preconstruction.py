@@ -206,6 +206,40 @@ def test_distinct_callees_in_one_module_share_one_constructed_frame_graph(
     assert constructions == 1
 
 
+def test_unselected_definition_gap_does_not_expand_into_selected_callee(
+    tmp_path: Path,
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "def first(value=1):\n    return value\n\n"
+        "class Unselected:\n"
+        "    def noisy(self):\n"
+        "        try:\n"
+        "            return 1\n"
+        "        except Exception:\n"
+        "            return 2\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged.helpers import first\nfirst()\n",
+    )
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+        artifact_graph_cache={},
+        source_frame_cache={},
+    )
+
+    assert len(context.source_call_resolutions) == 1
+    assert isinstance(
+        next(iter(context.source_call_resolutions.values())),
+        SourceCallPreconstructionRefV1,
+    )
+
+
 def test_source_visible_function_with_opaque_child_stays_typed_loud(
     tmp_path: Path,
 ) -> None:

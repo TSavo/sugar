@@ -219,12 +219,8 @@ def construct_manager_behavior(
 class _SourceDefinitionGraphV1:
     context: object = field(compare=False)
     definitions: tuple[Node, ...] = field(compare=False)
-
-
-@dataclass(frozen=True)
-class _SourceFrameGraphV1:
-    frames: tuple[tuple[str, object], ...] = field(compare=False)
-    gap: tuple[str, str] | None = None
+    frames: dict[str, object] = field(default_factory=dict, compare=False)
+    gaps: dict[str, tuple[str, str]] = field(default_factory=dict, compare=False)
 
 
 def resolve_source_visible_frame(
@@ -288,33 +284,15 @@ def resolve_source_visible_frame(
                     "opaque-call-target", resolved.cid, opaque[0]
                 ),
             )
-    module_key = (
-        "source-frame-graph-v1",
-        graph.distribution_artifact_cid,
-        resolved.module_name,
-        module.source_cid,
-    )
-    frame_graph = None if frame_cache is None else frame_cache.get(module_key)
-    if frame_graph is None:
-        frame_graph = _construct_source_frame_graph(definition_graph)
-        if frame_cache is not None:
-            frame_cache[module_key] = frame_graph
-    if frame_graph.gap is not None:
-        kind, detail = frame_graph.gap
+    frame_result = _construct_source_target_frame(definition_graph, target)
+    if isinstance(frame_result, tuple) and frame_result[0] == "gap":
+        _tag, kind, detail = frame_result
         return _remember_frame_result(
             frame_cache,
             resolved.cid,
             ManagerConstructionGapV1(kind, resolved.cid, detail),
         )
-    frame = dict(frame_graph.frames).get(target.name)
-    if frame is None:
-        return _remember_frame_result(
-            frame_cache,
-            resolved.cid,
-            ManagerConstructionGapV1(
-                "definition-missing", resolved.cid, "ordinary source call frame"
-            ),
-        )
+    frame = frame_result
     result = (frame, target)
     if frame_cache is not None:
         frame_cache[resolved.cid] = result
@@ -336,66 +314,56 @@ def _construct_source_definition_graph(module) -> _SourceDefinitionGraphV1:
     return _SourceDefinitionGraphV1(context, definitions)
 
 
-def _construct_source_frame_graph(
-    definition_graph: _SourceDefinitionGraphV1,
-) -> _SourceFrameGraphV1:
-    """Construct every direct definition frame once per authenticated module CID."""
+def _construct_source_target_frame(definition_graph, target):
+    """Construct only the selected definition's authenticated local call closure."""
     context = definition_graph.context
     definitions = definition_graph.definitions
-    definition_names = {item.name for item in definitions}
-    frames: dict[str, object] = {}
-    reaching_classes: dict[str, ClassDef] = {}
-    for item in definitions:
-        if not isinstance(item, ClassDef):
-            continue
-        local_bases = []
-        for base in item.bases:
-            if not isinstance(base, Name) or base.id not in reaching_classes:
-                local_bases = []
-                break
-            local_bases.append(reaching_classes[base.id].sugar())
-        if local_bases and len(local_bases) == len(item.bases):
-            context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
-        reaching_classes[item.name] = item
-    for item in definitions:
-        if isinstance(item, ClassDef):
-            frames[item.name] = item.source_visible_constructor_frame()
+    by_name = {item.name: item for item in definitions}
 
-    pending = [item for item in definitions if isinstance(item, FunctionDef)]
-    while pending:
-        progressed = False
-        for function in tuple(pending):
-            local_calls = tuple(_local_named_calls(function))
-            opaque = tuple(
-                call.func.id
-                for call in local_calls
-                if call.func.id not in definition_names
-            )
-            if opaque:
-                return _SourceFrameGraphV1(
-                    (),
-                    ("opaque-call-target", opaque[0]),
-                )
-            unresolved = tuple(
-                call.func.id
-                for call in local_calls
-                if call.func.id in definition_names and call.func.id not in frames
-            )
-            if unresolved:
-                continue
-            for call in local_calls:
-                nested = frames.get(call.func.id)
-                if nested is not None:
-                    context.source_call_frames[_call_coordinate(call)] = nested
-            frames[function.name] = function.source_visible_call_frame()
-            pending.remove(function)
-            progressed = True
-        if not progressed:
-            return _SourceFrameGraphV1(
-                (),
-                ("opaque-call-target", "recursive source call graph"),
-            )
-    return _SourceFrameGraphV1(tuple(frames.items()))
+    def ensure(item, active: frozenset[str]):
+        cached = definition_graph.frames.get(item.name)
+        if cached is not None:
+            return cached
+        gap = definition_graph.gaps.get(item.name)
+        if gap is not None:
+            return ("gap", *gap)
+        if item.name in active:
+            result = ("opaque-call-target", "recursive source call graph")
+            definition_graph.gaps[item.name] = result
+            return ("gap", *result)
+        active = active | {item.name}
+        if isinstance(item, ClassDef):
+            local_bases = []
+            for base in item.bases:
+                base_definition = by_name.get(base.id) if isinstance(base, Name) else None
+                if not isinstance(base_definition, ClassDef):
+                    local_bases = []
+                    break
+                base_result = ensure(base_definition, active)
+                if isinstance(base_result, tuple) and base_result[0] == "gap":
+                    return base_result
+                local_bases.append(base_definition.sugar())
+            if local_bases and len(local_bases) == len(item.bases):
+                context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
+            frame = item.source_visible_constructor_frame()
+            definition_graph.frames[item.name] = frame
+            return frame
+        local_calls = tuple(_local_named_calls(item))
+        for call in local_calls:
+            dependency = by_name.get(call.func.id)
+            if dependency is None:
+                result = ("opaque-call-target", call.func.id)
+                definition_graph.gaps[item.name] = result
+                return ("gap", *result)
+            nested = ensure(dependency, active)
+            if isinstance(nested, tuple) and nested[0] == "gap":
+                return nested
+            context.source_call_frames[_call_coordinate(call)] = nested
+        frame = item.source_visible_call_frame()
+        definition_graph.frames[item.name] = frame
+        return frame
+
+    return ensure(target, frozenset())
 
 
 def _remember_frame_result(frame_cache, resolved_cid, result):
