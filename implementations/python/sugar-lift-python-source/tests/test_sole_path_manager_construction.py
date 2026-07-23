@@ -271,3 +271,26 @@ def test_renamed_manager_inter_method_call_uses_constructed_method_frame(tmp_pat
     helper_block = returned.value.force_floor(None, owner="inter-method")
     assert isinstance(helper_block, BlockValue)
     assert helper_block.statements == (ReturnValue(actual.value),)
+
+
+def test_source_factory_default_gets_authenticated_binding_testimony(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class DefaultedGuard:\n"
+        "    def __init__(self, marker, enabled):\n"
+        "        self.marker = marker\n"
+        "        self.enabled = enabled\n\n"
+        "def make_guard(marker, *, enabled=False):\n"
+        "    return DefaultedGuard(marker, enabled)\n",
+    )
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert len(behavior.formal_actual_bindings) == 2
+    assert all(
+        entry.constructed_value_testimony is not None
+        for entry in behavior.formal_actual_bindings
+    )
