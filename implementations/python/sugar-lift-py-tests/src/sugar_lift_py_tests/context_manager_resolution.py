@@ -154,6 +154,10 @@ class TreeConstructionContextV1:
     # Mutable frame table held by reference; the context object itself is frozen.
     source_call_frames: dict = field(default_factory=dict)
     source_derived_contract_refs: dict = field(default_factory=dict)
+    # Runtime-only, prebound class-base Sugar children keyed by the exact
+    # subclass definition coordinate.  These are never serialized; the class
+    # definition projects their sealed CIDs into its own preimage.
+    source_class_bases: dict = field(default_factory=dict)
 
     @classmethod
     def for_source_call_construction(

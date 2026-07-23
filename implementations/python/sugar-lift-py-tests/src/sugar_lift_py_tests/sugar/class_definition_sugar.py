@@ -23,6 +23,8 @@ class ClassDefinitionSugar(Sugar):
     docstring_cid: str | None
     annotation_cids: tuple[str, ...]
     decorator_cids: tuple[str, ...]
+    base_sugars: tuple[Sugar, ...]
+    base_fragment_cids: tuple[str, ...]
     site: object = field(compare=False)
 
     @classmethod
@@ -58,6 +60,10 @@ class ClassDefinitionSugar(Sugar):
             "docstringCid": self.docstring_cid,
             "annotationCids": list(self.annotation_cids),
             "decoratorCids": list(self.decorator_cids),
+            "baseDefinitionCids": [
+                base.class_definition_cid for base in self.base_sugars
+            ],
+            "baseFragmentCids": list(self.base_fragment_cids),
         }
 
     @property
@@ -68,6 +74,21 @@ class ClassDefinitionSugar(Sugar):
         from sugar_lift_py_tests.floor import ObjectField
 
         class_fields = []
+        base_values = []
+        for base in self.base_sugars:
+            outcome = base.desugar(ctx)
+            if not isinstance(outcome, Complete) or not isinstance(
+                outcome.value, ClassDefinitionValue
+            ):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="ClassDefinitionSugar.desugar",
+                    observed="class base did not construct to ClassDefinitionValue",
+                    requested="one authenticated source-visible base definition",
+                    fix="keep dynamic or opaque inheritance loud",
+                )
+            base_values.append(outcome.value)
         for item in self.fields:
             outcome = item.value_sugar.desugar(ctx)
             if not isinstance(outcome, Complete):
@@ -93,5 +114,6 @@ class ClassDefinitionSugar(Sugar):
                 self.docstring_cid,
                 self.annotation_cids,
                 self.decorator_cids,
+                tuple(base_values),
             )
         )

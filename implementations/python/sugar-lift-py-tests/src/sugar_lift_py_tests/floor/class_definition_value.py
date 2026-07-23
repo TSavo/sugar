@@ -32,6 +32,7 @@ class ClassDefinitionValue(FloorValue):
     docstring_cid: str | None = None
     annotation_cids: tuple[str, ...] = ()
     decorator_cids: tuple[str, ...] = ()
+    base_classes: tuple["ClassDefinitionValue", ...] = ()
 
     def to_term(self, *, owner: str):
         del owner
@@ -103,6 +104,14 @@ class ClassDefinitionValue(FloorValue):
     def _object_methods(self):
         from sugar_lift_py_tests.floor import ObjectMethodValue
 
+        # ObjectValue searches from the end, so emit the reversed C3 lookup
+        # tail before this class's methods.  A base method is retained with its
+        # original authenticated source frame; nothing is reconstructed here.
+        inherited = tuple(
+            method
+            for base in reversed(self._c3_tail())
+            for method in base.methods
+        )
         return tuple(
             ObjectMethodValue(
                 method.name,
@@ -114,5 +123,34 @@ class ClassDefinitionValue(FloorValue):
                     for coordinate in method.source_call_frame.formal_coordinates
                 ),
             )
-            for method in self.methods
+            for method in (*inherited, *self.methods)
         )
+
+    def _c3_tail(self) -> tuple["ClassDefinitionValue", ...]:
+        if not self.base_classes:
+            return ()
+        sequences = [list((base, *base._c3_tail())) for base in self.base_classes]
+        sequences.append(list(self.base_classes))
+        result = []
+        while any(sequences):
+            sequences = [sequence for sequence in sequences if sequence]
+            candidate = next(
+                (
+                    sequence[0]
+                    for sequence in sequences
+                    if not any(sequence[0] in other[1:] for other in sequences)
+                ),
+                None,
+            )
+            if candidate is None:
+                raise SugarNotWritten(
+                    owner="ClassDefinitionValue._c3_tail",
+                    observed="inconsistent authenticated local base order",
+                    requested="one valid C3 linearization",
+                    fix="keep inconsistent or dynamic inheritance loud",
+                )
+            result.append(candidate)
+            for sequence in sequences:
+                if sequence and sequence[0] == candidate:
+                    sequence.pop(0)
+        return tuple(result)

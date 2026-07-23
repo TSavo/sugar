@@ -296,6 +296,55 @@ def test_decorated_method_retains_decorator_testimony_in_class_method_frame():
     assert method.source_call_frame.owner.decorators
 
 
+def test_local_inherited_manager_methods_follow_authenticated_mro(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class Ancestor:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        return self.marker\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "class Descendant(Ancestor):\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "def make_guard(marker):\n"
+        "    return Descendant(marker)\n",
+    )
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert behavior.receiver_state.has_method("__enter__")
+    assert behavior.receiver_state.has_method("__exit__")
+    protocol = construct_manager_protocol(behavior, exit_face_id="inherited-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+    assert protocol.enter_outcome() is not None
+    assert protocol.exit_outcome() is not None
+
+
+def test_opaque_base_never_fabricates_inherited_manager_methods(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class Descendant(OpaqueAncestor):\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "def make_guard(marker):\n"
+        "    return Descendant(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="opaque-base")
+    assert isinstance(protocol, ManagerProtocolConstructionGapV1)
+    assert protocol.kind == "enter-missing"
+
+
 def test_renamed_manager_inter_method_call_uses_constructed_method_frame(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,

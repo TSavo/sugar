@@ -135,6 +135,22 @@ def construct_manager_behavior(
             )
 
     frames: dict[str, object] = {}
+    # Prebind exact local base occurrences to already-owned class Sugars.  The
+    # ClassDef arm consumes these children through the ordinary door and seals
+    # their definition CIDs; dynamic/imported bases remain loud there.
+    reaching_classes: dict[str, ClassDef] = {}
+    for item in definitions:
+        if not isinstance(item, ClassDef):
+            continue
+        local_bases = []
+        for base in item.bases:
+            if not isinstance(base, Name) or base.id not in reaching_classes:
+                local_bases = []
+                break
+            local_bases.append(reaching_classes[base.id].sugar())
+        if local_bases and len(local_bases) == len(item.bases):
+            context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
+        reaching_classes[item.name] = item
     for item in definitions:
         if isinstance(item, ClassDef):
             frames[item.name] = item.source_visible_constructor_frame()
