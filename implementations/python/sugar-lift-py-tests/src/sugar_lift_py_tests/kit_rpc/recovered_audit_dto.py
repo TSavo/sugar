@@ -111,7 +111,10 @@ class RecoveredConstructionPanicDto:
     def from_rpc(cls, data: object) -> RecoveredConstructionPanicDto:
         row = _require_mapping(data, "recovered panic")
         _reject_unknown(row, set(_LEAF_PANIC_FIELDS), "recovered panic")
-        if row.get("kind") != "ConstructionPanic" or row.get("status") != "mandatory-panic":
+        if (
+            row.get("kind") != "ConstructionPanic"
+            or row.get("status") != "mandatory-panic"
+        ):
             raise ValueError("recovered panic must be a mandatory ConstructionPanic")
         gap = _require_mapping(row.get("gap"), "recovered panic gap")
         return cls(
@@ -322,8 +325,13 @@ class RecoveredConstructionPanicTreeDto:
     def from_rpc(cls, data: object) -> RecoveredConstructionPanicTreeDto:
         row = _require_mapping(data, "recovered tree panic")
         _reject_unknown(row, set(_TREE_PANIC_FIELDS), "recovered tree panic")
-        if row.get("kind") != "ConstructionPanic" or row.get("status") != "mandatory-panic":
-            raise ValueError("recovered tree panic must be a mandatory ConstructionPanic")
+        if (
+            row.get("kind") != "ConstructionPanic"
+            or row.get("status") != "mandatory-panic"
+        ):
+            raise ValueError(
+                "recovered tree panic must be a mandatory ConstructionPanic"
+            )
         gap = _require_mapping(row.get("gap"), "recovered tree panic gap")
         body = _require_mapping(
             row.get("demandedBody"), "recovered tree panic demandedBody"

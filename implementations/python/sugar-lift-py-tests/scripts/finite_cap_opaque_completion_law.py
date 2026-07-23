@@ -109,9 +109,7 @@ def _is_forbidden_cap_complete(node: ast.Call) -> bool:
         return False
     payload = node.args[0]
     constructor = (
-        _name(payload.func).split(".")[-1]
-        if isinstance(payload, ast.Call)
-        else ""
+        _name(payload.func).split(".")[-1] if isinstance(payload, ast.Call) else ""
     )
     # Over-cap Complete is closed by default.  Only an exact compact value whose
     # identity contains the finite constructor/elements/count is admitted.
@@ -131,9 +129,7 @@ def _forbidden_exit(
         helper = node.value.func.id
         if helper not in resolving:
             for returned in helpers.get(helper, ()):
-                forbidden = _forbidden_exit(
-                    returned, helpers, resolving | {helper}
-                )
+                forbidden = _forbidden_exit(returned, helpers, resolving | {helper})
                 if forbidden is not None:
                     return forbidden
     for child in ast.walk(node.value):
@@ -166,9 +162,9 @@ def _over_cap_returns(tree: ast.AST, node: ast.If) -> list[ast.Return]:
     left_is_cardinality = _looks_like_finite_cardinality(node.test.left)
     right_is_cardinality = _looks_like_finite_cardinality(node.test.comparators[0])
     op = node.test.ops[0]
-    body_is_over = (
-        left_is_cardinality and isinstance(op, (ast.Gt, ast.GtE))
-    ) or (right_is_cardinality and isinstance(op, (ast.Lt, ast.LtE)))
+    body_is_over = (left_is_cardinality and isinstance(op, (ast.Gt, ast.GtE))) or (
+        right_is_cardinality and isinstance(op, (ast.Lt, ast.LtE))
+    )
     if body_is_over:
         return _returns_in(node.body)
     if node.orelse:
@@ -220,7 +216,9 @@ def scan_source(source: str, *, path: str) -> list[FiniteCapOpaqueCompletion]:
     offenders: list[FiniteCapOpaqueCompletion] = []
     seen: set[tuple[int, str]] = set()
     parents = {
-        child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
     }
 
     # A force-curry inside a branch that has already authenticated a finite
@@ -273,8 +271,7 @@ def scan_source(source: str, *, path: str) -> list[FiniteCapOpaqueCompletion]:
         helpers = {
             item.name: _returns_in(item.body)
             for item in ast.walk(tree)
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and item.name
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name
         }
         controlled = _over_cap_returns(tree, node)
         for returned in controlled:

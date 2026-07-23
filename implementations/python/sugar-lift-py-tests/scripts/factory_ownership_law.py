@@ -294,9 +294,7 @@ def format_report(offenders: list[OwnershipOffender]) -> str:
     ownership_offenders = [
         row for row in offenders if not row.kind.startswith("auditor-")
     ]
-    auditor_errors = [
-        row for row in offenders if row.kind.startswith("auditor-")
-    ]
+    auditor_errors = [row for row in offenders if row.kind.startswith("auditor-")]
     lines = [
         f"R_ownership = {len(ownership_offenders)}",
         f"auditor_errors = {len(auditor_errors)}",

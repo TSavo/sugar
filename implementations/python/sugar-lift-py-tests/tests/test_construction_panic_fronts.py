@@ -47,7 +47,9 @@ def test_fingerprint_from_typed_gap_info_matches_json() -> None:
     )
 
 
-def test_rank_construction_panic_fronts_orders_owner_families_and_exact_fronts() -> None:
+def test_rank_construction_panic_fronts_orders_owner_families_and_exact_fronts() -> (
+    None
+):
     rows = [
         {
             "file": "numpy/a.py",

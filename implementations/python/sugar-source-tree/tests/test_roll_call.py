@@ -51,7 +51,10 @@ def test_identical_source_nodes_keep_distinct_roster_coordinates() -> None:
 
     functions = [entry for entry in report.roster if entry.kind == "FunctionDef"]
 
-    assert [(entry.start_line, entry.start_col) for entry in functions] == [(2, 4), (4, 4)]
+    assert [(entry.start_line, entry.start_col) for entry in functions] == [
+        (2, 4),
+        (4, 4),
+    ]
 
 
 def test_moment_zero_minority_is_the_whole_roster() -> None:

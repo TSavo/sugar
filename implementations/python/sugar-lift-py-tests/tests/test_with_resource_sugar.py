@@ -56,17 +56,13 @@ class _FixedSugar(Sugar):
 
 class _Pass(_FixedSugar):
     def __init__(self, probe=None):
-        super().__init__(
-            Complete(BlockValue((), can_fall_through=True)), probe=probe
-        )
+        super().__init__(Complete(BlockValue((), can_fall_through=True)), probe=probe)
 
 
 class _Raise(_FixedSugar):
     def __init__(self, name: str, *, occurrence: str = "t.py:1:0", probe=None):
         super().__init__(
-            Incomplete(
-                RaiseEffect(exception_name=name, occurrence=occurrence)
-            ),
+            Incomplete(RaiseEffect(exception_name=name, occurrence=occurrence)),
             probe=probe,
         )
 

@@ -74,9 +74,7 @@ class ExitFaceBinding:
 
         if isinstance(body_exit, Completed):
             return cls(face_id=face_id, kind="completed")
-        if isinstance(body_exit, Halted) and isinstance(
-            body_exit.effect, RaiseEffect
-        ):
+        if isinstance(body_exit, Halted) and isinstance(body_exit.effect, RaiseEffect):
             effect = body_exit.effect
             occurrence = (
                 getattr(effect, "occurrence_id", None)
@@ -111,9 +109,7 @@ class ExitFaceBinding:
             )
         elif self.kind == "raised":
             type_term = (
-                str_const(self.exception_name)
-                if self.exception_name
-                else open_type
+                str_const(self.exception_name) if self.exception_name else open_type
             )
             value_term = ctor(
                 "python:raise_effect_occurrence",

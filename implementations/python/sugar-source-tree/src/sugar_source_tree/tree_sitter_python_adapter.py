@@ -108,7 +108,7 @@ def _fields(node: TSNode, name: str) -> List[TSNode]:
 
 def _text(unit: SourceUnit, node: TSNode) -> str:
     span = _span(unit, node)
-    return unit.source[span.start:span.end]
+    return unit.source[span.start : span.end]
 
 
 class _Handle(BackendNode):
@@ -138,9 +138,15 @@ class _Fixed(BackendNode):
         return self._desc
 
 
-def _fixed(kind: str, raw_span: Optional[Span], slots: Tuple[Tuple[str, Slot], ...],
-           anchors: Tuple[Span, ...] = ()) -> _Fixed:
-    return _Fixed(Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=slots))
+def _fixed(
+    kind: str,
+    raw_span: Optional[Span],
+    slots: Tuple[Tuple[str, Slot], ...],
+    anchors: Tuple[Span, ...] = (),
+) -> _Fixed:
+    return _Fixed(
+        Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=slots)
+    )
 
 
 def _h(unit: SourceUnit, node: Optional[TSNode]) -> Optional[BackendNode]:
@@ -148,15 +154,34 @@ def _h(unit: SourceUnit, node: Optional[TSNode]) -> Optional[BackendNode]:
 
 
 _BIN_TOKEN = {
-    "+": "Add", "-": "Sub", "*": "Mult", "@": "MatMult", "/": "Div",
-    "%": "Mod", "**": "Pow", "<<": "LShift", ">>": "RShift", "|": "BitOr",
-    "^": "BitXor", "&": "BitAnd", "//": "FloorDiv",
+    "+": "Add",
+    "-": "Sub",
+    "*": "Mult",
+    "@": "MatMult",
+    "/": "Div",
+    "%": "Mod",
+    "**": "Pow",
+    "<<": "LShift",
+    ">>": "RShift",
+    "|": "BitOr",
+    "^": "BitXor",
+    "&": "BitAnd",
+    "//": "FloorDiv",
 }
 _AUG_TOKEN = {k + "=": v for k, v in _BIN_TOKEN.items()}
 _UNARY_TOKEN = {"+": "UAdd", "-": "USub", "~": "Invert"}
 _CMP_TOKEN = {
-    "<": "Lt", ">": "Gt", "==": "Eq", ">=": "GtE", "<=": "LtE", "!=": "NotEq",
-    "<>": "NotEq", "in": "In", "not in": "NotIn", "is": "Is", "is not": "IsNot",
+    "<": "Lt",
+    ">": "Gt",
+    "==": "Eq",
+    ">=": "GtE",
+    "<=": "LtE",
+    "!=": "NotEq",
+    "<>": "NotEq",
+    "in": "In",
+    "not in": "NotIn",
+    "is": "Is",
+    "is not": "IsNot",
 }
 
 
@@ -164,8 +189,12 @@ def _bool_kind(node_type: str) -> str:
     return {"and": "And", "or": "Or"}[node_type]
 
 
-def _bare_tuple(unit: SourceUnit, elts: Sequence[TSNode], raw_span: Optional[Span]) -> BackendNode:
-    return _fixed("Tuple", raw_span, (("elts", Children(tuple(_h(unit, e) for e in elts))),))
+def _bare_tuple(
+    unit: SourceUnit, elts: Sequence[TSNode], raw_span: Optional[Span]
+) -> BackendNode:
+    return _fixed(
+        "Tuple", raw_span, (("elts", Children(tuple(_h(unit, e) for e in elts))),)
+    )
 
 
 def _pattern_list_targets(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -176,7 +205,11 @@ def _pattern_list_targets(unit: SourceUnit, node: TSNode) -> BackendNode:
     elts = _named(node)
     if len(elts) == 1:
         return _target_handle(unit, elts[0])
-    return _fixed("Tuple", None, (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),))
+    return _fixed(
+        "Tuple",
+        None,
+        (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -200,8 +233,12 @@ def _block_stmts(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[BackendNode,
 
 def _module(unit: SourceUnit, node: TSNode) -> Description:
     body = tuple(_h(unit, c) for c in _named(node) if c.type != "comment")
-    return Description(kind="Module", raw_span=Span(0, len(unit.source)), anchors=(),
-                        slots=(("body", Children(body)),))
+    return Description(
+        kind="Module",
+        raw_span=Span(0, len(unit.source)),
+        anchors=(),
+        slots=(("body", Children(body)),),
+    )
 
 
 def _expression_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -211,8 +248,12 @@ def _expression_statement(unit: SourceUnit, node: TSNode) -> Description:
     if len(kids) > 1:
         # `f(x), "msg"` in statement position: a bare tuple — the same
         # shape CPython's ast gives (Expr(Tuple)).
-        return Description(kind="Tuple", raw_span=_span(unit, node), anchors=(),
-                            slots=(("elts", Children(tuple(_h(unit, c) for c in kids))),))
+        return Description(
+            kind="Tuple",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(("elts", Children(tuple(_h(unit, c) for c in kids))),),
+        )
     vocabulary_missing(
         owner="tree_sitter_python_adapter._expression_statement",
         observed=f"expression_statement with {len(kids)} named children",
@@ -223,17 +264,28 @@ def _expression_statement(unit: SourceUnit, node: TSNode) -> Description:
 
 
 def _leaf_identifier(unit: SourceUnit, node: TSNode) -> Description:
-    return Description(kind="Name", raw_span=_span(unit, node), anchors=(),
-                        slots=(("id", SlotLeaf(_text(unit, node))),))
+    return Description(
+        kind="Name",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("id", SlotLeaf(_text(unit, node))),),
+    )
 
 
-def _fixed_constant(span: Span, value: object, literal_kind: Optional[str] = None) -> Description:
-    return Description(kind="Constant", raw_span=span, anchors=(),
-                        slots=(("value", SlotLeaf(value)), ("literal_kind", SlotLeaf(literal_kind))))
+def _fixed_constant(
+    span: Span, value: object, literal_kind: Optional[str] = None
+) -> Description:
+    return Description(
+        kind="Constant",
+        raw_span=span,
+        anchors=(),
+        slots=(("value", SlotLeaf(value)), ("literal_kind", SlotLeaf(literal_kind))),
+    )
 
 
 def _number(unit: SourceUnit, node: TSNode) -> Description:
     import ast as _pyast
+
     text = _text(unit, node)
     value = _pyast.literal_eval(text)
     return _fixed_constant(_span(unit, node), value)
@@ -247,6 +299,7 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
     if not interpolations:
         text = _text(unit, node)
         import ast as _pyast
+
         try:
             value = _pyast.literal_eval(text)
         except Exception:
@@ -267,8 +320,12 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
                 requested="string_content or interpolation",
                 fix="extend _string_like deliberately",
             )
-    return Description(kind="JoinedStr", raw_span=span, anchors=(),
-                        slots=(("values", Children(tuple(values))),))
+    return Description(
+        kind="JoinedStr",
+        raw_span=span,
+        anchors=(),
+        slots=(("values", Children(tuple(values))),),
+    )
 
 
 def _concatenated_string(unit: SourceUnit, node: TSNode) -> Description:
@@ -277,14 +334,17 @@ def _concatenated_string(unit: SourceUnit, node: TSNode) -> Description:
     start to the last's end (spec: including inter-piece whitespace)."""
     pieces = _named(node)
     span = Span(_span(unit, pieces[0]).start, _span(unit, pieces[-1]).end)
-    any_fstring = any(any(c.type == "interpolation" for c in p.children) for p in pieces)
+    any_fstring = any(
+        any(c.type == "interpolation" for c in p.children) for p in pieces
+    )
     if not any_fstring:
         import ast as _pyast
+
         text = "".join(_text(unit, p) for p in pieces)
         try:
             value = _pyast.literal_eval(text)
         except Exception:
-            value = unit.source[span.start:span.end]
+            value = unit.source[span.start : span.end]
         return _fixed_constant(span, value)
     values: List[BackendNode] = []
     for p in pieces:
@@ -295,12 +355,17 @@ def _concatenated_string(unit: SourceUnit, node: TSNode) -> Description:
                 values.append(_h(unit, c))
             elif c.type == "interpolation":
                 values.append(_interpolation(unit, c))
-    return Description(kind="JoinedStr", raw_span=span, anchors=(), slots=(("values", Children(tuple(values))),))
+    return Description(
+        kind="JoinedStr",
+        raw_span=span,
+        anchors=(),
+        slots=(("values", Children(tuple(values))),),
+    )
 
 
 def _string_content(unit: SourceUnit, node: TSNode) -> Description:
     span = _span(unit, node)
-    return _fixed_constant(span, unit.source[span.start:span.end])
+    return _fixed_constant(span, unit.source[span.start : span.end])
 
 
 def _interpolation(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -320,19 +385,30 @@ def _interpolation(unit: SourceUnit, node: TSNode) -> BackendNode:
                 spec_values.append(_interpolation_like(unit, c, inner))
             else:
                 spec_values.append(_h(unit, c))
-        format_spec = _fixed("JoinedStr", spec_span, (("values", Children(tuple(spec_values))),))
+        format_spec = _fixed(
+            "JoinedStr", spec_span, (("values", Children(tuple(spec_values))),)
+        )
     return _fixed(
         "FormattedValue",
         _span(unit, node),
-        (("value", Child(_h(unit, value))), ("conversion", SlotLeaf(conversion)),
-         ("format_spec", MaybeChild(format_spec))),
+        (
+            ("value", Child(_h(unit, value))),
+            ("conversion", SlotLeaf(conversion)),
+            ("format_spec", MaybeChild(format_spec)),
+        ),
     )
 
 
 def _interpolation_like(unit: SourceUnit, node: TSNode, inner: TSNode) -> BackendNode:
-    return _fixed("FormattedValue", _span(unit, node),
-                  (("value", Child(_h(unit, inner))), ("conversion", SlotLeaf(-1)),
-                   ("format_spec", MaybeChild(None))))
+    return _fixed(
+        "FormattedValue",
+        _span(unit, node),
+        (
+            ("value", Child(_h(unit, inner))),
+            ("conversion", SlotLeaf(-1)),
+            ("format_spec", MaybeChild(None)),
+        ),
+    )
 
 
 _SIMPLE_LEAF = {
@@ -360,24 +436,41 @@ def _binary_operator(unit: SourceUnit, node: TSNode) -> Description:
             requested="a known binary operator token",
             fix="extend _BIN_TOKEN deliberately",
         )
-    return Description(kind="BinOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("left", Child(_h(unit, left))), ("op", OpLeaf(operator_for(kind))),
-                               ("right", Child(_h(unit, right)))))
+    return Description(
+        kind="BinOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("left", Child(_h(unit, left))),
+            ("op", OpLeaf(operator_for(kind))),
+            ("right", Child(_h(unit, right))),
+        ),
+    )
 
 
 def _boolean_operator(unit: SourceUnit, node: TSNode) -> Description:
     kids = node.children
     op_type = next(c.type for c in kids if not c.is_named)
     values = _named(node)
-    return Description(kind="BoolOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("op", OpLeaf(operator_for(_bool_kind(op_type)))),
-                               ("values", Children(tuple(_h(unit, v) for v in values)))))
+    return Description(
+        kind="BoolOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("op", OpLeaf(operator_for(_bool_kind(op_type)))),
+            ("values", Children(tuple(_h(unit, v) for v in values))),
+        ),
+    )
 
 
 def _not_operator(unit: SourceUnit, node: TSNode) -> Description:
     arg = _field(node, "argument")
-    return Description(kind="UnaryOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("op", OpLeaf(operator_for("Not"))), ("operand", Child(_h(unit, arg)))))
+    return Description(
+        kind="UnaryOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("op", OpLeaf(operator_for("Not"))), ("operand", Child(_h(unit, arg)))),
+    )
 
 
 def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
@@ -391,8 +484,12 @@ def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
             requested="'+', '-', or '~'",
             fix="extend _UNARY_TOKEN deliberately",
         )
-    return Description(kind="UnaryOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("op", OpLeaf(operator_for(kind))), ("operand", Child(_h(unit, arg)))))
+    return Description(
+        kind="UnaryOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("op", OpLeaf(operator_for(kind))), ("operand", Child(_h(unit, arg)))),
+    )
 
 
 def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
@@ -413,9 +510,16 @@ def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
                 fix="extend _CMP_TOKEN deliberately",
             )
         ops.append(operator_for(kind))
-    return Description(kind="Compare", raw_span=_span(unit, node), anchors=(),
-                        slots=(("left", Child(_h(unit, left))), ("ops", OpsLeaf(tuple(ops))),
-                               ("comparators", Children(tuple(_h(unit, c) for c in comparators)))))
+    return Description(
+        kind="Compare",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("left", Child(_h(unit, left))),
+            ("ops", OpsLeaf(tuple(ops))),
+            ("comparators", Children(tuple(_h(unit, c) for c in comparators))),
+        ),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -435,29 +539,64 @@ def _call(unit: SourceUnit, node: TSNode) -> Description:
             for c in _named(arglist):
                 if c.type == "list_splat":
                     inner = c.children[1]
-                    args.append(_fixed("Starred", _span(unit, c), (("value", Child(_h(unit, inner))),)))
+                    args.append(
+                        _fixed(
+                            "Starred",
+                            _span(unit, c),
+                            (("value", Child(_h(unit, inner))),),
+                        )
+                    )
                 elif c.type == "dictionary_splat":
                     inner = c.children[1]
-                    keywords.append(_fixed("Keyword", None,
-                                            (("arg", SlotLeaf(None)), ("value", Child(_h(unit, inner))))))
+                    keywords.append(
+                        _fixed(
+                            "Keyword",
+                            None,
+                            (
+                                ("arg", SlotLeaf(None)),
+                                ("value", Child(_h(unit, inner))),
+                            ),
+                        )
+                    )
                 elif c.type == "keyword_argument":
                     name_node = _field(c, "name")
                     value_node = _field(c, "value")
-                    keywords.append(_fixed("Keyword", _span(unit, c),
-                                            (("arg", SlotLeaf(_text(unit, name_node))),
-                                             ("value", Child(_h(unit, value_node))))))
+                    keywords.append(
+                        _fixed(
+                            "Keyword",
+                            _span(unit, c),
+                            (
+                                ("arg", SlotLeaf(_text(unit, name_node))),
+                                ("value", Child(_h(unit, value_node))),
+                            ),
+                        )
+                    )
                 else:
                     args.append(_h(unit, c))
-    return Description(kind="Call", raw_span=_span(unit, node), anchors=(),
-                        slots=(("func", Child(_h(unit, func))), ("args", Children(tuple(args))),
-                               ("keywords", Children(tuple(keywords)))))
+    return Description(
+        kind="Call",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("func", Child(_h(unit, func))),
+            ("args", Children(tuple(args))),
+            ("keywords", Children(tuple(keywords))),
+        ),
+    )
 
 
 def _attribute(unit: SourceUnit, node: TSNode) -> Description:
     value = _field(node, "object")
     attr = _field(node, "attribute")
-    return Description(kind="Attribute", raw_span=_span(unit, node), anchors=(),
-                        slots=(("value", Child(_h(unit, value))), ("attr", SlotLeaf(_text(unit, attr)))))
+    return Description(
+        kind="Attribute",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("value", Child(_h(unit, value))),
+            ("attr", SlotLeaf(_text(unit, attr))),
+        ),
+    )
 
 
 def _subscript(unit: SourceUnit, node: TSNode) -> Description:
@@ -468,8 +607,12 @@ def _subscript(unit: SourceUnit, node: TSNode) -> Description:
     else:
         elts = tuple(_one_subscript_item(unit, s) for s in subs)
         slice_handle = _fixed("Tuple", None, (("elts", Children(elts)),))
-    return Description(kind="Subscript", raw_span=_span(unit, node), anchors=(),
-                        slots=(("value", Child(_h(unit, value))), ("slice_", Child(slice_handle))))
+    return Description(
+        kind="Subscript",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("value", Child(_h(unit, value))), ("slice_", Child(slice_handle))),
+    )
 
 
 def _one_subscript_item(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -489,8 +632,11 @@ def _one_subscript_item(unit: SourceUnit, node: TSNode) -> BackendNode:
     def _maybe(seg: List[TSNode]) -> Slot:
         return MaybeChild(_h(unit, seg[0]) if seg else None)
 
-    return _fixed("Slice", _span(unit, node),
-                  (("lower", _maybe(lower)), ("upper", _maybe(upper)), ("step", _maybe(step))))
+    return _fixed(
+        "Slice",
+        _span(unit, node),
+        (("lower", _maybe(lower)), ("upper", _maybe(upper)), ("step", _maybe(step))),
+    )
 
 
 def _parenthesized_expression(unit: SourceUnit, node: TSNode) -> Description:
@@ -507,8 +653,12 @@ def _parenthesized_expression(unit: SourceUnit, node: TSNode) -> Description:
 
 def _tuple_expr(unit: SourceUnit, node: TSNode) -> Description:
     elts = [c for c in _named(node) if c.type != "comment"]
-    return Description(kind="Tuple", raw_span=_span(unit, node), anchors=(),
-                        slots=(("elts", Children(tuple(_h(unit, e) for e in elts))),))
+    return Description(
+        kind="Tuple",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("elts", Children(tuple(_h(unit, e) for e in elts))),),
+    )
 
 
 def _list_expr(unit: SourceUnit, node: TSNode) -> Description:
@@ -516,16 +666,27 @@ def _list_expr(unit: SourceUnit, node: TSNode) -> Description:
     for c in _named(node):
         if c.type == "list_splat":
             inner = c.children[1]
-            elts.append(_fixed("Starred", _span(unit, c), (("value", Child(_h(unit, inner))),)))
+            elts.append(
+                _fixed("Starred", _span(unit, c), (("value", Child(_h(unit, inner))),))
+            )
         else:
             elts.append(_h(unit, c))
-    return Description(kind="List", raw_span=_span(unit, node), anchors=(),
-                        slots=(("elts", Children(tuple(elts))),))
+    return Description(
+        kind="List",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("elts", Children(tuple(elts))),),
+    )
 
 
 def _set_expr(unit: SourceUnit, node: TSNode) -> Description:
     elts = tuple(_h(unit, c) for c in _named(node))
-    return Description(kind="Set", raw_span=_span(unit, node), anchors=(), slots=(("elts", Children(elts)),))
+    return Description(
+        kind="Set",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("elts", Children(elts)),),
+    )
 
 
 def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
@@ -534,12 +695,25 @@ def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
         if c.type == "pair":
             key = _field(c, "key")
             value = _field(c, "value")
-            items.append(_fixed("DictItem", _span(unit, c),
-                                 (("key", MaybeChild(_h(unit, key))), ("value", Child(_h(unit, value))))))
+            items.append(
+                _fixed(
+                    "DictItem",
+                    _span(unit, c),
+                    (
+                        ("key", MaybeChild(_h(unit, key))),
+                        ("value", Child(_h(unit, value))),
+                    ),
+                )
+            )
         elif c.type == "dictionary_splat":
             inner = c.children[1]
-            items.append(_fixed("DictItem", _span(unit, c),
-                                 (("key", MaybeChild(None)), ("value", Child(_h(unit, inner))))))
+            items.append(
+                _fixed(
+                    "DictItem",
+                    _span(unit, c),
+                    (("key", MaybeChild(None)), ("value", Child(_h(unit, inner)))),
+                )
+            )
         else:
             vocabulary_missing(
                 owner="tree_sitter_python_adapter._dictionary",
@@ -547,7 +721,12 @@ def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
                 requested="pair or dictionary_splat",
                 fix="extend _dictionary deliberately",
             )
-    return Description(kind="Dict", raw_span=_span(unit, node), anchors=(), slots=(("items", Children(tuple(items))),))
+    return Description(
+        kind="Dict",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("items", Children(tuple(items))),),
+    )
 
 
 def _comprehension_clause(unit: SourceUnit, node: TSNode) -> Description:
@@ -556,13 +735,27 @@ def _comprehension_clause(unit: SourceUnit, node: TSNode) -> Description:
     left = _field(node, "left")
     right = _field(node, "right")
     is_async = any(not c.is_named and c.type == "async" for c in node.children)
-    target = _pattern_list_targets(unit, left) if left.type in ("pattern_list", "tuple_pattern") else _h(unit, left)
-    return Description(kind="Comprehension", raw_span=_span(unit, node), anchors=(),
-                        slots=(("target", Child(target)), ("iter", Child(_h(unit, right))),
-                               ("ifs", Children(())), ("is_async", SlotLeaf(is_async))))
+    target = (
+        _pattern_list_targets(unit, left)
+        if left.type in ("pattern_list", "tuple_pattern")
+        else _h(unit, left)
+    )
+    return Description(
+        kind="Comprehension",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("target", Child(target)),
+            ("iter", Child(_h(unit, right))),
+            ("ifs", Children(())),
+            ("is_async", SlotLeaf(is_async)),
+        ),
+    )
 
 
-def _comprehension_body(unit: SourceUnit, node: TSNode, elt_field: str) -> Tuple[BackendNode, Tuple[BackendNode, ...]]:
+def _comprehension_body(
+    unit: SourceUnit, node: TSNode, elt_field: str
+) -> Tuple[BackendNode, Tuple[BackendNode, ...]]:
     elt = _field(node, elt_field)
     generators: List[BackendNode] = []
     current_desc: Optional[Description] = None
@@ -582,26 +775,40 @@ def _comprehension_body(unit: SourceUnit, node: TSNode, elt_field: str) -> Tuple
 
 
 def _finish_clause(desc: Description, ifs: List[BackendNode]) -> BackendNode:
-    new_slots = tuple((n, Children(tuple(ifs))) if n == "ifs" else (n, s) for n, s in desc.slots)
+    new_slots = tuple(
+        (n, Children(tuple(ifs))) if n == "ifs" else (n, s) for n, s in desc.slots
+    )
     return _fixed(desc.kind, desc.raw_span, new_slots, desc.anchors)
 
 
 def _list_comprehension(unit: SourceUnit, node: TSNode) -> Description:
     elt, gens = _comprehension_body(unit, node, "body")
-    return Description(kind="ListComp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("elt", Child(elt)), ("generators", Children(gens))))
+    return Description(
+        kind="ListComp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("elt", Child(elt)), ("generators", Children(gens))),
+    )
 
 
 def _set_comprehension(unit: SourceUnit, node: TSNode) -> Description:
     elt, gens = _comprehension_body(unit, node, "body")
-    return Description(kind="SetComp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("elt", Child(elt)), ("generators", Children(gens))))
+    return Description(
+        kind="SetComp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("elt", Child(elt)), ("generators", Children(gens))),
+    )
 
 
 def _generator_expression(unit: SourceUnit, node: TSNode) -> Description:
     elt, gens = _comprehension_body(unit, node, "body")
-    return Description(kind="GeneratorExp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("elt", Child(elt)), ("generators", Children(gens))))
+    return Description(
+        kind="GeneratorExp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("elt", Child(elt)), ("generators", Children(gens))),
+    )
 
 
 def _dictionary_comprehension(unit: SourceUnit, node: TSNode) -> Description:
@@ -621,24 +828,42 @@ def _dictionary_comprehension(unit: SourceUnit, node: TSNode) -> Description:
             current_ifs.append(_h(unit, _named(c)[0]))
     if current_desc is not None:
         generators.append(_finish_clause(current_desc, current_ifs))
-    return Description(kind="DictComp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("key", Child(_h(unit, key))), ("value", Child(_h(unit, value))),
-                               ("generators", Children(tuple(generators)))))
+    return Description(
+        kind="DictComp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("key", Child(_h(unit, key))),
+            ("value", Child(_h(unit, value))),
+            ("generators", Children(tuple(generators))),
+        ),
+    )
 
 
 def _conditional_expression(unit: SourceUnit, node: TSNode) -> Description:
     named = _named(node)
     body, test, orelse = named[0], named[1], named[2]
-    return Description(kind="IfExp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(_h(unit, test))), ("body", Child(_h(unit, body))),
-                               ("orelse", Child(_h(unit, orelse)))))
+    return Description(
+        kind="IfExp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("test", Child(_h(unit, test))),
+            ("body", Child(_h(unit, body))),
+            ("orelse", Child(_h(unit, orelse))),
+        ),
+    )
 
 
 def _named_expression(unit: SourceUnit, node: TSNode) -> Description:
     name = _field(node, "name")
     value = _field(node, "value")
-    return Description(kind="NamedExpr", raw_span=_span(unit, node), anchors=(),
-                        slots=(("target", Child(_h(unit, name))), ("value", Child(_h(unit, value)))))
+    return Description(
+        kind="NamedExpr",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("target", Child(_h(unit, name))), ("value", Child(_h(unit, value)))),
+    )
 
 
 def _yield_expr(unit: SourceUnit, node: TSNode) -> Description:
@@ -647,21 +872,43 @@ def _yield_expr(unit: SourceUnit, node: TSNode) -> Description:
     named = _named(node)
     span = _span(unit, node)
     if has_from:
-        return Description(kind="YieldFrom", raw_span=span, anchors=(), slots=(("value", Child(_h(unit, named[0]))),))
+        return Description(
+            kind="YieldFrom",
+            raw_span=span,
+            anchors=(),
+            slots=(("value", Child(_h(unit, named[0]))),),
+        )
     value = named[0] if named else None
-    return Description(kind="Yield", raw_span=span, anchors=(), slots=(("value", MaybeChild(_h(unit, value))),))
+    return Description(
+        kind="Yield",
+        raw_span=span,
+        anchors=(),
+        slots=(("value", MaybeChild(_h(unit, value))),),
+    )
 
 
 def _await_expr(unit: SourceUnit, node: TSNode) -> Description:
     value = _named(node)[0]
-    return Description(kind="Await", raw_span=_span(unit, node), anchors=(), slots=(("value", Child(_h(unit, value))),))
+    return Description(
+        kind="Await",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("value", Child(_h(unit, value))),),
+    )
 
 
 def _lambda(unit: SourceUnit, node: TSNode) -> Description:
     params_node = _field(node, "parameters")
     body = _field(node, "body")
-    return Description(kind="Lambda", raw_span=_span(unit, node), anchors=(),
-                        slots=(("params", Children(_flatten_params(unit, params_node))), ("body", Child(_h(unit, body)))))
+    return Description(
+        kind="Lambda",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("params", Children(_flatten_params(unit, params_node))),
+            ("body", Child(_h(unit, body))),
+        ),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -669,7 +916,9 @@ def _lambda(unit: SourceUnit, node: TSNode) -> Description:
 # --------------------------------------------------------------------------
 
 
-def _flatten_params(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[BackendNode, ...]:
+def _flatten_params(
+    unit: SourceUnit, node: Optional[TSNode]
+) -> Tuple[BackendNode, ...]:
     if node is None:
         return ()
     params: List[BackendNode] = []
@@ -693,38 +942,72 @@ def _flatten_params(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[BackendNo
 
 def _retag(handle: BackendNode, kind: str) -> BackendNode:
     desc = handle.describe()
-    new_slots = tuple((n, SlotLeaf(kind)) if n == "param_kind" else (n, s) for n, s in desc.slots)
+    new_slots = tuple(
+        (n, SlotLeaf(kind)) if n == "param_kind" else (n, s) for n, s in desc.slots
+    )
     return _fixed(desc.kind, desc.raw_span, new_slots, desc.anchors)
 
 
 def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> BackendNode:
     span = _span(unit, node)
     if node.type == "identifier":
-        return _fixed("Param", None,
-                       (("name", SlotLeaf(_text(unit, node))), ("annotation", MaybeChild(None)),
-                        ("default", MaybeChild(None)),
-                        ("param_kind", SlotLeaf("keyword_only" if after_star else "positional_or_keyword"))),
-                       anchors=(span,))
+        return _fixed(
+            "Param",
+            None,
+            (
+                ("name", SlotLeaf(_text(unit, node))),
+                ("annotation", MaybeChild(None)),
+                ("default", MaybeChild(None)),
+                (
+                    "param_kind",
+                    SlotLeaf("keyword_only" if after_star else "positional_or_keyword"),
+                ),
+            ),
+            anchors=(span,),
+        )
     if node.type == "list_splat_pattern":
         name_node = _named(node)[0]
-        return _fixed("Param", None,
-                       (("name", SlotLeaf(_text(unit, name_node))), ("annotation", MaybeChild(None)),
-                        ("default", MaybeChild(None)), ("param_kind", SlotLeaf("vararg"))),
-                       anchors=(_span(unit, name_node),))
+        return _fixed(
+            "Param",
+            None,
+            (
+                ("name", SlotLeaf(_text(unit, name_node))),
+                ("annotation", MaybeChild(None)),
+                ("default", MaybeChild(None)),
+                ("param_kind", SlotLeaf("vararg")),
+            ),
+            anchors=(_span(unit, name_node),),
+        )
     if node.type == "dictionary_splat_pattern":
         name_node = _named(node)[0]
-        return _fixed("Param", None,
-                       (("name", SlotLeaf(_text(unit, name_node))), ("annotation", MaybeChild(None)),
-                        ("default", MaybeChild(None)), ("param_kind", SlotLeaf("kwarg"))),
-                       anchors=(_span(unit, name_node),))
+        return _fixed(
+            "Param",
+            None,
+            (
+                ("name", SlotLeaf(_text(unit, name_node))),
+                ("annotation", MaybeChild(None)),
+                ("default", MaybeChild(None)),
+                ("param_kind", SlotLeaf("kwarg")),
+            ),
+            anchors=(_span(unit, name_node),),
+        )
     if node.type == "default_parameter":
         name_node = _field(node, "name")
         value_node = _field(node, "value")
-        return _fixed("Param", None,
-                       (("name", SlotLeaf(_text(unit, name_node))), ("annotation", MaybeChild(None)),
-                        ("default", MaybeChild(_h(unit, value_node))),
-                        ("param_kind", SlotLeaf("keyword_only" if after_star else "positional_or_keyword"))),
-                       anchors=(_span(unit, name_node),))
+        return _fixed(
+            "Param",
+            None,
+            (
+                ("name", SlotLeaf(_text(unit, name_node))),
+                ("annotation", MaybeChild(None)),
+                ("default", MaybeChild(_h(unit, value_node))),
+                (
+                    "param_kind",
+                    SlotLeaf("keyword_only" if after_star else "positional_or_keyword"),
+                ),
+            ),
+            anchors=(_span(unit, name_node),),
+        )
     if node.type == "typed_parameter":
         kids = list(node.children)
         name_node = kids[0]
@@ -738,21 +1021,35 @@ def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> BackendNode:
             kind = "kwarg"
         elif after_star:
             kind = "keyword_only"
-        return _fixed("Param", None,
-                       (("name", SlotLeaf(_text(unit, name_node))),
-                        ("annotation", MaybeChild(_h(unit, annotation_node))),
-                        ("default", MaybeChild(None)), ("param_kind", SlotLeaf(kind))),
-                       anchors=(_span(unit, name_node),))
+        return _fixed(
+            "Param",
+            None,
+            (
+                ("name", SlotLeaf(_text(unit, name_node))),
+                ("annotation", MaybeChild(_h(unit, annotation_node))),
+                ("default", MaybeChild(None)),
+                ("param_kind", SlotLeaf(kind)),
+            ),
+            anchors=(_span(unit, name_node),),
+        )
     if node.type == "typed_default_parameter":
         name_node = _field(node, "name")
         annotation_node = _field(node, "type")
         value_node = _field(node, "value")
-        return _fixed("Param", None,
-                       (("name", SlotLeaf(_text(unit, name_node))),
-                        ("annotation", MaybeChild(_h(unit, annotation_node))),
-                        ("default", MaybeChild(_h(unit, value_node))),
-                        ("param_kind", SlotLeaf("keyword_only" if after_star else "positional_or_keyword"))),
-                       anchors=(_span(unit, name_node),))
+        return _fixed(
+            "Param",
+            None,
+            (
+                ("name", SlotLeaf(_text(unit, name_node))),
+                ("annotation", MaybeChild(_h(unit, annotation_node))),
+                ("default", MaybeChild(_h(unit, value_node))),
+                (
+                    "param_kind",
+                    SlotLeaf("keyword_only" if after_star else "positional_or_keyword"),
+                ),
+            ),
+            anchors=(_span(unit, name_node),),
+        )
     vocabulary_missing(
         owner="tree_sitter_python_adapter._one_param",
         observed=f"parameter shape {node.type!r} not recognized",
@@ -773,17 +1070,32 @@ def _assignment(unit: SourceUnit, node: TSNode) -> Description:
     type_node = _field(node, "type")
     span = _span(unit, node)
     if type_node is not None:
-        return Description(kind="AnnAssign", raw_span=span, anchors=(),
-                            slots=(("target", Child(_h(unit, left))), ("annotation", Child(_h(unit, type_node))),
-                                   ("value", MaybeChild(_h(unit, right))), ("simple", SlotLeaf(True))))
+        return Description(
+            kind="AnnAssign",
+            raw_span=span,
+            anchors=(),
+            slots=(
+                ("target", Child(_h(unit, left))),
+                ("annotation", Child(_h(unit, type_node))),
+                ("value", MaybeChild(_h(unit, right))),
+                ("simple", SlotLeaf(True)),
+            ),
+        )
     targets = [left]
     value_node = right
     while value_node is not None and value_node.type == "assignment":
         targets.append(_field(value_node, "left"))
         value_node = _field(value_node, "right")
     target_handles = tuple(_target_handle(unit, t) for t in targets)
-    return Description(kind="Assign", raw_span=span, anchors=(),
-                        slots=(("targets", Children(target_handles)), ("value", Child(_h(unit, value_node)))))
+    return Description(
+        kind="Assign",
+        raw_span=span,
+        anchors=(),
+        slots=(
+            ("targets", Children(target_handles)),
+            ("value", Child(_h(unit, value_node))),
+        ),
+    )
 
 
 def _target_handle(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -791,16 +1103,32 @@ def _target_handle(unit: SourceUnit, node: TSNode) -> BackendNode:
         elts = _named(node)
         if len(elts) == 1:
             return _target_handle(unit, elts[0])
-        return _fixed("Tuple", None, (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),))
+        return _fixed(
+            "Tuple",
+            None,
+            (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),),
+        )
     if node.type == "tuple_pattern":
         elts = _named(node)
-        return _fixed("Tuple", _span(unit, node), (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),))
+        return _fixed(
+            "Tuple",
+            _span(unit, node),
+            (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),),
+        )
     if node.type == "list_pattern":
         elts = _named(node)
-        return _fixed("List", _span(unit, node), (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),))
+        return _fixed(
+            "List",
+            _span(unit, node),
+            (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),),
+        )
     if node.type == "list_splat_pattern":
         inner = _named(node)[0]
-        return _fixed("Starred", _span(unit, node), (("value", Child(_target_handle(unit, inner))),))
+        return _fixed(
+            "Starred",
+            _span(unit, node),
+            (("value", Child(_target_handle(unit, inner))),),
+        )
     return _h(unit, node)
 
 
@@ -816,9 +1144,16 @@ def _augmented_assignment(unit: SourceUnit, node: TSNode) -> Description:
             requested="a known augmented assignment token",
             fix="extend _AUG_TOKEN deliberately",
         )
-    return Description(kind="AugAssign", raw_span=_span(unit, node), anchors=(),
-                        slots=(("target", Child(_h(unit, left))), ("op", OpLeaf(operator_for(kind))),
-                               ("value", Child(_h(unit, right)))))
+    return Description(
+        kind="AugAssign",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("target", Child(_h(unit, left))),
+            ("op", OpLeaf(operator_for(kind))),
+            ("value", Child(_h(unit, right))),
+        ),
+    )
 
 
 def _return_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -829,15 +1164,24 @@ def _return_statement(unit: SourceUnit, node: TSNode) -> Description:
             value = _bare_tuple(unit, named, None)
         else:
             value = _h(unit, named[0])
-    return Description(kind="Return", raw_span=_span(unit, node), anchors=(), slots=(("value", MaybeChild(value)),))
+    return Description(
+        kind="Return",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("value", MaybeChild(value)),),
+    )
 
 
 def _delete_statement(unit: SourceUnit, node: TSNode) -> Description:
     named = _named(node)
     inner = named[0]
     elts = _named(inner) if inner.type == "expression_list" else [inner]
-    return Description(kind="Delete", raw_span=_span(unit, node), anchors=(),
-                        slots=(("targets", Children(tuple(_h(unit, e) for e in elts))),))
+    return Description(
+        kind="Delete",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("targets", Children(tuple(_h(unit, e) for e in elts))),),
+    )
 
 
 def _raise_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -849,26 +1193,47 @@ def _raise_statement(unit: SourceUnit, node: TSNode) -> Description:
         exc_node = None
     elif named:
         exc_node = named[0]
-    return Description(kind="Raise", raw_span=_span(unit, node), anchors=(),
-                        slots=(("exc", MaybeChild(_h(unit, exc_node))), ("cause", MaybeChild(_h(unit, cause)))))
+    return Description(
+        kind="Raise",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("exc", MaybeChild(_h(unit, exc_node))),
+            ("cause", MaybeChild(_h(unit, cause))),
+        ),
+    )
 
 
 def _assert_statement(unit: SourceUnit, node: TSNode) -> Description:
     named = _named(node)
     test = named[0]
     msg = named[1] if len(named) > 1 else None
-    return Description(kind="Assert", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(_h(unit, test))), ("msg", MaybeChild(_h(unit, msg)))))
+    return Description(
+        kind="Assert",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("test", Child(_h(unit, test))), ("msg", MaybeChild(_h(unit, msg)))),
+    )
 
 
 def _global_statement(unit: SourceUnit, node: TSNode) -> Description:
     names = tuple(_text(unit, c) for c in _named(node))
-    return Description(kind="Global", raw_span=_span(unit, node), anchors=(), slots=(("names", SlotLeaf(names)),))
+    return Description(
+        kind="Global",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("names", SlotLeaf(names)),),
+    )
 
 
 def _nonlocal_statement(unit: SourceUnit, node: TSNode) -> Description:
     names = tuple(_text(unit, c) for c in _named(node))
-    return Description(kind="Nonlocal", raw_span=_span(unit, node), anchors=(), slots=(("names", SlotLeaf(names)),))
+    return Description(
+        kind="Nonlocal",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("names", SlotLeaf(names)),),
+    )
 
 
 def _if_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -882,8 +1247,16 @@ def _if_statement(unit: SourceUnit, node: TSNode) -> Description:
         orelse = (_elif_handle(unit, alt),)
     else:  # else_clause
         orelse = _block_stmts(unit, _field(alt, "body"))
-    return Description(kind="If", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(_h(unit, test))), ("body", Children(body)), ("orelse", Children(orelse))))
+    return Description(
+        kind="If",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("test", Child(_h(unit, test))),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
 def _elif_handle(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -896,8 +1269,15 @@ def _elif_handle(unit: SourceUnit, node: TSNode) -> BackendNode:
         orelse = (_elif_handle(unit, alt),)
     else:
         orelse = _block_stmts(unit, _field(alt, "body"))
-    return _fixed("If", _span(unit, node),
-                  (("test", Child(_h(unit, test))), ("body", Children(body)), ("orelse", Children(orelse))))
+    return _fixed(
+        "If",
+        _span(unit, node),
+        (
+            ("test", Child(_h(unit, test))),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
 def _while_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -905,8 +1285,16 @@ def _while_statement(unit: SourceUnit, node: TSNode) -> Description:
     body = _block_stmts(unit, _field(node, "body"))
     alt = _field(node, "alternative")
     orelse = _block_stmts(unit, _field(alt, "body")) if alt is not None else ()
-    return Description(kind="While", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(_h(unit, test))), ("body", Children(body)), ("orelse", Children(orelse))))
+    return Description(
+        kind="While",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("test", Child(_h(unit, test))),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
 def _for_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -918,10 +1306,22 @@ def _for_statement(unit: SourceUnit, node: TSNode) -> Description:
     body = _block_stmts(unit, _field(node, "body"))
     alt = _field(node, "alternative")
     orelse = _block_stmts(unit, _field(alt, "body")) if alt is not None else ()
-    kind = "AsyncFor" if any(not c.is_named and c.type == "async" for c in node.children) else "For"
-    return Description(kind=kind, raw_span=_span(unit, node), anchors=(),
-                        slots=(("target", Child(target)), ("iter", Child(iter_handle)),
-                               ("body", Children(body)), ("orelse", Children(orelse))))
+    kind = (
+        "AsyncFor"
+        if any(not c.is_named and c.type == "async" for c in node.children)
+        else "For"
+    )
+    return Description(
+        kind=kind,
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("target", Child(target)),
+            ("iter", Child(iter_handle)),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
 def _with_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -941,28 +1341,65 @@ def _with_statement(unit: SourceUnit, node: TSNode) -> Description:
                     ctx = _named(c)[0]
                     alias = _field(c, "alias")
                     alias_inner = _named(alias)[0] if alias is not None else None
-                    items.append(_fixed("WithItem", _span(unit, c),
-                                         (("context_expr", Child(_h(unit, ctx))),
-                                          ("optional_vars", MaybeChild(_h(unit, alias_inner))))))
+                    items.append(
+                        _fixed(
+                            "WithItem",
+                            _span(unit, c),
+                            (
+                                ("context_expr", Child(_h(unit, ctx))),
+                                ("optional_vars", MaybeChild(_h(unit, alias_inner))),
+                            ),
+                        )
+                    )
                 else:
-                    items.append(_fixed("WithItem", _span(unit, c),
-                                         (("context_expr", Child(_h(unit, c))),
-                                          ("optional_vars", MaybeChild(None)))))
+                    items.append(
+                        _fixed(
+                            "WithItem",
+                            _span(unit, c),
+                            (
+                                ("context_expr", Child(_h(unit, c))),
+                                ("optional_vars", MaybeChild(None)),
+                            ),
+                        )
+                    )
             continue
         if value.type == "as_pattern":
             ctx = _named(value)[0]
             alias = _field(value, "alias")
             alias_inner = _named(alias)[0] if alias is not None else None
-            items.append(_fixed("WithItem", _span(unit, it),
-                                 (("context_expr", Child(_h(unit, ctx))),
-                                  ("optional_vars", MaybeChild(_h(unit, alias_inner))))))
+            items.append(
+                _fixed(
+                    "WithItem",
+                    _span(unit, it),
+                    (
+                        ("context_expr", Child(_h(unit, ctx))),
+                        ("optional_vars", MaybeChild(_h(unit, alias_inner))),
+                    ),
+                )
+            )
         else:
-            items.append(_fixed("WithItem", _span(unit, it),
-                                 (("context_expr", Child(_h(unit, value))), ("optional_vars", MaybeChild(None)))))
+            items.append(
+                _fixed(
+                    "WithItem",
+                    _span(unit, it),
+                    (
+                        ("context_expr", Child(_h(unit, value))),
+                        ("optional_vars", MaybeChild(None)),
+                    ),
+                )
+            )
     body = _block_stmts(unit, _field(node, "body"))
-    kind = "AsyncWith" if any(not c.is_named and c.type == "async" for c in node.children) else "With"
-    return Description(kind=kind, raw_span=_span(unit, node), anchors=(),
-                        slots=(("items", Children(tuple(items))), ("body", Children(body))))
+    kind = (
+        "AsyncWith"
+        if any(not c.is_named and c.type == "async" for c in node.children)
+        else "With"
+    )
+    return Description(
+        kind=kind,
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("items", Children(tuple(items))), ("body", Children(body))),
+    )
 
 
 def _try_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -982,23 +1419,43 @@ def _try_statement(unit: SourceUnit, node: TSNode) -> Description:
                 if value.type == "as_pattern":
                     exc_type = _named(value)[0]
                     alias = _field(value, "alias")
-                    exc_name = _text(unit, _named(alias)[0]) if alias is not None else None
+                    exc_name = (
+                        _text(unit, _named(alias)[0]) if alias is not None else None
+                    )
                 else:
                     exc_type = value
-            handler_body = _block_stmts(unit, next(k for k in c.children if k.type == "block"))
-            handlers.append(_fixed(
-                "ExceptHandler", _span(unit, c),
-                (("type_", MaybeChild(_h(unit, exc_type))), ("name", SlotLeaf(exc_name)),
-                 ("body", Children(handler_body))),
-            ))
+            handler_body = _block_stmts(
+                unit, next(k for k in c.children if k.type == "block")
+            )
+            handlers.append(
+                _fixed(
+                    "ExceptHandler",
+                    _span(unit, c),
+                    (
+                        ("type_", MaybeChild(_h(unit, exc_type))),
+                        ("name", SlotLeaf(exc_name)),
+                        ("body", Children(handler_body)),
+                    ),
+                )
+            )
         elif c.type == "else_clause":
             orelse = _block_stmts(unit, _field(c, "body"))
         elif c.type == "finally_clause":
-            finalbody = _block_stmts(unit, next(k for k in c.children if k.type == "block"))
+            finalbody = _block_stmts(
+                unit, next(k for k in c.children if k.type == "block")
+            )
     kind = "TryStar" if is_star else "Try"
-    return Description(kind=kind, raw_span=_span(unit, node), anchors=(),
-                        slots=(("body", Children(body)), ("handlers", Children(tuple(handlers))),
-                               ("orelse", Children(orelse)), ("finalbody", Children(finalbody))))
+    return Description(
+        kind=kind,
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("body", Children(body)),
+            ("handlers", Children(tuple(handlers))),
+            ("orelse", Children(orelse)),
+            ("finalbody", Children(finalbody)),
+        ),
+    )
 
 
 def _function_definition(unit: SourceUnit, node: TSNode) -> Description:
@@ -1006,11 +1463,24 @@ def _function_definition(unit: SourceUnit, node: TSNode) -> Description:
     params = _flatten_params(unit, _field(node, "parameters"))
     returns = _field(node, "return_type")
     body = _block_stmts(unit, _field(node, "body"))
-    kind = "AsyncFunctionDef" if any(not c.is_named and c.type == "async" for c in node.children) else "FunctionDef"
-    return Description(kind=kind, raw_span=_span(unit, node), anchors=(),
-                        slots=(("name", SlotLeaf(name)), ("params", Children(params)), ("body", Children(body)),
-                               ("decorators", Children(())),
-                               ("returns", MaybeChild(_h(unit, returns))), ("type_params", Children(()))))
+    kind = (
+        "AsyncFunctionDef"
+        if any(not c.is_named and c.type == "async" for c in node.children)
+        else "FunctionDef"
+    )
+    return Description(
+        kind=kind,
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("name", SlotLeaf(name)),
+            ("params", Children(params)),
+            ("body", Children(body)),
+            ("decorators", Children(())),
+            ("returns", MaybeChild(_h(unit, returns))),
+            ("type_params", Children(())),
+        ),
+    )
 
 
 def _class_definition(unit: SourceUnit, node: TSNode) -> Description:
@@ -1023,21 +1493,48 @@ def _class_definition(unit: SourceUnit, node: TSNode) -> Description:
             if c.type == "keyword_argument":
                 name_node = _field(c, "name")
                 value_node = _field(c, "value")
-                keywords.append(_fixed("Keyword", _span(unit, c),
-                                        (("arg", SlotLeaf(_text(unit, name_node))), ("value", Child(_h(unit, value_node))))))
+                keywords.append(
+                    _fixed(
+                        "Keyword",
+                        _span(unit, c),
+                        (
+                            ("arg", SlotLeaf(_text(unit, name_node))),
+                            ("value", Child(_h(unit, value_node))),
+                        ),
+                    )
+                )
             elif c.type == "list_splat":
                 inner = c.children[1]
-                bases.append(_fixed("Starred", _span(unit, c), (("value", Child(_h(unit, inner))),)))
+                bases.append(
+                    _fixed(
+                        "Starred", _span(unit, c), (("value", Child(_h(unit, inner))),)
+                    )
+                )
             elif c.type == "dictionary_splat":
                 inner = c.children[1]
-                keywords.append(_fixed("Keyword", None, (("arg", SlotLeaf(None)), ("value", Child(_h(unit, inner))))))
+                keywords.append(
+                    _fixed(
+                        "Keyword",
+                        None,
+                        (("arg", SlotLeaf(None)), ("value", Child(_h(unit, inner)))),
+                    )
+                )
             else:
                 bases.append(_h(unit, c))
     body = _block_stmts(unit, _field(node, "body"))
-    return Description(kind="ClassDef", raw_span=_span(unit, node), anchors=(),
-                        slots=(("name", SlotLeaf(name)), ("bases", Children(tuple(bases))),
-                               ("keywords", Children(tuple(keywords))), ("body", Children(body)),
-                               ("decorators", Children(())), ("type_params", Children(()))))
+    return Description(
+        kind="ClassDef",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("name", SlotLeaf(name)),
+            ("bases", Children(tuple(bases))),
+            ("keywords", Children(tuple(keywords))),
+            ("body", Children(body)),
+            ("decorators", Children(())),
+            ("type_params", Children(())),
+        ),
+    )
 
 
 def _decorated_definition(unit: SourceUnit, node: TSNode) -> Description:
@@ -1046,7 +1543,10 @@ def _decorated_definition(unit: SourceUnit, node: TSNode) -> Description:
     inner = _field(node, "definition")
     base = _describe(unit, inner)
     span = Span(_span(unit, node).start, base.raw_span.end)
-    new_slots = tuple((n, Children(dec_handles)) if n == "decorators" else (n, s) for n, s in base.slots)
+    new_slots = tuple(
+        (n, Children(dec_handles)) if n == "decorators" else (n, s)
+        for n, s in base.slots
+    )
     return Description(kind=base.kind, raw_span=span, anchors=(), slots=new_slots)
 
 
@@ -1056,16 +1556,31 @@ def _import_statement(unit: SourceUnit, node: TSNode) -> Description:
         if not c.is_named or c.type in _SKIP_TYPES:
             continue
         names.append(_import_alias(unit, c))
-    return Description(kind="Import", raw_span=_span(unit, node), anchors=(), slots=(("names", Children(tuple(names))),))
+    return Description(
+        kind="Import",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("names", Children(tuple(names))),),
+    )
 
 
 def _import_alias(unit: SourceUnit, node: TSNode) -> BackendNode:
     if node.type == "aliased_import":
         name_node = _field(node, "name")
         alias_node = _field(node, "alias")
-        return _fixed("ImportAlias", _span(unit, node),
-                      (("name", SlotLeaf(_dotted_str(unit, name_node))), ("asname", SlotLeaf(_text(unit, alias_node)))))
-    return _fixed("ImportAlias", _span(unit, node), (("name", SlotLeaf(_dotted_str(unit, node))), ("asname", SlotLeaf(None))))
+        return _fixed(
+            "ImportAlias",
+            _span(unit, node),
+            (
+                ("name", SlotLeaf(_dotted_str(unit, name_node))),
+                ("asname", SlotLeaf(_text(unit, alias_node))),
+            ),
+        )
+    return _fixed(
+        "ImportAlias",
+        _span(unit, node),
+        (("name", SlotLeaf(_dotted_str(unit, node))), ("asname", SlotLeaf(None))),
+    )
 
 
 def _dotted_str(unit: SourceUnit, node: TSNode) -> str:
@@ -1078,24 +1593,45 @@ def _import_from_statement(unit: SourceUnit, node: TSNode) -> Description:
     module: Optional[str] = None
     if module_node is not None:
         if module_node.type == "relative_import":
-            prefix = _field(module_node, None) if False else next(
-                (c for c in module_node.children if c.type == "import_prefix"), None
+            prefix = (
+                _field(module_node, None)
+                if False
+                else next(
+                    (c for c in module_node.children if c.type == "import_prefix"), None
+                )
             )
             if prefix is not None:
                 level = sum(1 for c in prefix.children if c.type == ".")
-            dotted = next((c for c in module_node.children if c.type == "dotted_name"), None)
+            dotted = next(
+                (c for c in module_node.children if c.type == "dotted_name"), None
+            )
             module = _text(unit, dotted) if dotted is not None else None
         else:
             module = _dotted_str(unit, module_node)
     names_nodes = _fields(node, "name")
-    star_node = next((c for c in node.children if not c.is_named and c.type == "*"), None)
+    star_node = next(
+        (c for c in node.children if not c.is_named and c.type == "*"), None
+    )
     if star_node is not None:
-        names = (_fixed("ImportAlias", _span(unit, star_node),
-                         (("name", SlotLeaf("*")), ("asname", SlotLeaf(None)))),)
+        names = (
+            _fixed(
+                "ImportAlias",
+                _span(unit, star_node),
+                (("name", SlotLeaf("*")), ("asname", SlotLeaf(None))),
+            ),
+        )
     else:
         names = tuple(_import_alias(unit, n) for n in names_nodes)
-    return Description(kind="ImportFrom", raw_span=_span(unit, node), anchors=(),
-                        slots=(("module", SlotLeaf(module)), ("names", Children(names)), ("level", SlotLeaf(level))))
+    return Description(
+        kind="ImportFrom",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("module", SlotLeaf(module)),
+            ("names", Children(names)),
+            ("level", SlotLeaf(level)),
+        ),
+    )
 
 
 def _dotted_name_expr(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -1108,7 +1644,11 @@ def _dotted_name_expr(unit: SourceUnit, node: TSNode) -> BackendNode:
     start = _span(unit, parts[0]).start
     for p in parts[1:]:
         end = _span(unit, p).end
-        acc = _fixed("Attribute", Span(start, end), (("value", Child(acc)), ("attr", SlotLeaf(_text(unit, p)))))
+        acc = _fixed(
+            "Attribute",
+            Span(start, end),
+            (("value", Child(acc)), ("attr", SlotLeaf(_text(unit, p)))),
+        )
     return acc
 
 
@@ -1123,9 +1663,17 @@ def _generic_type(unit: SourceUnit, node: TSNode) -> Description:
     if len(items) == 1:
         slice_handle = _one_subscript_item(unit, items[0])
     else:
-        slice_handle = _fixed("Tuple", None, (("elts", Children(tuple(_one_subscript_item(unit, i) for i in items))),))
-    return Description(kind="Subscript", raw_span=_span(unit, node), anchors=(),
-                        slots=(("value", Child(_h(unit, base))), ("slice_", Child(slice_handle))))
+        slice_handle = _fixed(
+            "Tuple",
+            None,
+            (("elts", Children(tuple(_one_subscript_item(unit, i) for i in items))),),
+        )
+    return Description(
+        kind="Subscript",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("value", Child(_h(unit, base))), ("slice_", Child(slice_handle))),
+    )
 
 
 def _type_var(unit: SourceUnit, item: TSNode) -> BackendNode:
@@ -1135,14 +1683,24 @@ def _type_var(unit: SourceUnit, item: TSNode) -> BackendNode:
         name_node, bound_node = _named(inner)[0], _named(inner)[1]
         name_inner = _named(name_node)[0] if name_node.type == "type" else name_node
         bound_inner = _named(bound_node)[0] if bound_node.type == "type" else bound_node
-        return _fixed("TypeVar", _span(unit, inner),
-                       (("name", SlotLeaf(_text(unit, name_inner))),
-                        ("bound", MaybeChild(_h(unit, bound_inner))),
-                        ("default_value", MaybeChild(None))))
-    return _fixed("TypeVar", _span(unit, inner),
-                   (("name", SlotLeaf(_text(unit, inner))),
-                    ("bound", MaybeChild(None)),
-                    ("default_value", MaybeChild(None))))
+        return _fixed(
+            "TypeVar",
+            _span(unit, inner),
+            (
+                ("name", SlotLeaf(_text(unit, name_inner))),
+                ("bound", MaybeChild(_h(unit, bound_inner))),
+                ("default_value", MaybeChild(None)),
+            ),
+        )
+    return _fixed(
+        "TypeVar",
+        _span(unit, inner),
+        (
+            ("name", SlotLeaf(_text(unit, inner))),
+            ("bound", MaybeChild(None)),
+            ("default_value", MaybeChild(None)),
+        ),
+    )
 
 
 def _type_alias_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -1159,15 +1717,33 @@ def _type_alias_statement(unit: SourceUnit, node: TSNode) -> Description:
             if i.is_named and i.type not in _SKIP_TYPES
         )
         name_expr = base
-    return Description(kind="TypeAlias", raw_span=_span(unit, node), anchors=(),
-                        slots=(("name", Child(_h(unit, name_expr))), ("type_params", Children(type_params)),
-                               ("value", Child(_h(unit, _named(right)[0] if right.type == "type" else right)))))
+    return Description(
+        kind="TypeAlias",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("name", Child(_h(unit, name_expr))),
+            ("type_params", Children(type_params)),
+            (
+                "value",
+                Child(_h(unit, _named(right)[0] if right.type == "type" else right)),
+            ),
+        ),
+    )
 
 
 def _future_import_statement(unit: SourceUnit, node: TSNode) -> Description:
     names = tuple(_import_alias(unit, n) for n in _fields(node, "name"))
-    return Description(kind="ImportFrom", raw_span=_span(unit, node), anchors=(),
-                        slots=(("module", SlotLeaf("__future__")), ("names", Children(names)), ("level", SlotLeaf(0))))
+    return Description(
+        kind="ImportFrom",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("module", SlotLeaf("__future__")),
+            ("names", Children(names)),
+            ("level", SlotLeaf(0)),
+        ),
+    )
 
 
 def _match_statement(unit: SourceUnit, node: TSNode) -> Description:
@@ -1178,8 +1754,15 @@ def _match_statement(unit: SourceUnit, node: TSNode) -> Description:
         if c.type != "case_clause":
             continue
         cases.append(_case_clause(unit, c))
-    return Description(kind="Match", raw_span=_span(unit, node), anchors=(),
-                        slots=(("subject", Child(_h(unit, subject))), ("cases", Children(tuple(cases)))))
+    return Description(
+        kind="Match",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("subject", Child(_h(unit, subject))),
+            ("cases", Children(tuple(cases))),
+        ),
+    )
 
 
 def _case_clause(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -1192,13 +1775,24 @@ def _case_clause(unit: SourceUnit, node: TSNode) -> BackendNode:
     if len(pattern_nodes) == 1:
         pattern = _pattern(unit, pattern_nodes[0])
     else:
-        pat_span = Span(_span(unit, pattern_nodes[0]).start, _span(unit, pattern_nodes[-1]).end)
-        pattern = _fixed("MatchSequence", pat_span,
-                          (("patterns", Children(tuple(_pattern(unit, p) for p in pattern_nodes))),))
+        pat_span = Span(
+            _span(unit, pattern_nodes[0]).start, _span(unit, pattern_nodes[-1]).end
+        )
+        pattern = _fixed(
+            "MatchSequence",
+            pat_span,
+            (("patterns", Children(tuple(_pattern(unit, p) for p in pattern_nodes))),),
+        )
     guard_cond = _named(guard)[0] if guard is not None else None
-    return _fixed("MatchCase", _span(unit, node),
-                  (("pattern", Child(pattern)), ("guard", MaybeChild(_h(unit, guard_cond))),
-                   ("body", Children(body))))
+    return _fixed(
+        "MatchCase",
+        _span(unit, node),
+        (
+            ("pattern", Child(pattern)),
+            ("guard", MaybeChild(_h(unit, guard_cond))),
+            ("body", Children(body)),
+        ),
+    )
 
 
 def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
@@ -1206,16 +1800,38 @@ def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
         inner = _named(node)
         if len(inner) == 1:
             return _pattern(unit, inner[0])
-        return _fixed("MatchSequence", _span(unit, node),
-                       (("patterns", Children(tuple(_pattern(unit, p) for p in inner))),))
+        return _fixed(
+            "MatchSequence",
+            _span(unit, node),
+            (("patterns", Children(tuple(_pattern(unit, p) for p in inner))),),
+        )
     span = _span(unit, node)
     if node.type == "_":
-        return _fixed("MatchAs", span, (("pattern", MaybeChild(None)), ("name", SlotLeaf(None))))
-    if node.type in ("integer", "float", "true", "false", "none", "string", "complex_pattern", "unary_operator",
-                      "concatenated_string"):
-        return _h(unit, node) if node.type != "true" and node.type != "false" and node.type != "none" else _Fixed(_SIMPLE_LEAF[node.type](unit, node))
+        return _fixed(
+            "MatchAs", span, (("pattern", MaybeChild(None)), ("name", SlotLeaf(None)))
+        )
+    if node.type in (
+        "integer",
+        "float",
+        "true",
+        "false",
+        "none",
+        "string",
+        "complex_pattern",
+        "unary_operator",
+        "concatenated_string",
+    ):
+        return (
+            _h(unit, node)
+            if node.type != "true" and node.type != "false" and node.type != "none"
+            else _Fixed(_SIMPLE_LEAF[node.type](unit, node))
+        )
     if node.type == "identifier":
-        return _fixed("MatchAs", span, (("pattern", MaybeChild(None)), ("name", SlotLeaf(_text(unit, node)))))
+        return _fixed(
+            "MatchAs",
+            span,
+            (("pattern", MaybeChild(None)), ("name", SlotLeaf(_text(unit, node)))),
+        )
     if node.type in ("dotted_name", "attribute"):
         return _fixed("MatchValue", span, (("value", Child(_h(unit, node))),))
     if node.type in ("list_pattern", "tuple_pattern"):
@@ -1234,8 +1850,17 @@ def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
         tn = _fields(node, "alias")
         if tn:
             tgt = tn[0]
-            target_name = _text(unit, _named(tgt)[0] if tgt.type == "as_pattern_target" else tgt)
-        return _fixed("MatchAs", span, (("pattern", MaybeChild(_pattern(unit, inner))), ("name", SlotLeaf(target_name))))
+            target_name = _text(
+                unit, _named(tgt)[0] if tgt.type == "as_pattern_target" else tgt
+            )
+        return _fixed(
+            "MatchAs",
+            span,
+            (
+                ("pattern", MaybeChild(_pattern(unit, inner))),
+                ("name", SlotLeaf(target_name)),
+            ),
+        )
     if node.type == "union_pattern":
         items = [_pattern(unit, c) for c in _named(node)]
         return _fixed("MatchOr", span, (("patterns", Children(tuple(items))),))
@@ -1254,9 +1879,16 @@ def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
                 kwd_patterns.append(_pattern_item(unit, kv))
             else:
                 positional.append(_pattern_item(unit, c))
-        return _fixed("MatchClass", span,
-                      (("cls_", Child(_h(unit, cls_node))), ("patterns", Children(tuple(positional))),
-                       ("kwd_attrs", SlotLeaf(tuple(kwd_attrs))), ("kwd_patterns", Children(tuple(kwd_patterns)))))
+        return _fixed(
+            "MatchClass",
+            span,
+            (
+                ("cls_", Child(_h(unit, cls_node))),
+                ("patterns", Children(tuple(positional))),
+                ("kwd_attrs", SlotLeaf(tuple(kwd_attrs))),
+                ("kwd_patterns", Children(tuple(kwd_patterns))),
+            ),
+        )
     if node.type == "dict_pattern":
         keys: List[BackendNode] = []
         patterns: List[BackendNode] = []
@@ -1282,8 +1914,15 @@ def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
             keys.append(_h(unit, key_node))
             patterns.append(_pattern_item(unit, value_node))
             i = j + 1
-        return _fixed("MatchMapping", span,
-                      (("keys", Children(tuple(keys))), ("patterns", Children(tuple(patterns))), ("rest", SlotLeaf(rest))))
+        return _fixed(
+            "MatchMapping",
+            span,
+            (
+                ("keys", Children(tuple(keys))),
+                ("patterns", Children(tuple(patterns))),
+                ("rest", SlotLeaf(rest)),
+            ),
+        )
     vocabulary_missing(
         owner="tree_sitter_python_adapter._pattern",
         observed=f"case pattern shape {node.type!r} not recognized",
@@ -1351,9 +1990,15 @@ _DISPATCH = {
     "assert_statement": _assert_statement,
     "global_statement": _global_statement,
     "nonlocal_statement": _nonlocal_statement,
-    "pass_statement": lambda u, n: Description(kind="Pass", raw_span=_span(u, n), anchors=(), slots=()),
-    "break_statement": lambda u, n: Description(kind="Break", raw_span=_span(u, n), anchors=(), slots=()),
-    "continue_statement": lambda u, n: Description(kind="Continue", raw_span=_span(u, n), anchors=(), slots=()),
+    "pass_statement": lambda u, n: Description(
+        kind="Pass", raw_span=_span(u, n), anchors=(), slots=()
+    ),
+    "break_statement": lambda u, n: Description(
+        kind="Break", raw_span=_span(u, n), anchors=(), slots=()
+    ),
+    "continue_statement": lambda u, n: Description(
+        kind="Continue", raw_span=_span(u, n), anchors=(), slots=()
+    ),
     "if_statement": _if_statement,
     "while_statement": _while_statement,
     "for_statement": _for_statement,
@@ -1395,20 +2040,29 @@ _DISPATCH = {
     "dotted_name": lambda u, n: _dotted_name_expr(u, n).describe(),
     "generic_type": _generic_type,
     "splat_type": lambda u, n: Description(
-        kind="Starred", raw_span=_span(u, n), anchors=(),
+        kind="Starred",
+        raw_span=_span(u, n),
+        anchors=(),
         slots=(("value", Child(_h(u, _named(n)[0]))),),
     ),
     "list_splat": lambda u, n: Description(
-        kind="Starred", raw_span=_span(u, n), anchors=(),
+        kind="Starred",
+        raw_span=_span(u, n),
+        anchors=(),
         slots=(("value", Child(_h(u, _named(n)[0]))),),
     ),
     # PEP 604 `X | Y` written in annotation position parses as its own
     # 'union_type' node rather than a binary_operator (the '|' expression
     # form still goes through binary_operator/BinOp as usual) — same shape.
     "union_type": lambda u, n: Description(
-        kind="BinOp", raw_span=_span(u, n), anchors=(),
-        slots=(("left", Child(_h(u, _named(n)[0]))), ("op", OpLeaf(operator_for("BitOr"))),
-               ("right", Child(_h(u, _named(n)[1])))),
+        kind="BinOp",
+        raw_span=_span(u, n),
+        anchors=(),
+        slots=(
+            ("left", Child(_h(u, _named(n)[0]))),
+            ("op", OpLeaf(operator_for("BitOr"))),
+            ("right", Child(_h(u, _named(n)[1]))),
+        ),
     ),
 }
 

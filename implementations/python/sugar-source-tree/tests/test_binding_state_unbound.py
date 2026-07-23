@@ -9,7 +9,11 @@ from sugar_lift_py_tests.floor import ReturnValue, TermValue, UniverseValue
 from sugar_lift_py_tests.ir import and_, make_var, not_, or_, py_truthy
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.binding_state import BranchResultSlot, GuardedBinding, UnboundBinding
+from sugar_source_tree.binding_state import (
+    BranchResultSlot,
+    GuardedBinding,
+    UnboundBinding,
+)
 from sugar_source_tree.nodes import Node
 from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -193,9 +197,7 @@ def test_bound_augassign_control_remains_completed_value() -> None:
     out = _out("def f():\n x = 1\n x += 2\n return x\n")
     assert isinstance(out, Complete)
     returns = [
-        entry
-        for entry in out.value.record.statements
-        if isinstance(entry, ReturnValue)
+        entry for entry in out.value.record.statements if isinstance(entry, ReturnValue)
     ]
     assert returns[0].value == TermValue(3)
 
@@ -245,9 +247,7 @@ def test_try_exception_alias_is_tombstoned_after_handler() -> None:
 
 def test_try_uncaught_raise_remains_a_halted_face() -> None:
     out = _out(
-        "def f():\n"
-        " try:\n  raise TypeError\n"
-        " except ValueError:\n  pass\n"
+        "def f():\n" " try:\n  raise TypeError\n" " except ValueError:\n  pass\n"
     )
     assert isinstance(out, Incomplete)
     assert isinstance(out.effect, RaiseEffect)

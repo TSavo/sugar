@@ -46,7 +46,9 @@ def test_exception_name_is_read_structurally():
     # raise E, raise E(...), raise mod.E, raise mod.E(...) all name E / mod.E,
     # independently of the normally built child carried by the exit.
     assert _effect("def A():\n    raise ValueError\n").exception_name == "ValueError"
-    assert _effect("def A():\n    raise ValueError('x')\n").exception_name == "ValueError"
+    assert (
+        _effect("def A():\n    raise ValueError('x')\n").exception_name == "ValueError"
+    )
     assert _effect("def A():\n    raise os.error\n").exception_name == "os.error"
     assert _effect("def A():\n    raise a.b.E(1)\n").exception_name == "a.b.E"
 

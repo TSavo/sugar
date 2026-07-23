@@ -21,9 +21,9 @@ def _run_ladder():
 
     # The factory is DELETED, not merely bypassed -- a stronger guarantee than
     # the old tripwire: there is no _lift_file_for_enumeration to consult.
-    assert not hasattr(lift_rpc, "_lift_file_for_enumeration"), (
-        "the factory enumeration fallback must be deleted, not present"
-    )
+    assert not hasattr(
+        lift_rpc, "_lift_file_for_enumeration"
+    ), "the factory enumeration fallback must be deleted, not present"
 
     lift_rpc._send_enumerate_result = lambda mid, nodes, gaps, **kw: captured.update(
         nodes=nodes, gaps=gaps

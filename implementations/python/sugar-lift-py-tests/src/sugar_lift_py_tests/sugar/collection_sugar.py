@@ -40,8 +40,11 @@ class ListSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return _call_return_pair(
-            name="list_len", owner_sugar="ListSugar", body="len([z, z, z])",
-            truthful="3", lying="2",
+            name="list_len",
+            owner_sugar="ListSugar",
+            body="len([z, z, z])",
+            truthful="3",
+            lying="2",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -59,8 +62,11 @@ class TupleSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return _call_return_pair(
-            name="tuple_len", owner_sugar="TupleSugar", body="len((z, z))",
-            truthful="2", lying="3",
+            name="tuple_len",
+            owner_sugar="TupleSugar",
+            body="len((z, z))",
+            truthful="2",
+            lying="3",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -78,8 +84,11 @@ class SetSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return _call_return_pair(
-            name="set_len", owner_sugar="SetSugar", body="len({1, 2, 3})",
-            truthful="3", lying="2",
+            name="set_len",
+            owner_sugar="SetSugar",
+            body="len({1, 2, 3})",
+            truthful="3",
+            lying="2",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -98,8 +107,11 @@ class DictSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return _call_return_pair(
-            name="dict_len", owner_sugar="DictSugar", body="len({1: z, 2: z})",
-            truthful="2", lying="3",
+            name="dict_len",
+            owner_sugar="DictSugar",
+            body="len({1: z, 2: z})",
+            truthful="2",
+            lying="3",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

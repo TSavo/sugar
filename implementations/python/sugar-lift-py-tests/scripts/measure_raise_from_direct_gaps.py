@@ -26,9 +26,7 @@ def classify_raise_from(
         byte_col = getattr(node, "col_offset", -1)
         if line < 1 or byte_col < 0:
             return type(node).__name__, line, byte_col
-        normalized_col = len(
-            lines[line - 1].encode("utf-8")[:byte_col].decode("utf-8")
-        )
+        normalized_col = len(lines[line - 1].encode("utf-8")[:byte_col].decode("utf-8"))
         return type(node).__name__, line, normalized_col
 
     direct: Counter[str] = Counter()
@@ -42,9 +40,7 @@ def classify_raise_from(
             continue
 
         descendant_sites = {
-            site(descendant)
-            for descendant in ast.walk(node)
-            if descendant is not node
+            site(descendant) for descendant in ast.walk(node) if descendant is not node
         }
         if descendant_sites & gap_sites:
             blocked["raise_from"] += 1
@@ -78,9 +74,7 @@ def measure(root: Path) -> dict[str, object]:
             shape = (
                 "bare"
                 if node.exc is None
-                else "raise_from"
-                if node.cause is not None
-                else "without_cause"
+                else "raise_from" if node.cause is not None else "without_cause"
             )
             syntax[shape] += 1
         if not raises:
@@ -94,7 +88,9 @@ def measure(root: Path) -> dict[str, object]:
             # Raise directly. An unwritten enclosing function must not hide a
             # cause descendant, and an unrelated sibling gap must not label
             # the Raise blocked.
-            for raise_node in (node for node in source_file.nodes() if node.kind == "Raise"):
+            for raise_node in (
+                node for node in source_file.nodes() if node.kind == "Raise"
+            ):
                 descendant_gap = False
                 for operand in (raise_node.exc, raise_node.cause):
                     if operand is None:

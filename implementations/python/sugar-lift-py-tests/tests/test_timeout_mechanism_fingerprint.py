@@ -120,7 +120,10 @@ def test_fingerprint_engine_events_names_dominant_and_multi_miss() -> None:
     report = fingerprint_engine_events(events)
     assert report["schema"] == "sugar.timeout.mechanism.v1"
     assert report["dominant_mechanism"] == MECHANISM_RECURSIVE_FUNCTION_CONSTRUCT
-    assert report["mechanism_heartbeat_counts"][MECHANISM_RECURSIVE_FUNCTION_CONSTRUCT] == 2
+    assert (
+        report["mechanism_heartbeat_counts"][MECHANISM_RECURSIVE_FUNCTION_CONSTRUCT]
+        == 2
+    )
     assert report["mechanism_heartbeat_counts"][MECHANISM_FACTORY_BUILD] == 1
     assert report["resolve_value_miss"] == 3
     assert report["resolve_value_hit"] == 1

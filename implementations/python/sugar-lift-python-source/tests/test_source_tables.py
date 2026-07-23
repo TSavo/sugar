@@ -72,7 +72,10 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
     assert source_lines(first) == tuple(ast._splitlines_no_ff(first))
     assert parsed_tree(first).body[0].targets[0].id == "x_0"  # type: ignore[attr-defined]
     assign = parsed_tree(first).body[0]
-    assert locate_parsed_node(first, type(assign), assign.lineno, assign.col_offset) is assign
+    assert (
+        locate_parsed_node(first, type(assign), assign.lineno, assign.col_offset)
+        is assign
+    )
     assert source_symtable(first) is not None
 
     # Cache never grows past capacity.

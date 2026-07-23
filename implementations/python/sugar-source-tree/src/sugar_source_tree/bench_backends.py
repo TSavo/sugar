@@ -174,5 +174,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     run_throughput(args.backend, args.path, args.limit)
     return 0
 
+
 if __name__ == "__main__":
     sys.exit(main())

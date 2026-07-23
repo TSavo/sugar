@@ -1,4 +1,13 @@
-class ProtocolResource: pass
-def create(): return ProtocolResource()
+class ProtocolResource:
+    pass
+
+
+def create():
+    return ProtocolResource()
+
+
 rows = {"k": create}
-def resolve(symbol): return rows.get(symbol)()
+
+
+def resolve(symbol):
+    return rows.get(symbol)()

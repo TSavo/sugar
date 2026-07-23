@@ -27,7 +27,11 @@ from conftest import oracle_source_file
 from sugar_source_tree.backend import BackendCouldNotParse  # noqa: E402
 from sugar_source_tree.tree import SourceFile  # noqa: E402
 from sugar_source_tree.cpython_adapter import CPythonAstBackend  # noqa: E402
-from sugar_source_tree.libcst_adapter import LibCSTBackend, _describe, _Ctx  # noqa: E402
+from sugar_source_tree.libcst_adapter import (
+    LibCSTBackend,
+    _describe,
+    _Ctx,
+)  # noqa: E402
 from sugar_source_tree import nodes  # noqa: E402
 from sugar_source_tree.panic import SourceTreePanic  # noqa: E402
 
@@ -114,7 +118,9 @@ def test_param_span_includes_annotation_and_default():
 
 def test_comprehension_clause_starts_at_the_for_keyword():
     """LibCST's CompFor position starts at the preceding whitespace."""
-    assert segment_of("[i for i in xs if i]\n", nodes.Comprehension) == "for i in xs if i"
+    assert (
+        segment_of("[i for i in xs if i]\n", nodes.Comprehension) == "for i in xs if i"
+    )
 
 
 def test_async_comprehension_clause_starts_at_async():

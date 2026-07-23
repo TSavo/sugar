@@ -47,6 +47,4 @@ class AssertSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Desugar the test, and the result states itself.
-        return self.test.desugar(ctx).and_then(
-            lambda value: value.stated(self.site)
-        )
+        return self.test.desugar(ctx).and_then(lambda value: value.stated(self.site))

@@ -24,7 +24,6 @@ from sugar_lift_py_tests.signing import Signer
 from sugar_lift_py_tests.context_manager_contract import _json_value
 from sugar_lift_py_tests import lift_rpc
 
-
 SEED = bytes(range(32))
 DECLARED_AT = "2026-07-22T00:00:00.000Z"
 
@@ -48,7 +47,11 @@ def _reseal(mutator):
     raw["header"]["cid"] = payload_cid
     raw["header"]["payloadCid"] = payload_cid
     return _assemble_layered(
-        _json_value(raw["header"]), _json_value(raw["metadata"]), DECLARED_AT, SEED, payload_cid
+        _json_value(raw["header"]),
+        _json_value(raw["metadata"]),
+        DECLARED_AT,
+        SEED,
+        payload_cid,
     )
 
 
@@ -68,8 +71,15 @@ def test_semantic_payload_is_provider_neutral_and_hashed_alone():
     header = raw["header"]
     assert header["schemaVersion"] == "1.2"
     assert set(header) == {
-        "schemaVersion", "kind", "cid", "payloadCid", "bridgeSourceSymbol",
-        "importSignature", "payload", "sourceWarrants", "inputCids",
+        "schemaVersion",
+        "kind",
+        "cid",
+        "payloadCid",
+        "bridgeSourceSymbol",
+        "importSignature",
+        "payload",
+        "sourceWarrants",
+        "inputCids",
     }
     assert "name" not in header["payload"] and "kit" not in header["payload"]
     assert header["payload"] == {
@@ -77,9 +87,16 @@ def test_semantic_payload_is_provider_neutral_and_hashed_alone():
         "schemaVersion": "1",
         "enter": {
             "completion": {"kind": "total"},
-            "result": {"kind": "projection", "projection": "enter-result", "sort": {"kind": "primitive", "name": "Value"}},
+            "result": {
+                "kind": "projection",
+                "projection": "enter-result",
+                "sort": {"kind": "primitive", "name": "Value"},
+            },
         },
-        "exit": {"completion": {"kind": "total"}, "disposition": {"kind": "never-suppresses"}},
+        "exit": {
+            "completion": {"kind": "total"},
+            "disposition": {"kind": "never-suppresses"},
+        },
     }
     assert header["payloadCid"] == blake3_512_of(
         encode_jcs(_json_value(header["payload"])).encode()
@@ -87,14 +104,18 @@ def test_semantic_payload_is_provider_neutral_and_hashed_alone():
 
 
 def test_correctly_resealed_unknown_disposition_reaches_typed_decoder():
-    sealed = _reseal(lambda h: h["payload"]["exit"]["disposition"].update(kind="sometimes"))
+    sealed = _reseal(
+        lambda h: h["payload"]["exit"]["disposition"].update(kind="sometimes")
+    )
     with pytest.raises(ContextManagerContractError, match="unknown exit disposition"):
         decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
 
 
 def test_correctly_resealed_missing_enter_reaches_typed_decoder():
     sealed = _reseal(lambda h: h["payload"].pop("enter"))
-    with pytest.raises(ContextManagerContractError, match="malformed protocol-resource semantics"):
+    with pytest.raises(
+        ContextManagerContractError, match="malformed protocol-resource semantics"
+    ):
         decode_context_manager_contract(sealed.canonical_bytes, sealed.cid)
 
 
@@ -107,7 +128,13 @@ def test_bad_signature_is_distinct_from_stale_payload_cid():
 
     raw = json.loads(sealed.canonical_bytes)
     raw["header"]["payloadCid"] = "blake3-512:" + "0" * 128
-    stale = _assemble_layered(_json_value(raw["header"]), _json_value(raw["metadata"]), DECLARED_AT, SEED, raw["header"]["payloadCid"])
+    stale = _assemble_layered(
+        _json_value(raw["header"]),
+        _json_value(raw["metadata"]),
+        DECLARED_AT,
+        SEED,
+        raw["header"]["payloadCid"],
+    )
     with pytest.raises(ContextManagerContractError, match="payload CID"):
         decode_context_manager_contract(stale.canonical_bytes, stale.cid)
 
@@ -133,6 +160,4 @@ def test_typed_declaration_is_published_on_the_live_kit_declaration(monkeypatch)
     monkeypatch.setattr(lift_rpc, "_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS", ())
     lift_rpc.publish_context_manager_declaration(row)
     declaration = lift_rpc._kit_declaration_result()
-    assert declaration["contractDeclarations"] == [
-        row.to_rpc_with_term_table(None)
-    ]
+    assert declaration["contractDeclarations"] == [row.to_rpc_with_term_table(None)]

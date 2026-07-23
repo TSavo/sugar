@@ -33,14 +33,20 @@ class SourceFragmentCoordinateV1:
     @classmethod
     def decode(cls, raw: Any) -> "SourceFragmentCoordinateV1":
         if not isinstance(raw, dict) or set(raw) != {
-            "sourceCid", "startLine", "startCol", "endLine", "endCol"
+            "sourceCid",
+            "startLine",
+            "startCol",
+            "endLine",
+            "endCol",
         }:
             raise ContractRefProtocolError("malformed source-fragment coordinate")
         values = (raw["startLine"], raw["startCol"], raw["endLine"], raw["endCol"])
         if not isinstance(raw["sourceCid"], str) or not all(
             isinstance(value, int) and value >= 0 for value in values
         ):
-            raise ContractRefProtocolError("malformed source-fragment coordinate fields")
+            raise ContractRefProtocolError(
+                "malformed source-fragment coordinate fields"
+            )
         return cls(raw["sourceCid"], *values)
 
     def wire(self) -> dict[str, Any]:
@@ -85,7 +91,9 @@ class ResolvedContractRefsV1:
     table_cid: str
     by_use_site: Mapping[SourceFragmentCoordinateV1, ContextManagerResolutionV1]
 
-    def require(self, use_site: SourceFragmentCoordinateV1) -> ContextManagerResolutionV1:
+    def require(
+        self, use_site: SourceFragmentCoordinateV1
+    ) -> ContextManagerResolutionV1:
         try:
             return self.by_use_site[use_site]
         except KeyError as exc:
@@ -101,11 +109,18 @@ class TreeConstructionContextV1:
     workspace_root: str | None = None
 
 
-_GAP_KINDS = frozenset({
-    "runtime-selected", "unresolved-symbol", "ambiguous-symbol",
-    "wrong-contract-kind", "signature-mismatch", "unauthenticated-member",
-    "payload-cid-mismatch", "unsupported-cm-schema",
-})
+_GAP_KINDS = frozenset(
+    {
+        "runtime-selected",
+        "unresolved-symbol",
+        "ambiguous-symbol",
+        "wrong-contract-kind",
+        "signature-mismatch",
+        "unauthenticated-member",
+        "payload-cid-mismatch",
+        "unsupported-cm-schema",
+    }
+)
 
 
 def _cid(value: Any, field: str) -> str:
@@ -122,11 +137,21 @@ def _decode_signature(raw: Any) -> ImportSignatureV2:
 
 
 def _resolution_cid_preimage(raw: dict[str, Any]) -> dict[str, Any]:
-    return {key: raw[key] for key in (
-        "schemaVersion", "demandCid", "useSite", "catalogCid", "memberCid",
-        "payloadCid", "bridgeSourceSymbol", "importSignature", "semantics",
-        "sourceWarrantCids",
-    )}
+    return {
+        key: raw[key]
+        for key in (
+            "schemaVersion",
+            "demandCid",
+            "useSite",
+            "catalogCid",
+            "memberCid",
+            "payloadCid",
+            "bridgeSourceSymbol",
+            "importSignature",
+            "semantics",
+            "sourceWarrantCids",
+        )
+    }
 
 
 def _hash_json(raw: Any) -> str:
@@ -135,9 +160,18 @@ def _hash_json(raw: Any) -> str:
 
 def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
     expected = {
-        "kind", "schemaVersion", "resolutionCid", "demandCid", "useSite",
-        "catalogCid", "memberCid", "payloadCid", "bridgeSourceSymbol",
-        "importSignature", "semantics", "sourceWarrantCids",
+        "kind",
+        "schemaVersion",
+        "resolutionCid",
+        "demandCid",
+        "useSite",
+        "catalogCid",
+        "memberCid",
+        "payloadCid",
+        "bridgeSourceSymbol",
+        "importSignature",
+        "semantics",
+        "sourceWarrantCids",
     }
     if not isinstance(raw, dict) or set(raw) != expected:
         raise ContractRefProtocolError("malformed context-manager contract ref")
@@ -155,22 +189,31 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
     if not isinstance(warrants, list):
         raise ContractRefProtocolError("sourceWarrantCids must be a list")
     return ContextManagerContractRefV1(
-        resolution_cid, _cid(raw["demandCid"], "demandCid"),
+        resolution_cid,
+        _cid(raw["demandCid"], "demandCid"),
         SourceFragmentCoordinateV1.decode(raw["useSite"]),
-        _cid(raw["catalogCid"], "catalogCid"), _cid(raw["memberCid"], "memberCid"),
-        _cid(raw["payloadCid"], "payloadCid"), raw["bridgeSourceSymbol"],
-        signature, semantics,
+        _cid(raw["catalogCid"], "catalogCid"),
+        _cid(raw["memberCid"], "memberCid"),
+        _cid(raw["payloadCid"], "payloadCid"),
+        raw["bridgeSourceSymbol"],
+        signature,
+        semantics,
         tuple(_cid(value, "sourceWarrantCid") for value in warrants),
     )
 
 
 def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
-    if not isinstance(raw, dict) or set(raw) != {
-        "kind", "schemaVersion", "catalogCid", "tableCid", "byUseSite"
-    } or raw["kind"] != "resolved-contract-refs" or raw["schemaVersion"] != "1":
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"kind", "schemaVersion", "catalogCid", "tableCid", "byUseSite"}
+        or raw["kind"] != "resolved-contract-refs"
+        or raw["schemaVersion"] != "1"
+    ):
         raise ContractRefProtocolError("malformed resolved-contract-ref table")
     table_cid = _cid(raw["tableCid"], "tableCid")
-    identity = {key: raw[key] for key in ("kind", "schemaVersion", "catalogCid", "byUseSite")}
+    identity = {
+        key: raw[key] for key in ("kind", "schemaVersion", "catalogCid", "byUseSite")
+    }
     if _hash_json(identity) != table_cid:
         raise ContractRefProtocolError("resolution table CID mismatch")
     rows = raw["byUseSite"]
@@ -185,21 +228,30 @@ def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
         resolution = row["resolution"]
         if not isinstance(resolution, dict):
             raise ContractRefProtocolError("malformed resolution")
-        if resolution.get("kind") == "resolved" and set(resolution) == {"kind", "reference"}:
+        if resolution.get("kind") == "resolved" and set(resolution) == {
+            "kind",
+            "reference",
+        }:
             value: ContextManagerResolutionV1 = _decode_ref(resolution["reference"])
             if value.use_site != use_site or value.catalog_cid != catalog_cid:
                 raise ContractRefProtocolError("resolution coordinate/catalog mismatch")
-        elif resolution.get("kind") == "unresolved" and set(resolution) == {"kind", "gap"}:
+        elif resolution.get("kind") == "unresolved" and set(resolution) == {
+            "kind",
+            "gap",
+        }:
             gap = resolution["gap"]
             if not isinstance(gap, dict) or gap.get("kind") not in _GAP_KINDS:
-                raise ContractRefProtocolError("malformed context-manager resolution gap")
+                raise ContractRefProtocolError(
+                    "malformed context-manager resolution gap"
+                )
             candidates = gap.get("candidateMemberCids")
             if not isinstance(candidates, list) or candidates != sorted(candidates):
                 raise ContractRefProtocolError("candidate member CIDs must be sorted")
             value = ContextManagerResolutionGapV1(
                 _cid(gap.get("demandCid"), "demandCid"),
                 SourceFragmentCoordinateV1.decode(gap.get("useSite")),
-                gap.get("targetSymbol"), gap["kind"],
+                gap.get("targetSymbol"),
+                gap["kind"],
                 tuple(_cid(v, "candidateMemberCid") for v in candidates),
             )
             if value.use_site != use_site:

@@ -5,12 +5,9 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "vendor_special_case_law.py"
-_SPEC = importlib.util.spec_from_file_location(
-    "vendor_special_case_law", _SCANNER_PATH
-)
+_SPEC = importlib.util.spec_from_file_location("vendor_special_case_law", _SCANNER_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 _SCANNER = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SCANNER)

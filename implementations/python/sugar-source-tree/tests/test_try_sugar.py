@@ -19,7 +19,12 @@ def _val(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write("import pytest\nimport contextlib\nimport tm\n" + src)
         path = f.name
-    return next(source_file_with_preconstruction(Path(path)).functions()).sugar().desugar().value
+    return (
+        next(source_file_with_preconstruction(Path(path)).functions())
+        .sugar()
+        .desugar()
+        .value
+    )
 
 
 def _fn(src):
@@ -170,8 +175,6 @@ def test_finally_reduces_on_uncaught_path():
     assert names == {"RuntimeError"}
 
 
-
-
 def test_finally_pass_restores_uncaught_raise():
     """Cleanup fall-through restores the incoming halt (ValueError survives)."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -251,9 +254,7 @@ def test_conditional_raise_both_exits_survive_through_finally():
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.ir import not_
 
-    returns = [
-        e for e in v.record.contribution() if isinstance(e, GuardedReturn)
-    ]
+    returns = [e for e in v.record.contribution() if isinstance(e, GuardedReturn)]
     assert len(returns) == 2
     assert {entry.value.value for entry in returns} == {1, 2}
     assert returns[1].guards[0] == not_(returns[0].guards[0])
@@ -283,7 +284,9 @@ def test_conditional_raise_assign_paths_through_finally_no_residual_halt():
     post = v.post()
     assert post.kind == "and"
     assert {face.operands[1].args[1].value for face in post.operands} == {1, 2}
-    by_value = {face.operands[1].args[1].value: face.operands[0] for face in post.operands}
+    by_value = {
+        face.operands[1].args[1].value: face.operands[0] for face in post.operands
+    }
     assert by_value[2].name == "py.truthy"
     assert by_value[1].kind == "not"
 
@@ -304,7 +307,9 @@ def test_false_arm_conditional_raise_routes_with_reverse_polarity():
     assert _incompletes(v) == []
     post = v.post()
     assert post.kind == "and"
-    by_value = {face.operands[1].args[1].value: face.operands[0] for face in post.operands}
+    by_value = {
+        face.operands[1].args[1].value: face.operands[0] for face in post.operands
+    }
     assert by_value[1].name == "py.truthy"
     assert by_value[2].kind == "not"
 
@@ -334,15 +339,15 @@ def test_except_as_binds_matching_raise_witness_in_handler():
     typed = [
         inv
         for inv in v.invs()
-        if inv.name == "="
-        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+        if inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_type"
     ]
-    assert typed, f"missing effect_slot_type in {[i.name for i in v.invs()]}: {v.invs()}"
+    assert (
+        typed
+    ), f"missing effect_slot_type in {[i.name for i in v.invs()]}: {v.invs()}"
     assert typed[0].args[1].value == "ValueError"
     # Witness identity is the slot itself (post), not a type-derived equation.
     assert not any(
-        inv.name == "="
-        and getattr(inv.args[0], "name", None) == "effect_slot_identity"
+        inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_identity"
         for inv in v.invs()
     )
     origins = [
@@ -417,8 +422,7 @@ def test_tuple_except_as_binds_the_matched_type_witness():
     typed = [
         inv
         for inv in v.invs()
-        if inv.name == "="
-        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+        if inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_type"
     ]
     assert typed and typed[0].args[1].value == "ValueError"
 
@@ -475,7 +479,6 @@ def test_dotted_except_type_matches():
     assert v.post().args[1].name == "z"
 
 
-
 def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
     """Two raise ValueError sites: equal type testimony, distinct origins."""
     v = _val(
@@ -493,8 +496,7 @@ def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
     types = [
         inv.args[1].value
         for inv in v.invs()
-        if inv.name == "="
-        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+        if inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_type"
     ]
     assert types.count("ValueError") >= 2
     origins = [

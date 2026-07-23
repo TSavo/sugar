@@ -54,11 +54,13 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
             outcome = head.desugar()
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
-            if isinstance(outcome, Complete) and isinstance(
-                outcome.value, GuardedFaces
-            ) and any(
-                isinstance(entry, Incomplete)
-                for entry in outcome.value.contribution()
+            if (
+                isinstance(outcome, Complete)
+                and isinstance(outcome.value, GuardedFaces)
+                and any(
+                    isinstance(entry, Incomplete)
+                    for entry in outcome.value.contribution()
+                )
             ):
                 faces = outcome.value
                 entries = []
@@ -84,9 +86,11 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
                 if faces.can_fall_through:
                     exits.append(
                         Completed(
-                            faces.continuation_guard
-                            if faces.continuation_guard is not None
-                            else true_guard(),
+                            (
+                                faces.continuation_guard
+                                if faces.continuation_guard is not None
+                                else true_guard()
+                            ),
                             completed_state,
                         )
                     )
@@ -110,9 +114,7 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
                     entries = (*state.entries, *contribution)
                     follow = linear.follow()
                     if not follow.continues:
-                        return ExitSet.completed(
-                            _ReducedBlock(entries, False, ())
-                        )
+                        return ExitSet.completed(_ReducedBlock(entries, False, ()))
                     return ExitSet.completed(
                         _ReducedBlock(
                             entries,
@@ -290,6 +292,8 @@ class FunctionUniverseSugar(Sugar):
                     stack.append(value)
                 elif isinstance(value, tuple):
                     stack.extend(
-                        reversed(tuple(item for item in value if isinstance(item, Sugar)))
+                        reversed(
+                            tuple(item for item in value if isinstance(item, Sugar))
+                        )
                     )
         return tuple(edges)

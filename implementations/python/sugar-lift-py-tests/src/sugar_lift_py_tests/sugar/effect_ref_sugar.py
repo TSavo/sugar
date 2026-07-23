@@ -53,8 +53,6 @@ class ObservationRefSugar(Sugar):
                 EnterResultCoordinate,
             )
 
-            return Complete(
-                EnterResultCoordinate(slot_id=self.slot_id, site=self.site)
-            )
+            return Complete(EnterResultCoordinate(slot_id=self.slot_id, site=self.site))
         # warning_observation / effect: pure coordinate until binding facts exist
         return Complete(EffectCoordinate(slot_id=self.slot_id, site=self.site))

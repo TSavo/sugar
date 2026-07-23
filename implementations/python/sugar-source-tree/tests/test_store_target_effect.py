@@ -54,12 +54,7 @@ def test_subscript_store_lifts_a_red_effect_and_the_block_continues():
 
 
 def test_subscript_store_post_out_equals_the_returned_value():
-    v = (
-        _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n")
-        .sugar()
-        .desugar()
-        .value
-    )
+    v = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar().value
     post = v.post()
     assert post.name == "="
     assert post.args[0].name == "out"
@@ -88,9 +83,7 @@ def test_subscript_store_witness_names_the_index():
 
 
 def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
-    entries = _entries(
-        "def A(o, v, w):\n    o.a = v\n    o.b = w\n    return v\n"
-    )
+    entries = _entries("def A(o, v, w):\n    o.a = v\n    o.b = w\n    return v\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 2
     operands = {repr(e.effect.witness.runtime_operand.term) for e in red}

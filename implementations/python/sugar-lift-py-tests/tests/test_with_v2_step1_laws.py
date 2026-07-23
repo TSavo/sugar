@@ -2,8 +2,11 @@
 
 from pathlib import Path
 
-from with_v2_law_detector import ModuleGraph, analyze_consumer_enrollment, analyze_single_authority
-
+from with_v2_law_detector import (
+    ModuleGraph,
+    analyze_consumer_enrollment,
+    analyze_single_authority,
+)
 
 PYTHON_ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOTS = (

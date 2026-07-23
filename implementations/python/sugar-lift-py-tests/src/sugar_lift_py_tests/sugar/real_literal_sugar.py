@@ -20,8 +20,11 @@ class RealLiteralSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return _call_return_pair(
-            name="real_literal_return", owner_sugar="RealLiteralSugar",
-            body="2.5", truthful="2.5", lying="2.6",
+            name="real_literal_return",
+            owner_sugar="RealLiteralSugar",
+            body="2.5",
+            truthful="2.5",
+            lying="2.6",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

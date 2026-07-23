@@ -136,9 +136,15 @@ class _Fixed(BackendNode):
         return f"<parso-fixed {self._desc.kind}>"
 
 
-def _fixed(kind: str, raw_span: Optional[Span], slots: Tuple[Tuple[str, Slot], ...],
-           anchors: Tuple[Span, ...] = ()) -> _Fixed:
-    return _Fixed(Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=slots))
+def _fixed(
+    kind: str,
+    raw_span: Optional[Span],
+    slots: Tuple[Tuple[str, Slot], ...],
+    anchors: Tuple[Span, ...] = (),
+) -> _Fixed:
+    return _Fixed(
+        Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=slots)
+    )
 
 
 def _h(unit: SourceUnit, node: ParsoNode) -> BackendNode:
@@ -150,18 +156,43 @@ def _h(unit: SourceUnit, node: ParsoNode) -> BackendNode:
 # --------------------------------------------------------------------------
 
 _BIN_TOKEN = {
-    "+": "Add", "-": "Sub", "*": "Mult", "@": "MatMult", "/": "Div",
-    "%": "Mod", "**": "Pow", "<<": "LShift", ">>": "RShift", "|": "BitOr",
-    "^": "BitXor", "&": "BitAnd", "//": "FloorDiv",
+    "+": "Add",
+    "-": "Sub",
+    "*": "Mult",
+    "@": "MatMult",
+    "/": "Div",
+    "%": "Mod",
+    "**": "Pow",
+    "<<": "LShift",
+    ">>": "RShift",
+    "|": "BitOr",
+    "^": "BitXor",
+    "&": "BitAnd",
+    "//": "FloorDiv",
 }
 _AUG_TOKEN = {
-    "+=": "Add", "-=": "Sub", "*=": "Mult", "@=": "MatMult", "/=": "Div",
-    "%=": "Mod", "**=": "Pow", "<<=": "LShift", ">>=": "RShift", "|=": "BitOr",
-    "^=": "BitXor", "&=": "BitAnd", "//=": "FloorDiv",
+    "+=": "Add",
+    "-=": "Sub",
+    "*=": "Mult",
+    "@=": "MatMult",
+    "/=": "Div",
+    "%=": "Mod",
+    "**=": "Pow",
+    "<<=": "LShift",
+    ">>=": "RShift",
+    "|=": "BitOr",
+    "^=": "BitXor",
+    "&=": "BitAnd",
+    "//=": "FloorDiv",
 }
 _UNARY_TOKEN = {"+": "UAdd", "-": "USub", "~": "Invert"}
 _CMP_TOKEN = {
-    "<": "Lt", ">": "Gt", "==": "Eq", ">=": "GtE", "<=": "LtE", "<>": "NotEq",
+    "<": "Lt",
+    ">": "Gt",
+    "==": "Eq",
+    ">=": "GtE",
+    "<=": "LtE",
+    "<>": "NotEq",
     "!=": "NotEq",
 }
 
@@ -268,7 +299,9 @@ def _compare(unit: SourceUnit, node: ParsoNode) -> Description:
     )
 
 
-def _bare_tuple(unit: SourceUnit, elts: Sequence[ParsoNode], unit_span: Optional[Span] = None) -> BackendNode:
+def _bare_tuple(
+    unit: SourceUnit, elts: Sequence[ParsoNode], unit_span: Optional[Span] = None
+) -> BackendNode:
     handles = tuple(_h(unit, e) for e in elts)
     return _fixed("Tuple", unit_span, (("elts", Children(handles)),))
 
@@ -321,7 +354,9 @@ def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> Backen
     # plain string(s): concatenate python-literal values
     import ast as _pyast  # value decoding only — never structure; see docstring
 
-    text = "".join(unit.source[_span(unit, p).start:_span(unit, p).end] for p in pieces)
+    text = "".join(
+        unit.source[_span(unit, p).start : _span(unit, p).end] for p in pieces
+    )
     try:
         value = _pyast.literal_eval(text)
     except Exception:
@@ -330,7 +365,9 @@ def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> Backen
 
 
 # _Fixed has no _replace_value; build Constant directly instead.
-def _fixed_constant(span: Span, value: object, literal_kind: Optional[str] = None) -> BackendNode:
+def _fixed_constant(
+    span: Span, value: object, literal_kind: Optional[str] = None
+) -> BackendNode:
     return _fixed(
         "Constant",
         span,
@@ -340,13 +377,15 @@ def _fixed_constant(span: Span, value: object, literal_kind: Optional[str] = Non
 
 def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     span = _span(unit, node)
-    text = unit.source[span.start:span.end]
+    text = unit.source[span.start : span.end]
     if node.type == "number":
         import ast as _pyast
+
         value = _pyast.literal_eval(text)
         return _fixed_constant(span, value)
     if node.type == "string":
         import ast as _pyast
+
         try:
             value = _pyast.literal_eval(text)
         except Exception:
@@ -371,7 +410,7 @@ def _fstring_values(unit: SourceUnit, node: ParsoNode) -> List[BackendNode]:
     for c in _kids(node):
         if c.type == "fstring_string":
             span = _span(unit, c)
-            out.append(_fixed_constant(span, unit.source[span.start:span.end]))
+            out.append(_fixed_constant(span, unit.source[span.start : span.end]))
         elif c.type == "fstring_expr":
             out.append(_h(unit, c))
         elif c.type in ("fstring_start", "fstring_end"):
@@ -439,8 +478,13 @@ def _describe_fstring_expr(unit: SourceUnit, node: ParsoNode) -> Description:
     )
 
 
-def _fold_trailers(unit: SourceUnit, atom: ParsoNode, trailers: Sequence[ParsoNode],
-                    has_await: bool, await_start: Optional[int]) -> BackendNode:
+def _fold_trailers(
+    unit: SourceUnit,
+    atom: ParsoNode,
+    trailers: Sequence[ParsoNode],
+    has_await: bool,
+    await_start: Optional[int],
+) -> BackendNode:
     base_start = _span(unit, atom).start
     acc: BackendNode = _h(unit, atom)
     for tr in trailers:
@@ -480,17 +524,24 @@ def _fold_trailers(unit: SourceUnit, atom: ParsoNode, trailers: Sequence[ParsoNo
                 fix="extend _fold_trailers deliberately",
             )
     if has_await:
-        acc = _fixed("Await", Span(await_start, end if trailers else _span(unit, atom).end),
-                      (("value", Child(acc)),))
+        acc = _fixed(
+            "Await",
+            Span(await_start, end if trailers else _span(unit, atom).end),
+            (("value", Child(acc)),),
+        )
     return acc
 
 
-def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[BackendNode], List[BackendNode]]:
+def _call_args(
+    unit: SourceUnit, inner: Sequence[ParsoNode]
+) -> Tuple[List[BackendNode], List[BackendNode]]:
     if len(inner) == 1 and inner[0].type == "arglist":
         inner = _kids(inner[0])
     inner = _strip_commas(inner)
-    if len(inner) == 1 and inner[0].type == "argument" and any(
-        c.type in ("comp_for", "sync_comp_for") for c in _kids(inner[0])
+    if (
+        len(inner) == 1
+        and inner[0].type == "argument"
+        and any(c.type in ("comp_for", "sync_comp_for") for c in _kids(inner[0]))
     ):
         # bare generator expression as the sole call argument
         ik = _kids(inner[0])
@@ -502,17 +553,32 @@ def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[Backe
         if item.type == "argument":
             ik = _kids(item)
             if _is_leaf(ik[0]) and ik[0].value == "**":
-                keywords.append(_fixed("Keyword", None,
-                                        (("arg", SlotLeaf(None)), ("value", Child(_h(unit, ik[1]))))))
+                keywords.append(
+                    _fixed(
+                        "Keyword",
+                        None,
+                        (("arg", SlotLeaf(None)), ("value", Child(_h(unit, ik[1])))),
+                    )
+                )
             elif _is_leaf(ik[0]) and ik[0].value == "*":
-                args.append(_fixed("Starred", Span(_span(unit, item).start, _span(unit, item).end),
-                                    (("value", Child(_h(unit, ik[1]))),)))
+                args.append(
+                    _fixed(
+                        "Starred",
+                        Span(_span(unit, item).start, _span(unit, item).end),
+                        (("value", Child(_h(unit, ik[1]))),),
+                    )
+                )
             elif len(ik) >= 2 and _is_leaf(ik[1]) and ik[1].value == "=":
-                keywords.append(_fixed(
-                    "Keyword",
-                    Span(_span(unit, item).start, _span(unit, item).end),
-                    (("arg", SlotLeaf(ik[0].value)), ("value", Child(_h(unit, ik[2])))),
-                ))
+                keywords.append(
+                    _fixed(
+                        "Keyword",
+                        Span(_span(unit, item).start, _span(unit, item).end),
+                        (
+                            ("arg", SlotLeaf(ik[0].value)),
+                            ("value", Child(_h(unit, ik[2]))),
+                        ),
+                    )
+                )
             else:
                 vocabulary_missing(
                     owner="parso_adapter._call_args",
@@ -524,7 +590,11 @@ def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[Backe
             continue  # handled as part of an 'argument' pairing above in real grammars
         elif item.type == "star_expr":
             sk = _kids(item)
-            args.append(_fixed("Starred", _span(unit, item), (("value", Child(_h(unit, sk[1]))),)))
+            args.append(
+                _fixed(
+                    "Starred", _span(unit, item), (("value", Child(_h(unit, sk[1]))),)
+                )
+            )
         else:
             args.append(_h(unit, item))
     return args, keywords
@@ -583,7 +653,9 @@ def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> BackendNode:
 # --------------------------------------------------------------------------
 
 
-def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[BackendNode, ...]:
+def _flatten_params(
+    unit: SourceUnit, node: Optional[ParsoNode]
+) -> Tuple[BackendNode, ...]:
     if node is None:
         return ()
     if node.type == "param":
@@ -595,12 +667,19 @@ def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[Backen
     if node.type == "name":
         # a single plain (no annotation, no default) parameter collapses all
         # the way down to a bare Name leaf when it is the only parameter.
-        return (_fixed(
-            "Param", None,
-            (("name", SlotLeaf(node.value)), ("annotation", MaybeChild(None)),
-             ("default", MaybeChild(None)), ("param_kind", SlotLeaf("positional_or_keyword"))),
-            anchors=(_span(unit, node),),
-        ),)
+        return (
+            _fixed(
+                "Param",
+                None,
+                (
+                    ("name", SlotLeaf(node.value)),
+                    ("annotation", MaybeChild(None)),
+                    ("default", MaybeChild(None)),
+                    ("param_kind", SlotLeaf("positional_or_keyword")),
+                ),
+                anchors=(_span(unit, node),),
+            ),
+        )
     kids = _kids(node)
     if node.type == "parameters":
         kids = kids[1:-1]  # drop '(' ')'
@@ -614,8 +693,11 @@ def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[Backen
                 pass  # positional-only marker: retroactive tagging not needed —
                 # every param before '/' was already emitted; re-tag them.
             params = [
-                p if p.describe().slots[3][1].value != "positional_or_keyword"
-                else _retag(p, "positional_only")
+                (
+                    p
+                    if p.describe().slots[3][1].value != "positional_or_keyword"
+                    else _retag(p, "positional_only")
+                )
                 for p in params
             ]
             continue
@@ -673,7 +755,10 @@ def _one_param(unit: SourceUnit, node: ParsoNode, kind: str) -> BackendNode:
         None,
         (
             ("name", SlotLeaf(name_node.value)),
-            ("annotation", MaybeChild(_h(unit, annotation) if annotation is not None else None)),
+            (
+                "annotation",
+                MaybeChild(_h(unit, annotation) if annotation is not None else None),
+            ),
             ("default", MaybeChild(_h(unit, default) if default is not None else None)),
             ("param_kind", SlotLeaf(kind)),
         ),
@@ -741,8 +826,12 @@ def _describe(unit: SourceUnit, node: ParsoNode) -> Description:
 
 def _describe_leaf(unit: SourceUnit, node: ParsoNode) -> Description:
     if node.type == "name":
-        return Description(kind="Name", raw_span=_span(unit, node), anchors=(),
-                             slots=(("id", SlotLeaf(node.value)),))
+        return Description(
+            kind="Name",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(("id", SlotLeaf(node.value)),),
+        )
     if node.type in ("number", "string"):
         d = _constant_leaf(unit, node)
         return d.describe()
@@ -751,27 +840,58 @@ def _describe_leaf(unit: SourceUnit, node: ParsoNode) -> Description:
     if node.type == "operator" and node.value == "...":
         return _constant_leaf(unit, node).describe()
     if node.type == "fstring":
-        return _fixed("JoinedStr", _span(unit, node),
-                       (("values", Children(tuple(_fstring_values(unit, node)))),)).describe()
+        return _fixed(
+            "JoinedStr",
+            _span(unit, node),
+            (("values", Children(tuple(_fstring_values(unit, node)))),),
+        ).describe()
     if node.type == "keyword" and node.value == "pass":
-        return Description(kind="Pass", raw_span=_span(unit, node), anchors=(), slots=())
+        return Description(
+            kind="Pass", raw_span=_span(unit, node), anchors=(), slots=()
+        )
     if node.type == "keyword" and node.value == "break":
-        return Description(kind="Break", raw_span=_span(unit, node), anchors=(), slots=())
+        return Description(
+            kind="Break", raw_span=_span(unit, node), anchors=(), slots=()
+        )
     if node.type == "keyword" and node.value == "continue":
-        return Description(kind="Continue", raw_span=_span(unit, node), anchors=(), slots=())
+        return Description(
+            kind="Continue", raw_span=_span(unit, node), anchors=(), slots=()
+        )
     if node.type == "keyword" and node.value == "return":
         # bare `return` with no value: parso collapses the return_stmt
         # wrapper down to just this keyword leaf (single-child collapsing).
-        return Description(kind="Return", raw_span=_span(unit, node), anchors=(), slots=(("value", MaybeChild(None)),))
+        return Description(
+            kind="Return",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(("value", MaybeChild(None)),),
+        )
     if node.type == "keyword" and node.value == "raise":
-        return Description(kind="Raise", raw_span=_span(unit, node), anchors=(),
-                            slots=(("exc", MaybeChild(None)), ("cause", MaybeChild(None))))
+        return Description(
+            kind="Raise",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(("exc", MaybeChild(None)), ("cause", MaybeChild(None))),
+        )
     if node.type == "keyword" and node.value == "yield":
-        return Description(kind="Yield", raw_span=_span(unit, node), anchors=(), slots=(("value", MaybeChild(None)),))
+        return Description(
+            kind="Yield",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(("value", MaybeChild(None)),),
+        )
     if node.type == "operator" and node.value == ":":
         # bare `a[:]`: subscript's slice collapses to just the ':' leaf.
-        return Description(kind="Slice", raw_span=_span(unit, node), anchors=(),
-                            slots=(("lower", MaybeChild(None)), ("upper", MaybeChild(None)), ("step", MaybeChild(None))))
+        return Description(
+            kind="Slice",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(
+                ("lower", MaybeChild(None)),
+                ("upper", MaybeChild(None)),
+                ("step", MaybeChild(None)),
+            ),
+        )
     vocabulary_missing(
         owner="parso_adapter._describe_leaf",
         observed=f"leaf {node.type}:{node.value!r} has no translation rule",
@@ -787,8 +907,12 @@ def _module(unit: SourceUnit, node: ParsoNode) -> Description:
         if c.type in ("endmarker", "newline"):
             continue
         body.extend(_stmt_handles(unit, c))
-    return Description(kind="Module", raw_span=Span(0, len(unit.source)), anchors=(),
-                        slots=(("body", Children(tuple(body))),))
+    return Description(
+        kind="Module",
+        raw_span=Span(0, len(unit.source)),
+        anchors=(),
+        slots=(("body", Children(tuple(body))),),
+    )
 
 
 def _atom(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -802,7 +926,11 @@ def _atom(unit: SourceUnit, node: ParsoNode) -> Description:
             return _describe(unit, inner)
         if inner.type == "testlist_comp":
             ik = _kids(inner)
-            if len(ik) >= 2 and ik[1].type == "comp_for" or (len(ik) >= 2 and ik[1].type == "sync_comp_for"):
+            if (
+                len(ik) >= 2
+                and ik[1].type == "comp_for"
+                or (len(ik) >= 2 and ik[1].type == "sync_comp_for")
+            ):
                 return _genexp(unit, ik[0], ik[1:]).describe()
             elts = _strip_commas(ik)
             has_trailing_comma = _is_leaf(ik[-1]) and ik[-1].value == ","
@@ -814,25 +942,45 @@ def _atom(unit: SourceUnit, node: ParsoNode) -> Description:
         return _describe(unit, inner)
     if _is_leaf(first) and first.value == "[":
         if len(kids) == 2:
-            return Description(kind="List", raw_span=_span(unit, node), anchors=(),
-                                slots=(("elts", Children(())),))
+            return Description(
+                kind="List",
+                raw_span=_span(unit, node),
+                anchors=(),
+                slots=(("elts", Children(())),),
+            )
         inner = kids[1]
         if inner.type in ("testlist_comp",):
             ik = _kids(inner)
             if len(ik) >= 2 and ik[1].type in ("comp_for", "sync_comp_for"):
                 elt = _h(unit, ik[0])
                 gens = _comp_clauses(unit, ik[1:])
-                return Description(kind="ListComp", raw_span=_span(unit, node), anchors=(),
-                                    slots=(("elt", Child(elt)), ("generators", Children(gens))))
+                return Description(
+                    kind="ListComp",
+                    raw_span=_span(unit, node),
+                    anchors=(),
+                    slots=(("elt", Child(elt)), ("generators", Children(gens))),
+                )
             elts = _strip_commas(ik)
-            return Description(kind="List", raw_span=_span(unit, node), anchors=(),
-                                slots=(("elts", Children(tuple(_h(unit, e) for e in elts))),))
-        return Description(kind="List", raw_span=_span(unit, node), anchors=(),
-                            slots=(("elts", Children((_h(unit, inner),))),))
+            return Description(
+                kind="List",
+                raw_span=_span(unit, node),
+                anchors=(),
+                slots=(("elts", Children(tuple(_h(unit, e) for e in elts))),),
+            )
+        return Description(
+            kind="List",
+            raw_span=_span(unit, node),
+            anchors=(),
+            slots=(("elts", Children((_h(unit, inner),))),),
+        )
     if _is_leaf(first) and first.value == "{":
         if len(kids) == 2:
-            return Description(kind="Dict", raw_span=_span(unit, node), anchors=(),
-                                slots=(("items", Children(())),))
+            return Description(
+                kind="Dict",
+                raw_span=_span(unit, node),
+                anchors=(),
+                slots=(("items", Children(())),),
+            )
         return _dictorset(unit, node, kids[1])
     if first.type == "fstring":
         return _describe(unit, first)
@@ -852,13 +1000,22 @@ def _dictorset(unit: SourceUnit, atom_node: ParsoNode, inner: ParsoNode) -> Desc
         has_colon = any(_is_leaf(c) and c.value == ":" for c in ik)
         has_comp = any(c.type in ("comp_for", "sync_comp_for") for c in ik)
         if has_colon and has_comp:
-            colon_i = next(i for i, c in enumerate(ik) if _is_leaf(c) and c.value == ":")
+            colon_i = next(
+                i for i, c in enumerate(ik) if _is_leaf(c) and c.value == ":"
+            )
             key = _h(unit, ik[0])
             value = _h(unit, ik[colon_i + 1])
-            gens = _comp_clauses(unit, ik[colon_i + 2:])
-            return Description(kind="DictComp", raw_span=span, anchors=(),
-                                slots=(("key", Child(key)), ("value", Child(value)),
-                                       ("generators", Children(gens))))
+            gens = _comp_clauses(unit, ik[colon_i + 2 :])
+            return Description(
+                kind="DictComp",
+                raw_span=span,
+                anchors=(),
+                slots=(
+                    ("key", Child(key)),
+                    ("value", Child(value)),
+                    ("generators", Children(gens)),
+                ),
+            )
         if has_colon:
             items: List[BackendNode] = []
             i = 0
@@ -868,31 +1025,65 @@ def _dictorset(unit: SourceUnit, atom_node: ParsoNode, inner: ParsoNode) -> Desc
                     i += 1
                     continue
                 if _is_leaf(c) and c.value == "**":
-                    items.append(_fixed("DictItem", None,
-                                         (("key", MaybeChild(None)), ("value", Child(_h(unit, ik[i + 1]))))))
+                    items.append(
+                        _fixed(
+                            "DictItem",
+                            None,
+                            (
+                                ("key", MaybeChild(None)),
+                                ("value", Child(_h(unit, ik[i + 1]))),
+                            ),
+                        )
+                    )
                     i += 2
                     continue
                 key_n = c
                 value_n = ik[i + 2]
-                items.append(_fixed("DictItem", None,
-                                     (("key", MaybeChild(_h(unit, key_n))), ("value", Child(_h(unit, value_n))))))
+                items.append(
+                    _fixed(
+                        "DictItem",
+                        None,
+                        (
+                            ("key", MaybeChild(_h(unit, key_n))),
+                            ("value", Child(_h(unit, value_n))),
+                        ),
+                    )
+                )
                 i += 3
-            return Description(kind="Dict", raw_span=span, anchors=(),
-                                slots=(("items", Children(tuple(items))),))
+            return Description(
+                kind="Dict",
+                raw_span=span,
+                anchors=(),
+                slots=(("items", Children(tuple(items))),),
+            )
         if has_comp:
             elt = _h(unit, ik[0])
             gens = _comp_clauses(unit, ik[1:])
-            return Description(kind="SetComp", raw_span=span, anchors=(),
-                                slots=(("elt", Child(elt)), ("generators", Children(gens))))
+            return Description(
+                kind="SetComp",
+                raw_span=span,
+                anchors=(),
+                slots=(("elt", Child(elt)), ("generators", Children(gens))),
+            )
         elts = _strip_commas(ik)
-        return Description(kind="Set", raw_span=span, anchors=(),
-                            slots=(("elts", Children(tuple(_h(unit, e) for e in elts))),))
+        return Description(
+            kind="Set",
+            raw_span=span,
+            anchors=(),
+            slots=(("elts", Children(tuple(_h(unit, e) for e in elts))),),
+        )
     # single element -> a one-item set
-    return Description(kind="Set", raw_span=span, anchors=(),
-                        slots=(("elts", Children((_h(unit, inner),))),))
+    return Description(
+        kind="Set",
+        raw_span=span,
+        anchors=(),
+        slots=(("elts", Children((_h(unit, inner),))),),
+    )
 
 
-def _comp_clauses(unit: SourceUnit, nodes: Sequence[ParsoNode]) -> Tuple[BackendNode, ...]:
+def _comp_clauses(
+    unit: SourceUnit, nodes: Sequence[ParsoNode]
+) -> Tuple[BackendNode, ...]:
     out: List[BackendNode] = []
     for n in nodes:
         if n.type in ("comp_for", "sync_comp_for"):
@@ -961,10 +1152,14 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
     )
 
 
-def _genexp(unit: SourceUnit, elt_node: ParsoNode, clause_nodes: Sequence[ParsoNode]) -> BackendNode:
+def _genexp(
+    unit: SourceUnit, elt_node: ParsoNode, clause_nodes: Sequence[ParsoNode]
+) -> BackendNode:
     elt = _h(unit, elt_node)
     gens = _comp_clauses(unit, clause_nodes)
-    return _fixed("GeneratorExp", None, (("elt", Child(elt)), ("generators", Children(gens))))
+    return _fixed(
+        "GeneratorExp", None, (("elt", Child(elt)), ("generators", Children(gens)))
+    )
 
 
 # ---- statements -----------------------------------------------------------
@@ -974,16 +1169,26 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     span = _span(unit, node)
     # annotated assignment: NAME ':' test ['=' test]
-    colon_idx = next((i for i, c in enumerate(kids) if _is_leaf(c) and c.value == ":"), None)
+    colon_idx = next(
+        (i for i, c in enumerate(kids) if _is_leaf(c) and c.value == ":"), None
+    )
     if colon_idx is not None:
         target = _h(unit, kids[0])
         annotation = _h(unit, kids[colon_idx + 1])
         value = None
         if len(kids) > colon_idx + 2:
             value = _h(unit, kids[colon_idx + 3])
-        return Description(kind="AnnAssign", raw_span=span, anchors=(),
-                            slots=(("target", Child(target)), ("annotation", Child(annotation)),
-                                   ("value", MaybeChild(value)), ("simple", SlotLeaf(True))))
+        return Description(
+            kind="AnnAssign",
+            raw_span=span,
+            anchors=(),
+            slots=(
+                ("target", Child(target)),
+                ("annotation", Child(annotation)),
+                ("value", MaybeChild(value)),
+                ("simple", SlotLeaf(True)),
+            ),
+        )
     if len(kids) == 1:
         return _describe(unit, kids[0])
     op = kids[1]
@@ -991,10 +1196,17 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
         # parso wraps `: annotation [= value]` in one annassign node.
         ann_kids = _kids(op)  # [':', annotation] or [':', annotation, '=', value]
         value = _h(unit, ann_kids[3]) if len(ann_kids) > 3 else None
-        return Description(kind="AnnAssign", raw_span=span, anchors=(),
-                            slots=(("target", Child(_h(unit, kids[0]))),
-                                   ("annotation", Child(_h(unit, ann_kids[1]))),
-                                   ("value", MaybeChild(value)), ("simple", SlotLeaf(True))))
+        return Description(
+            kind="AnnAssign",
+            raw_span=span,
+            anchors=(),
+            slots=(
+                ("target", Child(_h(unit, kids[0]))),
+                ("annotation", Child(_h(unit, ann_kids[1]))),
+                ("value", MaybeChild(value)),
+                ("simple", SlotLeaf(True)),
+            ),
+        )
     if not _is_leaf(op):
         vocabulary_missing(
             owner="parso_adapter._expr_stmt",
@@ -1005,9 +1217,15 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     if op.value == "=":
         targets = [kids[0]] + [kids[i] for i in range(2, len(kids) - 1, 2)]
         value = kids[-1]
-        return Description(kind="Assign", raw_span=span, anchors=(),
-                            slots=(("targets", Children(tuple(_h(unit, t) for t in targets))),
-                                   ("value", Child(_h(unit, value)))))
+        return Description(
+            kind="Assign",
+            raw_span=span,
+            anchors=(),
+            slots=(
+                ("targets", Children(tuple(_h(unit, t) for t in targets))),
+                ("value", Child(_h(unit, value))),
+            ),
+        )
     aug_kind = _AUG_TOKEN.get(op.value)
     if aug_kind is None:
         vocabulary_missing(
@@ -1016,34 +1234,63 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
             requested="'=' (chained) or an augmented-assignment token",
             fix="extend _expr_stmt deliberately",
         )
-    return Description(kind="AugAssign", raw_span=span, anchors=(),
-                        slots=(("target", Child(_h(unit, kids[0]))),
-                               ("op", OpLeaf(operator_for(aug_kind))),
-                               ("value", Child(_h(unit, kids[2])))))
+    return Description(
+        kind="AugAssign",
+        raw_span=span,
+        anchors=(),
+        slots=(
+            ("target", Child(_h(unit, kids[0]))),
+            ("op", OpLeaf(operator_for(aug_kind))),
+            ("value", Child(_h(unit, kids[2]))),
+        ),
+    )
 
 
 def _return_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     value = _h(unit, kids[1]) if len(kids) > 1 else None
-    return Description(kind="Return", raw_span=_span(unit, node), anchors=(),
-                        slots=(("value", MaybeChild(value)),))
+    return Description(
+        kind="Return",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("value", MaybeChild(value)),),
+    )
 
 
 def _yield_expr(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     span = _span(unit, node)
     if len(kids) == 1:
-        return Description(kind="Yield", raw_span=span, anchors=(), slots=(("value", MaybeChild(None)),))
+        return Description(
+            kind="Yield",
+            raw_span=span,
+            anchors=(),
+            slots=(("value", MaybeChild(None)),),
+        )
     arg = kids[1]
     if arg.type == "yield_arg":
         ak = _kids(arg)
-        return Description(kind="YieldFrom", raw_span=span, anchors=(),
-                            slots=(("value", Child(_h(unit, ak[1]))),))
+        return Description(
+            kind="YieldFrom",
+            raw_span=span,
+            anchors=(),
+            slots=(("value", Child(_h(unit, ak[1]))),),
+        )
     if arg.type == "testlist_star_expr" or arg.type == "testlist":
         elts = _strip_commas(_kids(arg))
         value = _bare_tuple(unit, elts) if len(elts) > 1 else _h(unit, elts[0])
-        return Description(kind="Yield", raw_span=span, anchors=(), slots=(("value", MaybeChild(value)),))
-    return Description(kind="Yield", raw_span=span, anchors=(), slots=(("value", MaybeChild(_h(unit, arg))),))
+        return Description(
+            kind="Yield",
+            raw_span=span,
+            anchors=(),
+            slots=(("value", MaybeChild(value)),),
+        )
+    return Description(
+        kind="Yield",
+        raw_span=span,
+        anchors=(),
+        slots=(("value", MaybeChild(_h(unit, arg))),),
+    )
 
 
 def _raise_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1053,9 +1300,15 @@ def _raise_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
         exc = kids[1]
         if len(kids) > 2:
             cause = kids[3]
-    return Description(kind="Raise", raw_span=_span(unit, node), anchors=(),
-                        slots=(("exc", MaybeChild(_h(unit, exc) if exc is not None else None)),
-                               ("cause", MaybeChild(_h(unit, cause) if cause is not None else None))))
+    return Description(
+        kind="Raise",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("exc", MaybeChild(_h(unit, exc) if exc is not None else None)),
+            ("cause", MaybeChild(_h(unit, cause) if cause is not None else None)),
+        ),
+    )
 
 
 def _del_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1065,21 +1318,31 @@ def _del_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
         elts = _strip_commas(_kids(target))
     else:
         elts = [target]
-    return Description(kind="Delete", raw_span=_span(unit, node), anchors=(),
-                        slots=(("targets", Children(tuple(_h(unit, e) for e in elts))),))
+    return Description(
+        kind="Delete",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("targets", Children(tuple(_h(unit, e) for e in elts))),),
+    )
 
 
 def _import_name(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     dotted = kids[1]
     names = _dotted_as_names(unit, dotted)
-    return Description(kind="Import", raw_span=_span(unit, node), anchors=(),
-                        slots=(("names", Children(names)),))
+    return Description(
+        kind="Import",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("names", Children(names)),),
+    )
 
 
 def _dotted_name_str(node: ParsoNode) -> str:
     if node.type == "dotted_name":
-        return "".join(c.value for c in _kids(node) if not (_is_leaf(c) and c.value == "."))
+        return "".join(
+            c.value for c in _kids(node) if not (_is_leaf(c) and c.value == ".")
+        )
     return node.value
 
 
@@ -1102,8 +1365,11 @@ def _dotted_as_name(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     else:
         name = _dotted_name_str(node)
         asname = None
-    return _fixed("ImportAlias", _span(unit, node),
-                  (("name", SlotLeaf(name)), ("asname", SlotLeaf(asname))))
+    return _fixed(
+        "ImportAlias",
+        _span(unit, node),
+        (("name", SlotLeaf(name)), ("asname", SlotLeaf(asname))),
+    )
 
 
 def _import_from(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1120,14 +1386,27 @@ def _import_from(unit: SourceUnit, node: ParsoNode) -> Description:
     assert _is_leaf(kids[i]) and kids[i].value == "import"
     i += 1
     if _is_leaf(kids[i]) and kids[i].value == "*":
-        names = (_fixed("ImportAlias", _span(unit, kids[i]), (("name", SlotLeaf("*")), ("asname", SlotLeaf(None)))),)
+        names = (
+            _fixed(
+                "ImportAlias",
+                _span(unit, kids[i]),
+                (("name", SlotLeaf("*")), ("asname", SlotLeaf(None))),
+            ),
+        )
     elif _is_leaf(kids[i]) and kids[i].value == "(":
         names = _import_as_names(unit, kids[i + 1])
     else:
         names = _import_as_names(unit, kids[i])
-    return Description(kind="ImportFrom", raw_span=_span(unit, node), anchors=(),
-                        slots=(("module", SlotLeaf(module)), ("names", Children(names)),
-                               ("level", SlotLeaf(level))))
+    return Description(
+        kind="ImportFrom",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("module", SlotLeaf(module)),
+            ("names", Children(names)),
+            ("level", SlotLeaf(level)),
+        ),
+    )
 
 
 def _import_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[BackendNode, ...]:
@@ -1139,32 +1418,54 @@ def _import_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[BackendNode, ..
     for it in items:
         if it.type == "import_as_name":
             k = _kids(it)
-            out.append(_fixed("ImportAlias", _span(unit, it),
-                               (("name", SlotLeaf(k[0].value)), ("asname", SlotLeaf(k[2].value)))))
+            out.append(
+                _fixed(
+                    "ImportAlias",
+                    _span(unit, it),
+                    (("name", SlotLeaf(k[0].value)), ("asname", SlotLeaf(k[2].value))),
+                )
+            )
         else:
-            out.append(_fixed("ImportAlias", _span(unit, it),
-                               (("name", SlotLeaf(it.value)), ("asname", SlotLeaf(None)))))
+            out.append(
+                _fixed(
+                    "ImportAlias",
+                    _span(unit, it),
+                    (("name", SlotLeaf(it.value)), ("asname", SlotLeaf(None))),
+                )
+            )
     return tuple(out)
 
 
 def _global_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _strip_commas(_kids(node)[1:])
-    return Description(kind="Global", raw_span=_span(unit, node), anchors=(),
-                        slots=(("names", SlotLeaf(tuple(k.value for k in kids))),))
+    return Description(
+        kind="Global",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("names", SlotLeaf(tuple(k.value for k in kids))),),
+    )
 
 
 def _nonlocal_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _strip_commas(_kids(node)[1:])
-    return Description(kind="Nonlocal", raw_span=_span(unit, node), anchors=(),
-                        slots=(("names", SlotLeaf(tuple(k.value for k in kids))),))
+    return Description(
+        kind="Nonlocal",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("names", SlotLeaf(tuple(k.value for k in kids))),),
+    )
 
 
 def _assert_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     test = _h(unit, kids[1])
     msg = _h(unit, kids[3]) if len(kids) > 3 else None
-    return Description(kind="Assert", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(test)), ("msg", MaybeChild(msg))))
+    return Description(
+        kind="Assert",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("test", Child(test)), ("msg", MaybeChild(msg))),
+    )
 
 
 def _if_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1173,7 +1474,9 @@ def _if_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     return _if_chain(unit, kids, 0, _span(unit, node))
 
 
-def _if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span) -> Description:
+def _if_chain(
+    unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span
+) -> Description:
     keyword = kids[i]
     test = _h(unit, kids[i + 1])
     body = _stmts(unit, kids[i + 3])
@@ -1185,11 +1488,21 @@ def _if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span)
     else:
         orelse = ()
     span = Span(_span(unit, keyword).start, outer_span.end) if i > 0 else outer_span
-    return Description(kind="If", raw_span=span, anchors=(),
-                        slots=(("test", Child(test)), ("body", Children(body)), ("orelse", Children(orelse))))
+    return Description(
+        kind="If",
+        raw_span=span,
+        anchors=(),
+        slots=(
+            ("test", Child(test)),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
-def _fixed_if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span) -> BackendNode:
+def _fixed_if_chain(
+    unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span
+) -> BackendNode:
     d = _if_chain(unit, kids, i, outer_span)
     return _fixed(d.kind, d.raw_span, d.slots, d.anchors)
 
@@ -1201,8 +1514,16 @@ def _while_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     orelse: Tuple[BackendNode, ...] = ()
     if len(kids) > 4:
         orelse = _stmts(unit, kids[6])
-    return Description(kind="While", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(test)), ("body", Children(body)), ("orelse", Children(orelse))))
+    return Description(
+        kind="While",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("test", Child(test)),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
 def _for_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1223,9 +1544,17 @@ def _for_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     orelse: Tuple[BackendNode, ...] = ()
     if len(kids) > 6:
         orelse = _stmts(unit, kids[8])
-    return Description(kind="For", raw_span=_span(unit, node), anchors=(),
-                        slots=(("target", Child(target)), ("iter", Child(iter_handle)),
-                               ("body", Children(body)), ("orelse", Children(orelse))))
+    return Description(
+        kind="For",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("target", Child(target)),
+            ("iter", Child(iter_handle)),
+            ("body", Children(body)),
+            ("orelse", Children(orelse)),
+        ),
+    )
 
 
 def _try_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1252,12 +1581,22 @@ def _try_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
             if j < len(ek) and _is_leaf(ek[j]) and ek[j].value == "as":
                 exc_name = ek[j + 1].value
             handler_body = _stmts(unit, kids[i + 2])
-            handlers.append(_fixed(
-                "ExceptHandler",
-                _span(unit, c).envelope(_span(unit, kids[i + 2])),
-                (("type_", MaybeChild(_h(unit, exc_type) if exc_type is not None else None)),
-                 ("name", SlotLeaf(exc_name)), ("body", Children(handler_body))),
-            ))
+            handlers.append(
+                _fixed(
+                    "ExceptHandler",
+                    _span(unit, c).envelope(_span(unit, kids[i + 2])),
+                    (
+                        (
+                            "type_",
+                            MaybeChild(
+                                _h(unit, exc_type) if exc_type is not None else None
+                            ),
+                        ),
+                        ("name", SlotLeaf(exc_name)),
+                        ("body", Children(handler_body)),
+                    ),
+                )
+            )
             i += 3
         elif c.type == "keyword" and c.value == "else":
             orelse = _stmts(unit, kids[i + 2])
@@ -1268,9 +1607,17 @@ def _try_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
         else:
             i += 1
     kind = "TryStar" if is_star else "Try"
-    return Description(kind=kind, raw_span=_span(unit, node), anchors=(),
-                        slots=(("body", Children(body)), ("handlers", Children(tuple(handlers))),
-                               ("orelse", Children(orelse)), ("finalbody", Children(finalbody))))
+    return Description(
+        kind=kind,
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("body", Children(body)),
+            ("handlers", Children(tuple(handlers))),
+            ("orelse", Children(orelse)),
+            ("finalbody", Children(finalbody)),
+        ),
+    )
 
 
 def _with_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1282,14 +1629,31 @@ def _with_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
             ik = _kids(it)
             ctx = _h(unit, ik[0])
             var = _h(unit, ik[2]) if len(ik) > 2 else None
-            items.append(_fixed("WithItem", _span(unit, it),
-                                 (("context_expr", Child(ctx)), ("optional_vars", MaybeChild(var)))))
+            items.append(
+                _fixed(
+                    "WithItem",
+                    _span(unit, it),
+                    (("context_expr", Child(ctx)), ("optional_vars", MaybeChild(var))),
+                )
+            )
         else:
-            items.append(_fixed("WithItem", _span(unit, it),
-                                 (("context_expr", Child(_h(unit, it))), ("optional_vars", MaybeChild(None)))))
+            items.append(
+                _fixed(
+                    "WithItem",
+                    _span(unit, it),
+                    (
+                        ("context_expr", Child(_h(unit, it))),
+                        ("optional_vars", MaybeChild(None)),
+                    ),
+                )
+            )
     body = _stmts(unit, kids[-1])
-    return Description(kind="With", raw_span=_span(unit, node), anchors=(),
-                        slots=(("items", Children(tuple(items))), ("body", Children(body))))
+    return Description(
+        kind="With",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("items", Children(tuple(items))), ("body", Children(body))),
+    )
 
 
 def _funcdef(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1297,7 +1661,9 @@ def _funcdef(unit: SourceUnit, node: ParsoNode) -> Description:
     name = kids[1].value
     idx = 2
     if kids[idx].type in ("typeparams",):
-        idx += 1  # PEP 695 generic params: not further destructured (rare in this corpus)
+        idx += (
+            1  # PEP 695 generic params: not further destructured (rare in this corpus)
+        )
     params_node = kids[idx]
     idx += 1
     returns = None
@@ -1305,11 +1671,19 @@ def _funcdef(unit: SourceUnit, node: ParsoNode) -> Description:
         returns = kids[idx + 1]
         idx += 2
     body = _stmts(unit, kids[-1])
-    return Description(kind="FunctionDef", raw_span=_span(unit, node), anchors=(),
-                        slots=(("name", SlotLeaf(name)), ("params", Children(_flatten_params(unit, params_node))),
-                               ("body", Children(body)), ("decorators", Children(())),
-                               ("returns", MaybeChild(_h(unit, returns) if returns is not None else None)),
-                               ("type_params", Children(()))))
+    return Description(
+        kind="FunctionDef",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("name", SlotLeaf(name)),
+            ("params", Children(_flatten_params(unit, params_node))),
+            ("body", Children(body)),
+            ("decorators", Children(())),
+            ("returns", MaybeChild(_h(unit, returns) if returns is not None else None)),
+            ("type_params", Children(())),
+        ),
+    )
 
 
 def _classdef(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1320,14 +1694,27 @@ def _classdef(unit: SourceUnit, node: ParsoNode) -> Description:
     idx = 2
     if idx < len(kids) and _is_leaf(kids[idx]) and kids[idx].value == "(":
         if not (_is_leaf(kids[idx + 1]) and kids[idx + 1].value == ")"):
-            arglist_kids = _kids(kids[idx + 1]) if kids[idx + 1].type == "arglist" else [kids[idx + 1]]
+            arglist_kids = (
+                _kids(kids[idx + 1])
+                if kids[idx + 1].type == "arglist"
+                else [kids[idx + 1]]
+            )
             b, kw = _call_args(unit, arglist_kids)
             bases, keywords = tuple(b), tuple(kw)
     body = _stmts(unit, kids[-1])
-    return Description(kind="ClassDef", raw_span=_span(unit, node), anchors=(),
-                        slots=(("name", SlotLeaf(name)), ("bases", Children(bases)),
-                               ("keywords", Children(keywords)), ("body", Children(body)),
-                               ("decorators", Children(())), ("type_params", Children(()))))
+    return Description(
+        kind="ClassDef",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("name", SlotLeaf(name)),
+            ("bases", Children(bases)),
+            ("keywords", Children(keywords)),
+            ("body", Children(body)),
+            ("decorators", Children(())),
+            ("type_params", Children(())),
+        ),
+    )
 
 
 def _decorated(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1356,13 +1743,17 @@ def _async_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     span = _span(unit, node)
     if inner.type == "funcdef":
         base = _funcdef(unit, inner)
-        return Description(kind="AsyncFunctionDef", raw_span=span, anchors=(), slots=base.slots)
+        return Description(
+            kind="AsyncFunctionDef", raw_span=span, anchors=(), slots=base.slots
+        )
     if inner.type == "for_stmt":
         base = _for_stmt(unit, inner)
         return Description(kind="AsyncFor", raw_span=span, anchors=(), slots=base.slots)
     if inner.type == "with_stmt":
         base = _with_stmt(unit, inner)
-        return Description(kind="AsyncWith", raw_span=span, anchors=(), slots=base.slots)
+        return Description(
+            kind="AsyncWith", raw_span=span, anchors=(), slots=base.slots
+        )
     vocabulary_missing(
         owner="parso_adapter._async_stmt",
         observed=f"async_stmt wrapping {inner.type!r} not recognized",
@@ -1378,9 +1769,15 @@ def _lambdef(unit: SourceUnit, node: ParsoNode) -> Description:
     body_node = kids[-1]
     if len(kids) > 3:
         params_node = kids[1]
-    return Description(kind="Lambda", raw_span=_span(unit, node), anchors=(),
-                        slots=(("params", Children(_flatten_params(unit, params_node))),
-                               ("body", Child(_h(unit, body_node)))))
+    return Description(
+        kind="Lambda",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("params", Children(_flatten_params(unit, params_node))),
+            ("body", Child(_h(unit, body_node))),
+        ),
+    )
 
 
 def _ternary(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1388,20 +1785,38 @@ def _ternary(unit: SourceUnit, node: ParsoNode) -> Description:
     body = _h(unit, kids[0])
     test = _h(unit, kids[2])
     orelse = _h(unit, kids[4])
-    return Description(kind="IfExp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("test", Child(test)), ("body", Child(body)), ("orelse", Child(orelse))))
+    return Description(
+        kind="IfExp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("test", Child(test)), ("body", Child(body)), ("orelse", Child(orelse))),
+    )
 
 
 def _namedexpr(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
-    return Description(kind="NamedExpr", raw_span=_span(unit, node), anchors=(),
-                        slots=(("target", Child(_h(unit, kids[0]))), ("value", Child(_h(unit, kids[2])))))
+    return Description(
+        kind="NamedExpr",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("target", Child(_h(unit, kids[0]))),
+            ("value", Child(_h(unit, kids[2]))),
+        ),
+    )
 
 
 def _not_test(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
-    return Description(kind="UnaryOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("op", OpLeaf(operator_for("Not"))), ("operand", Child(_h(unit, kids[1])))))
+    return Description(
+        kind="UnaryOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("op", OpLeaf(operator_for("Not"))),
+            ("operand", Child(_h(unit, kids[1]))),
+        ),
+    )
 
 
 def _factor(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1414,22 +1829,41 @@ def _factor(unit: SourceUnit, node: ParsoNode) -> Description:
             requested="'+', '-', or '~'",
             fix="extend _UNARY_TOKEN deliberately",
         )
-    return Description(kind="UnaryOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("op", OpLeaf(operator_for(kind))), ("operand", Child(_h(unit, kids[1])))))
+    return Description(
+        kind="UnaryOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("op", OpLeaf(operator_for(kind))),
+            ("operand", Child(_h(unit, kids[1]))),
+        ),
+    )
 
 
 def _power(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     left = _h(unit, kids[0])
     right = _h(unit, kids[2])
-    return Description(kind="BinOp", raw_span=_span(unit, node), anchors=(),
-                        slots=(("left", Child(left)), ("op", OpLeaf(operator_for("Pow"))), ("right", Child(right))))
+    return Description(
+        kind="BinOp",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(
+            ("left", Child(left)),
+            ("op", OpLeaf(operator_for("Pow"))),
+            ("right", Child(right)),
+        ),
+    )
 
 
 def _star_expr(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
-    return Description(kind="Starred", raw_span=_span(unit, node), anchors=(),
-                        slots=(("value", Child(_h(unit, kids[1]))),))
+    return Description(
+        kind="Starred",
+        raw_span=_span(unit, node),
+        anchors=(),
+        slots=(("value", Child(_h(unit, kids[1]))),),
+    )
 
 
 def _atom_expr(unit: SourceUnit, node: ParsoNode) -> Description:
@@ -1444,7 +1878,9 @@ def _atom_expr(unit: SourceUnit, node: ParsoNode) -> Description:
 
 def _bare_tuple_node(unit: SourceUnit, node: ParsoNode) -> Description:
     elts = _strip_commas(_kids(node))
-    return _bare_tuple(unit, elts, _span(unit, node)).describe()  # note: overridden below for envelope
+    return _bare_tuple(
+        unit, elts, _span(unit, node)
+    ).describe()  # note: overridden below for envelope
 
 
 _DISPATCH = {
@@ -1472,8 +1908,9 @@ _DISPATCH = {
     "sync_comp_for": _comprehension,
     "fstring_expr": _describe_fstring_expr,
     "strings": lambda u, n: _join_string_pieces(u, _kids(n)).describe(),
-    "fstring": lambda u, n: _fixed("JoinedStr", _span(u, n),
-                                    (("values", Children(tuple(_fstring_values(u, n)))),)).describe(),
+    "fstring": lambda u, n: _fixed(
+        "JoinedStr", _span(u, n), (("values", Children(tuple(_fstring_values(u, n)))),)
+    ).describe(),
     "expr_stmt": _expr_stmt,
     "return_stmt": _return_stmt,
     "yield_expr": _yield_expr,

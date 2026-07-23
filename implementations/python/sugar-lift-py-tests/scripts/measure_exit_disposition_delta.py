@@ -79,7 +79,11 @@ def main() -> int:
                     if id_ is None:
                         continue
                     for family, spellings in FAMILIES.items():
-                        if id_ in spellings or id_.endswith("." + family) or id_ == family:
+                        if (
+                            id_ in spellings
+                            or id_.endswith("." + family)
+                            or id_ == family
+                        ):
                             # proven iff class proof exists (same definition)
                             if proofs[family] is not None:
                                 counts[family]["proven_never_suppresses"] += 1

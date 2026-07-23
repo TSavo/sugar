@@ -324,9 +324,7 @@ def _lookup_name_in_module(
             bound = alias.asname or alias.name
             if bound != name:
                 continue
-            target = _resolve_relative(
-                module_name, filename, node.level, node.module
-            )
+            target = _resolve_relative(module_name, filename, node.level, node.module)
             if target is None:
                 return None
             return _lookup_name_in_module(target, alias.name, depth=depth + 1)
@@ -335,7 +333,11 @@ def _lookup_name_in_module(
     for node in _module_level_nodes(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             t = node.targets[0]
-            if isinstance(t, ast.Name) and t.id == name and isinstance(node.value, ast.Name):
+            if (
+                isinstance(t, ast.Name)
+                and t.id == name
+                and isinstance(node.value, ast.Name)
+            ):
                 return _lookup_name_in_module(
                     module_name, node.value.id, depth=depth + 1
                 )
@@ -365,7 +367,11 @@ def _local_import_bindings(source: str) -> dict[str, tuple[str, str]]:
                     # import a.b.c binds only top-level name `a`
                     top = alias.name.split(".")[0]
                     out[top] = ("module", top)
-        if isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.level == 0
+        ):
             for alias in node.names:
                 if alias.name == "*":
                     continue

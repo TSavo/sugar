@@ -412,7 +412,6 @@ def test_identical_stated_and_computed_equality_retains_both_warrants() -> None:
     ] == ["Stated", "Derived"]
 
 
-
 @dataclass(frozen=True)
 class CaseResult:
     verdict: str

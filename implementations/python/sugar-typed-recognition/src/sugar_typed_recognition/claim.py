@@ -147,7 +147,9 @@ def _operator_field_names(cls: type) -> Tuple[str, ...]:
     names: list[str] = []
     if is_dataclass(cls):
         for f in dataclass_fields(cls):
-            annotation = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", "")
+            annotation = (
+                f.type if isinstance(f.type, str) else getattr(f.type, "__name__", "")
+            )
             if "Operator" in annotation:
                 names.append(f.name)
     result = tuple(names)

@@ -61,9 +61,13 @@ def test_complete_real_roots_have_stable_zero_boundary_residue():
         sugar_root=python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
         source_tree_root=python_root / "sugar-source-tree/src/sugar_source_tree",
     )
-    assert report.files_scanned == len(list(
-        (python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar").rglob("*.py")
-    )) + len(list(
-        (python_root / "sugar-source-tree/src/sugar_source_tree").rglob("*.py")
-    ))
+    assert report.files_scanned == len(
+        list(
+            (python_root / "sugar-lift-py-tests/src/sugar_lift_py_tests/sugar").rglob(
+                "*.py"
+            )
+        )
+    ) + len(
+        list((python_root / "sugar-source-tree/src/sugar_source_tree").rglob("*.py"))
+    )
     assert report.r == 0, report.render()

@@ -194,9 +194,6 @@ def test_assertions_cited_assert_is_not_silent() -> None:
     assert cov.assertions.to_json()["is_zero"] is True
 
 
-
-
-
 # ---------------------------------------------------------------------------
 # Integration: statistics vendor on battleaxe (real sugar lift --report)
 # ---------------------------------------------------------------------------
@@ -816,7 +813,9 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     assert (
         result["delta"] == 0
     ), f"{package} live isolation conservation delta must be 0; R={result}"
-    assert result["R_live_construction_panic_files"] == result["construction_panic_files"]
+    assert (
+        result["R_live_construction_panic_files"] == result["construction_panic_files"]
+    )
     assert result["onDisk"] == result["accounted"]
     assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
     assert result["assert_files"] == len(files)

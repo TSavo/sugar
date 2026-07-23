@@ -9,7 +9,6 @@ from pathlib import Path
 
 from sugar_source_tree.panic import BackendDefect
 
-
 SCRIPT = (
     Path(__file__).parents[2]
     / "sugar-lift-py-tests"
@@ -44,8 +43,7 @@ def test_measurement_observes_raise_from_direct_residue_drained(tmp_path) -> Non
 
 def test_measurement_counts_unwritten_cause_descendant_as_blocked(tmp_path) -> None:
     (tmp_path / "blocked.py").write_text(
-        "async def blocked(cause):\n"
-        "    raise ValueError() from (await cause)\n",
+        "async def blocked(cause):\n" "    raise ValueError() from (await cause)\n",
         encoding="utf-8",
     )
 
@@ -57,14 +55,15 @@ def test_measurement_counts_unwritten_cause_descendant_as_blocked(tmp_path) -> N
 
 def test_blocked_classifier_walks_into_cause_not_up_to_parent() -> None:
     parsed = ast.parse(
-        "async def blocked(cause):\n"
-        "    raise ValueError() from (await cause)\n"
+        "async def blocked(cause):\n" "    raise ValueError() from (await cause)\n"
     )
     raise_node = next(node for node in ast.walk(parsed) if isinstance(node, ast.Raise))
     await_node = next(node for node in ast.walk(parsed) if isinstance(node, ast.Await))
     gap_sites = {("Await", await_node.lineno, await_node.col_offset)}
 
-    direct, blocked = _module().classify_raise_from([raise_node], gap_sites, ast.unparse(parsed))
+    direct, blocked = _module().classify_raise_from(
+        [raise_node], gap_sites, ast.unparse(parsed)
+    )
 
     assert direct == {}
     assert blocked == {"raise_from": 1}
@@ -109,9 +108,7 @@ def test_measurement_surfaces_planted_construction_panic(tmp_path, monkeypatch) 
 
 def test_measurement_is_red_when_direct_residue_remains() -> None:
     assert (
-        _module().exit_status(
-            {"direct": {"raise_from": 1}, "construction_panics": []}
-        )
+        _module().exit_status({"direct": {"raise_from": 1}, "construction_panics": []})
         == 1
     )
 

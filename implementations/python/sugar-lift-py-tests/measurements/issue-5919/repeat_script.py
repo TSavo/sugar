@@ -39,7 +39,9 @@ def run_one(rel, abspath, with_manifest):
     cmd = [sys.executable, str(SCRIPT), "--child-file", abspath, "--child-rel", rel]
     t0 = time.time()
     try:
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=30, env=env, check=False)
+        proc = subprocess.run(
+            cmd, text=True, capture_output=True, timeout=30, env=env, check=False
+        )
         elapsed = time.time() - t0
         out = proc.stdout.strip().splitlines()
         last_json = None

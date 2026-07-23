@@ -152,8 +152,7 @@ def test_nested_lambda_same_name_does_not_escape_comprehension_transform():
 
 def test_nested_symbolic_listcomp_builds_composed_lambda_binders():
     term = _out(
-        "def A(xs, ys, z):\n"
-        "    return [[f(x, y, z) for y in ys] for x in xs]\n"
+        "def A(xs, ys, z):\n" "    return [[f(x, y, z) for y in ys] for x in xs]\n"
     )
 
     assert term.name == "py.listcomp"
@@ -166,10 +165,7 @@ def test_nested_symbolic_listcomp_builds_composed_lambda_binders():
 
 
 def test_nested_comprehension_iterable_builds_without_flattening():
-    term = _out(
-        "def A(ys):\n"
-        "    return [f(x) for x in [g(y) for y in ys]]\n"
-    )
+    term = _out("def A(ys):\n" "    return [f(x) for x in [g(y) for y in ys]]\n")
 
     assert term.name == "py.listcomp"
     assert term.args[0].name == "py.listcomp"
@@ -179,10 +175,7 @@ def test_nested_comprehension_iterable_builds_without_flattening():
 
 
 def test_nested_generator_expression_retains_both_lazy_coordinates():
-    term = _out(
-        "def A(xs, ys):\n"
-        "    return ((f(x, y) for y in ys) for x in xs)\n"
-    )
+    term = _out("def A(xs, ys):\n" "    return ((f(x, y) for y in ys) for x in xs)\n")
 
     assert term.name == "py.generatorexp"
     assert term.args[1].param_name == "x"
@@ -223,8 +216,7 @@ def test_nested_arm_composes_already_built_comprehension_kinds(
 def test_nested_comprehension_does_not_admit_an_inner_filtered_gap():
     with pytest.raises(SugarNotWritten):
         _fn(
-            "def A(xs, ys):\n"
-            "    return [[y for y in ys if keep(y)] for x in xs]\n"
+            "def A(xs, ys):\n" "    return [[y for y in ys if keep(y)] for x in xs]\n"
         ).sugar()
 
 
@@ -241,11 +233,7 @@ def test_list_generator_nested_arm_does_not_widen_set_or_dict(source):
 
 
 def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
-    term = _out(
-        "def A(xs):\n"
-        "    x = 999\n"
-        "    return [f(x) for x in xs]\n"
-    )
+    term = _out("def A(xs):\n" "    x = 999\n" "    return [f(x) for x in xs]\n")
     assert term.name == "py.listcomp"
     assert term.args[1].param_name == "x"
     assert term.args[1].body.name == "call:f"
@@ -353,9 +341,7 @@ def test_nested_comprehension_substitutes_outer_capture_before_building():
 
 def test_walrus_comprehension_substitutes_outer_capture_before_own_gap():
     fn = _fn(
-        "def A():\n"
-        "    value = 7\n"
-        "    return [(captured := value) for x in [1]]\n"
+        "def A():\n" "    value = 7\n" "    return [(captured := value) for x in [1]]\n"
     )
     expression = fn.substitute({}).body[-1].value
     assert expression.elt.value.value == 7
@@ -365,8 +351,6 @@ def test_walrus_comprehension_substitutes_outer_capture_before_own_gap():
 
 def test_existing_concrete_displays_keep_exact_terms():
     filtered = _out("def A():\n    return [x for x in [1, 2, 3] if x > 1]\n")
-    destructured = _out(
-        "def A():\n    return [a + b for a, b in [(1, 2), (3, 4)]]\n"
-    )
+    destructured = _out("def A():\n    return [a + b for a, b in [(1, 2), (3, 4)]]\n")
     assert filtered == ctor("array", [num(2), num(3)])
     assert destructured == ctor("array", [num(3), num(7)])

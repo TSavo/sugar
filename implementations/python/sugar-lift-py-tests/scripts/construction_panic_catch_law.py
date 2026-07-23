@@ -92,9 +92,7 @@ def _handler_names(handler: ast.ExceptHandler) -> set[str]:
 
 def _catches_construction_panic(handler: ast.ExceptHandler) -> bool:
     names = _handler_names(handler)
-    return bool(names & {"ConstructionPanic", "BaseException"}) or names == {
-        "<bare>"
-    }
+    return bool(names & {"ConstructionPanic", "BaseException"}) or names == {"<bare>"}
 
 
 def _is_terminal_raise(stmt: ast.AST) -> bool:
@@ -287,7 +285,11 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
             ):
                 continue
             body_text = ast.unparse(node)
-            if "return None" in body_text or "return" in body_text and "raise" not in body_text:
+            if (
+                "return None" in body_text
+                or "return" in body_text
+                and "raise" not in body_text
+            ):
                 offenders.append(
                     PanicCatchOffender(
                         path=rel,
@@ -324,12 +326,8 @@ def scan_repository(kit_root: Path) -> list[PanicCatchOffender]:
 
 
 def format_report(offenders: list[PanicCatchOffender]) -> str:
-    panic_offenders = [
-        row for row in offenders if not row.kind.startswith("auditor-")
-    ]
-    auditor_errors = [
-        row for row in offenders if row.kind.startswith("auditor-")
-    ]
+    panic_offenders = [row for row in offenders if not row.kind.startswith("auditor-")]
+    auditor_errors = [row for row in offenders if row.kind.startswith("auditor-")]
     lines = [
         f"R_construction_panic_catches_outside_audit = {len(panic_offenders)}",
         f"auditor_errors = {len(auditor_errors)}",
@@ -366,7 +364,9 @@ def main() -> int:
         )
         print(format_report(offenders))
         return 1
-    print("FACTORY-PANIC-CATCH LAW GREEN: R_construction_panic_catches_outside_audit = 0")
+    print(
+        "FACTORY-PANIC-CATCH LAW GREEN: R_construction_panic_catches_outside_audit = 0"
+    )
     return 0
 
 

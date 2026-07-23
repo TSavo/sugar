@@ -6,6 +6,7 @@ recursion, Assert → Compare → two Constants, all node.sugar() calling
 node.sugar(). No factory in the chain. The message operand is source
 provenance only: AssertSugar carries its pinned fragment but never reduces it.
 """
+
 from __future__ import annotations
 
 import tempfile

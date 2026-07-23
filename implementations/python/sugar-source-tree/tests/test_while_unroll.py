@@ -26,29 +26,46 @@ def _out(src):
 
 def test_concrete_counter_unrolls():
     # i = 0; while i < 3: i = i + 1; return i  ->  out == 3
-    assert _out("def A():\n    i = 0\n    while i < 3:\n        i = i + 1\n    return i\n").value == 3
+    assert (
+        _out(
+            "def A():\n    i = 0\n    while i < 3:\n        i = i + 1\n    return i\n"
+        ).value
+        == 3
+    )
 
 
 def test_concrete_accumulator_unrolls():
     # sum 0..3 through a while: out == 6
-    assert _out(
-        "def A():\n    i = 0\n    t = 0\n    while i < 4:\n        t = t + i\n"
-        "        i = i + 1\n    return t\n"
-    ).value == 6
+    assert (
+        _out(
+            "def A():\n    i = 0\n    t = 0\n    while i < 4:\n        t = t + i\n"
+            "        i = i + 1\n    return t\n"
+        ).value
+        == 6
+    )
 
 
 def test_false_condition_skips_the_body():
-    assert _out("def A():\n    i = 5\n    while False:\n        i = 9\n    return i\n").value == 5
+    assert (
+        _out(
+            "def A():\n    i = 5\n    while False:\n        i = 9\n    return i\n"
+        ).value
+        == 5
+    )
 
 
 def test_while_true_stays_loud():
     with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    i = 0\n    while True:\n        i = i + 1\n    return i\n").sugar()
+        _fn(
+            "def A():\n    i = 0\n    while True:\n        i = i + 1\n    return i\n"
+        ).sugar()
 
 
 def test_symbolic_condition_stays_loud():
     with pytest.raises(SugarNotWritten):
-        _fn("def A(n):\n    i = 0\n    while i < n:\n        i = i + 1\n    return i\n").sugar()
+        _fn(
+            "def A(n):\n    i = 0\n    while i < n:\n        i = i + 1\n    return i\n"
+        ).sugar()
 
 
 if __name__ == "__main__":

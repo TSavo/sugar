@@ -67,38 +67,50 @@ class ComparisonOperator(Operator):
 class Add(BinaryOperator):
     kind, symbol = "Add", "+"
 
+
 class Sub(BinaryOperator):
     kind, symbol = "Sub", "-"
+
 
 class Mult(BinaryOperator):
     kind, symbol = "Mult", "*"
 
+
 class MatMult(BinaryOperator):
     kind, symbol = "MatMult", "@"
+
 
 class Div(BinaryOperator):
     kind, symbol = "Div", "/"
 
+
 class Mod(BinaryOperator):
     kind, symbol = "Mod", "%"
+
 
 class Pow(BinaryOperator):
     kind, symbol = "Pow", "**"
 
+
 class LShift(BinaryOperator):
     kind, symbol = "LShift", "<<"
+
 
 class RShift(BinaryOperator):
     kind, symbol = "RShift", ">>"
 
+
 class BitOr(BinaryOperator):
     kind, symbol = "BitOr", "|"
+
 
 class BitXor(BinaryOperator):
     kind, symbol = "BitXor", "^"
 
+
 class BitAnd(BinaryOperator):
     kind, symbol = "BitAnd", "&"
+
 
 class FloorDiv(BinaryOperator):
     kind, symbol = "FloorDiv", "//"
@@ -107,11 +119,14 @@ class FloorDiv(BinaryOperator):
 class UAdd(UnaryOperator):
     kind, symbol = "UAdd", "+"
 
+
 class USub(UnaryOperator):
     kind, symbol = "USub", "-"
 
+
 class Not(UnaryOperator):
     kind, symbol = "Not", "not"
+
 
 class Invert(UnaryOperator):
     kind, symbol = "Invert", "~"
@@ -120,6 +135,7 @@ class Invert(UnaryOperator):
 class And(BooleanOperator):
     kind, symbol = "And", "and"
 
+
 class Or(BooleanOperator):
     kind, symbol = "Or", "or"
 
@@ -127,29 +143,38 @@ class Or(BooleanOperator):
 class Eq(ComparisonOperator):
     kind, symbol = "Eq", "=="
 
+
 class NotEq(ComparisonOperator):
     kind, symbol = "NotEq", "!="
+
 
 class Lt(ComparisonOperator):
     kind, symbol = "Lt", "<"
 
+
 class LtE(ComparisonOperator):
     kind, symbol = "LtE", "<="
+
 
 class Gt(ComparisonOperator):
     kind, symbol = "Gt", ">"
 
+
 class GtE(ComparisonOperator):
     kind, symbol = "GtE", ">="
+
 
 class Is(ComparisonOperator):
     kind, symbol = "Is", "is"
 
+
 class IsNot(ComparisonOperator):
     kind, symbol = "IsNot", "is not"
 
+
 class In(ComparisonOperator):
     kind, symbol = "In", "in"
+
 
 class NotIn(ComparisonOperator):
     kind, symbol = "NotIn", "not in"
@@ -158,9 +183,35 @@ class NotIn(ComparisonOperator):
 _OPERATORS: dict[str, type[Operator]] = {
     cls.kind: cls
     for cls in (
-        Add, Sub, Mult, MatMult, Div, Mod, Pow, LShift, RShift, BitOr,
-        BitXor, BitAnd, FloorDiv, UAdd, USub, Not, Invert, And, Or,
-        Eq, NotEq, Lt, LtE, Gt, GtE, Is, IsNot, In, NotIn,
+        Add,
+        Sub,
+        Mult,
+        MatMult,
+        Div,
+        Mod,
+        Pow,
+        LShift,
+        RShift,
+        BitOr,
+        BitXor,
+        BitAnd,
+        FloorDiv,
+        UAdd,
+        USub,
+        Not,
+        Invert,
+        And,
+        Or,
+        Eq,
+        NotEq,
+        Lt,
+        LtE,
+        Gt,
+        GtE,
+        Is,
+        IsNot,
+        In,
+        NotIn,
     )
 }
 

@@ -6,7 +6,6 @@ from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
-
 # Binary operator kind -> the floor method that owns its meaning. The value
 # owns what each operation MEANS (ints fold, strings concatenate on `+`, mixed
 # types hit the honest gap); this sugar only routes to it. Every entry maps to

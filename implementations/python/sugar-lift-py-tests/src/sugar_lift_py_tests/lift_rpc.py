@@ -80,7 +80,9 @@ def publish_context_manager_declaration(
     """Publish a typed bodyless member on the live kit declaration."""
     global _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
     if _BOUND_CONTRACT_REFS is not None:
-        raise RuntimeError("context-manager declarations are frozen for this generation")
+        raise RuntimeError(
+            "context-manager declarations are frozen for this generation"
+        )
     if not isinstance(declaration, ContextManagerContractIrV1):
         raise ValueError("typed context-manager declaration required")
     _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS += (declaration,)
@@ -112,11 +114,17 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
             for item in node.items:
                 expression = item.context_expr
                 target = None
-                if isinstance(expression, ast.Call) and not expression.args and not expression.keywords:
+                if (
+                    isinstance(expression, ast.Call)
+                    and not expression.args
+                    and not expression.keywords
+                ):
                     callee = expression.func
                     if isinstance(callee, ast.Name):
                         target = imports.get(callee.id)
-                    elif isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+                    elif isinstance(callee, ast.Attribute) and isinstance(
+                        callee.value, ast.Name
+                    ):
                         base = imports.get(callee.value.id)
                         if base:
                             target = f"{base}.{callee.attr}"
@@ -127,22 +135,25 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
                     "endLine": expression.end_lineno,
                     "endCol": expression.end_col_offset,
                 }
-                rows.append({
-                    "schemaVersion": "1",
-                    "kind": "context-manager-demand",
-                    "useSite": coordinate,
-                    "targetSymbol": f"context-manager:{target}" if target else None,
-                    "importSignature": {"formals": [], "sorts": []},
-                    "expectedKind": "context-manager-contract",
-                    "gapKind": None if target else "runtime-selected",
-                })
+                rows.append(
+                    {
+                        "schemaVersion": "1",
+                        "kind": "context-manager-demand",
+                        "useSite": coordinate,
+                        "targetSymbol": f"context-manager:{target}" if target else None,
+                        "importSignature": {"formals": [], "sorts": []},
+                        "expectedKind": "context-manager-contract",
+                        "gapKind": None if target else "runtime-selected",
+                    }
+                )
     return rows
 
 
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll imported plain calls by their source-authenticated use sites."""
     from sugar_lift_py_tests.import_binding import (
-        authenticated_import_uses, authenticated_module_exports,
+        authenticated_import_uses,
+        authenticated_module_exports,
         module_name_for_path,
     )
     from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
@@ -158,7 +169,8 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         units.append((path, source, source_cid))
     module_identities = {
         module_name_for_path(root, path): {
-            "kind": "authenticated-python-module", "schemaVersion": "1",
+            "kind": "authenticated-python-module",
+            "schemaVersion": "1",
             "moduleName": module_name_for_path(root, path),
             "sourceCid": source_cid,
         }
@@ -171,6 +183,8 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         rows.extend(authenticated_module_exports(root, path, source, source_cid))
         rows.extend(enrolled)
     return rows
+
+
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -1368,9 +1382,7 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
             f"{lc.end_line}:{lc.end_col}[{node.kind}]"
         )
         panic_kind = (
-            type(panic).__name__
-            if panic is not None
-            else "UnaccountedConstruction"
+            type(panic).__name__ if panic is not None else "UnaccountedConstruction"
         )
         reason = (
             panic.observed or str(panic)
@@ -1431,7 +1443,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             "catalogCid": _BOUND_CONTRACT_REFS.catalog_cid,
             "tableCid": _BOUND_CONTRACT_REFS.table_cid,
         }:
-            raise ValueError("semantic construction request has a stale contract-ref generation")
+            raise ValueError(
+                "semantic construction request has a stale contract-ref generation"
+            )
     if _BOUND_CALL_CONTRACT_REFS is not None:
         generation = options.get("callContractRefs")
         if generation != {
@@ -1459,17 +1473,30 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
     try:
         if level == "contract-declarations":
-            _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-                "rows": [
-                    row.to_rpc_with_term_table(None)
-                    for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
-                ]
-            }})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "rows": [
+                            row.to_rpc_with_term_table(None)
+                            for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
+                        ]
+                    },
+                }
+            )
             return
         if level == "contract-demands":
-            _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-                "rows": _context_manager_demand_rows(root) + _call_contract_demand_rows(root)
-            }})
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "rows": _context_manager_demand_rows(root)
+                        + _call_contract_demand_rows(root)
+                    },
+                }
+            )
             return
         if level == "context-manager-edges":
             if _BOUND_CONTRACT_REFS is None:
@@ -1478,7 +1505,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
             from sugar_lift_python_source.source_oracle import path_source
             from sugar_source_tree.tree import SourceFile as _TreeSourceFile
-            from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+            from sugar_lift_py_tests.context_manager_resolution import (
+                TreeConstructionContextV1,
+            )
 
             rows = []
             construction_context = TreeConstructionContextV1(_BOUND_CONTRACT_REFS)
@@ -1490,8 +1519,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 for function in source_file.functions():
                     function_sugar = function.sugar()
                     rows.extend(
-                        edge.to_rpc()
-                        for edge in function_sugar.context_manager_edges()
+                        edge.to_rpc() for edge in function_sugar.context_manager_edges()
                     )
             _send(
                 {
@@ -1617,9 +1645,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         return
                     _src, _fname, file_cid = identity
                     sf = _tree.source_file(full_path)
-                    memento = _tree.module_definition_memento(
-                        sf, file_rel, file_cid
-                    )
+                    memento = _tree.module_definition_memento(sf, file_rel, file_cid)
                     _send_enumerate_result(
                         msg_id,
                         [{"memento": memento, "audit": None, "payload": None}],
@@ -1692,7 +1718,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    TreeConstructionContextV1,
+                )
 
                 construction_context = (
                     TreeConstructionContextV1(
@@ -1700,7 +1728,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         call_contract_refs=_BOUND_CALL_CONTRACT_REFS,
                         workspace_root=str(root),
                     )
-                    if _BOUND_CONTRACT_REFS is not None or _BOUND_CALL_CONTRACT_REFS is not None
+                    if _BOUND_CONTRACT_REFS is not None
+                    or _BOUND_CALL_CONTRACT_REFS is not None
                     else None
                 )
                 tree_file = _TreeSourceFile(
@@ -1755,14 +1784,17 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     _send_enumerate_result(
                         msg_id,
                         [],
-                        [{"memento": at, "reason": "implications requires a call-site memento"}],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "implications requires a call-site memento",
+                            }
+                        ],
                     )
                     return
                 sf = _tree.source_file(full_path)
                 span = at.get("span") if isinstance(at, dict) else None
-                source_assert, assert_node = _tree.temporally_rewritten_assert(
-                    sf, span
-                )
+                source_assert, assert_node = _tree.temporally_rewritten_assert(sf, span)
                 if source_assert is None or assert_node is None:
                     _send_enumerate_result(
                         msg_id,
@@ -1960,17 +1992,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 _send_enumerate_result(
                     msg_id,
                     cued,
-                    []
-                    if cued
-                    else [
-                        {
-                            "memento": at,
-                            "reason": (
-                                "no universe for the callee(s) this call site cues: "
-                                f"{targets or 'none'}"
-                            ),
-                        }
-                    ],
+                    (
+                        []
+                        if cued
+                        else [
+                            {
+                                "memento": at,
+                                "reason": (
+                                    "no universe for the callee(s) this call site cues: "
+                                    f"{targets or 'none'}"
+                                ),
+                            }
+                        ]
+                    ),
                     term_tables=[term_table.nodes],
                 )
                 _log_enumeration_demand(
@@ -1995,8 +2029,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     if fn is not None:
                         for a in _tree.asserts_of(fn):
                             memento = _tree.assert_memento(a, file_rel)
-                            if seek and at is not None and not _memento_matches(
-                                memento, at
+                            if (
+                                seek
+                                and at is not None
+                                and not _memento_matches(memento, at)
                             ):
                                 continue
                             built.append(
@@ -2045,7 +2081,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     str(level), at, cache="miss", started=demand_started
                 )
                 return
-
 
         _send(
             {
@@ -2175,17 +2210,29 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
             msg_id, params if isinstance(params, dict) else {}
         )
     elif method == BIND_CONTRACT_REFS_RPC_METHOD:
-        from sugar_lift_py_tests.context_manager_resolution import decode_resolved_contract_refs
+        from sugar_lift_py_tests.context_manager_resolution import (
+            decode_resolved_contract_refs,
+        )
+
         global _BOUND_CONTRACT_REFS
         if not isinstance(params, dict) or set(params) != {"contractRefs"}:
             raise ValueError("malformed preconstruction contract-ref bind")
         installed = decode_resolved_contract_refs(params["contractRefs"])
-        if _BOUND_CONTRACT_REFS is not None and _BOUND_CONTRACT_REFS.table_cid != installed.table_cid:
+        if (
+            _BOUND_CONTRACT_REFS is not None
+            and _BOUND_CONTRACT_REFS.table_cid != installed.table_cid
+        ):
             raise ValueError("contract-ref generation is already frozen")
         _BOUND_CONTRACT_REFS = installed
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-            "tableCid": installed.table_cid,
-        }})
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "tableCid": installed.table_cid,
+                },
+            }
+        )
     elif method == BIND_CALL_CONTRACT_REFS_RPC_METHOD:
         from sugar_lift_py_tests.call_contract_resolution import (
             decode_resolved_call_contract_refs,
@@ -2199,7 +2246,13 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
         ):
             raise ValueError("call-contract-ref generation is already frozen")
         _BOUND_CALL_CONTRACT_REFS = installed
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": {"tableCid": installed.table_cid}})
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {"tableCid": installed.table_cid},
+            }
+        )
     elif method == ENUMERATE_RPC_METHOD:
         global _ENUMERATION_ACTIVE, _ENUMERATION_REQUEST_COUNT
         enumerate_started = time.monotonic()

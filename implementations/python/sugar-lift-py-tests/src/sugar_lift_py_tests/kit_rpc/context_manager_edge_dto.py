@@ -73,7 +73,9 @@ class ContextManagerEdgeDtoV1:
                 "context-manager edge requires a resolved authenticated ref"
             )
         if use_site != reference.use_site:
-            raise ContextManagerEdgeTransportError("context-manager edge use-site mismatch")
+            raise ContextManagerEdgeTransportError(
+                "context-manager edge use-site mismatch"
+            )
         if not _admitted(reference):
             raise ContextManagerEdgeTransportError(
                 "context-manager edge requires admitted typed NeverSuppresses semantics"

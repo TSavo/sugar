@@ -114,7 +114,11 @@ def fingerprint_engine_events(
             continue
         event_count += 1
         event = raw.get("event")
-        role = raw.get("role") if isinstance(raw.get("role"), str) else str(raw.get("role") or "")
+        role = (
+            raw.get("role")
+            if isinstance(raw.get("role"), str)
+            else str(raw.get("role") or "")
+        )
         sugar = str(raw.get("sugar") or "?")
         if event == "enter":
             enter_roles[role or "?"] += 1
@@ -131,7 +135,9 @@ def fingerprint_engine_events(
 
     multi_miss = {name: count for name, count in resolve_miss.items() if count > 1}
     wasted_reresolves = sum(count - 1 for count in multi_miss.values())
-    dominant = mechanism_hb.most_common(1)[0][0] if mechanism_hb else MECHANISM_ROOT_OR_OTHER
+    dominant = (
+        mechanism_hb.most_common(1)[0][0] if mechanism_hb else MECHANISM_ROOT_OR_OTHER
+    )
     miss_total = sum(resolve_miss.values())
     hit_total = sum(resolve_hit.values())
     return {

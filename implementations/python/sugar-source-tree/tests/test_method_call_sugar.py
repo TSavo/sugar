@@ -36,7 +36,12 @@ def test_method_chains_compose():
 
 
 def test_assert_consumes_the_coordinate():
-    inv = _fn("def A(s):\n    assert s.upper() == s\n    return s\n").sugar().desugar().value.invs()[0]
+    inv = (
+        _fn("def A(s):\n    assert s.upper() == s\n    return s\n")
+        .sugar()
+        .desugar()
+        .value.invs()[0]
+    )
     assert inv.name == "py.eq"
     assert inv.args[0].name == "call:upper"
 

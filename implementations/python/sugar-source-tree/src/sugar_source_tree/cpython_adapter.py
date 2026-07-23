@@ -281,6 +281,7 @@ def _comprehension_for_anchor(unit: SourceUnit, comp: ast.comprehension) -> Span
         for_start = k - 5
     return Span(for_start, for_start)
 
+
 # kinds the backend does not position: envelope-spanned per the spec
 _ENVELOPE_KINDS = frozenset({"comprehension", "withitem", "match_case"})
 
@@ -386,7 +387,9 @@ def _describe(unit: SourceUnit, node: ast.AST) -> Description:
     else:
         raw_span = _node_span(unit, node)
 
-    return Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=tuple(slots))
+    return Description(
+        kind=kind, raw_span=raw_span, anchors=anchors, slots=tuple(slots)
+    )
 
 
 class CPythonAstBackend(Backend):

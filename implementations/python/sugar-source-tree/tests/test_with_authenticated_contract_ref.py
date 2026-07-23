@@ -41,7 +41,9 @@ def _coordinate(node) -> SourceFragmentCoordinateV1:
 
 def _source_with_resolution(source_identity, resolution):
     first = SourceFile(source_identity)
-    with_node = next(node for node in first.nodes() if node.kind in {"With", "AsyncWith"})
+    with_node = next(
+        node for node in first.nodes() if node.kind in {"With", "AsyncWith"}
+    )
     use_site = _coordinate(with_node.items[0].context_expr)
     if callable(resolution):
         resolution = resolution(use_site)
@@ -80,7 +82,9 @@ def _function_sugar(source_identity, resolution):
     return next(source.functions()).sugar()
 
 
-def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(tmp_path, monkeypatch):
+def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "consumer.py"
     path.write_text(
         "from dependency import manager\n"
@@ -108,7 +112,11 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(tmp_p
         lambda *_: (_ for _ in ()).throw(AssertionError("source proof invoked")),
     )
     sugar = _function_sugar(path_source(str(path)), _resolved)
-    resource = next(statement for statement in sugar.statements if isinstance(statement, WithResourceSugar))
+    resource = next(
+        statement
+        for statement in sugar.statements
+        if isinstance(statement, WithResourceSugar)
+    )
     assert resource.contract_ref.member_cid == _cid("m")
     assert resource.contract_ref.payload_cid == _cid("p")
     assert resource.enter_slot_id == f"{resource.manager_slot_id}#enter_result"
@@ -128,7 +136,12 @@ def test_unresolved_ref_stays_typed_loud(tmp_path, monkeypatch):
     )
     from sugar_lift_python_source.source_oracle import path_source
     import sugar_lift_py_tests.exit_disposition_proof as source_proof
-    monkeypatch.setattr(source_proof, "prove_exit_disposition_from_manager_expr", lambda *_: pytest.fail("source proof invoked"))
+
+    monkeypatch.setattr(
+        source_proof,
+        "prove_exit_disposition_from_manager_expr",
+        lambda *_: pytest.fail("source proof invoked"),
+    )
 
     def unresolved(use_site):
         return ContextManagerResolutionGapV1(

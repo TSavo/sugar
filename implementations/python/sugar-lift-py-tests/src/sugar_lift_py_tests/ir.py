@@ -311,9 +311,7 @@ def _intern_term(term: Term) -> Term:
             children = (
                 node.args
                 if isinstance(node, _Ctor)
-                else (node.body,)
-                if isinstance(node, _Lambda)
-                else ()
+                else (node.body,) if isinstance(node, _Lambda) else ()
             )
             if not children:
                 done[node_id] = _commit_interned_term(by_key, by_id, node, ())
@@ -688,7 +686,9 @@ class _Atomic:
         return hash(_formula_cycle_key(self))
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Atomic) and _formula_cycle_key(self) == _formula_cycle_key(other)
+        return isinstance(other, _Atomic) and _formula_cycle_key(
+            self
+        ) == _formula_cycle_key(other)
 
 
 @dataclass(frozen=True)
@@ -700,7 +700,9 @@ class _Connective:
         return hash(_formula_cycle_key(self))
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Connective) and _formula_cycle_key(self) == _formula_cycle_key(other)
+        return isinstance(other, _Connective) and _formula_cycle_key(
+            self
+        ) == _formula_cycle_key(other)
 
 
 @dataclass(frozen=True)
@@ -714,7 +716,9 @@ class _Quantifier:
         return hash(_formula_cycle_key(self))
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Quantifier) and _formula_cycle_key(self) == _formula_cycle_key(other)
+        return isinstance(other, _Quantifier) and _formula_cycle_key(
+            self
+        ) == _formula_cycle_key(other)
 
 
 Formula = Union[_Atomic, _Connective, _Quantifier]
@@ -1131,9 +1135,7 @@ class TermTableBuilder:
             children = (
                 term.get("args", []) or []
                 if kind == "ctor"
-                else [term["body"]]
-                if kind == "lambda"
-                else []
+                else [term["body"]] if kind == "lambda" else []
             )
             for child in children:
                 if not isinstance(child, dict):
@@ -1159,9 +1161,7 @@ class TermTableBuilder:
             if kind in {"ctor", "lambda"} and not finishing:
                 work.append((term, True))
                 children = (
-                    term.get("args", []) or []
-                    if kind == "ctor"
-                    else [term["body"]]
+                    term.get("args", []) or [] if kind == "ctor" else [term["body"]]
                 )
                 work.extend((child, False) for child in reversed(children))
                 continue
@@ -1286,9 +1286,7 @@ class TermTableBuilder:
             children = (
                 term.args
                 if isinstance(term, _Ctor)
-                else (term.body,)
-                if isinstance(term, _Lambda)
-                else ()
+                else (term.body,) if isinstance(term, _Lambda) else ()
             )
             for child in children:
                 child_id = id(child)

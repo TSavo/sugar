@@ -55,9 +55,9 @@ def test_raise_name_points_at_the_built_value() -> None:
 
 
 def test_raise_constructor_carries_its_built_call_coordinate() -> None:
-    outcome = _statement(
-        "def A():\n    raise ValueError(7)\n", "Raise"
-    ).sugar().desugar()
+    outcome = (
+        _statement("def A():\n    raise ValueError(7)\n", "Raise").sugar().desugar()
+    )
 
     assert isinstance(outcome, Incomplete)
     raised = outcome.effect.raised_value
@@ -72,9 +72,11 @@ def test_unwritten_raised_child_stays_loud() -> None:
 
 
 def test_raise_from_carries_the_built_cause() -> None:
-    outcome = _statement(
-        "def A():\n    raise ValueError from KeyError\n", "Raise"
-    ).sugar().desugar()
+    outcome = (
+        _statement("def A():\n    raise ValueError from KeyError\n", "Raise")
+        .sugar()
+        .desugar()
+    )
 
     assert isinstance(outcome, Incomplete)
     assert outcome.effect.cause_value.to_term(owner="raise-cause").name == "KeyError"

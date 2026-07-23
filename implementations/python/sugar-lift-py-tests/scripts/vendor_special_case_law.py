@@ -33,7 +33,6 @@ import traceback
 from pathlib import Path
 from typing import NamedTuple, Sequence
 
-
 VENDORS = frozenset(
     {
         "numpy",
@@ -114,20 +113,14 @@ def _vendor_symbols(tree: ast.AST) -> dict[str, set[str]]:
     return symbols
 
 
-def _is_name_match(
-    node: ast.Compare, symbols: dict[str, set[str]]
-) -> set[str]:
+def _is_name_match(node: ast.Compare, symbols: dict[str, set[str]]) -> set[str]:
     operands: tuple[ast.AST, ...] = (node.left, *node.comparators)
     if all(
         isinstance(operand, (ast.Constant, ast.Tuple, ast.List, ast.Set))
         for operand in operands
     ):
         return set()
-    direct = {
-        vendor
-        for operand in operands
-        for vendor in _vendor_strings(operand)
-    }
+    direct = {vendor for operand in operands for vendor in _vendor_strings(operand)}
     indirect = {
         vendor
         for operand in operands
@@ -144,11 +137,7 @@ def _isinstance_vendor(node: ast.Call) -> str | None:
     if len(node.args) < 2:
         return None
     type_arg = node.args[1]
-    candidates = (
-        type_arg.elts
-        if isinstance(type_arg, ast.Tuple)
-        else (type_arg,)
-    )
+    candidates = type_arg.elts if isinstance(type_arg, ast.Tuple) else (type_arg,)
     for candidate in candidates:
         vendor = _vendor_from_text(_qualified_name(candidate))
         if vendor is not None:
@@ -276,15 +265,17 @@ def scan_file(path: Path, *, rel: str) -> list[VendorSpecialCase]:
     source, read_error = _read_source(path)
     if read_error is not None:
         return [
-            read_error._replace(path=rel)
-            if read_error.path == path.as_posix()
-            else VendorSpecialCase(
-                path=rel,
-                line=read_error.line,
-                kind=read_error.kind,
-                vendor=read_error.vendor,
-                expression=read_error.expression,
-                note=read_error.note,
+            (
+                read_error._replace(path=rel)
+                if read_error.path == path.as_posix()
+                else VendorSpecialCase(
+                    path=rel,
+                    line=read_error.line,
+                    kind=read_error.kind,
+                    vendor=read_error.vendor,
+                    expression=read_error.expression,
+                    note=read_error.note,
+                )
             )
         ]
     assert source is not None
@@ -490,11 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, ValueError):
             pass
-    package = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "sugar_lift_py_tests"
-    )
+    package = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "roots",
@@ -556,8 +543,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if r > 0 or err > 0:
         print(
             "VENDOR-SPECIAL-CASE LAW RED: "
-            f"{r} logo-dispatch loci"
-            + (f"; {err} auditor errors" if err else "")
+            f"{r} logo-dispatch loci" + (f"; {err} auditor errors" if err else "")
         )
         print(format_report(offenders))
         print(json.dumps(summary))

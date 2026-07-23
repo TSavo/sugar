@@ -942,9 +942,7 @@ class _Emitter:
             self.effects.add_panics()
             value = self.expr(node.exc)
             cause = (
-                ctor("python:no_value")
-                if node.cause is None
-                else self.expr(node.cause)
+                ctor("python:no_value") if node.cause is None else self.expr(node.cause)
             )
             self.panic_loci.append(
                 self.runtime_failure_locus(

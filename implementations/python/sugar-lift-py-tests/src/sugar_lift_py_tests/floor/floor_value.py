@@ -297,9 +297,7 @@ class FloorValue:
         ctx: FactoryBuildContext | None,
     ) -> Outcome:
         del ctx
-        return self._operation_construction_gap(
-            operation, "callable_application_with"
-        )
+        return self._operation_construction_gap(operation, "callable_application_with")
 
     def call_method_with(
         self, operation: MethodCallOperation, ctx: FactoryBuildContext | None

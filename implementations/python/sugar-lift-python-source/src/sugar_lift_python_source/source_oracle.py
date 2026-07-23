@@ -167,7 +167,11 @@ def resolve_span_memento(
     if not isinstance(span, dict):
         raise SourceUnavailable("span memento missing `span`")
     start, end = span.get("start"), span.get("end")
-    if not isinstance(start, int) or not isinstance(end, int) or not (0 <= start <= end):
+    if (
+        not isinstance(start, int)
+        or not isinstance(end, int)
+        or not (0 <= start <= end)
+    ):
         raise SourceUnavailable(f"span memento has degenerate span {span!r}")
 
     path = str(Path(project_root) / file) if project_root else file
@@ -303,9 +307,7 @@ def _node_source_locator(
     elif isinstance(node, ast.expr):
         ast_template = expr_to_template(node, params)
     else:
-        raise SourceUnavailable(
-            f"unsupported source node kind `{type(node).__name__}`"
-        )
+        raise SourceUnavailable(f"unsupported source node kind `{type(node).__name__}`")
     return {
         "file": rel_path,
         "source_cid": blake3_512_of(body_text.encode("utf-8")),

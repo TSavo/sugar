@@ -55,7 +55,5 @@ def test_byte_vs_codepoint_columns_are_normalized():
     LibCST) — verify a non-ASCII prefix does not corrupt a later span."""
     source = 'x = "éü" + f(y)\n'
     root = _root(source, filename="unicode.py")
-    call_positions = [
-        n.segment() for n in root.walk() if type(n).__name__ == "Call"
-    ]
+    call_positions = [n.segment() for n in root.walk() if type(n).__name__ == "Call"]
     assert call_positions == ["f(y)"]

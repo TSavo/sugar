@@ -66,7 +66,6 @@ from .binding_state import (
     join_binding_state,
 )
 
-
 # Scope metadata travels beside temporal bindings under an unforgeable key.
 # It lets recognition distinguish a builtin spelling from a lexically bound
 # formal without substituting a fake value for that formal.
@@ -88,6 +87,8 @@ class _ConditionalRaiseRoute:
     slot: BranchResultSlot
     raised_on_true: bool
     exception_name: str
+
+
 _NESTED_COMPREHENSION_TEMPLATE = object()
 
 
@@ -108,9 +109,7 @@ class SourceUnit:
 
     # populated in __post_init__, never by callers
     line_table: LineTable = field(init=False, default=None)  # type: ignore[assignment]
-    module_bound_names: frozenset[str] = field(
-        init=False, default_factory=frozenset
-    )
+    module_bound_names: frozenset[str] = field(init=False, default_factory=frozenset)
     module_symtable: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
@@ -124,9 +123,7 @@ class SourceUnit:
             frozenset(
                 symbol.get_name()
                 for symbol in symbols
-                if symbol.is_assigned()
-                or symbol.is_imported()
-                or symbol.is_namespace()
+                if symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
             ),
         )
 
@@ -1022,8 +1019,7 @@ class FunctionDef(Statement):
         body_scope = {
             **body_scope,
             **{
-                name: UnboundBinding(name=name, cause=self.fragment)
-                for name in locals_
+                name: UnboundBinding(name=name, cause=self.fragment) for name in locals_
             },
             _LEXICALLY_BOUND_NAMES: frozenset(inherited_bound) | bound | locals_,
             _FUNCTION_PARAMETERS: parameters,
@@ -1088,8 +1084,10 @@ class FunctionDef(Statement):
                 ):
                     from pathlib import Path
 
-                    relative = Path(self.unit.filename).resolve().relative_to(
-                        Path(workspace_root).resolve()
+                    relative = (
+                        Path(self.unit.filename)
+                        .resolve()
+                        .relative_to(Path(workspace_root).resolve())
                     )
                     module_parts = list(relative.with_suffix("").parts)
                     if module_parts and module_parts[-1] == "__init__":
@@ -1724,7 +1722,9 @@ class For(Statement):
             return super()._construct_sugar()
         carried, facts = self._carried_and_facts()
         if carried and facts:
-            return super()._construct_sugar()  # accumulator-referencing assert -- point 3
+            return (
+                super()._construct_sugar()
+            )  # accumulator-referencing assert -- point 3
         if carried:
             # Pure fold: the loop states nothing; its meaning is the fold binding
             # (substitution_binding), consumed where the carried name is read.
@@ -2208,9 +2208,7 @@ class With(Statement):
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
             and isinstance(semantics.exit.completion, TotalCompletionV1)
-            and isinstance(
-                semantics.exit.disposition, NeverSuppressesDispositionV1
-            )
+            and isinstance(semantics.exit.disposition, NeverSuppressesDispositionV1)
         )
         if not admitted:
             panic = UnsupportedContextManagerSemantics(
@@ -2266,7 +2264,9 @@ class With(Statement):
 
         resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
-            from sugar_lift_py_tests.context_manager_contract import ProtocolResourceSemanticsV1
+            from sugar_lift_py_tests.context_manager_contract import (
+                ProtocolResourceSemanticsV1,
+            )
             from sugar_lift_py_tests.kit_rpc import ContextManagerEdgeDtoV1
             from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
@@ -2279,9 +2279,7 @@ class With(Statement):
                 )
 
             manager_slot = item._manager_slot_id()
-            enter_slot = (
-                f"{manager_slot}#enter_result" if as_name is not None else None
-            )
+            enter_slot = f"{manager_slot}#enter_result" if as_name is not None else None
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
@@ -2456,9 +2454,7 @@ class Try(Statement):
             if d:
                 changed["handlers"] = new_handlers
             for field_name in ("body", "orelse", "finalbody"):
-                new_value, d = self._substitute_body(
-                    getattr(self, field_name), scope
-                )
+                new_value, d = self._substitute_body(getattr(self, field_name), scope)
                 if d:
                     changed[field_name] = new_value
             return self if not changed else rewrite(self, **changed)
@@ -2468,9 +2464,7 @@ class Try(Statement):
         if d:
             changed["body"] = new_body
         body_state = {**scope, **body_net}
-        new_orelse, d, else_net = self._substitute_body_tracked(
-            self.orelse, body_state
-        )
+        new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, body_state)
         if d:
             changed["orelse"] = new_orelse
         body_completion = {**body_net, **else_net}
@@ -2493,9 +2487,7 @@ class Try(Statement):
             if body_changed:
                 handler_changed["body"] = new_handler_body
             rewritten = (
-                handler
-                if not handler_changed
-                else rewrite(handler, **handler_changed)
+                handler if not handler_changed else rewrite(handler, **handler_changed)
             )
             new_handlers.append(rewritten)
             if handler.name:
@@ -2518,9 +2510,7 @@ class Try(Statement):
             if unconditional is not None:
                 include = self._handler_matches(handler, unconditional)
             elif conditional is not None:
-                include = self._handler_matches(
-                    handler, conditional.exception_name
-                )
+                include = self._handler_matches(handler, conditional.exception_name)
             else:
                 include = True
             if include:
@@ -2705,14 +2695,18 @@ class Try(Statement):
                 continue
 
             type_nodes = (
-                handler.type_.elts if handler.type_.kind == "Tuple" else (handler.type_,)
+                handler.type_.elts
+                if handler.type_.kind == "Tuple"
+                else (handler.type_,)
             )
             if not type_nodes:
                 return super()._construct_sugar()  # empty tuple: no honest matcher
             for type_node in type_nodes:
                 type_name = self._except_type_name(type_node)
                 if type_name is None:
-                    return super()._construct_sugar()  # exotic tuple elt/type -- stay loud
+                    return (
+                        super()._construct_sugar()
+                    )  # exotic tuple elt/type -- stay loud
                 handler_specs.append(
                     (
                         EffectMatcher(kind="raise", name=type_name),
@@ -2997,7 +2991,9 @@ class Match(Statement):
                 return super()._construct_sugar()  # `case P if g:` not written
             alternatives = self._pattern_alternatives(case.pattern)
             if alternatives is None:
-                return super()._construct_sugar()  # structural pattern (sequence/class/...)
+                return (
+                    super()._construct_sugar()
+                )  # structural pattern (sequence/class/...)
             specs.append(
                 MatchCaseSpec(
                     alternatives=alternatives,
@@ -3140,11 +3136,15 @@ class Lambda(Expression):
         """
         from .shadow import ShadowNode
 
-        if not isinstance(self.ref, ShadowNode) or len(self.params) != 1 or any(
-            param.param_kind != "positional_or_keyword"
-            or param.default is not None
-            or param.annotation is not None
-            for param in self.params
+        if (
+            not isinstance(self.ref, ShadowNode)
+            or len(self.params) != 1
+            or any(
+                param.param_kind != "positional_or_keyword"
+                or param.default is not None
+                or param.annotation is not None
+                for param in self.params
+            )
         ):
             return super()._construct_sugar()
 
@@ -3234,9 +3234,11 @@ class Set(Expression):
             return SpreadCollectionSugar(
                 kind="set",
                 elements=tuple(
-                    ("python:starred", e.value.sugar())
-                    if isinstance(e, Starred)
-                    else (None, e.sugar())
+                    (
+                        ("python:starred", e.value.sugar())
+                        if isinstance(e, Starred)
+                        else (None, e.sugar())
+                    )
                     for e in self.elts
                 ),
                 site=self.fragment,
@@ -3335,26 +3337,28 @@ class ListComp(Expression):
 
     def _contains_named_expression(self, roots: tuple) -> bool:
         """True when a walrus would bind outside the comprehension coordinate."""
-        return any(
-            node.kind == "NamedExpr" for root in roots for node in root.walk()
-        )
+        return any(node.kind == "NamedExpr" for root in roots for node in root.walk())
 
     def _calls_shadowed_range(self, iterable, scope) -> bool:
         return (
-            iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
-            and "range" in scope
-        ) or (
-            iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
-            and "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
-        ) or (
-            iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
-            and "range" in self.unit.module_bound_names
+            (
+                iterable.kind == "Call"
+                and iterable.func.kind == "Name"
+                and iterable.func.id == "range"
+                and "range" in scope
+            )
+            or (
+                iterable.kind == "Call"
+                and iterable.func.kind == "Name"
+                and iterable.func.id == "range"
+                and "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
+            )
+            or (
+                iterable.kind == "Call"
+                and iterable.func.kind == "Name"
+                and iterable.func.id == "range"
+                and "range" in self.unit.module_bound_names
+            )
         )
 
     def _ground_hash_key(self, expression):
@@ -3451,8 +3455,10 @@ class SetComp(Expression):
         ):
             return None
         gen = self.generators[0]
-        if gen.is_async or gen.ifs or ListComp._contains_forbidden_shape(
-            self, (gen.iter,)
+        if (
+            gen.is_async
+            or gen.ifs
+            or ListComp._contains_forbidden_shape(self, (gen.iter,))
         ):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
@@ -3468,9 +3474,7 @@ class SetComp(Expression):
             bindings = For._target_bindings_for(self, gen.target, element)
             if bindings is None:
                 return None
-            new_elt, changed = self._substitute_field(
-                self.elt, {**scope, **bindings}
-            )
+            new_elt, changed = self._substitute_field(self.elt, {**scope, **bindings})
             result = new_elt if changed else self.elt
             key = ListComp._ground_hash_key(self, result)
             if key is None:
@@ -3541,8 +3545,10 @@ class DictComp(Expression):
         ):
             return None
         gen = self.generators[0]
-        if gen.is_async or gen.ifs or ListComp._contains_forbidden_shape(
-            self, (gen.iter,)
+        if (
+            gen.is_async
+            or gen.ifs
+            or ListComp._contains_forbidden_shape(self, (gen.iter,))
         ):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
@@ -3648,6 +3654,7 @@ class GeneratorExp(Expression):
             element=self.elt.sugar(),
             site=self.fragment,
         )
+
 
 class Await(Expression):
     value: Expression
@@ -3770,9 +3777,11 @@ class Call(Expression):
             from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
 
             arguments = tuple(
-                ("star", None, arg.value.sugar())
-                if isinstance(arg, Starred)
-                else ("positional", None, arg.sugar())
+                (
+                    ("star", None, arg.value.sugar())
+                    if isinstance(arg, Starred)
+                    else ("positional", None, arg.sugar())
+                )
                 for arg in self.args
             ) + tuple(
                 (
@@ -3785,11 +3794,7 @@ class Call(Expression):
             callee_name = self._spread_callee_name(self.func)
             return SpreadCallSugar(
                 callee_name=callee_name,
-                callee=(
-                    None
-                    if isinstance(self.func, Name)
-                    else self.func.sugar()
-                ),
+                callee=(None if isinstance(self.func, Name) else self.func.sugar()),
                 arguments=arguments,
                 site=self.fragment,
             )
@@ -4372,9 +4377,11 @@ class List(Expression):
             return SpreadCollectionSugar(
                 kind="list",
                 elements=tuple(
-                    ("python:starred", e.value.sugar())
-                    if isinstance(e, Starred)
-                    else (None, e.sugar())
+                    (
+                        ("python:starred", e.value.sugar())
+                        if isinstance(e, Starred)
+                        else (None, e.sugar())
+                    )
                     for e in self.elts
                 ),
                 site=self.fragment,
@@ -4402,9 +4409,11 @@ class Tuple_(Expression):
             return SpreadCollectionSugar(
                 kind="tuple",
                 elements=tuple(
-                    ("python:starred", e.value.sugar())
-                    if isinstance(e, Starred)
-                    else (None, e.sugar())
+                    (
+                        ("python:starred", e.value.sugar())
+                        if isinstance(e, Starred)
+                        else (None, e.sugar())
+                    )
                     for e in self.elts
                 ),
                 site=self.fragment,

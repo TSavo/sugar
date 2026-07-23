@@ -11,15 +11,17 @@ from sugar_source_tree.spans import Span
 
 
 def test_every_constructed_node_is_typed():
-    root = oracle_source_file((
-        "import os\n"
-        "class C:\n"
-        "    def m(self, *a, **k):\n"
-        "        return {x: y for x, y in a if x}\n"
-        "async def g():\n"
-        "    async with open('f') as fh:\n"
-        "        await fh.read()\n"
-    )).root
+    root = oracle_source_file(
+        (
+            "import os\n"
+            "class C:\n"
+            "    def m(self, *a, **k):\n"
+            "        return {x: y for x, y in a if x}\n"
+            "async def g():\n"
+            "    async with open('f') as fh:\n"
+            "        await fh.read()\n"
+        )
+    ).root
     for node in root.walk():
         assert isinstance(node, Typed)
         assert node.resolve_type() is type(node)

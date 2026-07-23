@@ -64,10 +64,15 @@ def test_wildcard_guarded_by_all_negations():
 def test_capture_binds_the_subject():
     # case x: binds x = subject (the temporal half, via substitute). So a
     # `case 1: return 10; case x: return x` capture arm is `not(z==1) -> out==z`.
-    post = _fn(
-        "def A(z):\n    match z:\n        case 1:\n            return 10\n"
-        "        case x:\n            return x\n"
-    ).sugar().desugar().value.post()
+    post = (
+        _fn(
+            "def A(z):\n    match z:\n        case 1:\n            return 10\n"
+            "        case x:\n            return x\n"
+        )
+        .sugar()
+        .desugar()
+        .value.post()
+    )
     capture_arm = post.operands[1]  # the `case x:` implication
     assert capture_arm.operands[0].operands[0].kind == "not"  # guarded by not(z==1)
     assert capture_arm.operands[1].args[1].name == "z"  # out == z (x = subject)
@@ -75,12 +80,16 @@ def test_capture_binds_the_subject():
 
 def test_structural_pattern_stays_loud():
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    match z:\n        case [a, b]:\n            return a\n").sugar()
+        _fn(
+            "def A(z):\n    match z:\n        case [a, b]:\n            return a\n"
+        ).sugar()
 
 
 def test_pattern_guard_stays_loud():
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    match z:\n        case 1 if z > 0:\n            return z\n").sugar()
+        _fn(
+            "def A(z):\n    match z:\n        case 1 if z > 0:\n            return z\n"
+        ).sugar()
 
 
 def test_singleton_pattern_none_and_bool():

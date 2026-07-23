@@ -24,13 +24,17 @@ def _invs(src):
 
 
 def test_range_stop_unrolls_the_body_per_element():
-    invs = _invs("def A(z):\n    for i in range(3):\n        assert i == z\n    return z\n")
+    invs = _invs(
+        "def A(z):\n    for i in range(3):\n        assert i == z\n    return z\n"
+    )
     assert len(invs) == 3
     assert [i.args[0].value for i in invs] == [0, 1, 2]
 
 
 def test_range_start_stop_unrolls_the_body_per_element():
-    invs = _invs("def A(z):\n    for i in range(2, 5):\n        assert i == z\n    return z\n")
+    invs = _invs(
+        "def A(z):\n    for i in range(2, 5):\n        assert i == z\n    return z\n"
+    )
     assert [i.args[0].value for i in invs] == [2, 3, 4]
 
 
@@ -42,24 +46,36 @@ def test_range_start_stop_step_unrolls_the_body_per_element():
 
 
 def test_empty_range_states_nothing():
-    invs = _invs("def A(z):\n    for i in range(0):\n        assert i == z\n    return z\n")
+    invs = _invs(
+        "def A(z):\n    for i in range(0):\n        assert i == z\n    return z\n"
+    )
     assert invs == ()
 
 
 def test_loop_carried_accumulator_folds_over_a_concrete_range():
     # t = 0; for i in range(4): t = t + i; return t  -- folds to 0+1+2+3 = 6.
-    post = _fn(
-        "def A():\n    t = 0\n    for i in range(4):\n        t = t + i\n    return t\n"
-    ).sugar().desugar().value.post()
+    post = (
+        _fn(
+            "def A():\n    t = 0\n    for i in range(4):\n        t = t + i\n    return t\n"
+        )
+        .sugar()
+        .desugar()
+        .value.post()
+    )
     assert post.args[1].value == 6
 
 
 def test_symbolic_range_bound_is_a_universal():
     # range(n) with symbolic n is not concrete, so the assert-only loop emits
     # its universal forall i. member(i, range(n)) -> P(i) -- not loud.
-    inv = _fn(
-        "def A(z, n):\n    for i in range(n):\n        assert i == z\n    return z\n"
-    ).sugar().desugar().value.invs()[0]
+    inv = (
+        _fn(
+            "def A(z, n):\n    for i in range(n):\n        assert i == z\n    return z\n"
+        )
+        .sugar()
+        .desugar()
+        .value.invs()[0]
+    )
     assert inv.kind == "forall"
 
 

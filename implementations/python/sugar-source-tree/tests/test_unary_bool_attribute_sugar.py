@@ -37,7 +37,9 @@ def test_unary_minus_and_invert_emit_symbolic_ops():
 
 def test_not_is_truth_then_negate():
     # if not (z == 1): the guard is not(z == 1), so the body's fact rides under it.
-    invs = _invs("def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n")
+    invs = _invs(
+        "def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n"
+    )
     authentication = invs[0]
     observed = authentication.operands[0].operands[1]
     assert observed.kind == "not"

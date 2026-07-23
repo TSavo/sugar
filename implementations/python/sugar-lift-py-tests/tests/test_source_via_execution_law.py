@@ -13,7 +13,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "source_via_execution_law.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -154,9 +153,7 @@ def _load(name):
 """,
         encoding="utf-8",
     )
-    assert (
-        _SCANNER.r_source_via_execution(_SCANNER.scan_roots((sugar,))) == 1
-    )
+    assert _SCANNER.r_source_via_execution(_SCANNER.scan_roots((sugar,))) == 1
 
     # Revert: replace the executing call with the non-executing PathFinder
     # form -- the legitimate replacement named in the floor's own docstring.

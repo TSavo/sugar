@@ -34,8 +34,12 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 class LiftReportPayloadDto:
     # Closed lanes: a DTO already exists for every row, so no raw-dict side
     # door is left for callers to bypass construction law (#3661).
-    ir: list[BodyUniverseDto | SourceFunctionContractDto | ContextManagerContractIrV1] = field(
-        default_factory=list[BodyUniverseDto | SourceFunctionContractDto | ContextManagerContractIrV1]
+    ir: list[
+        BodyUniverseDto | SourceFunctionContractDto | ContextManagerContractIrV1
+    ] = field(
+        default_factory=list[
+            BodyUniverseDto | SourceFunctionContractDto | ContextManagerContractIrV1
+        ]
     )
     source_mementos: list[SourceMementoDto] = field(
         default_factory=list[SourceMementoDto]

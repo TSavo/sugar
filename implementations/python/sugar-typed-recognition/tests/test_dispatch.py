@@ -134,9 +134,7 @@ def test_operands_are_already_typed_when_the_parent_is_recognized():
     finished children.
     """
     root = parse(
-        "def f(a, b):\n"
-        "    assert len(a) + b * 2\n"
-        "    return a.join(b)\n"
+        "def f(a, b):\n" "    assert len(a) + b * 2\n" "    return a.join(b)\n"
     )
     seen = 0
     for node in root.walk():
@@ -150,9 +148,11 @@ def test_nested_dispatch_resolves_at_every_level():
     root = parse("assert len(xs) + n * 2\n")
     catalog = default_catalog()
     resolved = {
-        type(n).__name__: catalog.resolve(
+        type(n)
+        .__name__: catalog.resolve(
             Role.STATEMENT if isinstance(n, (Assert, Return)) else Role.TERM, n
-        ).name()
+        )
+        .name()
         for n in root.walk()
         if isinstance(n, (Assert, BinOp, Call, Name))
     }

@@ -22,9 +22,7 @@ def _returned_term(expression: str):
     out = _function(f"def f(a, b, d):\n    return {expression}\n").sugar().desugar()
     assert isinstance(out, Complete)
     returns = [
-        entry
-        for entry in out.value.record.statements
-        if isinstance(entry, ReturnValue)
+        entry for entry in out.value.record.statements if isinstance(entry, ReturnValue)
     ]
     assert len(returns) == 1
     return returns[0].value.to_term(owner="starred-spread-test")
