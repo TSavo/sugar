@@ -297,47 +297,173 @@ class Interpreter:
         return result.stepped(f"return <- {fid}", rpc=bool(result.entries))
 
     def exec_block(self, module: str, body: list[ast.stmt], env: dict[str, AbstractValue], chain: tuple[str, ...], *, sink_slice: bool) -> AbstractValue:
+        returns, exits, _raises, _prefixes = self._flow_block(
+            module, body, env, chain, sink_slice=sink_slice
+        )
+        if exits:
+            merged = self._join_envs(exits)
+            env.clear()
+            env.update(merged)
+        return returns
+
+    def _flow_block(
+        self,
+        module: str,
+        body: list[ast.stmt],
+        initial: Mapping[str, AbstractValue],
+        chain: tuple[str, ...],
+        *,
+        sink_slice: bool,
+    ) -> tuple[AbstractValue, tuple[dict[str, AbstractValue], ...], tuple[dict[str, AbstractValue], ...], tuple[dict[str, AbstractValue], ...]]:
+        """Solve structured CFG edges over the finite abstract environment."""
         returns = AbstractValue()
-        for stmt in body:
+        raises: list[dict[str, AbstractValue]] = []
+        prefixes: list[dict[str, AbstractValue]] = []
+        exits: list[dict[str, AbstractValue]] = []
+        states: dict[int, dict[str, AbstractValue]] = {}
+        pending: list[int] = []
+
+        def enqueue(index: int, candidate: Mapping[str, AbstractValue]) -> None:
+            old = states.get(index)
+            joined = dict(candidate) if old is None else self._join_envs((old, candidate))
+            if old is None or joined != old:
+                states[index] = joined
+                if index not in pending:
+                    pending.append(index)
+
+        enqueue(0, initial)
+        while pending:
+            index = pending.pop(0)
+            current = dict(states[index])
+            if index == len(body):
+                exits.append(current)
+                continue
+            stmt = body[index]
+            prefixes.append(dict(current))
             if isinstance(stmt, ast.ImportFrom):
                 target_module = self.index._resolve_module(module, stmt.module, stmt.level)
                 if target_module:
                     for alias in stmt.names:
                         canonical = self.index.module_symbols[target_module].get(alias.name)
                         if canonical in self.index.classes:
-                            env[alias.asname or alias.name] = AbstractValue(frozenset({Atom("ClassObject", canonical, self.index.classes[canonical].site, chain)}))
+                            current[alias.asname or alias.name] = AbstractValue(frozenset({Atom("ClassObject", canonical, self.index.classes[canonical].site, chain)}))
                         elif canonical in self.index.functions:
-                            env[alias.asname or alias.name] = AbstractValue(frozenset({Atom("Callable", canonical, self.index.functions[canonical].site, chain)}))
+                            current[alias.asname or alias.name] = AbstractValue(frozenset({Atom("Callable", canonical, self.index.functions[canonical].site, chain)}))
+                enqueue(index + 1, current)
             elif isinstance(stmt, ast.Import):
                 for alias in stmt.names:
                     target_module = self.index._resolve_module(module, alias.name, 0)
                     if target_module:
-                        env[alias.asname or alias.name.split(".")[0]] = AbstractValue(frozenset({Atom("Module", target_module, self.index.site(module, stmt), chain)}))
+                        current[alias.asname or alias.name.split(".")[0]] = AbstractValue(frozenset({Atom("Module", target_module, self.index.site(module, stmt), chain)}))
+                enqueue(index + 1, current)
             elif isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value is not None:
-                value = self.eval_expr(module, stmt.value, env, chain, sink_slice=sink_slice)
+                value = self.eval_expr(module, stmt.value, current, chain, sink_slice=sink_slice)
                 targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
                 for target in targets:
                     if isinstance(target, ast.Name):
-                        env[target.id] = env.get(target.id, AbstractValue()).join(value)
+                        current[target.id] = current.get(target.id, AbstractValue()).join(value)
+                enqueue(index + 1, current)
             elif isinstance(stmt, ast.Return):
                 if stmt.value is not None:
-                    returns = returns.join(self.eval_expr(module, stmt.value, env, chain, sink_slice=sink_slice))
+                    returns = returns.join(self.eval_expr(module, stmt.value, current, chain, sink_slice=sink_slice))
             elif isinstance(stmt, ast.If):
-                body_env = dict(env)
-                refinement = self._isinstance_refinement(module, stmt.test, env, chain)
+                body_env = dict(current)
+                refinement = self._isinstance_refinement(module, stmt.test, current, chain)
                 if refinement:
                     name, value = refinement
                     body_env[name] = body_env.get(name, AbstractValue()).join(value)
-                body_result = self.exec_block(module, stmt.body, body_env, chain, sink_slice=sink_slice)
+                body_result, body_exits, body_raises, body_prefixes = self._flow_block(
+                    module, stmt.body, body_env, chain, sink_slice=sink_slice
+                )
                 if refinement and body_result.has("SuccessSugar"):
                     body_result = body_result.join(body_env[refinement[0]])
                 returns = returns.join(body_result)
-                returns = returns.join(self.exec_block(module, stmt.orelse, dict(env), chain, sink_slice=sink_slice))
+                else_result, else_exits, else_raises, else_prefixes = self._flow_block(
+                    module, stmt.orelse, current, chain, sink_slice=sink_slice
+                )
+                returns = returns.join(else_result)
+                raises.extend((*body_raises, *else_raises))
+                prefixes.extend((*body_prefixes, *else_prefixes))
+                for successor in (*body_exits, *else_exits):
+                    enqueue(index + 1, successor)
+            elif isinstance(stmt, ast.While):
+                header = dict(current)
+                loop_returns = AbstractValue()
+                loop_raises: list[dict[str, AbstractValue]] = []
+                loop_prefixes: list[dict[str, AbstractValue]] = []
+                while True:
+                    body_result, body_exits, body_raises, body_prefixes = self._flow_block(
+                        module, stmt.body, header, chain, sink_slice=sink_slice
+                    )
+                    loop_returns = loop_returns.join(body_result)
+                    loop_raises.extend(body_raises)
+                    loop_prefixes.extend(body_prefixes)
+                    next_header = self._join_envs((header, *body_exits))
+                    if next_header == header:
+                        break
+                    header = next_header
+                returns = returns.join(loop_returns)
+                raises.extend(loop_raises)
+                prefixes.extend(loop_prefixes)
+                else_result, else_exits, else_raises, else_prefixes = self._flow_block(
+                    module, stmt.orelse, header, chain, sink_slice=sink_slice
+                )
+                returns = returns.join(else_result)
+                raises.extend(else_raises)
+                prefixes.extend(else_prefixes)
+                for successor in else_exits:
+                    enqueue(index + 1, successor)
+            elif isinstance(stmt, ast.Try):
+                try_result, try_exits, try_raises, try_prefixes = self._flow_block(
+                    module, stmt.body, current, chain, sink_slice=sink_slice
+                )
+                returns = returns.join(try_result)
+                handler_entry = self._join_envs((current, *try_prefixes, *try_raises))
+                handler_exits: list[dict[str, AbstractValue]] = []
+                for handler in stmt.handlers:
+                    handler_result, caught_exits, caught_raises, caught_prefixes = self._flow_block(
+                        module, handler.body, handler_entry, chain, sink_slice=sink_slice
+                    )
+                    returns = returns.join(handler_result)
+                    handler_exits.extend(caught_exits)
+                    raises.extend(caught_raises)
+                    prefixes.extend(caught_prefixes)
+                normal_result, normal_exits, normal_raises, normal_prefixes = self._flow_block(
+                    module,
+                    stmt.orelse,
+                    self._join_envs(try_exits) if try_exits else current,
+                    chain,
+                    sink_slice=sink_slice,
+                )
+                returns = returns.join(normal_result)
+                raises.extend(normal_raises)
+                prefixes.extend((*try_prefixes, *normal_prefixes))
+                successors = (*normal_exits, *handler_exits)
+                for successor in successors:
+                    final_result, final_exits, final_raises, final_prefixes = self._flow_block(
+                        module, stmt.finalbody, successor, chain, sink_slice=sink_slice
+                    )
+                    returns = returns.join(final_result)
+                    raises.extend(final_raises)
+                    prefixes.extend(final_prefixes)
+                    for final_exit in final_exits:
+                        enqueue(index + 1, final_exit)
             elif isinstance(stmt, ast.Expr):
-                self.eval_expr(module, stmt.value, env, chain, sink_slice=sink_slice)
+                self.eval_expr(module, stmt.value, current, chain, sink_slice=sink_slice)
+                enqueue(index + 1, current)
             elif isinstance(stmt, ast.Raise):
-                continue
-        return returns
+                raises.append(current)
+            else:
+                enqueue(index + 1, current)
+        return returns, tuple(exits), tuple(raises), tuple(prefixes)
+
+    @staticmethod
+    def _join_envs(envs: Iterable[Mapping[str, AbstractValue]]) -> dict[str, AbstractValue]:
+        joined: dict[str, AbstractValue] = {}
+        for env in envs:
+            for name, value in env.items():
+                joined[name] = joined.get(name, AbstractValue()).join(value)
+        return joined
 
     def _isinstance_refinement(self, module: str, expr: ast.expr, env: Mapping[str, AbstractValue], chain: tuple[str, ...]) -> tuple[str, AbstractValue] | None:
         if not (isinstance(expr, ast.Call) and len(expr.args) >= 2):
@@ -478,7 +604,11 @@ class Interpreter:
                     rows.append(self._row("R_with_noncontract_admission_authority", sink.site, atom, "opaque-admission-flow"))
                 elif atom.kind == "Instance":
                     leaf = atom.identity.rsplit(".", 1)[-1]
-                    if leaf in {"ContextManagerContractRefV1", "ContextManagerResolutionGapV1"} or self.index.is_sugar(atom.identity):
+                    if (
+                        atom.identity == sink.owner
+                        or leaf in {"ContextManagerContractRefV1", "ContextManagerResolutionGapV1"}
+                        or self.index.is_sugar(atom.identity)
+                    ):
                         continue
                     rows.append(self._row("R_with_noncontract_admission_authority", sink.site, atom, "secondary-admission-authority"))
             # Union members may not be instantiated, but a guarded success makes them authority.

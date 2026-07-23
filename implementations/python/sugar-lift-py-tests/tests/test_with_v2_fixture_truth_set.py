@@ -31,6 +31,8 @@ ENROLLMENT_CASES = {
     "enrollment_opaque": ("enrollment_opaque.py",),
     "enrollment_generic_rename": ("enrollment_generic_rename.py",),
     "enrollment_boundary_b": ("enrollment_boundary_b.py",),
+    "enrollment_exceptional_prefix": ("enrollment_exceptional_prefix.py",),
+    "enrollment_loop_backedge": ("enrollment_loop_backedge.py",),
     "enrollment_lookup_only_coexists_with_sugar": ("enrollment_lookup_only_coexists_with_sugar.py",),
     "enrollment_ordinary_dict": ("enrollment_ordinary_dict.py",),
     "enrollment_ordinary_get": ("enrollment_ordinary_get.py",),
@@ -73,6 +75,8 @@ def test_no_consumer_enrollment_planted_detector_cases():
         "enrollment_opaque",
         "enrollment_generic_rename",
         "enrollment_boundary_b",
+        "enrollment_exceptional_prefix",
+        "enrollment_loop_backedge",
     ):
         rows = analyze_consumer_enrollment(graph(ENROLLMENT_CASES[case]))
         assert len(rows) == 1, (case, rows)
