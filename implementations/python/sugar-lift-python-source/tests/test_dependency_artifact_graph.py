@@ -354,6 +354,28 @@ def test_compound_statement_later_definition_is_the_authenticated_export(
     assert result.definition.start_line != 1
 
 
+def test_with_suppressible_exceptional_prefix_does_not_authenticate_unreachable_export(
+    tmp_path: Path,
+) -> None:
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source=(
+                "def build(value):\n    return 'old'\n"
+                "with suppresses_exceptions():\n"
+                "    raise RuntimeError()\n"
+                "    def build(value):\n        return 'new'\n"
+            ),
+        )
+    )
+
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
 def test_export_transfer_exhaustively_classifies_running_ast_statement_grammar() -> (
     None
 ):

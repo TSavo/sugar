@@ -817,14 +817,42 @@ def export_statement_coverage() -> tuple[list[str], list[str]]:
 
 def _export_block(statements, name, initial):
     state = initial
-    for statement in statements:
+    for index, statement in enumerate(statements):
+        if _statement_contains_module_init_raise(statement) and _suite_binds_export(
+            statements[index + 1 :], name
+        ):
+            # A later binding is control-dependent on whether this exceptional
+            # prefix completes.  In particular, a With/AsyncWith exit may
+            # suppress the exception while skipping the remainder of its
+            # suite.  Selecting that later textual binding would authenticate
+            # an unreachable definition.
+            return ("dynamic", statement)
         state = _export_statement(statement, name, state)
     return state
 
 
+def _suite_binds_export(statements, name: str) -> bool:
+    marker = object()
+    return _export_block(statements, name, marker) is not marker
+
+
+def _statement_contains_module_init_raise(statement: ast.AST) -> bool:
+    stack: list[ast.AST] = [statement]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Raise):
+            return True
+        if node is not statement and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return False
+
+
 def _export_statement(statement: ast.stmt, name: str, state):
     if type(statement) not in (_EXPORT_SIMPLE_STATEMENTS | _EXPORT_COMPOUND_STATEMENTS):
-        return ("unsupported", type(statement).__name__)
+        return _unsupported_export_statement(statement)
     if _statement_walrus_binds(statement, name):
         state = ("dynamic", statement)
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -940,7 +968,13 @@ def _export_statement(statement: ast.stmt, name: str, state):
         iterated = _export_block(statement.body, name, iterated)
         iterated = _export_block(statement.orelse, name, iterated)
         return _join_export_states((state, iterated), statement)
-    return state
+    if type(statement) in _EXPORT_SIMPLE_STATEMENTS:
+        return state
+    return _unsupported_export_statement(statement)
+
+
+def _unsupported_export_statement(statement: ast.AST):
+    return ("unsupported", type(statement).__name__)
 
 
 def _join_export_states(states, locus):
@@ -962,7 +996,7 @@ def _pattern_binds(pattern: ast.pattern, name: str) -> bool:
     )
 
 
-def _statement_walrus_binds(statement: ast.stmt, name: str) -> bool:
+def _statement_walrus_binds(statement: ast.AST, name: str) -> bool:
     """Find module-scope named expressions without entering nested scopes/suites."""
     stack = list(ast.iter_child_nodes(statement))
     while stack:
@@ -979,7 +1013,7 @@ def _statement_walrus_binds(statement: ast.stmt, name: str) -> bool:
     return False
 
 
-def _cannot_raise_during_module_init(statement: ast.stmt) -> bool:
+def _cannot_raise_during_module_init(statement: ast.AST) -> bool:
     if isinstance(statement, ast.Pass):
         return True
     if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
