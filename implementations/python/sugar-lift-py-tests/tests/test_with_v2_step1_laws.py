@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from with_v2_law_detector import ModuleGraph, analyze_consumer_enrollment, analyze_single_authority
 
 
@@ -28,15 +26,13 @@ def print_rows(name, rows):
         )
 
 
-@pytest.mark.xfail(strict=True, reason="current secondary With authority is migration debt")
-def test_single_authority_production_debt():
+def test_single_authority_production_is_zero():
     rows = analyze_single_authority(production_graph())
     print_rows("R_with_noncontract_admission_authority", rows)
     assert rows == ()
 
 
-@pytest.mark.xfail(strict=True, reason="current consumer manifest enrollment is migration debt")
-def test_no_consumer_enrollment_production_debt():
+def test_no_consumer_enrollment_production_is_zero():
     rows = analyze_consumer_enrollment(production_graph())
     print_rows("R_consumer_manager_enrollment", rows)
     assert rows == ()
