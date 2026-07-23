@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "moduleGraph": ["arbitrary_iteration_module.py"],
+  "authority": "source-structure-only",
+  "cases": [
+    {
+      "case": "continue_backedge",
+      "construct": "Continue",
+      "loopKind": "For",
+      "constructionVerdict": "typed-continue-to-owning-loop-backedge",
+      "stateRule": "tail-after-continue-is-not-in-the-continued-face",
+      "truthfulVerdict": "head-all-tail-odd-post-four",
+      "lyingVerdict": "continued-tail-runs",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "break_exit",
+      "construct": "Break",
+      "loopKind": "For",
+      "constructionVerdict": "typed-break-to-owning-loop-exit",
+      "stateRule": "break-state-excludes-unvisited-elements-and-skipped-tail",
+      "truthfulVerdict": "visited-zero-one-two-post-two",
+      "lyingVerdict": "facts-for-unvisited-elements",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "for_else_exhaustion",
+      "construct": "LoopElse",
+      "loopKind": "For",
+      "constructionVerdict": "normal-exhaustion-runs-else",
+      "truthfulVerdict": "else-runs",
+      "lyingVerdict": "else-skipped",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "for_else_break",
+      "construct": "LoopElse",
+      "loopKind": "For",
+      "constructionVerdict": "break-suppresses-else",
+      "truthfulVerdict": "else-skipped",
+      "lyingVerdict": "else-runs-after-break",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "while_else_exhaustion",
+      "construct": "LoopElse",
+      "loopKind": "While",
+      "constructionVerdict": "normal-exhaustion-runs-else",
+      "truthfulVerdict": "else-runs",
+      "lyingVerdict": "else-skipped",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "while_else_break",
+      "construct": "LoopElse",
+      "loopKind": "While",
+      "constructionVerdict": "break-suppresses-else",
+      "truthfulVerdict": "else-skipped",
+      "lyingVerdict": "else-runs-after-break",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "nested_break",
+      "construct": "Break",
+      "loopKind": "NestedFor",
+      "constructionVerdict": "nearest-loop-alone-consumes-break",
+      "truthfulVerdict": "outer-loop-completes",
+      "lyingVerdict": "outer-loop-consumes-inner-break",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "nested_continue",
+      "construct": "Continue",
+      "loopKind": "NestedFor",
+      "constructionVerdict": "nearest-loop-alone-consumes-continue",
+      "truthfulVerdict": "outer-tail-runs-after-inner-exhaustion",
+      "lyingVerdict": "outer-loop-consumes-inner-continue",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "concrete_bounded",
+      "construct": "IterationState",
+      "loopKind": "For",
+      "constructionVerdict": "bounded-unroll-with-one-state-transition-per-element",
+      "truthfulVerdict": "states-one-three-six-ten",
+      "lyingVerdict": "iterations-share-one-post-state",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "symbolic_break",
+      "lyingFunction": "symbolic_break_lying",
+      "construct": "OpaqueLoop",
+      "loopKind": "For",
+      "constructionVerdict": "opaque-loop-with-typed-break-obligation",
+      "stateRule": "no-whole-iterable-universal-after-reachable-break",
+      "truthfulVerdict": "prefix-through-stop-only",
+      "lyingVerdict": "universal-over-entire-iterable",
+      "lyingDisposition": "typed-loud"
+    },
+    {
+      "case": "guarded_break_join",
+      "construct": "GuardedExitJoin",
+      "loopKind": "For",
+      "constructionVerdict": "exitset-joins-break-and-exhaustion-faces",
+      "stateRule": "each-guard-retains-its-own-exact-state",
+      "truthfulVerdict": "break-face-post-one-exhaustion-face-post-two",
+      "lyingVerdict": "one-state-used-for-both-guards",
+      "lyingDisposition": "reject"
+    },
+    {
+      "case": "guarded_continue_join",
+      "construct": "GuardedExitJoin",
+      "loopKind": "For",
+      "constructionVerdict": "exitset-routes-continue-face-to-backedge",
+      "stateRule": "continued-face-omits-skipped-tail-and-rejoins-next-iteration",
+      "truthfulVerdict": "guarded-tail-omits-one-only",
+      "lyingVerdict": "continued-face-carries-skipped-tail",
+      "lyingDisposition": "reject"
+    }
+  ]
+}
