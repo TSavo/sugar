@@ -1672,8 +1672,45 @@ class ClassDef(Statement):
         resulting floor value.  No class body is interpreted beside this door.
         """
         methods = tuple(item for item in self.body if isinstance(item, FunctionDef))
+        docstring_cid = None
+        if self.body:
+            first = self.body[0]
+            if (
+                isinstance(first, Expr)
+                and isinstance(first.value, Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstring_cid = first.fragment.seal().cid
+        class_assignments = tuple(
+            (item.targets[0].id, item.value, item.fragment)
+            for item in self.body
+            if isinstance(item, Assign)
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], Name)
+        )
+        annotated_assignments = tuple(
+            item
+            for item in self.body
+            if isinstance(item, AnnAssign) and isinstance(item.target, Name)
+        )
         unsupported = tuple(
-            item for item in self.body if not isinstance(item, (FunctionDef, Pass))
+            item
+            for index, item in enumerate(self.body)
+            if not isinstance(item, (FunctionDef, Pass))
+            and not (
+                index == 0
+                and isinstance(item, Expr)
+                and isinstance(item.value, Constant)
+                and isinstance(item.value.value, str)
+            )
+            and not (
+                isinstance(item, Assign)
+                and len(item.targets) == 1
+                and isinstance(item.targets[0], Name)
+            )
+            and not (
+                isinstance(item, AnnAssign) and isinstance(item.target, Name)
+            )
         )
         if unsupported:
             from sugar_source_tree.panic import SugarNotWritten
@@ -1684,7 +1721,10 @@ class ClassDef(Statement):
                 requested="a total source-visible class member construction arm",
                 fix="add the member's ordinary node Sugar arm or keep the class loud",
             )
-        from sugar_lift_py_tests.floor import ConstructedClassMethodV1
+        from sugar_lift_py_tests.floor import (
+            ConstructedClassFieldV1,
+            ConstructedClassMethodV1,
+        )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ClassDefinitionSugar,
         )
@@ -1698,11 +1738,35 @@ class ClassDef(Statement):
             )
             for method in methods
         )
+        fields = tuple(
+            ConstructedClassFieldV1(
+                name,
+                fragment.seal().cid,
+                value.sugar(),
+            )
+            for name, value, fragment in class_assignments
+        ) + tuple(
+            ConstructedClassFieldV1(
+                item.target.id,
+                item.fragment.seal().cid,
+                item.value.sugar(),
+            )
+            for item in annotated_assignments
+            if item.value is not None
+        )
         return ClassDefinitionSugar(
             class_name=self.name,
             source_identity_cid=self.unit.source_cid,
             definition_fragment_cid=self.fragment.seal().cid,
             methods=constructed,
+            fields=fields,
+            docstring_cid=docstring_cid,
+            annotation_cids=tuple(
+                item.fragment.seal().cid for item in annotated_assignments
+            ),
+            decorator_cids=tuple(
+                item.fragment.seal().cid for item in self.decorators
+            ),
             site=self.fragment,
         )
 
