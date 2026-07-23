@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -22,6 +22,7 @@ class ObjectMethodValue(FloorValue):
     body: SugarBody[Any] | Sugar
     source_call_frame_cid: str | None = None
     formal_coordinate_cids: tuple[str, ...] = ()
+    source_call_frame: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         from sugar_lift_py_tests.sugar.sugar_base import Sugar

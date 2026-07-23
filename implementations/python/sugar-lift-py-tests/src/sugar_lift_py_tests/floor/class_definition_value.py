@@ -108,9 +108,7 @@ class ClassDefinitionValue(FloorValue):
         # tail before this class's methods.  A base method is retained with its
         # original authenticated source frame; nothing is reconstructed here.
         inherited = tuple(
-            method
-            for base in reversed(self._c3_tail())
-            for method in base.methods
+            method for base in reversed(self._c3_tail()) for method in base.methods
         )
         return tuple(
             ObjectMethodValue(
@@ -122,6 +120,7 @@ class ClassDefinitionValue(FloorValue):
                     coordinate.cid
                     for coordinate in method.source_call_frame.formal_coordinates
                 ),
+                method.source_call_frame,
             )
             for method in (*inherited, *self.methods)
         )

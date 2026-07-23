@@ -365,6 +365,8 @@ class ObjectValue(FloorValue):
         owner: str,
         blame: object,
         ctx: Any | None = None,
+        keywords: tuple[tuple[str, FloorValue], ...] = (),
+        required_frame: object | None = None,
     ) -> Outcome:
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -374,6 +376,10 @@ class ObjectValue(FloorValue):
         for method in reversed(self.methods):
             if method.name != name:
                 continue
+            if required_frame is not None and (
+                method.source_call_frame_cid != required_frame.frame_cid
+            ):
+                continue
             if not method.parameters:
                 return self._floor_gap(
                     owner=owner,
@@ -382,23 +388,32 @@ class ObjectValue(FloorValue):
                     requested="method self parameter",
                     fix=f"add method binding sugar for `{self.class_name}.{name}`",
                 )
-            expected = len(method.parameters) - 1
-            if len(arguments) != expected:
+            target_name = f"{self.class_name}.{name}"
+            arg_values = (self, *arguments)
+            selected_frame = required_frame or method.source_call_frame
+            if selected_frame is not None:
+                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+                try:
+                    arg_values = selected_frame.bind_actuals(arg_values, keywords, ctx)
+                except SourceCallBindingGap as exc:
+                    return self._floor_gap(
+                        owner=owner,
+                        blame=blame,
+                        observed=str(exc),
+                        requested="actuals matching authenticated method signature",
+                        fix="preserve exact defaults/variadics or keep the call loud",
+                    )
+            elif keywords or len(arguments) != len(method.parameters) - 1:
                 return self._floor_gap(
                     owner=owner,
                     blame=blame,
                     observed=f"{self.class_name}.{name}",
-                    requested=f"{expected} method arguments",
-                    fix=(
-                        f"add method argument binding sugar for "
-                        f"`{self.class_name}.{name}`"
-                    ),
+                    requested="arguments matching the constructor-bound method",
+                    fix="bind through the authenticated method frame or keep loud",
                 )
-            target_name = f"{self.class_name}.{name}"
-            arg_values = (self, *arguments)
             arg_terms = [
-                value.to_term(owner=f"{owner} method argument")
-                for value in arg_values
+                value.to_term(owner=f"{owner} method argument") for value in arg_values
             ]
             call_value = CallSiteValue(
                 target_name=target_name,

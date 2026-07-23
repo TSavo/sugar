@@ -517,7 +517,10 @@ class Node(Typed):
             return self.control_context.enter_loop(self.owned_loop_target)
         if isinstance(self, ExceptHandler) and field_name == "body":
             return self.control_context.enter_exception(self._effect_slot_id())
-        if isinstance(self, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)) and field_name == "body":
+        if (
+            isinstance(self, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda))
+            and field_name == "body"
+        ):
             return ControlConstructionContextV1()
         return self.control_context
 
@@ -824,7 +827,12 @@ class Node(Typed):
                         candidates.append(
                             (
                                 node.fragment,
-                                ("targets", target_index, "projection", projection_index),
+                                (
+                                    "targets",
+                                    target_index,
+                                    "projection",
+                                    projection_index,
+                                ),
                             )
                         )
         target = getattr(self, "target", None)
@@ -1690,9 +1698,7 @@ class FunctionDef(Statement):
                     construction_root = materialize(
                         substituted.unit, substituted.ref, testimony_reporter
                     )
-                    statements = tuple(
-                        stmt.sugar() for stmt in construction_root.body
-                    )
+                    statements = tuple(stmt.sugar() for stmt in construction_root.body)
                     substitution_trace = trace_builder.freeze(testimony_reporter)
                 else:
                     # Every statement still has an immutable runtime snapshot.
@@ -1827,9 +1833,7 @@ class ClassDef(Statement):
                 and len(item.targets) == 1
                 and isinstance(item.targets[0], Name)
             )
-            and not (
-                isinstance(item, AnnAssign) and isinstance(item.target, Name)
-            )
+            and not (isinstance(item, AnnAssign) and isinstance(item.target, Name))
         )
         if unsupported:
             from sugar_source_tree.panic import SugarNotWritten
@@ -1857,29 +1861,33 @@ class ClassDef(Statement):
             )
             for method in methods
         )
-        fields = tuple(
-            ConstructedClassFieldV1(
-                name,
-                fragment.seal().cid,
-                value.sugar(),
+        fields = (
+            tuple(
+                ConstructedClassFieldV1(
+                    name,
+                    fragment.seal().cid,
+                    value.sugar(),
+                )
+                for name, value, fragment in class_assignments
             )
-            for name, value, fragment in class_assignments
-        ) + tuple(
-            ConstructedClassFieldV1(
-                item.target.id,
-                item.fragment.seal().cid,
-                item.value.sugar(),
+            + tuple(
+                ConstructedClassFieldV1(
+                    item.target.id,
+                    item.fragment.seal().cid,
+                    item.value.sugar(),
+                )
+                for item in annotated_assignments
+                if item.value is not None
             )
-            for item in annotated_assignments
-            if item.value is not None
-        ) + tuple(
-            ConstructedClassFieldV1(
-                item.name,
-                item.fragment.seal().cid,
-                item.sugar(),
+            + tuple(
+                ConstructedClassFieldV1(
+                    item.name,
+                    item.fragment.seal().cid,
+                    item.sugar(),
+                )
+                for item in self.body
+                if isinstance(item, ClassDef)
             )
-            for item in self.body
-            if isinstance(item, ClassDef)
         )
         base_sugars = ()
         if self.bases:
@@ -1889,8 +1897,8 @@ class ClassDef(Statement):
                 if context is not None
                 else None
             )
-            base_sugars = () if table is None else table.get(
-                self.fragment.seal().cid, ()
+            base_sugars = (
+                () if table is None else table.get(self.fragment.seal().cid, ())
             )
         return ClassDefinitionSugar(
             class_name=self.name,
@@ -1902,9 +1910,7 @@ class ClassDef(Statement):
             annotation_cids=tuple(
                 item.fragment.seal().cid for item in annotated_assignments
             ),
-            decorator_cids=tuple(
-                item.fragment.seal().cid for item in self.decorators
-            ),
+            decorator_cids=tuple(item.fragment.seal().cid for item in self.decorators),
             base_sugars=base_sugars,
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
@@ -2173,7 +2179,9 @@ class Assign(Statement):
             return None
 
         starred = [
-            index for index, element in enumerate(target.elts) if isinstance(element, Starred)
+            index
+            for index, element in enumerate(target.elts)
+            if isinstance(element, Starred)
         ]
         if len(starred) > 1:
             return None
@@ -2212,7 +2220,12 @@ class Assign(Statement):
             ShadowNode(
                 "List",
                 self.span,
-                (("elts", Children(tuple(_handle_of(element) for element in elements))),),
+                (
+                    (
+                        "elts",
+                        Children(tuple(_handle_of(element) for element in elements)),
+                    ),
+                ),
             ),
             self.reporter,
         )
@@ -2856,7 +2869,9 @@ class For(Statement):
             unrolled.extend(statements)
             target_names = self._bound_names_in(self.target)
             carried = {
-                key: value for key, value in iteration.items() if key not in target_names
+                key: value
+                for key, value in iteration.items()
+                if key not in target_names
             }
             if action == "break":
                 broke = True
@@ -3972,10 +3987,7 @@ class Try(Statement):
         names = set().union(*(net.keys() for net in nets))
         merged: BindingMap = {}
         for name in sorted(names):
-            states = [
-                net.get(name, _explicit_state(name, scope))
-                for net in nets
-            ]
+            states = [net.get(name, _explicit_state(name, scope)) for net in nets]
             if any(state is _MISSING for state in states):
                 continue
             if all(state is states[0] or state == states[0] for state in states[1:]):
@@ -5319,9 +5331,7 @@ class Call(Expression):
                         f"{source_call_resolution.detail}"
                     ),
                 )
-            if not isinstance(
-                source_call_resolution, SourceCallPreconstructionRefV1
-            ):
+            if not isinstance(source_call_resolution, SourceCallPreconstructionRefV1):
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
@@ -5363,6 +5373,29 @@ class Call(Expression):
                     ),
                 )
             )
+            if (
+                source_call_resolution is not None
+                and source_call_resolution.dispatch_kind == "method"
+            ):
+                if not isinstance(self.func, Attribute):
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        owner="Call._construct_sugar",
+                        observed=self.func.kind,
+                        requested="attribute callee for authenticated method dispatch",
+                        fix="bind the method ref to its exact attribute-call occurrence",
+                    )
+                from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+                return MethodCallSugar(
+                    receiver=self.func.value.sugar(),
+                    name=self.func.attr,
+                    args=tuple(a.sugar() for a in self.args),
+                    site=self.fragment,
+                    keywords=keyword_sugars,
+                    source_call_frame=bound_frame,
+                )
             return CallSiteSugar(
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
                 args=tuple(a.sugar() for a in self.args),
