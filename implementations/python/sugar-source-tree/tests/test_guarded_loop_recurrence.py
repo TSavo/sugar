@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import copy
+import importlib.util
 import tempfile
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.loop_construction import LoopConstructionV1
+from sugar_lift_py_tests.loop_construction import (
+    LoopConstructionV1,
+    LoopWireError,
+    decode_loop_construction_v1,
+)
+from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.binding_state import (
+    BindingEntryV1,
     BindingStateWireGap,
     LoopProjectedBinding,
     LoopProjectedCompletedFace,
@@ -17,7 +25,6 @@ from sugar_source_tree.loop_recurrence import project_loop_post_binding
 from sugar_source_tree.nodes import _construct_binding_projection
 from sugar_source_tree.binding_state import RuntimeBindingEntryFactoryV1
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.sugar.binding_projection import LoopCompletedFacesProjection
 
 
 def _entry(source: str):
@@ -38,26 +45,27 @@ def _entry(source: str):
     return assignment, live_state, entry
 
 
-def _construction(target_cid, faces, state_cids):
-    records = [
-        {
-            "kind": "loop-completed-face",
-            "completedFaceCid": face.cid,
-            "targetCid": face.target_cid,
-            "completionKind": face.completion_kind,
-            "guardFormulaCid": face.guard_formula_cid,
-            "stateCid": state_cid,
-        }
-        for face, state_cid in zip(faces, state_cids, strict=True)
-    ]
-    return LoopConstructionV1(
-        target=SimpleNamespace(target_cid=target_cid),
-        pre_state=SimpleNamespace(state_cid=cid_of_json({"state": "pre"})),
-        operation=SimpleNamespace(kind="for-operation"),
-        completed_faces=tuple(faces),
-        loop_construction_cid=cid_of_json({"loop": target_cid}),
-        _graph={"root": {}, "records": records},
+def _sample_construction():
+    path = (
+        Path(__file__).parents[2]
+        / "sugar-lift-py-tests"
+        / "tests"
+        / "test_loop_construction_wire.py"
     )
+    spec = importlib.util.spec_from_file_location("loop_wire_fixture", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return decode_loop_construction_v1(module._sample_graph())
+
+
+def _sample_coordinate(construction):
+    state = next(
+        record
+        for record in construction.wire_graph()["records"]
+        if record.get("kind") == "binding-state" and record["entries"]
+    )
+    return BindingCoordinateV1.decode(state["entries"][0]["coordinate"])
 
 
 def test_break_and_exhaustion_faces_project_exact_runtime_states_by_coordinate():
@@ -67,97 +75,93 @@ def test_break_and_exhaustion_faces_project_exact_runtime_states_by_coordinate()
     _assignment2, exhaustion_state, exhaustion_entry = _entry(
         "def arbitrary():\n    carried = 2\n"
     )
-    coordinate = break_entry.coordinate
-    exhaustion_entry = type(exhaustion_entry)(
-        coordinate, exhaustion_entry.state, exhaustion_entry.sealed_state
-    )
-    target_cid = cid_of_json({"target": "loop"})
-    break_state_cid = cid_of_json({"state": "break"})
-    exhaustion_state_cid = cid_of_json({"state": "exhaustion"})
-    faces = (
-        SimpleNamespace(
-            cid=cid_of_json({"face": "break"}),
-            target_cid=target_cid,
-            completion_kind="BreakExit",
-            guard_formula_cid=cid_of_json({"guard": "break"}),
-        ),
-        SimpleNamespace(
-            cid=cid_of_json({"face": "exhaustion"}),
-            target_cid=target_cid,
-            completion_kind="NormalExhaustion",
-            guard_formula_cid=cid_of_json({"guard": "exhaustion"}),
-        ),
-    )
-    construction = _construction(
-        target_cid, faces, (break_state_cid, exhaustion_state_cid)
-    )
+    construction = _sample_construction()
+    coordinate = _sample_coordinate(construction)
+    break_entry = BindingEntryV1(coordinate, break_state, None)
+    exhaustion_entry = BindingEntryV1(coordinate, exhaustion_state, None)
+    graph = construction.wire_graph()
+    state_cids = {
+        record["stateCid"]
+        for record in graph["records"]
+        if record.get("kind") == "binding-state"
+    }
+    runtime_states = {
+        state_cid: (
+            break_entry
+            if state_cid
+            == next(
+                face.state_cid
+                for face in construction.completed_faces
+                if face.completion_kind == "BreakExit"
+            )
+            else exhaustion_entry,
+        )
+        for state_cid in state_cids
+    }
 
     projected = project_loop_post_binding(
         construction=construction,
         binding_coordinate=coordinate,
-        runtime_states={
-            break_state_cid: (break_entry,),
-            exhaustion_state_cid: (exhaustion_entry,),
-        },
+        runtime_states=runtime_states,
     )
 
     assert isinstance(projected, LoopProjectedBinding)
-    assert projected.target_cid == target_cid
+    assert projected.target_cid == construction.target.target_cid
     assert [face.completion_kind for face in projected.completed_faces] == [
         "BreakExit",
+        "BodyFallthrough",
         "NormalExhaustion",
     ]
     assert projected.completed_faces[0].state is break_state
     assert projected.completed_faces[1].state is exhaustion_state
+    assert projected.completed_faces[2].state is exhaustion_state
 
 
 def test_projection_is_typed_loud_for_missing_state_or_coordinate():
     _assignment, _state, entry = _entry("def arbitrary():\n    carried = 1\n")
-    target_cid = cid_of_json({"target": "loop"})
-    state_cid = cid_of_json({"state": "completed"})
-    face = SimpleNamespace(
-        cid=cid_of_json({"face": "completed"}),
-        target_cid=target_cid,
-        completion_kind="NormalExhaustion",
-        guard_formula_cid=cid_of_json({"guard": "completed"}),
-    )
-    construction = _construction(target_cid, (face,), (state_cid,))
+    construction = _sample_construction()
+    coordinate = _sample_coordinate(construction)
+    state_cid = construction.completed_faces[0].state_cid
 
     with pytest.raises(BindingStateWireGap, match="runtime state"):
         project_loop_post_binding(
             construction=construction,
-            binding_coordinate=entry.coordinate,
+            binding_coordinate=coordinate,
             runtime_states={},
         )
     with pytest.raises(BindingStateWireGap, match="binding coordinate"):
         project_loop_post_binding(
             construction=construction,
-            binding_coordinate=entry.coordinate,
+            binding_coordinate=coordinate,
             runtime_states={state_cid: ()},
         )
 
 
-def test_projection_rejects_a_lying_face_target():
-    _assignment, _state, entry = _entry("def arbitrary():\n    carried = 1\n")
-    target_cid = cid_of_json({"target": "truthful"})
-    state_cid = cid_of_json({"state": "completed"})
-    face = SimpleNamespace(
-        cid=cid_of_json({"face": "completed"}),
-        target_cid=cid_of_json({"target": "lying"}),
-        completion_kind="BreakExit",
-        guard_formula_cid=cid_of_json({"guard": "break"}),
+def test_projection_redecodes_and_rejects_a_spliced_public_dataclass():
+    construction = _sample_construction()
+    graph = copy.deepcopy(construction.wire_graph())
+    face = next(
+        record for record in graph["records"] if record.get("kind") == "loop-completed-face"
     )
-    construction = _construction(target_cid, (face,), (state_cid,))
+    face["completionKind"] = "NormalExhaustion"
+    spliced = LoopConstructionV1(
+        construction.target,
+        construction.pre_state,
+        construction.operation,
+        construction.completed_faces,
+        construction.loop_construction_cid,
+        graph,
+    )
 
-    with pytest.raises(BindingStateWireGap, match="target mismatch"):
+    with pytest.raises(LoopWireError, match="completedFaceCid mismatch"):
         project_loop_post_binding(
-            construction=construction,
-            binding_coordinate=entry.coordinate,
-            runtime_states={state_cid: (entry,)},
+            construction=spliced,
+            binding_coordinate=_sample_coordinate(construction),
+            runtime_states={},
         )
 
 
-def test_downstream_binding_read_consumes_every_guarded_completed_face():
+def test_downstream_binding_read_stays_loud_without_exact_guard_formulas():
     _assignment, live_state, _entry_value = _entry(
         "def arbitrary():\n    carried = 1\n"
     )
@@ -180,15 +184,5 @@ def test_downstream_binding_read_consumes_every_guarded_completed_face():
         ),
     )
 
-    consumed = _construct_binding_projection(projection)
-
-    assert isinstance(consumed, LoopCompletedFacesProjection)
-    assert consumed.target_cid == target_cid
-    assert [face.completion_kind for face in consumed.completed_faces] == [
-        "BreakExit",
-        "NormalExhaustion",
-    ]
-    assert [face.guard_formula_cid for face in consumed.completed_faces] == [
-        projection.completed_faces[0].guard_formula_cid,
-        projection.completed_faces[1].guard_formula_cid,
-    ]
+    with pytest.raises(BindingStateWireGap, match="exact guard formula"):
+        _construct_binding_projection(projection)

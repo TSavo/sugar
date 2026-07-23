@@ -105,7 +105,7 @@ class ComprehensionSugar:
 
 def test_current_tree_measurement_has_nonempty_denominator() -> None:
     root = Path(__file__).parents[2]
-    findings = scan_guarded_loop_recurrence(root / "sugar-source-tree" / "src")
+    findings = scan_guarded_loop_recurrence(root)
 
     assert findings
     assert {f.code for f in findings} == {

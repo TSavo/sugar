@@ -125,10 +125,15 @@ def scan_guarded_loop_recurrence(
         text = comprehension_sugar.read_text()
         tree = ast.parse(text, filename=str(comprehension_sugar))
         legacy = any(
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "target"
-            for node in ast.walk(tree)
+            isinstance(node, ast.ClassDef)
+            and node.name == "ComprehensionSugar"
+            and any(
+                isinstance(field, ast.AnnAssign)
+                and isinstance(field.target, ast.Name)
+                and field.target.id == "target"
+                for field in node.body
+            )
+            for node in tree.body
         )
         if legacy or "python:loop.flat_map" not in text or "python:loop.filter_guard" not in text:
             findings.append(
