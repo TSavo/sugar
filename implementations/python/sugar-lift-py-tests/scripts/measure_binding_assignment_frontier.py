@@ -18,7 +18,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.audit_only.collect_construction_gaps import (
+    collect_construction_panic,
+)
 from sugar_source_tree.backend import BackendCouldNotParse, materialize
 from sugar_source_tree.cpython_adapter import _Handle
 from sugar_source_tree.nodes import SourceUnit
@@ -79,6 +81,12 @@ def _panic_key(panic: BaseException) -> str:
     observed = getattr(panic, "observed", "")
     requested = getattr(panic, "requested", "")
     return f"{owner}|{observed}|{requested}"
+
+
+def _gap_key(info: dict[str, str]) -> str:
+    return "|".join(
+        info.get(field, "") for field in ("owner", "observed", "requested")
+    )
 
 
 def _plain_class_names(module: ast.Module) -> frozenset[str]:
@@ -161,7 +169,9 @@ def measure(
                 direct[shape]["total"] += 1
                 node = materialize(unit, _Handle(unit, native))
                 try:
-                    node.sugar()
+                    _, gap = collect_construction_panic(
+                        f"{path}:{getattr(native, 'lineno', 0)}", node.sugar
+                    )
                 except SugarNotWritten as panic:
                     own = getattr(panic, "owner", "") in {
                         "Assign.sugar", "AnnAssign.sugar", "AugAssign.sugar"
@@ -171,11 +181,12 @@ def measure(
                 except SourceTreePanic as panic:
                     direct[shape]["other_typed_loud"] += 1
                     roots[_panic_key(panic)] += 1
-                except ConstructionPanic as panic:
-                    direct[shape]["construction_panic"] += 1
-                    roots[_panic_key(panic)] += 1
                 else:
-                    direct[shape]["built"] += 1
+                    if gap is None:
+                        direct[shape]["built"] += 1
+                    else:
+                        direct[shape]["construction_panic"] += 1
+                        roots[_gap_key(gap.info)] += 1
 
             functions = [] if direct_only else [
                 node for node in ast.walk(parsed)
@@ -201,7 +212,9 @@ def measure(
                 shapes = sorted({_shape(node) for node in ast.walk(native_function) if isinstance(node, ASSIGNMENT)})
                 function = materialize(unit, _Handle(unit, native_function))
                 try:
-                    function.sugar()
+                    _, gap = collect_construction_panic(
+                        f"{path}:{native_function.lineno}", function.sugar
+                    )
                 except SourceTreePanic as panic:
                     enclosing_functions["typed_loud"] += 1
                     if object_field_candidate:
@@ -213,23 +226,6 @@ def measure(
                     for shape in shapes:
                         enclosing[shape]["loud"] += 1
                         enclosing[shape][f"root:{getattr(panic, 'owner', type(panic).__name__)}"] += 1
-                except ConstructionPanic as panic:
-                    enclosing_functions["construction_panic"] += 1
-                    if object_field_candidate:
-                        object_field_enclosing["construction_panic"] += 1
-                        object_field_rows.append(
-                            {
-                                **row,
-                                "status": "construction_panic",
-                                "error": str(panic),
-                            }
-                        )
-                    roots[_panic_key(panic)] += 1
-                    for shape in shapes:
-                        enclosing[shape]["construction_panic"] += 1
-                        enclosing[shape][
-                            f"root:{getattr(panic, 'owner', type(panic).__name__)}"
-                        ] += 1
                 except Exception as panic:
                     enclosing_functions["non_source_failure"] += 1
                     if object_field_candidate:
@@ -245,12 +241,29 @@ def measure(
                         enclosing[shape]["non_source_failure"] += 1
                         enclosing[shape][f"root:{type(panic).__name__}"] += 1
                 else:
-                    enclosing_functions["built"] += 1
-                    if object_field_candidate:
-                        object_field_enclosing["built"] += 1
-                        object_field_rows.append({**row, "status": "built"})
-                    for shape in shapes:
-                        enclosing[shape]["built"] += 1
+                    if gap is None:
+                        enclosing_functions["built"] += 1
+                        if object_field_candidate:
+                            object_field_enclosing["built"] += 1
+                            object_field_rows.append({**row, "status": "built"})
+                        for shape in shapes:
+                            enclosing[shape]["built"] += 1
+                    else:
+                        owner = gap.info.get("owner", "ConstructionPanic")
+                        enclosing_functions["construction_panic"] += 1
+                        if object_field_candidate:
+                            object_field_enclosing["construction_panic"] += 1
+                            object_field_rows.append(
+                                {
+                                    **row,
+                                    "status": "construction_panic",
+                                    "error": gap.message,
+                                }
+                            )
+                        roots[_gap_key(gap.info)] += 1
+                        for shape in shapes:
+                            enclosing[shape]["construction_panic"] += 1
+                            enclosing[shape][f"root:{owner}"] += 1
             counts["files_completed"] += 1
         except BackendCouldNotParse:
             counts["files_could_not_parse"] += 1
