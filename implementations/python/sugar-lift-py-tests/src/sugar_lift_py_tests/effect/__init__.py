@@ -52,6 +52,7 @@ from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
 from .warning_effect import WarningEffect
 from .expectation_not_met_effect import ExpectationNotMetEffect
+from .loop_control_effect import LoopControlEffect
 from .runtime_effect import (
     RuntimeEffect,
     RuntimeOperand,
@@ -126,6 +127,7 @@ __all__ = [
     "RaiseEffect",
     "WarningEffect",
     "ExpectationNotMetEffect",
+    "LoopControlEffect",
     "RuntimeEffect",
     "RuntimeOperand",
     "RuntimeEffectWitness",

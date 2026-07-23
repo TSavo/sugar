@@ -241,7 +241,7 @@ impl SubstitutionTraceV1 {
     }
 }
 
-fn validate_entries(entries: &[BindingEntryV1]) -> Result<(), BindingProvenanceError> {
+pub(crate) fn validate_entries(entries: &[BindingEntryV1]) -> Result<(), BindingProvenanceError> {
     let mut prior: Option<&str> = None;
     for entry in entries {
         let coordinate = &entry.coordinate;

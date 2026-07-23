@@ -106,4 +106,6 @@ def rewrite(origin: Node, **children: object) -> Node:
     shadow = ShadowNode(desc.kind, desc.raw_span or origin.span, tuple(new_slots))
     # A rewrite inherits the origin's audit channel: the shadow tree reports
     # its gaps to the same reporter the source tree did.
-    return materialize(origin.unit, shadow, origin.reporter)
+    return materialize(
+        origin.unit, shadow, origin.reporter, origin.control_context
+    )

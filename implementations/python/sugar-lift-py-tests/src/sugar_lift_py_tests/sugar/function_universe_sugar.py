@@ -233,6 +233,9 @@ class FunctionUniverseSugar(Sugar):
     statements: tuple  # the body statements' sugars, in source order
     site: object = dataclass_field(compare=False, default=None)
     bridge_source_symbol: str | None = None
+    substitution_trace: object | None = dataclass_field(
+        compare=False, default=None
+    )
 
     @classmethod
     def witnesses(cls):
