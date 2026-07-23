@@ -5,6 +5,17 @@ from types import MappingProxyType
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
+    CallParameterV1,
+    EffectBoundarySemanticsV1,
+    ExceptionInfoBindingV1,
+    ExpectsModeV1,
+    FormalArgumentProjectionV1,
+    KeywordOnlyV1,
+    LiteralDefaultV1,
+    NoDefaultV1,
+    OptionalFormalArgumentProjectionV1,
+    PositionalOrKeywordV1,
+    RaiseEffectKindV1,
     ProtocolResourceSemanticsV1,
     EnterResultContractV1,
     ExitContractV1,
@@ -19,6 +30,10 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
+from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
+from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -65,6 +80,10 @@ def _resolved(use_site) -> ContextManagerContractRefV1:
         resolution_cid=_cid("r"),
         demand_cid=_cid("d"),
         use_site=use_site,
+        authenticated_import_use_cid=_cid("u"),
+        import_binding_cid=_cid("i"),
+        provider_kit_cid=_cid("k"),
+        provider_export_cid=_cid("e"),
         catalog_cid=_cid("c"),
         member_cid=_cid("m"),
         payload_cid=_cid("p"),
@@ -78,6 +97,60 @@ def _resolved(use_site) -> ContextManagerContractRefV1:
 def _function_sugar(source_identity, resolution):
     source = _source_with_resolution(source_identity, resolution)
     return next(source.functions()).sugar()
+
+
+def _effect_resolved(use_site) -> ContextManagerContractRefV1:
+    signature = ImportSignatureV2((
+        CallParameterV1("expected_exception", PrimitiveSort("Value"), PositionalOrKeywordV1(), True, NoDefaultV1()),
+        CallParameterV1("match", PrimitiveSort("String"), KeywordOnlyV1(), False, LiteralDefaultV1({
+            "kind": "ctor", "name": "None", "args": []
+        })),
+    ))
+    return ContextManagerContractRefV1(
+        resolution_cid=_cid("r"), demand_cid=_cid("d"), use_site=use_site,
+        authenticated_import_use_cid=_cid("u"), import_binding_cid=_cid("i"),
+        provider_kit_cid=_cid("k"), provider_export_cid=_cid("e"),
+        catalog_cid=_cid("c"), member_cid=_cid("m"), payload_cid=_cid("p"),
+        bridge_source_symbol="pytest.raises", import_signature=signature,
+        semantics=EffectBoundarySemanticsV1(
+            ExpectsModeV1(), RaiseEffectKindV1(), FormalArgumentProjectionV1(0),
+            OptionalFormalArgumentProjectionV1(1), ExceptionInfoBindingV1(),
+        ),
+        source_warrant_cids=(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "result_type", "effect_type"),
+    [
+        ('raise ValueError("boom")', Completed, None),
+        ('raise TypeError("boom")', Halted, RaiseEffect),
+        ("pass", Halted, ExpectationNotMetEffect),
+    ],
+)
+def test_effect_boundary_projects_real_call_actuals_and_routes_exitset(
+    tmp_path, body, result_type, effect_type
+):
+    path = tmp_path / "pytest_boundary.py"
+    path.write_text(
+        "from pytest import raises as expect_raises\n"
+        "def f():\n"
+        "    with expect_raises(ValueError, match=\"boom\"):\n"
+        f"        {body}\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+
+    sugar = _function_sugar(path_source(str(path)), _effect_resolved)
+    boundary = next(statement for statement in sugar.statements if isinstance(statement, WithEffectBoundarySugar))
+    outcome = boundary.desugar()
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    face = outcome.exits[0]
+    if result_type is Completed:
+        assert isinstance(face, Completed)
+    else:
+        assert isinstance(face, Halted)
+        assert isinstance(face.effect, effect_type)
 
 
 def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(tmp_path, monkeypatch):

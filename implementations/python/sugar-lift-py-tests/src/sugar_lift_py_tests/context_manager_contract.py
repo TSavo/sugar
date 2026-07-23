@@ -473,6 +473,9 @@ class PublishedContextManagerContractV1:
     semantics: ContextManagerSemanticsV1
     source_warrants: tuple[str, ...]
     payload_cid: str
+    provider_kit_cid: str | None = None
+    provider_export_cid: str | None = None
+    signer_key_id: str | None = None
 
 
 class ContextManagerContractError(ValueError):
@@ -604,6 +607,7 @@ def publish_effect_boundary_context_manager_contract(
     message_pattern_operand: NoMessagePatternV1 | OptionalFormalArgumentProjectionV1 | VariadicPositionalElementProjectionV1 | VariadicKeywordEntryProjectionV1,
     binding: NoBindingV1 | ExceptionInfoBindingV1 | WarningObservationBindingV1,
     source_warrants: Sequence[str], signer: Signer, declared_at: str,
+    provider_kit_cid: str | None = None, signer_key_id: str | None = None,
 ) -> ClaimEnvelope:
     """Publish a provider-owned EffectBoundary through the sole CM envelope door."""
     return publish_context_manager_contract(
@@ -619,6 +623,8 @@ def publish_effect_boundary_context_manager_contract(
         source_warrants=source_warrants,
         signer=signer,
         declared_at=declared_at,
+        provider_kit_cid=provider_kit_cid,
+        signer_key_id=signer_key_id,
     )
 
 
@@ -626,6 +632,8 @@ def publish_context_manager_contract(
     *, bridge_source_symbol: str, import_signature: ImportSignatureV2,
     semantics: ContextManagerSemanticsV1, source_warrants: Sequence[str],
     signer: Signer, declared_at: str,
+    provider_kit_cid: str | None = None,
+    signer_key_id: str | None = None,
 ) -> ClaimEnvelope:
     if not bridge_source_symbol:
         raise ContextManagerContractError("bridgeSourceSymbol must be non-empty")
@@ -639,8 +647,28 @@ def publish_context_manager_contract(
         raise ContextManagerContractError("context-manager semantics failed canonical validation")
     payload_cid = blake3_512_of(encode_jcs(payload).encode())
     sorted_inputs = sorted(source_warrants)
+    provider_fields = ()
+    schema_version = "1.2"
+    if provider_kit_cid is not None or signer_key_id is not None:
+        if not isinstance(provider_kit_cid, str) or not provider_kit_cid.startswith("blake3-512:"):
+            raise ContextManagerContractError("providerKitCid must be an authenticated CID")
+        if not isinstance(signer_key_id, str) or not signer_key_id:
+            raise ContextManagerContractError("provider member requires signerKeyId")
+        provider_export_cid = blake3_512_of(encode_jcs(vobj([
+            ("kind", vstr("provider-export")),
+            ("schemaVersion", vstr("1")),
+            ("providerKitCid", vstr(provider_kit_cid)),
+            ("bridgeSourceSymbol", vstr(bridge_source_symbol)),
+            ("importSignature", import_signature_to_value(import_signature)),
+        ])).encode())
+        schema_version = "1.3"
+        provider_fields = (
+            ("providerKitCid", vstr(provider_kit_cid)),
+            ("providerExportCid", vstr(provider_export_cid)),
+            ("signerKeyId", vstr(signer_key_id)),
+        )
     header = vobj([
-        ("schemaVersion", vstr("1.2")),
+        ("schemaVersion", vstr(schema_version)),
         ("kind", vstr("context-manager-contract")),
         ("cid", vstr(payload_cid)),
         ("payloadCid", vstr(payload_cid)),
@@ -649,6 +677,7 @@ def publish_context_manager_contract(
         ("payload", payload),
         ("sourceWarrants", varr([vstr(v) for v in source_warrants])),
         ("inputCids", varr([vstr(v) for v in sorted_inputs])),
+        *provider_fields,
     ])
     metadata = vobj([
         ("authoring", vobj([
@@ -1007,8 +1036,13 @@ def decode_context_manager_contract(
     signing = vobj([("header", _json_value(header)), ("metadata", _json_value(raw["metadata"]))])
     if not ed25519_verify_string(envelope.get("signer", ""), envelope.get("signature", ""), encode_jcs(signing).encode()):
         raise ContextManagerContractError("member signature does not verify")
-    expected = {"schemaVersion", "kind", "cid", "payloadCid", "bridgeSourceSymbol", "importSignature", "payload", "sourceWarrants", "inputCids"}
-    if not isinstance(header, dict) or set(header) != expected or header.get("schemaVersion") != "1.2" or header.get("kind") != "context-manager-contract":
+    common = {"schemaVersion", "kind", "cid", "payloadCid", "bridgeSourceSymbol", "importSignature", "payload", "sourceWarrants", "inputCids"}
+    provider = {"providerKitCid", "providerExportCid", "signerKeyId"}
+    if not isinstance(header, dict) or header.get("kind") != "context-manager-contract" or (
+        header.get("schemaVersion") == "1.2" and set(header) != common
+    ) or (
+        header.get("schemaVersion") == "1.3" and set(header) != common | provider
+    ) or header.get("schemaVersion") not in {"1.2", "1.3"}:
         raise ContextManagerContractError("malformed context-manager-contract header")
     signature = decode_import_signature_v2(header["importSignature"])
     semantics = decode_context_manager_semantics_v1(header["payload"], signature)
@@ -1023,10 +1057,25 @@ def decode_context_manager_contract(
     symbol = header["bridgeSourceSymbol"]
     if not isinstance(symbol, str) or not symbol:
         raise ContextManagerContractError("bridgeSourceSymbol must be non-empty")
+    provider_kit_cid = header.get("providerKitCid")
+    provider_export_cid = header.get("providerExportCid")
+    signer_key_id = header.get("signerKeyId")
+    if header["schemaVersion"] == "1.3":
+        expected_export = blake3_512_of(encode_jcs(vobj([
+            ("kind", vstr("provider-export")), ("schemaVersion", vstr("1")),
+            ("providerKitCid", vstr(provider_kit_cid)),
+            ("bridgeSourceSymbol", vstr(symbol)),
+            ("importSignature", import_signature_to_value(signature)),
+        ])).encode())
+        if provider_export_cid != expected_export or not signer_key_id:
+            raise ContextManagerContractError("provider export identity mismatch")
     return PublishedContextManagerContractV1(
         bridge_source_symbol=symbol,
         import_signature=signature,
         semantics=semantics,
         source_warrants=tuple(warrants),
         payload_cid=payload_cid,
+        provider_kit_cid=provider_kit_cid,
+        provider_export_cid=provider_export_cid,
+        signer_key_id=signer_key_id,
     )

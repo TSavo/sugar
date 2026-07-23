@@ -68,7 +68,7 @@ def promote_raise_halts(exits):
             if is_hard_raise(entry):
                 saw_halt = True
                 guard = guard_from_conditions(exit_.guard, entry.branch_conditions)
-                promoted.append(Halted(guard, entry.effect))
+                promoted.append(Halted(guard, entry.effect, state))
             else:
                 remaining.append(entry)
 
@@ -152,7 +152,7 @@ def routed_entries_to_exitset(entries: tuple, guard, *, prior_state=None):
     out: list = []
     for entry in entries:
         if is_hard_raise(entry):
-            out.append(Halted(guard, entry.effect))
+            out.append(Halted(guard, entry.effect, prior_state))
         else:
             remaining.append(entry)
 

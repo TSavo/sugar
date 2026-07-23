@@ -7,11 +7,12 @@ from .raise_effect import RaiseEffect
 from .runtime_effect import RuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .warning_effect import WarningEffect
+from .expectation_not_met_effect import ExpectationNotMetEffect
 
 # FactoryGapEffect and DigBoundaryEffect are DELETED.
 # No-recognizer is panic, not a typed Incomplete arm.
 Effect = (
-    RaiseEffect | WarningEffect | RuntimeEffect | CoverageGapEffect | SourceOracleEffect
+    RaiseEffect | WarningEffect | RuntimeEffect | CoverageGapEffect | SourceOracleEffect | ExpectationNotMetEffect
 )
 
 EffectStatus = Literal[
@@ -33,6 +34,7 @@ def require_effect(effect: object) -> Effect:
             RuntimeEffect,
             CoverageGapEffect,
             SourceOracleEffect,
+            ExpectationNotMetEffect,
         ),
     ):
         return effect
@@ -54,6 +56,8 @@ def effect_kind(effect: Effect) -> str:
         return "CoverageGap"
     if isinstance(effect, SourceOracleEffect):
         return "SourceOracleEffect"
+    if isinstance(effect, ExpectationNotMetEffect):
+        return "ExpectationNotMetEffect"
     return _unhandled_effect(effect)
 
 
@@ -67,6 +71,8 @@ def effect_reason(effect: Effect) -> str:
     if isinstance(effect, CoverageGapEffect):
         return effect.reason
     if isinstance(effect, SourceOracleEffect):
+        return effect.reason
+    if isinstance(effect, ExpectationNotMetEffect):
         return effect.reason
     return _unhandled_effect(effect)
 
@@ -82,6 +88,8 @@ def effect_status(effect: Effect) -> EffectStatus:
         return "coverage-gap"
     if isinstance(effect, SourceOracleEffect):
         return effect.status
+    if isinstance(effect, ExpectationNotMetEffect):
+        return "runtime-effect"
     return _unhandled_effect(effect)
 
 

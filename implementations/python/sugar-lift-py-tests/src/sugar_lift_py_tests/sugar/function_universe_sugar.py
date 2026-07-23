@@ -72,7 +72,7 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
                             if len(entry.branch_conditions) == 1
                             else and_(list(entry.branch_conditions))
                         )
-                        exits.append(Halted(guard, entry.effect))
+                        exits.append(Halted(guard, entry.effect, state))
                     else:
                         entries.append(entry)
                 completed_state = _ReducedBlock(
@@ -142,7 +142,7 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
                         return ExitSet.conditional_halt(
                             condition, outcome.effect, state
                         )
-                    return ExitSet.halted(outcome.effect)
+                    return ExitSet.halted(outcome.effect, state=state)
                 return ExitSet.completed(
                     _ReducedBlock(entries, can_fall_through=False, fall_through=())
                 )

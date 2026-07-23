@@ -112,7 +112,7 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
             for item in node.items:
                 expression = item.context_expr
                 target = None
-                if isinstance(expression, ast.Call) and not expression.args and not expression.keywords:
+                if isinstance(expression, ast.Call):
                     callee = expression.func
                     if isinstance(callee, ast.Name):
                         target = imports.get(callee.id)
@@ -131,8 +131,8 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
                     "schemaVersion": "1",
                     "kind": "context-manager-demand",
                     "useSite": coordinate,
-                    "targetSymbol": f"context-manager:{target}" if target else None,
-                    "importSignature": {"formals": [], "sorts": []},
+                    "targetSymbol": target,
+                    "importSignature": {"parameters": []},
                     "expectedKind": "context-manager-contract",
                     "gapKind": None if target else "runtime-selected",
                 })
@@ -171,6 +171,44 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         rows.extend(authenticated_module_exports(root, path, source, source_cid))
         rows.extend(enrolled)
     return rows
+
+
+def _preconstruction_demand_rows(root: Path) -> List[Dict[str, Any]]:
+    """Join authenticated call identity into With demands without dual ownership.
+
+    A context-manager expression is constructed under its context-manager
+    contract.  Its call coordinate supplies the authenticated import binding,
+    but must not also enroll an independent function-contract demand for the
+    same use site.
+    """
+    call_rows = _call_contract_demand_rows(root)
+    calls_by_site = {
+        json.dumps(row["useSite"], sort_keys=True): row
+        for row in call_rows if row.get("kind") == "call-contract-demand"
+    }
+    cm_rows = _context_manager_demand_rows(root)
+    cm_sites = set()
+    for row in cm_rows:
+        site = json.dumps(row["useSite"], sort_keys=True)
+        cm_sites.add(site)
+        call = calls_by_site.get(site)
+        if call is None:
+            row["targetSymbol"] = None
+            row["gapKind"] = "runtime-selected"
+            continue
+        target = call["targetSymbol"]
+        row["targetSymbol"] = target.removeprefix("python:")
+        row["importBindingCid"] = call["importBindingCid"]
+        row["importBinding"] = call["importBinding"]
+        row["authenticatedImportUse"] = call["authenticatedImportUse"]
+        row["gapKind"] = None
+    remaining_call_rows = [
+        row
+        for row in call_rows
+        if row.get("kind") != "call-contract-demand"
+        or json.dumps(row["useSite"], sort_keys=True) not in cm_sites
+    ]
+    return cm_rows + remaining_call_rows
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -1439,7 +1477,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             "tableCid": _BOUND_CALL_CONTRACT_REFS.table_cid,
         }:
             raise ValueError(
-                "semantic construction request has a stale call-contract-ref generation"
+                "semantic construction request has a stale call-contract-ref generation: "
+                f"expected catalog={_BOUND_CALL_CONTRACT_REFS.catalog_cid} "
+                f"table={_BOUND_CALL_CONTRACT_REFS.table_cid}, got {generation!r}"
             )
     # The audit frontier's factory census is deleted; auditFrontier now short-
     # circuits to an empty frontier (its R census re-homes onto the source
@@ -1468,7 +1508,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             return
         if level == "contract-demands":
             _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-                "rows": _context_manager_demand_rows(root) + _call_contract_demand_rows(root)
+                "rows": _preconstruction_demand_rows(root)
             }})
             return
         if level == "context-manager-edges":

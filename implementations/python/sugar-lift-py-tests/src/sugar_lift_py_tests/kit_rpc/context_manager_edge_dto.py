@@ -8,6 +8,7 @@ from typing import Any
 
 from sugar_lift_py_tests.context_manager_contract import (
     ImportSignatureV2,
+    EffectBoundarySemanticsV1,
     NeverSuppressesDispositionV1,
     ProtocolResourceSemanticsV1,
     TotalCompletionV1,
@@ -38,7 +39,7 @@ def _signature_wire(signature: ImportSignatureV2) -> dict[str, Any]:
 
 def _admitted(reference: ContextManagerContractRefV1) -> bool:
     semantics = reference.semantics
-    return (
+    return isinstance(semantics, EffectBoundarySemanticsV1) or (
         isinstance(semantics, ProtocolResourceSemanticsV1)
         and semantics.schema_version == "1"
         and isinstance(semantics.enter.completion, TotalCompletionV1)
@@ -54,6 +55,10 @@ def _admitted(reference: ContextManagerContractRefV1) -> bool:
 class ContextManagerEdgeDtoV1:
     edge_cid: str
     use_site: SourceFragmentCoordinateV1
+    authenticated_import_use_cid: str
+    import_binding_cid: str
+    provider_kit_cid: str
+    provider_export_cid: str
     bridge_source_symbol: str
     import_signature: ImportSignatureV2
     target_contract_cid: str
@@ -87,6 +92,10 @@ class ContextManagerEdgeDtoV1:
             "kind": "context-manager-edge",
             "schemaVersion": "1",
             "useSite": use_site.wire(),
+            "authenticatedImportUseCid": reference.authenticated_import_use_cid,
+            "importBindingCid": reference.import_binding_cid,
+            "providerKitCid": reference.provider_kit_cid,
+            "providerExportCid": reference.provider_export_cid,
             "managerIdentity": {
                 "bridgeSourceSymbol": reference.bridge_source_symbol,
                 "importSignature": _signature_wire(reference.import_signature),
@@ -102,6 +111,10 @@ class ContextManagerEdgeDtoV1:
         return cls(
             edge_cid=_hash_json(values),
             use_site=use_site,
+            authenticated_import_use_cid=reference.authenticated_import_use_cid,
+            import_binding_cid=reference.import_binding_cid,
+            provider_kit_cid=reference.provider_kit_cid,
+            provider_export_cid=reference.provider_export_cid,
             bridge_source_symbol=reference.bridge_source_symbol,
             import_signature=reference.import_signature,
             target_contract_cid=reference.member_cid,
@@ -119,6 +132,10 @@ class ContextManagerEdgeDtoV1:
             "schemaVersion": self.schema_version,
             "edgeCid": self.edge_cid,
             "useSite": self.use_site.wire(),
+            "authenticatedImportUseCid": self.authenticated_import_use_cid,
+            "importBindingCid": self.import_binding_cid,
+            "providerKitCid": self.provider_kit_cid,
+            "providerExportCid": self.provider_export_cid,
             "managerIdentity": {
                 "bridgeSourceSymbol": self.bridge_source_symbol,
                 "importSignature": _signature_wire(self.import_signature),

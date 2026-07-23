@@ -890,6 +890,9 @@ impl StageReceiptMember {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextManagerContractMember {
     pub payload_cid: MementoCid,
+    pub provider_kit_cid: Option<MementoCid>,
+    pub provider_export_cid: Option<MementoCid>,
+    pub signer_key_id: Option<String>,
     pub bridge_source_symbol: String,
     pub import_signature: ImportSignatureV2,
     pub semantics: ContextManagerSemanticsV1,
@@ -1124,6 +1127,12 @@ struct ContextManagerHeader {
     cid: String,
     #[serde(rename = "payloadCid")]
     payload_cid: String,
+    #[serde(rename = "providerKitCid")]
+    provider_kit_cid: Option<String>,
+    #[serde(rename = "providerExportCid")]
+    provider_export_cid: Option<String>,
+    #[serde(rename = "signerKeyId")]
+    signer_key_id: Option<String>,
     #[serde(rename = "bridgeSourceSymbol")]
     bridge_source_symbol: String,
     #[serde(rename = "importSignature")]
@@ -1630,9 +1639,20 @@ impl ContextManagerContractMember {
             serde_json::from_value(raw_header.clone()).map_err(|e| {
                 MemberError::InvalidContextManagerContract(format!("malformed header: {e}"))
             })?;
-        if header.schema_version != "1.2" || header.kind != "context-manager-contract" {
+        if !matches!(header.schema_version.as_str(), "1.2" | "1.3")
+            || header.kind != "context-manager-contract"
+        {
             return Err(MemberError::InvalidContextManagerContract(
                 "schemaVersion/kind mismatch".into(),
+            ));
+        }
+        if header.schema_version == "1.3"
+            && (header.provider_kit_cid.is_none()
+                || header.provider_export_cid.is_none()
+                || header.signer_key_id.as_deref().is_none_or(str::is_empty))
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "provider-owned schema 1.3 requires providerKitCid, providerExportCid, and signerKeyId".into(),
             ));
         }
         if header.bridge_source_symbol.is_empty() {
@@ -1681,6 +1701,25 @@ impl ContextManagerContractMember {
         }
         Ok(Self {
             payload_cid,
+            provider_kit_cid: header
+                .provider_kit_cid
+                .map(MementoCid::try_parse)
+                .transpose()
+                .map_err(|raw| MemberError::InvalidCidFormat {
+                    kind: "context-manager-contract".into(),
+                    field: "providerKitCid".into(),
+                    raw,
+                })?,
+            provider_export_cid: header
+                .provider_export_cid
+                .map(MementoCid::try_parse)
+                .transpose()
+                .map_err(|raw| MemberError::InvalidCidFormat {
+                    kind: "context-manager-contract".into(),
+                    field: "providerExportCid".into(),
+                    raw,
+                })?,
+            signer_key_id: header.signer_key_id,
             bridge_source_symbol: header.bridge_source_symbol,
             import_signature: signature,
             semantics,
@@ -1702,7 +1741,7 @@ pub fn context_manager_contract_from_stored(
             "stored member has the wrong contract kind".into(),
         ));
     }
-    let names = [
+    let mut names = vec![
         "schemaVersion",
         "kind",
         "cid",
@@ -1713,6 +1752,9 @@ pub fn context_manager_contract_from_stored(
         "sourceWarrants",
         "inputCids",
     ];
+    if member.field("schemaVersion").and_then(Json::as_str) == Some("1.3") {
+        names.extend(["providerKitCid", "providerExportCid", "signerKeyId"]);
+    }
     let mut header = serde_json::Map::new();
     for name in names {
         let value = member.field(name).ok_or_else(|| {

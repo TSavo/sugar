@@ -285,6 +285,12 @@ pub struct SourceFragmentCoordinateV1 {
     pub end_col: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportSignatureV1 {
+    pub formals: Vec<String>,
+    pub sorts: Vec<Sort>,
+}
+
 // Authenticated imported-call preconstruction resolution (#6086)
 // -------------------------------------------------------------------
 
@@ -318,7 +324,7 @@ impl CallContractDemandV1 {
             "importBindingCid": import_binding_cid,
             "authenticatedImportUseCid": authenticated_import_use_cid,
             "targetSymbol": target_symbol,
-            "importSignature": import_signature_to_json(&import_signature),
+            "importSignature": import_signature_v1_to_json(&import_signature),
             "expectedKind": "function-contract",
         });
         Self {
@@ -814,7 +820,7 @@ fn call_resolution_to_json(resolution: &CallContractResolutionV1) -> Json {
                 "memberCid": reference.member_cid,
                 "contractCid": reference.contract_cid,
                 "bridgeSourceSymbol": reference.bridge_source_symbol,
-                "importSignature": import_signature_to_json(&reference.import_signature),
+                "importSignature": import_signature_v1_to_json(&reference.import_signature),
                 "returnTerm": reference.return_term,
                 "sourceWarrantCids": reference.source_warrant_cids,
                 "contractDecl": reference.contract_decl,
@@ -952,7 +958,7 @@ pub fn resolve_call_contract_demand(
         "memberCid": candidate.member_cid,
         "contractCid": candidate.contract_cid,
         "bridgeSourceSymbol": candidate.bridge_source_symbol,
-        "importSignature": import_signature_to_json(&candidate.import_signature),
+        "importSignature": import_signature_v1_to_json(&candidate.import_signature),
         "returnTerm": candidate.return_term,
         "sourceWarrantCids": candidate.source_warrant_cids,
         "contractDecl": candidate.contract_decl,
@@ -1008,7 +1014,10 @@ pub fn final_check_call_contract_ref(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextManagerContractDemandV1 {
     pub demand_cid: Cid,
+    pub authenticated_import_use_cid: Option<Cid>,
     pub use_site: SourceFragmentCoordinateV1,
+    pub import_binding_cid: Option<Cid>,
+    pub provider_export_cid: Option<Cid>,
     pub target_symbol: Option<Symbol>,
     pub import_signature: ImportSignatureV2,
 }
@@ -1016,11 +1025,22 @@ pub struct ContextManagerContractDemandV1 {
 impl ContextManagerContractDemandV1 {
     pub fn new(
         use_site: SourceFragmentCoordinateV1,
+        import_binding_cid: Cid,
+        provider_export_cid: Option<Cid>,
         target_symbol: Symbol,
         import_signature: ImportSignatureV2,
     ) -> Self {
+        let authenticated_import_use_cid = Cid::from(jcs_cid(&serde_json::json!({
+            "kind": "authenticated-import-use",
+            "schemaVersion": "1",
+            "useSite": use_site,
+            "importBindingCid": import_binding_cid,
+        })));
         let preimage = serde_json::json!({
             "useSite": use_site,
+            "importBindingCid": import_binding_cid,
+            "authenticatedImportUseCid": authenticated_import_use_cid,
+            "providerExportCid": provider_export_cid,
             "targetSymbol": target_symbol,
             "importSignature": sugar_proof_envelope::import_signature_v2_to_json(&import_signature),
             "expectedKind": "context-manager-contract",
@@ -1028,7 +1048,10 @@ impl ContextManagerContractDemandV1 {
         let demand_cid = Cid::from(jcs_cid(&preimage));
         Self {
             demand_cid,
+            authenticated_import_use_cid: Some(authenticated_import_use_cid),
             use_site,
+            import_binding_cid: Some(import_binding_cid),
+            provider_export_cid,
             target_symbol: Some(target_symbol),
             import_signature,
         }
@@ -1046,10 +1069,126 @@ impl ContextManagerContractDemandV1 {
         });
         Self {
             demand_cid: Cid::from(jcs_cid(&preimage)),
+            authenticated_import_use_cid: None,
             use_site,
+            import_binding_cid: None,
+            provider_export_cid: None,
             target_symbol: None,
             import_signature,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderKitKeyBindingV1 {
+    pub provider_kit_cid: Cid,
+    pub component_cid: Cid,
+    pub signer_key_id: String,
+    pub signer_public_key: String,
+    pub scopes: Vec<String>,
+    pub key_binding_cid: Cid,
+}
+
+impl ProviderKitKeyBindingV1 {
+    pub fn new(
+        provider_kit_cid: Cid,
+        component_cid: Cid,
+        signer_key_id: String,
+        signer_public_key: String,
+        scopes: Vec<String>,
+    ) -> Result<Self, String> {
+        if signer_key_id.is_empty() || !signer_public_key.starts_with("ed25519:") {
+            return Err("provider key binding requires a key id and Ed25519 public key".into());
+        }
+        if scopes != ["context-manager-contract"] {
+            return Err("provider key binding has an unsupported publication scope".into());
+        }
+        let preimage = serde_json::json!({
+            "kind": "provider-kit-key-binding",
+            "schemaVersion": "1",
+            "providerKitCid": provider_kit_cid,
+            "componentCid": component_cid,
+            "signerKeyId": signer_key_id,
+            "signerPublicKey": signer_public_key,
+            "scopes": scopes,
+        });
+        Ok(Self {
+            provider_kit_cid,
+            component_cid,
+            signer_key_id,
+            signer_public_key,
+            scopes,
+            key_binding_cid: Cid::from(jcs_cid(&preimage)),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedProviderMemberV1 {
+    pub member_cid: Cid,
+    pub canonical_member: Json,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedProviderKitV1 {
+    pub component_cid: Cid,
+    pub provider_kit_cid: Cid,
+    pub key_binding: ProviderKitKeyBindingV1,
+    pub members: Vec<SelectedProviderMemberV1>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectedProviderKitsV1 {
+    pub selection_cid: Cid,
+    pub providers: std::sync::Arc<[SelectedProviderKitV1]>,
+}
+
+impl SelectedProviderKitsV1 {
+    pub fn new(mut providers: Vec<SelectedProviderKitV1>) -> Result<Self, String> {
+        for provider in &providers {
+            if provider.provider_kit_cid != provider.key_binding.provider_kit_cid
+                || provider.component_cid != provider.key_binding.component_cid
+            {
+                return Err(
+                    "selected provider does not match its authenticated key binding".into(),
+                );
+            }
+        }
+        providers.sort_by(|left, right| {
+            (
+                &left.provider_kit_cid,
+                &left.component_cid,
+                &left.key_binding.key_binding_cid,
+            )
+                .cmp(&(
+                    &right.provider_kit_cid,
+                    &right.component_cid,
+                    &right.key_binding.key_binding_cid,
+                ))
+        });
+        let rows = providers
+            .iter()
+            .map(|provider| {
+                serde_json::json!({
+                    "providerKitCid": provider.provider_kit_cid,
+                    "componentCid": provider.component_cid,
+                    "keyBindingCid": provider.key_binding.key_binding_cid,
+                })
+            })
+            .collect::<Vec<_>>();
+        let selection_cid = Cid::from(jcs_cid(&serde_json::json!({
+            "kind": "selected-provider-kits",
+            "schemaVersion": "1",
+            "providers": rows,
+        })));
+        Ok(Self {
+            selection_cid,
+            providers: providers.into(),
+        })
+    }
+
+    pub fn empty() -> Self {
+        Self::new(vec![]).expect("empty provider selection is canonical")
     }
 }
 
@@ -1058,9 +1197,65 @@ pub struct AuthenticatedContextManagerCatalog {
     catalog_cid: Cid,
     members: BTreeMap<Cid, StoredMember>,
     authenticated_cids: BTreeSet<Cid>,
+    selected_provider_only: bool,
 }
 
 impl AuthenticatedContextManagerCatalog {
+    pub fn freeze_selected(selection: &SelectedProviderKitsV1) -> Result<Self, String> {
+        let mut members = Vec::new();
+        for provider in selection.providers.iter() {
+            for published in &provider.members {
+                let header = published
+                    .canonical_member
+                    .get("header")
+                    .and_then(Json::as_object)
+                    .ok_or_else(|| "provider member is missing its canonical header".to_string())?;
+                let envelope = published
+                    .canonical_member
+                    .get("envelope")
+                    .and_then(Json::as_object)
+                    .ok_or_else(|| {
+                        "provider member is missing its canonical envelope".to_string()
+                    })?;
+                if header.get("providerKitCid").and_then(Json::as_str)
+                    != Some(provider.provider_kit_cid.as_str())
+                    || header.get("signerKeyId").and_then(Json::as_str)
+                        != Some(provider.key_binding.signer_key_id.as_str())
+                    || envelope.get("signer").and_then(Json::as_str)
+                        != Some(provider.key_binding.signer_public_key.as_str())
+                {
+                    return Err("wrong-provider: sealed member is not owned by the selected provider key binding".into());
+                }
+                let symbol = header
+                    .get("bridgeSourceSymbol")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| "provider member is missing bridgeSourceSymbol".to_string())?;
+                let signature = header
+                    .get("importSignature")
+                    .ok_or_else(|| "provider member is missing importSignature".to_string())?;
+                let expected_export = Cid::from(jcs_cid(&serde_json::json!({
+                    "kind": "provider-export",
+                    "schemaVersion": "1",
+                    "providerKitCid": provider.provider_kit_cid,
+                    "bridgeSourceSymbol": symbol,
+                    "importSignature": signature,
+                })));
+                if header.get("providerExportCid").and_then(Json::as_str)
+                    != Some(expected_export.as_str())
+                {
+                    return Err("provider export CID mismatch".into());
+                }
+                members.push((
+                    published.member_cid.clone(),
+                    published.canonical_member.clone(),
+                ));
+            }
+        }
+        let mut catalog = Self::freeze(members)?;
+        catalog.selected_provider_only = true;
+        Ok(catalog)
+    }
+
     pub fn freeze(members: Vec<(Cid, Json)>) -> Result<Self, String> {
         let mut by_cid = BTreeMap::new();
         for (cid, envelope) in members {
@@ -1079,6 +1274,7 @@ impl AuthenticatedContextManagerCatalog {
             catalog_cid,
             authenticated_cids: by_cid.keys().cloned().collect(),
             members: by_cid,
+            selected_provider_only: false,
         })
     }
 
@@ -1111,6 +1307,7 @@ impl AuthenticatedContextManagerCatalog {
         Ok(Self {
             catalog_cid,
             members,
+            selected_provider_only: false,
             authenticated_cids,
         })
     }
@@ -1131,6 +1328,8 @@ pub enum ContextManagerResolutionGapKindV1 {
     UnauthenticatedMember,
     PayloadCidMismatch,
     UnsupportedCmSchema,
+    ProviderNotSelected,
+    WrongProvider,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1147,6 +1346,10 @@ pub struct ContextManagerContractRefV1 {
     resolution_cid: Cid,
     demand_cid: Cid,
     use_site: SourceFragmentCoordinateV1,
+    authenticated_import_use_cid: Cid,
+    import_binding_cid: Cid,
+    provider_kit_cid: Cid,
+    provider_export_cid: Cid,
     catalog_cid: Cid,
     member_cid: Cid,
     payload_cid: Cid,
@@ -1165,6 +1368,15 @@ impl ContextManagerContractRefV1 {
     }
     pub fn use_site(&self) -> &SourceFragmentCoordinateV1 {
         &self.use_site
+    }
+    pub fn import_binding_cid(&self) -> &Cid {
+        &self.import_binding_cid
+    }
+    pub fn provider_kit_cid(&self) -> &Cid {
+        &self.provider_kit_cid
+    }
+    pub fn provider_export_cid(&self) -> &Cid {
+        &self.provider_export_cid
     }
     pub fn catalog_cid(&self) -> &Cid {
         &self.catalog_cid
@@ -1288,6 +1500,13 @@ fn import_signature_to_json(value: &ImportSignatureV2) -> Json {
     sugar_proof_envelope::import_signature_v2_to_json(value)
 }
 
+fn import_signature_v1_to_json(value: &ImportSignatureV1) -> Json {
+    serde_json::json!({
+        "formals": value.formals,
+        "sorts": value.sorts,
+    })
+}
+
 fn reference_to_json(value: &ContextManagerContractRefV1) -> Json {
     serde_json::json!({
         "kind": "context-manager-contract-ref",
@@ -1295,6 +1514,10 @@ fn reference_to_json(value: &ContextManagerContractRefV1) -> Json {
         "resolutionCid": value.resolution_cid,
         "demandCid": value.demand_cid,
         "useSite": value.use_site,
+        "authenticatedImportUseCid": value.authenticated_import_use_cid,
+        "importBindingCid": value.import_binding_cid,
+        "providerKitCid": value.provider_kit_cid,
+        "providerExportCid": value.provider_export_cid,
         "catalogCid": value.catalog_cid,
         "memberCid": value.member_cid,
         "payloadCid": value.payload_cid,
@@ -1352,16 +1575,23 @@ pub fn resolve_context_manager_demand(
     };
     let mut candidates = Vec::new();
     for (cid, member) in &catalog.members {
-        if member.field("bridgeSourceSymbol").and_then(Json::as_str)
-            == Some(&target_symbol.to_string())
-        {
+        let symbol_matches = member.field("bridgeSourceSymbol").and_then(Json::as_str)
+            == Some(&target_symbol.to_string());
+        let export_matches = demand.provider_export_cid.as_ref().is_none_or(|expected| {
+            member.field("providerExportCid").and_then(Json::as_str) == Some(expected.as_str())
+        });
+        if symbol_matches && export_matches {
             candidates.push((cid.clone(), member));
         }
     }
     if candidates.is_empty() {
         return cm_gap(
             demand,
-            ContextManagerResolutionGapKindV1::UnresolvedSymbol,
+            if catalog.selected_provider_only {
+                ContextManagerResolutionGapKindV1::ProviderNotSelected
+            } else {
+                ContextManagerResolutionGapKindV1::UnresolvedSymbol
+            },
             vec![],
         );
     }
@@ -1397,13 +1627,51 @@ pub fn resolve_context_manager_demand(
             )
         }
     };
-    if demand.import_signature != cm.import_signature {
+    if !demand.import_signature.parameters.is_empty()
+        && demand.import_signature != cm.import_signature
+    {
         return cm_gap(
             demand,
             ContextManagerResolutionGapKindV1::SignatureMismatch,
             vec![member_cid],
         );
     }
+    let (Some(authenticated_import_use_cid), Some(import_binding_cid)) = (
+        demand.authenticated_import_use_cid.clone(),
+        demand.import_binding_cid.clone(),
+    ) else {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::UnauthenticatedMember,
+            vec![member_cid],
+        );
+    };
+    let (Some(provider_kit_cid), Some(member_export_cid)) = (
+        cm.provider_kit_cid
+            .as_ref()
+            .map(|cid| Cid::from(cid.as_str())),
+        cm.provider_export_cid
+            .as_ref()
+            .map(|cid| Cid::from(cid.as_str())),
+    ) else {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::WrongProvider,
+            vec![member_cid],
+        );
+    };
+    if demand
+        .provider_export_cid
+        .as_ref()
+        .is_some_and(|expected| expected != &member_export_cid)
+    {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::WrongProvider,
+            vec![member_cid],
+        );
+    }
+    let provider_export_cid = member_export_cid;
     let source_warrant_cids: Vec<Cid> = cm.source_warrants.iter().cloned().map(Cid::from).collect();
     if source_warrant_cids
         .iter()
@@ -1419,6 +1687,10 @@ pub fn resolve_context_manager_demand(
     let preimage = serde_json::json!({
         "schemaVersion": "1", "demandCid": demand.demand_cid,
         "useSite": demand.use_site, "catalogCid": catalog.catalog_cid,
+        "authenticatedImportUseCid": authenticated_import_use_cid,
+        "importBindingCid": import_binding_cid,
+        "providerKitCid": provider_kit_cid,
+        "providerExportCid": provider_export_cid,
         "memberCid": member_cid, "payloadCid": payload_cid,
         "bridgeSourceSymbol": target_symbol,
         "importSignature": sugar_proof_envelope::import_signature_v2_to_json(&cm.import_signature),
@@ -1430,6 +1702,10 @@ pub fn resolve_context_manager_demand(
         resolution_cid,
         demand_cid: demand.demand_cid.clone(),
         use_site: demand.use_site.clone(),
+        authenticated_import_use_cid,
+        import_binding_cid,
+        provider_kit_cid,
+        provider_export_cid,
         catalog_cid: catalog.catalog_cid.clone(),
         member_cid,
         payload_cid,
@@ -1451,7 +1727,10 @@ pub fn final_check_context_manager_ref(
     }
     let demand = ContextManagerContractDemandV1 {
         demand_cid: reference.demand_cid.clone(),
+        authenticated_import_use_cid: Some(reference.authenticated_import_use_cid.clone()),
         use_site: reference.use_site.clone(),
+        import_binding_cid: Some(reference.import_binding_cid.clone()),
+        provider_export_cid: Some(reference.provider_export_cid.clone()),
         target_symbol: Some(reference.bridge_source_symbol.clone()),
         import_signature: reference.import_signature.clone(),
     };
@@ -1470,6 +1749,10 @@ pub fn final_check_context_manager_ref(
 pub struct ContextManagerEdgeV1 {
     edge_cid: Cid,
     use_site: SourceFragmentCoordinateV1,
+    authenticated_import_use_cid: Cid,
+    import_binding_cid: Cid,
+    provider_kit_cid: Cid,
+    provider_export_cid: Cid,
     bridge_source_symbol: Symbol,
     import_signature: ImportSignatureV2,
     target_contract_cid: Cid,
@@ -1486,6 +1769,10 @@ impl ContextManagerEdgeV1 {
         let mut edge = Self {
             edge_cid: Cid::from(""),
             use_site: reference.use_site.clone(),
+            authenticated_import_use_cid: reference.authenticated_import_use_cid.clone(),
+            import_binding_cid: reference.import_binding_cid.clone(),
+            provider_kit_cid: reference.provider_kit_cid.clone(),
+            provider_export_cid: reference.provider_export_cid.clone(),
             bridge_source_symbol: reference.bridge_source_symbol.clone(),
             import_signature: reference.import_signature.clone(),
             target_contract_cid: reference.member_cid.clone(),
@@ -1505,6 +1792,10 @@ impl ContextManagerEdgeV1 {
         serde_json::json!({
             "kind": "context-manager-edge", "schemaVersion": "1",
             "useSite": self.use_site,
+            "authenticatedImportUseCid": self.authenticated_import_use_cid,
+            "importBindingCid": self.import_binding_cid,
+            "providerKitCid": self.provider_kit_cid,
+            "providerExportCid": self.provider_export_cid,
             "managerIdentity": {
                 "bridgeSourceSymbol": self.bridge_source_symbol,
                 "importSignature": import_signature_to_json(&self.import_signature),
@@ -1564,6 +1855,14 @@ struct ContextManagerEdgeWireV1 {
     edge_cid: Cid,
     #[serde(rename = "useSite")]
     use_site: SourceFragmentCoordinateV1,
+    #[serde(rename = "authenticatedImportUseCid")]
+    authenticated_import_use_cid: Cid,
+    #[serde(rename = "importBindingCid")]
+    import_binding_cid: Cid,
+    #[serde(rename = "providerKitCid")]
+    provider_kit_cid: Cid,
+    #[serde(rename = "providerExportCid")]
+    provider_export_cid: Cid,
     #[serde(rename = "managerIdentity")]
     manager_identity: ContextManagerIdentityWireV1,
     #[serde(rename = "targetContractCid")]
@@ -1621,8 +1920,8 @@ pub fn decode_context_manager_edge(
                 })
                 && resource.exit.disposition
                     == sugar_proof_envelope::ExitDispositionV1::NeverSuppresses => {}
-        ContextManagerSemanticsV1::ProtocolResource(_)
-        | ContextManagerSemanticsV1::EffectBoundary(_) => {
+        ContextManagerSemanticsV1::EffectBoundary(_) => {}
+        ContextManagerSemanticsV1::ProtocolResource(_) => {
             return Err(ContextManagerEdgeTransportErrorV1::Malformed(
                 "unsupported context-manager edge semantics".into(),
             ));
@@ -1631,6 +1930,10 @@ pub fn decode_context_manager_edge(
     let edge = ContextManagerEdgeV1 {
         edge_cid: wire.edge_cid,
         use_site: wire.use_site,
+        authenticated_import_use_cid: wire.authenticated_import_use_cid,
+        import_binding_cid: wire.import_binding_cid,
+        provider_kit_cid: wire.provider_kit_cid,
+        provider_export_cid: wire.provider_export_cid,
         bridge_source_symbol: wire.manager_identity.bridge_source_symbol,
         import_signature: signature,
         target_contract_cid: wire.target_contract_cid,
@@ -1654,6 +1957,10 @@ pub fn final_check_context_manager_edge(
 ) -> Result<(), &'static str> {
     if edge.target_contract_cid != reference.member_cid
         || edge.use_site != reference.use_site
+        || edge.authenticated_import_use_cid != reference.authenticated_import_use_cid
+        || edge.import_binding_cid != reference.import_binding_cid
+        || edge.provider_kit_cid != reference.provider_kit_cid
+        || edge.provider_export_cid != reference.provider_export_cid
         || edge.bridge_source_symbol != reference.bridge_source_symbol
         || edge.import_signature != reference.import_signature
         || edge.payload_cid != reference.payload_cid
