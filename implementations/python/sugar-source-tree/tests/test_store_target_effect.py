@@ -91,6 +91,34 @@ def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
     assert any("store_target.b" in o for o in operands)
 
 
+def test_symbolic_attribute_store_owns_real_receiver_and_value_children():
+    function = _fn(
+        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "    symbolic_receiver.payload = constructed_value\n"
+    )
+    assignment = next(node for node in function.walk() if node.kind == "Assign")
+    sugar = assignment.sugar()
+
+    assert sugar.receiver == assignment.targets[0].value.sugar()
+    assert sugar.value == assignment.value.sugar()
+
+
+def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
+    function = _fn(
+        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "    symbolic_receiver.payload = constructed_value\n"
+    )
+    assignment = next(node for node in function.walk() if node.kind == "Assign")
+    outcome = assignment.sugar().desugar()
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, AttributeStoreRuntimeEffect)
+    operation = repr(outcome.effect.witness.operation)
+    assert "symbolic_receiver" in operation
+    assert "constructed_value" in operation
+    assert "payload" in operation
+
+
 if __name__ == "__main__":
     test_attribute_store_lifts_a_red_effect_and_the_block_continues()
     test_attribute_store_post_out_equals_the_returned_value()
