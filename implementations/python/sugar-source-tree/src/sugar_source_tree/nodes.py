@@ -313,12 +313,8 @@ class SourceUnit:
             ):
                 containing.append(candidate)
         if containing:
-            owner = max(
-                containing, key=lambda item: item.line_col_span().start_line
-            )
-            table = self.function_symtable(
-                owner.name, owner.line_col_span().start_line
-            )
+            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(call.func.id)
             except KeyError:
@@ -414,8 +410,7 @@ class SourceUnit:
             }
         if statement.kind in ("Import", "ImportFrom"):
             return {
-                alias.asname or alias.name.split(".", 1)[0]
-                for alias in statement.names
+                alias.asname or alias.name.split(".", 1)[0] for alias in statement.names
             }
         return set()
 
@@ -755,8 +750,7 @@ class Node(Typed):
             vocabulary_missing(
                 owner="nodes.Node.span",
                 observed=(
-                    f"{self.kind} with neither a backend position nor any "
-                    "spanned child"
+                    f"{self.kind} with neither a backend position nor any spanned child"
                 ),
                 requested="every node has a source extent",
                 fix="give the adapter an anchor rule for this kind; never invent a span",
@@ -1814,9 +1808,7 @@ class FunctionDef(Statement):
                 for nested in statement.body:
                     append_statement(nested)
                 steps.append(
-                    FinallyStepV1(
-                        tuple(item.sugar() for item in statement.finalbody)
-                    )
+                    FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
             else:
                 steps.append(OpaqueStepV1(statement.kind))
@@ -1984,9 +1976,7 @@ class FunctionDef(Statement):
 
         lc = stmt.line_col_span()
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
-        with reduction_span(
-            sugar=f"Body.{stmt.kind}", role="construction", site=site
-        ):
+        with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
             return stmt.sugar()
 
     def _construct_sugar(self):
@@ -2074,9 +2064,7 @@ class FunctionDef(Statement):
                         role="construction",
                         site=where,
                     ):
-                        substitution_trace = trace_builder.freeze(
-                            testimony_reporter
-                        )
+                        substitution_trace = trace_builder.freeze(testimony_reporter)
                 else:
                     # Every statement still has an immutable runtime snapshot.
                     # Only a loop consumer demands the sealed state projection;
@@ -2885,6 +2873,21 @@ class Assign(Statement):
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
             bindings = self._destructured_binding()
             if bindings is None:
+                target = self.targets[0]
+                if (
+                    not isinstance(self.value, (Tuple_, List))
+                    and target.elts
+                    and all(isinstance(item, Name) for item in target.elts)
+                ):
+                    from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
+                        DynamicUnpackAssignSugar,
+                    )
+
+                    return DynamicUnpackAssignSugar(
+                        tuple(item.id for item in target.elts),
+                        self.value.sugar(),
+                        self.fragment,
+                    )
                 return super()._construct_sugar()
             from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
 
@@ -3236,9 +3239,7 @@ class For(Statement):
         except SourceTreePanic:
             pass
 
-        with reduction_span(
-            sugar="For.substitute", role="temporal", site=where
-        ):
+        with reduction_span(sugar="For.substitute", role="temporal", site=where):
             new_iter, iter_changed = self._substitute_field(self.iter, scope)
             subst_iter = new_iter if iter_changed else self.iter
 
@@ -3249,15 +3250,11 @@ class For(Statement):
             with reduction_span(
                 sugar="For.concrete_elements", role="temporal", site=where
             ):
-                elements = (
-                    self._concrete_elements(subst_iter) if concrete else None
-                )
+                elements = self._concrete_elements(subst_iter) if concrete else None
             if elements is not None and len(elements) > self._UNROLL_FUEL:
                 elements = None  # past the unroll budget: the fold/universal stands
             if elements is not None:
-                with reduction_span(
-                    sugar="For.unroll", role="temporal", site=where
-                ):
+                with reduction_span(sugar="For.unroll", role="temporal", site=where):
                     bindings = [self._target_bindings(e) for e in elements]
                     if all(b is not None for b in bindings):
                         if self._body_has_owned_loop_control():
@@ -3271,9 +3268,7 @@ class For(Statement):
                             # by concrete unrolling and must remain a real loop
                             # below.
                             elements = None
-                    if elements is not None and all(
-                        b is not None for b in bindings
-                    ):
+                    if elements is not None and all(b is not None for b in bindings):
                         target_names = self._bound_names_in(self.target)
                         unrolled: list = []
                         carried = dict(
@@ -3283,9 +3278,7 @@ class For(Statement):
                         for element_bindings in bindings:
                             final_target_bindings = element_bindings
                             iter_scope = {**carried, **element_bindings}
-                            new_body, _c = self._substitute_body(
-                                self.body, iter_scope
-                            )
+                            new_body, _c = self._substitute_body(self.body, iter_scope)
                             unrolled.extend(new_body)
                             # thread this iteration's bindings forward (the
                             # carried fold), never the loop target's own names
@@ -3318,9 +3311,7 @@ class For(Statement):
             # substitution_binding can read the fold; the pre-loop value seeds
             # it from the outer scope. A symbolic loop is not a dead unroll --
             # it is the universal / fold over the hole.
-            with reduction_span(
-                sugar="For.symbolic", role="temporal", site=where
-            ):
+            with reduction_span(sugar="For.symbolic", role="temporal", site=where):
                 bound = self._bound_names_in(self.target) | For._stmts_bound_names(
                     self.body
                 )
@@ -6063,8 +6054,7 @@ class Call(Expression):
                     site=self.fragment,
                     keywords=keyword_sugars,
                     contract_resolution_gap=(
-                        f"{source_call_resolution.kind}:"
-                        f"{source_call_resolution.detail}"
+                        f"{source_call_resolution.kind}:{source_call_resolution.detail}"
                     ),
                 )
             if not isinstance(source_call_resolution, SourceCallPreconstructionRefV1):
@@ -6148,6 +6138,7 @@ class Call(Expression):
             from sugar_lift_py_tests.call_contract_resolution import (
                 CallContractResolutionGapV1,
             )
+
             call_refs = getattr(context, "call_contract_refs", None)
             if call_refs is not None:
                 from sugar_lift_py_tests.call_contract_resolution import (
@@ -6491,7 +6482,11 @@ class ObjectPlaceStateV1(Expression):
     def with_attribute_store(self, name, value, occurrence):
         from .object_identity import AttributeFieldCoordinateV1
 
-        return self._with_store(AttributeFieldCoordinateV1.mint(self.object_coordinate, name), value, occurrence)
+        return self._with_store(
+            AttributeFieldCoordinateV1.mint(self.object_coordinate, name),
+            value,
+            occurrence,
+        )
 
     def _with_store(self, selector, value, occurrence, *, constructed=None):
         self.validate_identity()
@@ -6499,9 +6494,7 @@ class ObjectPlaceStateV1(Expression):
         if constructed is None:
             return None
         floor_value, testimony = constructed
-        projected = ConstructedValueProjectionV1.create(
-            value, floor_value, testimony
-        )
+        projected = ConstructedValueProjectionV1.create(value, floor_value, testimony)
         from .object_identity import AttributeFieldVersionV1
 
         prior = self.version(selector)
@@ -6509,7 +6502,9 @@ class ObjectPlaceStateV1(Expression):
             owner=self.object_coordinate,
             field=selector,
             store_occurrence=occurrence,
-            construction_generation=self.object_coordinate.construction_generation + len(self.version_cids) + 1,
+            construction_generation=self.object_coordinate.construction_generation
+            + len(self.version_cids)
+            + 1,
             stored_value_testimony_cid=testimony.cid,
             prior_version_cid=prior,
         )
@@ -6726,15 +6721,12 @@ class Attribute(Expression):
             isinstance(receiver, IfExp)
             and isinstance(receiver.body, ObjectPlaceStateV1)
             and isinstance(receiver.orelse, ObjectPlaceStateV1)
-            and receiver.body.object_identity_cid
-            == receiver.orelse.object_identity_cid
+            and receiver.body.object_identity_cid == receiver.orelse.object_identity_cid
         ):
             when_true = receiver.body.attribute_field(self.attr)
             when_false = receiver.orelse.attribute_field(self.attr)
             if when_true is not None and when_false is not None:
-                return rewrite(
-                    receiver, body=when_true, orelse=when_false
-                )
+                return rewrite(receiver, body=when_true, orelse=when_false)
         if isinstance(receiver, ObjectPlaceStateV1):
             projected = receiver.attribute_field(self.attr)
             if projected is not None:

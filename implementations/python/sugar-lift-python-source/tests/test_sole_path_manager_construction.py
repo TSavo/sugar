@@ -284,7 +284,7 @@ def test_fixture_manager_class_bodies_construct_docstrings_and_class_fields():
 def test_nested_class_member_constructs_as_exact_class_field_through_same_door():
     source = SourceFile(
         (
-            "class Outer:\n" "    class Inner:\n" "        marker = 17\n",
+            "class Outer:\n    class Inner:\n        marker = 17\n",
             "nested-class.py",
             "blake3-512:" + ("34" * 64),
         )
@@ -922,6 +922,37 @@ def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_pa
     resolution = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(resolution, ContextManagerResolutionGapV1)
     assert resolution.kind == "no-derived-contract"
+
+
+def test_installed_stdlib_suppress_reaches_grouped_unpack_after_graph_authentication(
+    tmp_path,
+):
+    consumer = (
+        "import contextlib as renamed_stdlib\n"
+        "def use_boundary():\n"
+        "    with renamed_stdlib.suppress(ValueError):\n"
+        "        raise ValueError('boom')\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    graphs = {}
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten, match="DynamicUnpackAssignSugar"):
+        populate_source_derived_resource_refs(
+            tree, root=tmp_path, path=path, artifact_graph_cache=graphs
+        )
+
+    graph = graphs["contextlib"]
+    assert graph.artifact_kind == "stdlib"
+    assert "contextlib" in graph.modules
 
 
 @pytest.mark.parametrize(

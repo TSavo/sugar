@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from email.parser import BytesParser
+import importlib.machinery
 import importlib.metadata
 from pathlib import Path, PurePosixPath
 import sys
+import sysconfig
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
@@ -341,6 +343,7 @@ PythonObjectResolutionV1 = ResolvedPythonObjectV1 | PythonObjectResolutionGapV1
 
 @dataclass(frozen=True)
 class DependencyArtifactGraph:
+    artifact_kind: Literal["distribution", "stdlib"]
     distribution_name: str
     distribution_version: str
     distribution_artifact_cid: str
@@ -353,22 +356,27 @@ class DependencyArtifactGraph:
             raise DependencyArtifactAuthenticationError(
                 "dependency artifact graph was not minted by SourceOracle intake"
             )
-        metadata_files = [
-            item
-            for item in self.files
-            if item.source_seat.endswith(".dist-info/METADATA")
-        ]
-        if len(metadata_files) != 1:
+        if self.artifact_kind == "distribution":
+            metadata_files = [
+                item
+                for item in self.files
+                if item.source_seat.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata_files) != 1:
+                raise DependencyArtifactAuthenticationError(
+                    "distribution graph must retain one METADATA preimage"
+                )
+            metadata = BytesParser().parsebytes(metadata_files[0].content)
+            if (
+                metadata.get("Name") != self.distribution_name
+                or metadata.get("Version") != self.distribution_version
+            ):
+                raise DependencyArtifactAuthenticationError(
+                    "distribution identity does not match its METADATA preimage"
+                )
+        elif self.artifact_kind != "stdlib":
             raise DependencyArtifactAuthenticationError(
-                "distribution graph must retain one METADATA preimage"
-            )
-        metadata = BytesParser().parsebytes(metadata_files[0].content)
-        if (
-            metadata.get("Name") != self.distribution_name
-            or metadata.get("Version") != self.distribution_version
-        ):
-            raise DependencyArtifactAuthenticationError(
-                "distribution identity does not match its METADATA preimage"
+                "dependency artifact graph has an unknown intake kind"
             )
         records = [
             {"path": item.source_seat, "contentCid": item.content_cid}
@@ -380,7 +388,11 @@ class DependencyArtifactGraph:
             )
         expected = cid_of_json(
             {
-                "kind": "python-dependency-artifact",
+                "kind": (
+                    "python-dependency-artifact"
+                    if self.artifact_kind == "distribution"
+                    else "python-stdlib-artifact"
+                ),
                 "schemaVersion": "1",
                 "distributionName": self.distribution_name,
                 "distributionVersion": self.distribution_version,
@@ -500,6 +512,7 @@ class DependencyArtifactGraph:
             ],
         }
         return cls(
+            artifact_kind="distribution",
             distribution_name=name,
             distribution_version=version,
             distribution_artifact_cid=cid_of_json(preimage),
@@ -507,6 +520,119 @@ class DependencyArtifactGraph:
             modules=MappingProxyType(modules),
             _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
+
+    @classmethod
+    def authenticate_stdlib_module(cls, module_name: str) -> "DependencyArtifactGraph":
+        """Authenticate source reached through the running Python's stdlib root."""
+        if not module_name or not all(
+            part.isidentifier() for part in module_name.split(".")
+        ):
+            raise DependencyArtifactAuthenticationError("invalid stdlib module name")
+        root = Path(sysconfig.get_path("stdlib")).resolve()
+        top_level = module_name.split(".", 1)[0]
+        spec = importlib.machinery.PathFinder.find_spec(top_level, [str(root)])
+        if spec is None or spec.origin is None:
+            raise DependencyArtifactAuthenticationError(
+                "module has no source in the authenticated stdlib root"
+            )
+        return cls.authenticate_stdlib_path(
+            top_level, Path(spec.origin), stdlib_root=root
+        )
+
+    @classmethod
+    def authenticate_stdlib_path(
+        cls, module_name: str, path: Path, *, stdlib_root: Path
+    ) -> "DependencyArtifactGraph":
+        """Content-address one stdlib module/package after root containment."""
+        root = stdlib_root.resolve()
+        source_path = path.resolve()
+        if (
+            not source_path.is_relative_to(root)
+            or any(
+                part in {"site-packages", "dist-packages"} for part in source_path.parts
+            )
+            or source_path.suffix != ".py"
+        ):
+            raise DependencyArtifactAuthenticationError(
+                "module source is outside the authenticated stdlib root"
+            )
+        paths = (
+            sorted(source_path.parent.rglob("*.py"))
+            if source_path.name == "__init__.py"
+            else [source_path]
+        )
+        authenticated_files: list[AuthenticatedArtifactFileV1] = []
+        modules: dict[str, AuthenticatedModuleSourceV1] = {}
+        for candidate in paths:
+            relative = PurePosixPath(candidate.relative_to(root).as_posix())
+            SourceFile, BackendCouldNotParse = _source_file_cls()
+            try:
+                content, _seat, content_cid = dependency_artifact_file(str(candidate))
+                source = content.decode("utf-8")
+                SourceFile((source, str(candidate), content_cid))
+            except (SourceUnavailable, UnicodeError, SyntaxError, ValueError) as exc:
+                raise DependencyArtifactAuthenticationError(
+                    f"cannot authenticate stdlib source {relative}"
+                ) from exc
+            except BackendCouldNotParse as exc:
+                raise DependencyArtifactAuthenticationError(
+                    f"cannot authenticate stdlib source {relative}"
+                ) from exc
+            authenticated_files.append(
+                AuthenticatedArtifactFileV1(relative.as_posix(), content_cid, content)
+            )
+            projected_name = _module_name(relative)
+            if projected_name is not None:
+                modules[projected_name] = AuthenticatedModuleSourceV1(
+                    projected_name, relative.as_posix(), content_cid, source
+                )
+        if module_name not in modules:
+            raise DependencyArtifactAuthenticationError(
+                "requested stdlib module is not projected from authenticated source"
+            )
+        runtime_version = sys.implementation.cache_tag or sys.version.split()[0]
+        name = f"{sys.implementation.name}-stdlib"
+        records = [
+            {"path": item.source_seat, "contentCid": item.content_cid}
+            for item in authenticated_files
+        ]
+        preimage = {
+            "kind": "python-stdlib-artifact",
+            "schemaVersion": "1",
+            "distributionName": name,
+            "distributionVersion": runtime_version,
+            "files": records,
+        }
+        return cls(
+            artifact_kind="stdlib",
+            distribution_name=name,
+            distribution_version=runtime_version,
+            distribution_artifact_cid=cid_of_json(preimage),
+            files=tuple(authenticated_files),
+            modules=MappingProxyType(modules),
+            _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
+        )
+
+
+def authenticate_dependency_top_level(
+    top_level: str,
+    *,
+    distribution_index: Mapping[str, importlib.metadata.Distribution] | None = None,
+) -> DependencyArtifactGraph:
+    """Authenticate a distribution or stdlib module through one graph door."""
+    if distribution_index is not None and top_level in distribution_index:
+        return DependencyArtifactGraph.authenticate(distribution_index[top_level])
+    packages = importlib.metadata.packages_distributions()
+    distributions = tuple(packages.get(top_level, ()))
+    if len(distributions) == 1:
+        return DependencyArtifactGraph.authenticate(
+            importlib.metadata.distribution(distributions[0])
+        )
+    if distributions:
+        raise DependencyArtifactAuthenticationError(
+            "top-level module belongs to multiple installed distributions"
+        )
+    return DependencyArtifactGraph.authenticate_stdlib_module(top_level)
 
 
 def resolve_import_binding(
@@ -582,8 +708,6 @@ def resolve_import_binding(
     )
 
 
-
-
 def _binding_target(
     value: Mapping[str, Any],
 ) -> tuple[str, tuple[str, ...], str | None]:
@@ -606,6 +730,7 @@ def _binding_target(
         raise ValueError("invalid exported path")
     return _string(module_name, "module name"), tuple(path), source_cid
 
+
 def _module_name(path: PurePosixPath) -> str | None:
     if path.suffix != ".py":
         return None
@@ -617,6 +742,7 @@ def _module_name(path: PurePosixPath) -> str | None:
     if not parts or not all(part.isidentifier() for part in parts):
         return None
     return ".".join(parts)
+
 
 def _gap(
     kind: Any,
@@ -633,20 +759,24 @@ def _gap(
         exported_name=exported_name,
     )
 
+
 def _require_exact_keys(value: Any, expected: set[str], label: str) -> None:
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError(f"{label} has an invalid key set")
+
 
 def _string(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{label} must be a nonempty string")
     return value
 
+
 def _cid(value: Any, label: str) -> str:
     value = _string(value, label)
     if not value.startswith("blake3-512:"):
         raise ValueError(f"{label} must be a content CID")
     return value
+
 
 def _nonnegative_int(value: Any, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -664,4 +794,3 @@ def export_statement_coverage():
     from .dependency_export_adapter import export_statement_coverage as _coverage
 
     return _coverage()
-

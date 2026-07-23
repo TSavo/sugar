@@ -118,20 +118,22 @@ def test_mixed_chain_preserves_each_store_face_in_source_order():
 
 def test_nested_tuple_target_binds_each_structural_projection():
     post = _post(
-        "def A():\n"
-        "    (a, (b, c)), d = (1, (2, 3)), 4\n"
-        "    return a + b + c + d\n"
+        "def A():\n    (a, (b, c)), d = (1, (2, 3)), 4\n    return a + b + c + d\n"
     )
     assert post.args[1].value == 10
 
 
 def test_nested_tuple_projection_pairing_discriminates():
-    left = _post(
-        "def A():\n    (a, (b, c)) = (1, (2, 4))\n    return b - c\n"
-    ).args[1].value
-    right = _post(
-        "def A():\n    (a, (b, c)) = (1, (4, 2))\n    return b - c\n"
-    ).args[1].value
+    left = (
+        _post("def A():\n    (a, (b, c)) = (1, (2, 4))\n    return b - c\n")
+        .args[1]
+        .value
+    )
+    right = (
+        _post("def A():\n    (a, (b, c)) = (1, (4, 2))\n    return b - c\n")
+        .args[1]
+        .value
+    )
     assert (left, right) == (-2, 2)
 
 
@@ -161,11 +163,15 @@ def test_arity_mismatch_stays_loud():
         _fn("def A():\n    a, b = (1, 2, 3)\n    return a\n").sugar()
 
 
-def test_non_display_rhs_stays_loud():
-    # The rhs is a Name, not a Tuple/List display -- no shape to destructure
-    # against, so the tuple target is not threaded.
+def test_non_display_rhs_constructs_but_stays_typed_loud_when_reached():
+    # Construction must be total enough for an unreachable branch to coexist
+    # with a closed guard. If execution reaches the dynamic unpack, its unknown
+    # iteration/cardinality semantics remain loud rather than fabricating binds.
+    function = _fn("def A(p):\n    a, b = p\n    return a\n")
+    sugar = function.sugar()
+
     with pytest.raises(SugarNotWritten):
-        _fn("def A(p):\n    a, b = p\n    return a\n").sugar()
+        sugar.desugar()
 
 
 def test_mixed_chained_targets_stay_loud():

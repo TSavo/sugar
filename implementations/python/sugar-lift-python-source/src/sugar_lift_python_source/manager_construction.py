@@ -273,7 +273,9 @@ def resolve_source_visible_frame(
     if hit is not None:
         return hit
 
-    result = _resolve_source_visible_frame_uncached(resolved, graph=graph, module=module)
+    result = _resolve_source_visible_frame_uncached(
+        resolved, graph=graph, module=module
+    )
     if isinstance(result, tuple) and len(result) == 3:
         frame, target, source_file = result
         # Hold the SourceFile that owns target/frame node identity.
@@ -308,6 +310,32 @@ def _resolve_source_visible_frame_uncached(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "resolved definition coordinate"
         )
+
+    definitions_by_name = {item.name: item for item in definitions}
+    reachable_names = {target.name}
+    pending_names = [target.name]
+    while pending_names:
+        current = definitions_by_name[pending_names.pop()]
+        dependencies = []
+        if isinstance(current, ClassDef):
+            dependencies.extend(
+                base.id for base in current.bases if isinstance(base, Name)
+            )
+            functions = tuple(
+                item for item in current.body if isinstance(item, FunctionDef)
+            )
+        else:
+            functions = (current,)
+        dependencies.extend(
+            call.func.id
+            for function in functions
+            for call in _local_named_calls(function)
+        )
+        for name in dependencies:
+            if name in definitions_by_name and name not in reachable_names:
+                reachable_names.add(name)
+                pending_names.append(name)
+    definitions = tuple(item for item in definitions if item.name in reachable_names)
 
     definition_names = {item.name for item in definitions}
     from sugar_lift_py_tests.floor import BuiltinSemanticCallable
