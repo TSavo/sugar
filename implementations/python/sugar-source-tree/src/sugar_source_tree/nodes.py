@@ -1897,16 +1897,90 @@ class Assign(Statement):
         return rewrite(self, **changes)
 
     def _destructured_binding(self):
-        # `a, b = <display>` -- a single Tuple/List target of plain Names,
-        # destructured against the already-substituted rhs when it is a
-        # Tuple/List display of the same arity. Starred/nested targets, an
-        # arity mismatch, or a non-display rhs return None here (mirrors
-        # For._target_bindings_for -- the shared destructuring reader, called
-        # class-explicitly so it never depends on `self` being a For).
+        # Destructure only an already-constructed Tuple/List display.  This is
+        # structural projection, not an iterator guess: a symbolic/opaque RHS
+        # has no authenticated cardinality and therefore stays loud.
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)):
             return None
-        return For._target_bindings_for(self, target, self.value)
+        return self._destructure_display(target, self.value)
+
+    def _destructure_display(self, target, value):
+        if isinstance(target, Name):
+            return {target.id: value}
+        if not isinstance(target, (Tuple_, List)) or not isinstance(
+            value, (Tuple_, List)
+        ):
+            return None
+
+        starred = [
+            index for index, element in enumerate(target.elts) if isinstance(element, Starred)
+        ]
+        if len(starred) > 1:
+            return None
+        pairs = []
+        if not starred:
+            if len(target.elts) != len(value.elts):
+                return None
+            pairs = list(zip(target.elts, value.elts))
+        else:
+            star_index = starred[0]
+            suffix = len(target.elts) - star_index - 1
+            if len(value.elts) < len(target.elts) - 1:
+                return None
+            pairs.extend(zip(target.elts[:star_index], value.elts[:star_index]))
+            rest_end = len(value.elts) - suffix if suffix else len(value.elts)
+            rest = self._make_unpack_rest_list(value.elts[star_index:rest_end])
+            pairs.append((target.elts[star_index].value, rest))
+            if suffix:
+                pairs.extend(zip(target.elts[-suffix:], value.elts[-suffix:]))
+
+        bindings = {}
+        for child_target, child_value in pairs:
+            child = self._destructure_display(child_target, child_value)
+            if child is None:
+                return None
+            bindings.update(child)
+        return bindings
+
+    def _make_unpack_rest_list(self, elements):
+        """The starred target's real CPython list result, from real RHS children."""
+        from .backend import Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "List",
+                self.span,
+                (("elts", Children(tuple(_handle_of(element) for element in elements))),),
+            ),
+            self.reporter,
+        )
+
+    def _binding_site_and_path(self, name: str, ordinal: int):
+        del ordinal
+        matches = []
+
+        def collect(target, path):
+            if isinstance(target, Name):
+                if target.id == name:
+                    matches.append((target.fragment, path))
+                return
+            if isinstance(target, Starred):
+                collect(target.value, (*path, "starred"))
+                return
+            if isinstance(target, (Tuple_, List)):
+                kind = "tuple" if isinstance(target, Tuple_) else "list"
+                for index, child in enumerate(target.elts):
+                    collect(child, (*path, kind, index))
+
+        for target_index, target in enumerate(self.targets):
+            collect(target, ("targets", target_index))
+        if matches:
+            # Repeated targets are legal; the final store is the live binding.
+            return matches[-1]
+        return super()._binding_site_and_path(name, 0)
 
     def substitution_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
