@@ -22,6 +22,7 @@ from sugar_source_tree.nodes import (
     Starred,
     Tuple_,
 )
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -59,6 +60,14 @@ def _target_shape(target) -> str:
     return f"{kind}:{detail}"
 
 
+def _builds(node) -> bool:
+    try:
+        node.sugar().desugar()
+    except (SugarNotWritten, ConstructionPanic, Exception):
+        return False
+    return True
+
+
 def main() -> int:
     counts: dict[str, Counter[str]] = defaultdict(Counter)
     parse_failures = 0
@@ -81,12 +90,8 @@ def main() -> int:
 
             shape = _target_shape(target)
             counts[shape]["total"] += 1
-            try:
-                node.substitute({}).sugar()
-            except SugarNotWritten:
-                try:
-                    node.value.sugar()
-                except SugarNotWritten:
+            if not _builds(node.substitute({})):
+                if not _builds(node.value):
                     counts[shape]["blocked_descendant"] += 1
                 else:
                     counts[shape]["direct_gap"] += 1

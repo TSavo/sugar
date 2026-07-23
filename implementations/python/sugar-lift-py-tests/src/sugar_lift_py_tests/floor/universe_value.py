@@ -50,8 +50,7 @@ class UniverseValue(FloorValue):
             for entry in self.record.statements
             if isinstance(entry, (UnpackValueBinding, GuardedUnpackValueBinding))
         )
-        if unpack_bindings:
-            validate_unpack_projections(exits, unpack_bindings)
+        validate_unpack_projections(exits, unpack_bindings)
         if not exits:
             from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
             from sugar_lift_py_tests.floor.raise_value import RaiseValue

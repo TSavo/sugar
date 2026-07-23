@@ -1485,10 +1485,28 @@ def _free_vars_in_term(t: Term) -> set[str]:
     if isinstance(t, _Var):
         return {t.name}
     if isinstance(t, _Ctor):
+        if t.name == "python:unpack_assign" and len(t.args) == 3:
+            return _free_vars_in_unpack_target(t.args[1]) | _free_vars_in_term(
+                t.args[2]
+            )
         return set().union(*(_free_vars_in_term(arg) for arg in t.args))
     if isinstance(t, _Lambda):
         return _free_vars_in_term(t.body) - {t.param_name}
     return set()
+
+
+def _free_vars_in_unpack_target(t: Term) -> set[str]:
+    """Read a decoded unpack store pattern by target role, not value role."""
+    if isinstance(t, _Var):
+        return set()
+    if isinstance(t, _Ctor) and t.name in {
+        "python:unpack_targets",
+        "python:tuple_target",
+        "python:list_target",
+    }:
+        return set().union(*(_free_vars_in_unpack_target(arg) for arg in t.args))
+    # Future attribute/subscript store targets retain receiver/index reads.
+    return _free_vars_in_term(t)
 
 
 def subst_var_in_formula(f: Formula, formal: str, actual: Term) -> Formula:

@@ -22,12 +22,12 @@ def unpack_slot_term(slot):
 
 
 def unpack_pattern_term(pattern):
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.ir import ctor, make_var
 
     if isinstance(pattern, UnpackNamePattern):
-        # A typed declaration, deliberately not Var(name): target declarations
-        # contribute no free value variables.
-        return ctor("python:unpack_target_name", [str_const(pattern.name)])
+        # Byte-identical to the Python reference. The typed unpack-target FV
+        # decoder interprets this Var as a store declaration, never a value read.
+        return make_var(pattern.name)
     nested = [unpack_pattern_term(element) for element in pattern.elements]
     return ctor(
         "python:tuple_target" if pattern.kind == "tuple" else "python:list_target",

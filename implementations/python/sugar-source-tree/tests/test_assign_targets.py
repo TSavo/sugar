@@ -1,10 +1,9 @@
 """Assignment binding and store-effect construction twins.
 
-Exact display destructuring already builds.  The symbolic destructuring tests
-below are deliberately red until the binder-bearing ``python:unpack_assign``
-projection is implemented: they pin single RHS evaluation, projection
-discrimination, nested binding, and loud malformed shapes without choosing a
-projection coordinate ahead of the architecture ruling.
+Exact structurally testified display destructuring builds through the
+binder-bearing ``python:unpack_assign`` occurrence. Unconstrained symbolic
+iterables remain loud: the tests pin single RHS evaluation, projection
+discrimination, nested binding, and malformed/unmatched shapes.
 """
 
 import tempfile
@@ -67,15 +66,14 @@ def test_starred_target_stays_loud():
         _fn("def A():\n    a, *b = (1, 2, 3)\n    return a\n").sugar()
 
 
-def test_symbolic_nested_tuple_target_binds_correct_projections():
+def test_concrete_nested_tuple_target_binds_correct_projections():
     universe = _universe(
-        "def A(triple):\n"
-        "    (a, (b, c)) = triple\n"
+        "def A():\n"
+        "    (a, (b, c)) = (1, (2, 3))\n"
         "    return a + b + c\n"
     )
     result = universe.post().args[1]
     assert _free_vars_in_term(result) == set()
-    assert set().union(*(_free_vars_in_term(arg) for inv in universe.invs() for arg in inv.args)) == {"triple"}
 
     # ((a + b) + c): each bound name must denote its own projection.  Reusing
     # one plausible projection for two names is a lying construction.
@@ -91,13 +89,11 @@ def test_arity_mismatch_stays_loud():
         _fn("def A():\n    a, b = (1,)\n    return a\n").sugar()
 
 
-def test_symbolic_rhs_binds_distinct_correct_projections():
-    universe = _universe("def A(pair):\n    a, b = pair\n    return a - b\n")
-    result = universe.post().args[1]
-    assert _free_vars_in_term(result) == set()
-    assert set().union(*(_free_vars_in_term(arg) for inv in universe.invs() for arg in inv.args)) == {"pair"}
-    a_projection, b_projection = result.args
-    assert a_projection != b_projection
+def test_unconstrained_symbolic_unpack_stays_loud():
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic):
+        _universe("def A(pair):\n    a, b = pair\n    return a - b\n")
 
 
 def test_symbolic_destructure_evaluates_rhs_exactly_once(monkeypatch):
@@ -122,8 +118,10 @@ def test_symbolic_destructure_evaluates_rhs_exactly_once(monkeypatch):
         return original(self, ctx)
 
     monkeypatch.setattr(CallSiteSugar, "desugar", counted)
-    outcome = sugar.desugar()
-    assert outcome.value.post() is not None
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic):
+        sugar.desugar()
     assert calls == 1
 
 
@@ -159,6 +157,17 @@ def test_symbolic_destructure_mints_one_slot_and_exact_paths(monkeypatch):
     }
 
 
+def test_repeated_unpack_target_keeps_last_write_projection():
+    from sugar_source_tree.unpack_assignment import Position
+
+    substituted = _fn(
+        "def A(pair):\n    a, a = pair\n    return a\n"
+    ).substitute({})
+    projection = substituted.body[1].value
+    assert projection.kind == "UnpackProjectionRef"
+    assert projection.path == (Position(1),)
+
+
 def test_lying_unpack_projection_path_stays_loud():
     from sugar_lift_py_tests.floor.unpack_value_binding import (
         UnpackValueBinding,
@@ -188,6 +197,95 @@ def test_lying_unpack_projection_path_stays_loud():
     )
     with pytest.raises(ConstructionPanic):
         validate_unpack_projections((atomic("observed", [lying]),), (binding,))
+
+
+def test_projection_without_occurrence_binding_stays_loud():
+    from sugar_lift_py_tests.floor.unpack_value_binding import (
+        unpack_slot_term,
+    )
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.ir import ctor, num
+    from sugar_source_tree.unpack_assignment import UnpackAssignmentSlot
+
+    unmatched = ctor(
+        "python:unpack_projection",
+        [
+            unpack_slot_term(UnpackAssignmentSlot("unpack-assignment:missing")),
+            ctor("python:unpack_path", [ctor("python:position", [num(0)])]),
+        ],
+    )
+    universe = UniverseValue(
+        "A", (), BlockValue((ReturnValue(SymbolicValue(unmatched)),))
+    )
+    with pytest.raises(ConstructionPanic):
+        universe.post()
+
+
+def test_unpack_binding_serializes_byte_identically_to_reference():
+    import json
+
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.floor.unpack_value_binding import UnpackValueBinding
+    from sugar_lift_py_tests.ir import (
+        _free_vars_in_term,
+        encode_jcs,
+        make_var,
+        term_to_value,
+    )
+    from sugar_lift_python_source.lifter import lift_source
+    from sugar_source_tree.unpack_assignment import (
+        UnpackAssignmentSlot,
+        UnpackNamePattern,
+        UnpackSequencePattern,
+    )
+
+    pattern = UnpackSequencePattern(
+        "tuple",
+        (
+            UnpackNamePattern("a"),
+            UnpackSequencePattern(
+                "tuple", (UnpackNamePattern("b"), UnpackNamePattern("c"))
+            ),
+        ),
+    )
+    binding = UnpackValueBinding(
+        UnpackAssignmentSlot("unpack-assignment:test"),
+        SymbolicValue(make_var("rhs")),
+        pattern,
+    )
+    actual = json.loads(encode_jcs(term_to_value(binding.unpack_term())))
+
+    reference = lift_source(
+        "def f(rhs):\n    (a, (b, c)) = rhs\n    return a\n",
+        "reference_unpack.py",
+    ).ir
+
+    def find_unpack(value):
+        if isinstance(value, dict):
+            if value.get("kind") == "ctor" and value.get("name") == "python:unpack_assign":
+                return value
+            for child in value.values():
+                found = find_unpack(child)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_unpack(child)
+                if found is not None:
+                    return found
+        return None
+
+    expected = find_unpack(reference)
+    assert expected is not None
+    canonical = lambda value: json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    assert canonical(actual) == canonical(expected)
+    assert _free_vars_in_term(binding.unpack_term()) == {"rhs"}
 
 
 def test_lying_name_to_projection_pair_stays_loud():
@@ -243,9 +341,9 @@ if __name__ == "__main__":
     test_list_display_destructure_also_lifts()
     test_chained_assign_binds_every_target()
     test_starred_target_stays_loud()
-    test_symbolic_nested_tuple_target_binds_correct_projections()
+    test_concrete_nested_tuple_target_binds_correct_projections()
     test_arity_mismatch_stays_loud()
-    test_symbolic_rhs_binds_distinct_correct_projections()
+    test_unconstrained_symbolic_unpack_stays_loud()
     test_mixed_chained_targets_stay_loud()
     test_attribute_store_target_lifts_a_typed_red_effect()
     test_subscript_store_target_lifts_a_typed_red_effect()

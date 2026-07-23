@@ -308,6 +308,29 @@ fn free_vars(term: Term) -> std::collections::BTreeSet<String> {
 }
 
 #[test]
+fn unpack_target_names_are_store_patterns_not_free_values() {
+    let wire = json!({
+        "kind": "ctor",
+        "name": "python:unpack_assign",
+        "args": [
+            {"kind": "const", "value": "tuple", "sort": {"kind": "primitive", "name": "String"}},
+            {"kind": "ctor", "name": "python:unpack_targets", "args": [
+                {"kind": "var", "name": "a"},
+                {"kind": "ctor", "name": "python:tuple_target", "args": [
+                    {"kind": "var", "name": "b"},
+                    {"kind": "var", "name": "c"}
+                ]}
+            ]},
+            {"kind": "var", "name": "rhs"}
+        ]
+    });
+    let term: Term = serde_json::from_value(wire.clone()).expect("reference term parses");
+
+    assert_eq!(serde_json::to_value(&term).expect("term serializes"), wire);
+    assert_eq!(free_vars(term), ["rhs".to_string()].into());
+}
+
+#[test]
 fn python_comprehension_lambda_survives_rust_parse_and_membership() {
     let term = document_post_term(python_comprehension_document(
         "[f(x, y) for x in xs]",

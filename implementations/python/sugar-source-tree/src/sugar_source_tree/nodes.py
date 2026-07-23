@@ -1386,9 +1386,10 @@ class Assign(Statement):
             except AttributeError:
                 pass
             else:
+                final_paths = dict(pattern_bindings(pattern))
                 return {
                     name: self._make_unpack_projection_ref(slot, pattern, name, path)
-                    for name, path in pattern_bindings(pattern)
+                    for name, path in final_paths.items()
                 }
             return self._destructured_binding()
         if all(isinstance(t, Name) for t in self.targets):

@@ -6,6 +6,7 @@ import pytest
 
 from sugar_lift_py_tests.effect import NameErrorEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue, UniverseValue
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import and_, make_var, not_, or_, py_truthy
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
@@ -113,7 +114,7 @@ def test_nested_conditional_delete_retains_both_source_guards() -> None:
     assert completed[0].guard == or_([not_(outer), and_([outer, not_(inner)])])
 
 
-def test_pandas_blocks_nested_if_augassign_reads_unpack_projection_node() -> None:
+def test_pandas_blocks_nested_if_augassign_keeps_unresolved_unpack_loud() -> None:
     source = (
         "def f(i, values):\n"
         " if isinstance(i, tuple):\n"
@@ -128,7 +129,8 @@ def test_pandas_blocks_nested_if_augassign_reads_unpack_projection_node() -> Non
     ]
     assert projections
     assert all(projection.path for projection in projections)
-    assert isinstance(_out(source), Complete)
+    with pytest.raises(ConstructionPanic):
+        _out(source)
 
 
 def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
@@ -167,7 +169,7 @@ def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
     )
 
 
-def test_pandas_converter_if_augassign_reads_unpack_projection_nodes() -> None:
+def test_pandas_converter_if_augassign_keeps_unresolved_unpack_loud() -> None:
     source = (
         "def f(locs):\n"
         " vmin, vmax = locs\n"
@@ -182,7 +184,8 @@ def test_pandas_converter_if_augassign_reads_unpack_projection_nodes() -> None:
     ]
     assert len(projections) >= 2
     assert len({projection.path for projection in projections}) == 2
-    assert isinstance(_out(source), Complete)
+    with pytest.raises(ConstructionPanic):
+        _out(source)
 
 
 def test_augassign_over_explicitly_unbound_local_builds_guarded_read() -> None:

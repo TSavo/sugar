@@ -698,6 +698,11 @@ fn free_vars_in_term(term: &Term) -> BTreeSet<String> {
     match term {
         Term::Var { name } => BTreeSet::from([name.clone()]),
         Term::Const { .. } => BTreeSet::new(),
+        Term::Ctor { name, args } if name == "python:unpack_assign" && args.len() == 3 => {
+            let mut vars = free_vars_in_unpack_target(&args[1]);
+            vars.extend(free_vars_in_term(&args[2]));
+            vars
+        }
         Term::Ctor { args, .. } => args.iter().flat_map(free_vars_in_term).collect(),
         Term::Lambda {
             param_name, body, ..
@@ -714,5 +719,20 @@ fn free_vars_in_term(term: &Term) -> BTreeSet<String> {
             }
             vars
         }
+    }
+}
+
+fn free_vars_in_unpack_target(term: &Term) -> BTreeSet<String> {
+    match term {
+        Term::Var { .. } => BTreeSet::new(),
+        Term::Ctor { name, args }
+            if matches!(
+                name.as_str(),
+                "python:unpack_targets" | "python:tuple_target" | "python:list_target"
+            ) =>
+        {
+            args.iter().flat_map(free_vars_in_unpack_target).collect()
+        }
+        other => free_vars_in_term(other),
     }
 }

@@ -177,15 +177,34 @@ def _free_vars_in_ir_term(
     if isinstance(ir_term, _Var):
         result = frozenset({ir_term.name})
     elif isinstance(ir_term, _Ctor):
-        result = frozenset().union(
-            *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
-        )
+        if ir_term.name == "python:unpack_assign" and len(ir_term.args) == 3:
+            result = _free_vars_in_unpack_target(ir_term.args[1], memo) | (
+                _free_vars_in_ir_term(ir_term.args[2], memo)
+            )
+        else:
+            result = frozenset().union(
+                *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
+            )
     elif isinstance(ir_term, _Lambda):
         result = _free_vars_in_ir_term(ir_term.body, memo) - {ir_term.param_name}
     else:
         result = frozenset()
     memo[id(ir_term)] = result
     return result
+
+
+def _free_vars_in_unpack_target(ir_term, memo) -> frozenset[str]:
+    if isinstance(ir_term, _Var):
+        return frozenset()
+    if isinstance(ir_term, _Ctor) and ir_term.name in {
+        "python:unpack_targets",
+        "python:tuple_target",
+        "python:list_target",
+    }:
+        return frozenset().union(
+            *(_free_vars_in_unpack_target(arg, memo) for arg in ir_term.args)
+        )
+    return _free_vars_in_ir_term(ir_term, memo)
 
 
 __all__ = ["And", "Eq", "Formula", "formula_from_ir", "formula_to_rpc"]
