@@ -1,15 +1,17 @@
-"""The one API for reading source text through the AST: table-backed, idempotent.
+"""The one API for reading source text through line tables: table-backed, idempotent.
 
-Every consumer that needs a node's source segment, a module's line table, or a
-parsed tree goes through these functions. Each is an idempotent recompute keyed
-by the source CONTENT, so behind the scenes it is a build-once in-memory table
-and an O(1) lookup on every subsequent request -- callers never know different.
+Every consumer that needs a node's source segment or a module's line table goes
+through these functions. Each is an idempotent recompute keyed by the source
+CONTENT, so behind the scenes it is a build-once in-memory table and an O(1)
+lookup on every subsequent request -- callers never know different.
 Keying by content (never by path) preserves drift semantics exactly: changed
 source is a new key and recomputes; identical source never re-derives.
 
-`ast.get_source_segment` re-splits the entire source on every call and callers
-that re-`ast.parse` per query are quadratic across a module's nodes; these
-tables are why neither ever appears outside this module.
+Stdlib parse / foreign AST currency does NOT live here. Residual dual-body
+consumers that still need a content-keyed ``ast.Module`` enter through
+``source_tables_adapter.parsed_tree``. Production construction enters through
+``SourceFile`` / typed Nodes. Parent maps, locus indexes, and symtable caches
+that had no production callers were deleted rather than rewritten.
 
 Process-lifetime bound: tables use a finite LRU (SOURCE_TABLE_CAPACITY), not
 `maxsize=None`. A resident lift generation walks many modules; unbounded
@@ -21,8 +23,13 @@ docs/analysis/ci-whack-a-mole-course-2026-07-15.md.
 
 from __future__ import annotations
 
-import ast
 import functools
+import re
+from typing import Any, Protocol
+
+# Re-export residual dual parse for callers that still pin it; the adapter
+# owns the foreign ``ast`` import so this module stays construction-clean.
+from .source_tables_adapter import SOURCE_TABLE_CAPACITY, parsed_tree
 
 __all__ = [
     "SOURCE_TABLE_CAPACITY",
@@ -32,9 +39,20 @@ __all__ = [
     "source_splitlines",
 ]
 
-# Align with install-source index capacity (install_source_dig): hot working
-# set of modules in one generation, not the whole corpus forever.
-SOURCE_TABLE_CAPACITY = 64
+
+# Mirror of CPython ``ast._splitlines_no_ff``: form feeds do not break lines,
+# so offsets agree with parser node positions. Kept local so this module never
+# imports foreign ``ast`` currency.
+_LINE_PATTERN = re.compile(r"(.*?(?:\r\n|\n|\r|$))")
+
+
+class _Positioned(Protocol):
+    """Duck shape for source-segment lookup — typed Node or residual dual AST."""
+
+    lineno: int
+    col_offset: int
+    end_lineno: int | None
+    end_col_offset: int | None
 
 
 @functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
@@ -52,17 +70,21 @@ def source_splitlines(source: str) -> tuple[str, ...]:
 def source_lines(source: str) -> tuple[str, ...]:
     """The module's line table (line ends kept), split once per source.
 
-    Mirrors the parser's own line splitting (`ast._splitlines_no_ff`): form
-    feeds do not break lines, so offsets agree with node positions.
+    Mirrors the parser's own line splitting (form feeds do not break lines),
+    so offsets agree with node positions.
     """
-    return tuple(ast._splitlines_no_ff(source))
+    lines: list[str] = []
+    for match in _LINE_PATTERN.finditer(source):
+        lines.append(match[0])
+    return tuple(lines)
 
 
-def source_segment(source: str, node: ast.AST) -> str | None:
+def source_segment(source: str, node: Any) -> str | None:
     """`ast.get_source_segment` semantics as a lookup against the line table.
 
     Returns None when position information is missing, exactly as the stdlib
     does. Column offsets are byte offsets into the UTF-8 encoding of each line.
+    Accepts any positioned node (typed Node attrs or residual dual AST).
     """
     try:
         if node.end_lineno is None or node.end_col_offset is None:
@@ -79,23 +101,3 @@ def source_segment(source: str, node: ast.AST) -> str | None:
     first = lines[lineno].encode()[col_offset:].decode()
     last = lines[end_lineno].encode()[:end_col_offset].decode()
     return "".join((first, *lines[lineno + 1 : end_lineno], last))
-
-
-@functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
-def _parsed(source: str, filename: str) -> ast.Module:
-    return ast.parse(source, filename=filename)
-
-
-def parsed_tree(source: str, filename: str = "<unknown>") -> ast.Module:
-    """The parsed module, one parse per (source, filename).
-
-    Raises SyntaxError exactly as `ast.parse` does (the raise recurs on every
-    call for the same source; failures are not cached).
-
-    Dual-path residual: production construction should enter through
-    ``SourceFile`` / typed Nodes. Remaining callers (bind_lifter / source_oracle
-    template recompute / dependency_artifact export scan) still pin this table
-    until those paths are drained. Parent maps, locus indexes, and symtable
-    caches that had no production callers were deleted rather than rewritten.
-    """
-    return _parsed(source, filename)

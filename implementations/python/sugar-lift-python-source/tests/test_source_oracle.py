@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-import ast
 import os
 from pathlib import Path
 import sys
 
 import pytest
 
+from sugar_lift_python_source import typed_node_api as typed
 from sugar_lift_python_source.bind_lifter import (
     _body_source_locator,
     lift_source,
@@ -142,8 +142,13 @@ def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(src, encoding="utf-8")
-    tree = ast.parse(src, filename=rel)
-    fn = next(n for n in ast.walk(tree) if getattr(n, "name", "") == "get_signature")
+    tree = typed.parse(src, filename=rel)
+    fn = next(
+        n
+        for n in typed.walk(tree)
+        if isinstance(n, (typed.FunctionDef, typed.AsyncFunctionDef))
+        and n.name == "get_signature"
+    )
     full = _body_source_locator(fn, rel, src.splitlines(keepends=True))
     memento = dict(source_memento_of(full))
     memento["source_function_name"] = "Algo.get_signature"
@@ -164,8 +169,9 @@ def test_oracle_resolves_statement_memento_exactly(tmp_path: Path) -> None:
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(src, encoding="utf-8")
-    tree = ast.parse(src, filename=rel)
+    tree = typed.parse(src, filename=rel)
     fn = tree.body[0]
+    assert isinstance(fn, typed.FunctionDef)
     stmt = fn.body[0]
     source = "assert [1, 2, 3].map(lambda x: x + 1) == [2, 3, 4]"
     template = stmt_to_template(stmt, function_param_names(fn))

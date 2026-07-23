@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 
 from sugar_lift_python_source import source_tables
+from sugar_lift_python_source import source_tables_adapter
 from sugar_lift_python_source.source_tables import (
     SOURCE_TABLE_CAPACITY,
     parsed_tree,
@@ -18,6 +19,7 @@ from sugar_lift_python_source.source_tables import (
 def test_capacity_is_finite_and_positive() -> None:
     assert SOURCE_TABLE_CAPACITY > 0
     assert SOURCE_TABLE_CAPACITY == 64
+    assert source_tables_adapter.SOURCE_TABLE_CAPACITY == SOURCE_TABLE_CAPACITY
 
 
 def test_source_tables_are_lru_bounded_not_unbounded() -> None:
@@ -30,8 +32,8 @@ def test_source_tables_are_lru_bounded_not_unbounded() -> None:
         # lru_cache exposes maxsize; None would mean unbounded.
         assert info.maxsize is not None, f"{fn.__name__} must be bounded"
         assert info.maxsize == SOURCE_TABLE_CAPACITY
-    # _parsed is wrapped only via parsed_tree; check the private table.
-    assert source_tables._parsed.cache_info().maxsize == SOURCE_TABLE_CAPACITY
+    # Dual residual parse lives on the adapter, still content-keyed LRU.
+    assert source_tables_adapter._parsed.cache_info().maxsize == SOURCE_TABLE_CAPACITY
 
 
 def test_tables_evict_past_capacity_without_losing_semantics() -> None:
@@ -39,7 +41,7 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
     # Clear so the test owns the cache population.
     source_splitlines.cache_clear()
     source_lines.cache_clear()
-    source_tables._parsed.cache_clear()
+    source_tables_adapter._parsed.cache_clear()
 
     n = SOURCE_TABLE_CAPACITY + 8
     bodies = [f"x_{i} = {i}\n" for i in range(n)]
@@ -58,7 +60,7 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
     # Cache never grows past capacity.
     assert source_splitlines.cache_info().currsize <= SOURCE_TABLE_CAPACITY
     assert source_lines.cache_info().currsize <= SOURCE_TABLE_CAPACITY
-    assert source_tables._parsed.cache_info().currsize <= SOURCE_TABLE_CAPACITY
+    assert source_tables_adapter._parsed.cache_info().currsize <= SOURCE_TABLE_CAPACITY
 
 
 def test_source_segment_still_uses_line_table() -> None:
@@ -69,6 +71,32 @@ def test_source_segment_still_uses_line_table() -> None:
     segment = source_segment(source, fn)
     assert segment is not None
     assert "def f()" in segment
+
+
+def test_source_lines_matches_parser_split_including_form_feed() -> None:
+    """Form feed must NOT break a line — matches ast._splitlines_no_ff."""
+    source = "a = 1\x0cb = 2\nc = 3\n"
+    assert source_lines(source) == tuple(ast._splitlines_no_ff(source))
+    # str.splitlines would split on form feed; our table must not.
+    assert any("\x0c" in line for line in source_lines(source))
+
+
+def test_public_source_tables_module_has_no_foreign_ast_import() -> None:
+    """Construction currency: line tables never import stdlib ast."""
+    text = (
+        __import__("pathlib")
+        .Path(source_tables.__file__)
+        .read_text(encoding="utf-8")
+    )
+    tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert not any(
+                alias.name == "ast" or alias.name.startswith("ast.")
+                for alias in node.names
+            )
+        if isinstance(node, ast.ImportFrom):
+            assert not (node.module and node.module.split(".", 1)[0] == "ast")
 
 
 def test_dead_dual_path_tables_are_gone() -> None:

@@ -20,7 +20,6 @@
 
 from __future__ import annotations
 
-import ast
 import importlib.machinery
 import os
 import sys
@@ -28,6 +27,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from . import typed_node_api as typed
 from .ast_template import (
     expr_to_template,
     function_param_names,
@@ -35,7 +35,7 @@ from .ast_template import (
 )
 from .bind_lifter import _body_source_locator
 from .canonical import blake3_512_of, template_cid_of_json
-from .source_tables import parsed_tree, source_segment, source_splitlines
+from .source_tables import source_segment, source_splitlines
 
 
 def _source_file_cls():
@@ -261,12 +261,18 @@ def resolve_source_memento(
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SourceUnavailable(f"cannot read source `{path}`: {exc}") from exc
+
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    # SourceFile / typed Nodes are the sole recompute path: locate, body text,
+    # and template projection all speak typed currency (bind_lifter/ast_template
+    # already drain onto typed Nodes).
+    SourceFile, BackendCouldNotParse = _source_file_cls()
     try:
-        tree = parsed_tree(source, filename=str(path))
-    except SyntaxError as exc:
+        source_file = SourceFile((source, str(path), source_cid))
+    except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError) as exc:
         raise SourceUnavailable(f"cannot parse source `{path}`: {exc}") from exc
 
-    node = _locate_function(tree, function_name, span)
+    node = _locate_function(source_file, function_name, span)
     if node is None:
         raise SourceUnavailable(
             f"source function `{function_name}` not found in `{file}` near line "
@@ -316,13 +322,76 @@ def resolve_source_memento(
     }
 
 
+def _span_of(node: typed.AST) -> dict[str, int]:
+    return {
+        "start_line": node.lineno,
+        "start_col": node.col_offset,
+        "end_line": node.end_lineno,
+        "end_col": node.end_col_offset,
+    }
+
+
+def _locate_function(
+    source_file: Any,
+    function_name: Any,
+    span: dict[str, Any],
+) -> typed.FunctionDef | typed.AsyncFunctionDef | None:
+    """Find the typed FunctionDef matching the memento's name (and span)."""
+    start = span.get("start_line")
+    function_leaf = (
+        function_name.rsplit(".", 1)[-1] if isinstance(function_name, str) else None
+    )
+    matches = [
+        n
+        for n in source_file.functions()
+        if isinstance(n, (typed.FunctionDef, typed.AsyncFunctionDef))
+        and (
+            function_name is None or n.name == function_name or n.name == function_leaf
+        )
+    ]
+    if not matches:
+        return None
+    if isinstance(start, int) and len(matches) > 1:
+        for n in matches:
+            n_start = min((d.lineno for d in n.decorators), default=n.lineno)
+            if n_start <= start <= (n.end_lineno or n.lineno):
+                return n
+    return matches[0]
+
+
+def _locate_spanned_node(
+    fn: typed.FunctionDef | typed.AsyncFunctionDef,
+    span: dict[str, Any],
+    source_kind: str,
+) -> typed.AST | None:
+    if source_kind == "python.ast-stmt":
+        node_type: type = typed.stmt
+    elif source_kind == "python.ast-expr":
+        node_type = typed.expr
+    else:
+        return None
+    wanted = {
+        "start_line": span.get("start_line"),
+        "start_col": span.get("start_col"),
+        "end_line": span.get("end_line"),
+        "end_col": span.get("end_col"),
+    }
+    for node in fn.walk():
+        if not isinstance(node, node_type):
+            continue
+        if _span_of(node) == wanted:
+            return node
+    return None
+
+
 def _node_source_locator(
-    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+    fn: typed.FunctionDef | typed.AsyncFunctionDef,
     rel_path: str,
     source: str,
     span: dict[str, Any],
     source_kind: str,
 ) -> dict[str, Any]:
+    """Statement/expression recompute through typed Nodes only."""
     node = _locate_spanned_node(fn, span, source_kind)
     if node is None:
         raise SourceUnavailable(
@@ -335,9 +404,9 @@ def _node_source_locator(
             f"{source_kind} source node in `{rel_path}` had no source segment"
         )
     params = function_param_names(fn)
-    if isinstance(node, ast.stmt):
+    if isinstance(node, typed.stmt):
         ast_template = stmt_to_template(node, params)
-    elif isinstance(node, ast.expr):
+    elif isinstance(node, typed.expr):
         ast_template = expr_to_template(node, params)
     else:
         raise SourceUnavailable(f"unsupported source node kind `{type(node).__name__}`")
@@ -349,40 +418,6 @@ def _node_source_locator(
         "param_names": params,
         "ast_template": ast_template,
         "body_text": body_text,
-    }
-
-
-def _locate_spanned_node(
-    fn: ast.FunctionDef | ast.AsyncFunctionDef,
-    span: dict[str, Any],
-    source_kind: str,
-) -> ast.AST | None:
-    node_type: type[ast.AST]
-    if source_kind == "python.ast-stmt":
-        node_type = ast.stmt
-    elif source_kind == "python.ast-expr":
-        node_type = ast.expr
-    else:
-        return None
-    for node in ast.walk(fn):
-        if not isinstance(node, node_type):
-            continue
-        if _span_of(node) == {
-            "start_line": span.get("start_line"),
-            "start_col": span.get("start_col"),
-            "end_line": span.get("end_line"),
-            "end_col": span.get("end_col"),
-        }:
-            return node
-    return None
-
-
-def _span_of(node: ast.AST) -> dict[str, int]:
-    return {
-        "start_line": getattr(node, "lineno"),
-        "start_col": getattr(node, "col_offset"),
-        "end_line": getattr(node, "end_lineno"),
-        "end_col": getattr(node, "end_col_offset"),
     }
 
 
@@ -451,29 +486,4 @@ def importlib_library_dir(library_tag: str) -> str | None:
     return str(Path(origin).parent) if origin else None
 
 
-def _locate_function(
-    tree: ast.AST,
-    function_name: Any,
-    span: dict[str, Any],
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Find the FunctionDef matching the memento's name (and span when ambiguous)."""
-    start = span.get("start_line")
-    function_leaf = (
-        function_name.rsplit(".", 1)[-1] if isinstance(function_name, str) else None
-    )
-    matches = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and (
-            function_name is None or n.name == function_name or n.name == function_leaf
-        )
-    ]
-    if not matches:
-        return None
-    if isinstance(start, int) and len(matches) > 1:
-        for n in matches:
-            n_start = min((d.lineno for d in n.decorator_list), default=n.lineno)
-            if n_start <= start <= (n.end_lineno or n.lineno):
-                return n
-    return matches[0]
+
