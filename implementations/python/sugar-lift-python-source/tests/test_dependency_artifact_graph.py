@@ -438,3 +438,118 @@ def test_resolve_import_binding_amortizes_lexical_revalidation(tmp_path: Path) -
         f"{lexical_passes['count']} times for {n_sites} receipts from one module; "
         f"amortize revalidation (cache or batch) so this stays O(1) per module"
     )
+
+
+def test_resolve_export_amortizes_repeated_static_scans(tmp_path: Path) -> None:
+    """Red instrument: same export must not re-walk module AST per receipt.
+
+    After revalidation amortization, megamodule call-frame preconstruction still
+    paid a full static export scan per import-use receipt (many repeats of the
+    same symbol). Structural export resolution is pure in
+    (distribution, module, name); recompute frequency must be O(unique exports).
+    """
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_python_source import dependency_export_adapter as de
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source="def build(value):\n    return value\n",
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    de.clear_export_resolution_cache()
+
+    n_sites = 8
+    lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
+    source = "\n".join(lines) + "\n"
+    path = tmp_path / "consumer_export_many.py"
+    path.write_text(source, encoding="utf-8")
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    receipts, outcomes = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+    assert len(receipts) == n_sites
+
+    scans = {"count": 0}
+    original_block = de._export_block
+
+    def counting_export_block(statements, name, initial):
+        scans["count"] += 1
+        return original_block(statements, name, initial)
+
+    de._export_block = counting_export_block
+    try:
+        results = [resolve_import_binding(receipt, graph=graph) for receipt in receipts]
+    finally:
+        de._export_block = original_block
+        de.clear_export_resolution_cache()
+
+    assert all(isinstance(item, ResolvedPythonObjectV1) for item in results)
+    # First receipt: package reexport walk + implementation definition (2).
+    # Further receipts must hit the top-level export cache (no more scans).
+    assert scans["count"] <= 2, (
+        f"resolve_export re-ran _export_block {scans['count']} times for "
+        f"{n_sites} receipts of the same symbol; amortize export resolution"
+    )
+    # Same import binding → same resolved object identity; definition is shared.
+    assert len({item.definition.fragment_cid for item in results}) == 1
+    assert len({item.module_name for item in results}) == 1
+
+
+def test_resolve_source_visible_frame_amortizes_repeated_materialize(
+    tmp_path: Path,
+) -> None:
+    """Red instrument: same definition must not re-SourceFile per receipt.
+
+    ``resolve_source_visible_frame`` materializes the target module and may
+    sugar class bases. Repeating that per call-site receipt dominated
+    megamodule preconstruction after export amortization.
+    """
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_python_source import manager_construction as mc
+    from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
+    from sugar_source_tree.tree import SourceFile
+
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source="def build(value):\n    return value\n",
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    mc.clear_source_visible_frame_cache()
+
+    n_sites = 6
+    lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
+    source = "\n".join(lines) + "\n"
+    path = tmp_path / "consumer_frame_many.py"
+    path.write_text(source, encoding="utf-8")
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    receipts, _ = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+    resolved = [resolve_import_binding(r, graph=graph) for r in receipts]
+    assert all(isinstance(item, ResolvedPythonObjectV1) for item in resolved)
+
+    materializations = {"count": 0}
+    original_sf = SourceFile
+
+    class CountingSourceFile(original_sf):
+        def __init__(self, *args, **kwargs):
+            materializations["count"] += 1
+            super().__init__(*args, **kwargs)
+
+    mc.SourceFile = CountingSourceFile  # type: ignore[misc, assignment]
+    try:
+        frames = [
+            resolve_source_visible_frame(item, graph=graph) for item in resolved
+        ]
+    finally:
+        mc.SourceFile = original_sf  # type: ignore[misc, assignment]
+        mc.clear_source_visible_frame_cache()
+
+    assert all(isinstance(item, tuple) for item in frames)
+    assert materializations["count"] <= 1, (
+        f"resolve_source_visible_frame re-materialized SourceFile "
+        f"{materializations['count']} times for {n_sites} receipts of one "
+        f"definition; amortize source-visible frame projection"
+    )
