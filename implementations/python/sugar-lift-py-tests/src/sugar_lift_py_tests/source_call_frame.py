@@ -158,8 +158,7 @@ class SourceVisibleCallFrameV1:
             )
         )
         scope = dict(zip(self.parameters, entries, strict=True))
-        body = self.owner._source_visible_body(scope)
-        return replace(self, body=body, runtime_entries=entries)
+        return replace(self, runtime_entries=entries)
 
     def _tuple_node(self, values: tuple):
         from sugar_source_tree.backend import Children, materialize

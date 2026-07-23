@@ -54,6 +54,30 @@ class ExitTypeCoordinate(FloorValue):
 
         return ctor("python:exit_type", [str_const(self.face_id)])
 
+    def test_python_subtype(self, supertype, site):
+        from sugar_lift_py_tests.floor import ClassValue, SymbolicValue, TupleValue
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        if type(supertype) is TupleValue:
+            return supertype.test_python_subtype(self, site)
+        if not isinstance(supertype, (ClassValue, SymbolicValue)):
+            return _dynamic_subtype_operand(self, supertype, site)
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "python.subtype",
+                    [
+                        self.to_term(owner="python.issubclass subtype"),
+                        supertype.to_term(owner="python.issubclass supertype"),
+                    ],
+                ),
+                site,
+                operand_callsites=(*self.callsites(), *supertype.callsites()),
+            )
+        )
+
 
 @dataclass(frozen=True)
 class ExitValueCoordinate(FloorValue):
@@ -94,3 +118,16 @@ class ExitTracebackCoordinate(FloorValue):
         from sugar_lift_py_tests.ir import ctor, str_const
 
         return ctor("python:exit_traceback", [str_const(self.face_id)])
+
+
+def _dynamic_subtype_operand(subtype, supertype, site):
+    del subtype
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="ExitTypeCoordinate.test_python_subtype",
+        blame=str(site),
+        observed=type(supertype).__name__,
+        requested="authenticated class, tuple-of-classes, or symbolic type operand",
+        fix="construct the Python type operand or keep issubclass loudly unsupported",
+    )

@@ -85,7 +85,7 @@ class CallSiteSugar(Sugar):
             from sugar_lift_py_tests.callable_application import CallableApplication
             from sugar_lift_py_tests.floor import BuiltinSemanticCallable
 
-            receiver = ctx.temporal.value_for(self.target_name)
+            receiver = ctx.temporal.value_if_bound(self.target_name)
             if isinstance(receiver, BuiltinSemanticCallable):
                 return receiver.callable_application_with(
                     CallableApplication(
@@ -160,7 +160,14 @@ class CallSiteSugar(Sugar):
                 exception_type_coordinate=self.exception_type_coordinate,
                 exception_type_mro=self.exception_type_mro,
                 source_call_frame_cid=source_frame_cid,
-                formal_coordinate_cids=(),
+                formal_coordinate_cids=(
+                    tuple(
+                        item.cid
+                        for item in self.source_call_frame.formal_coordinates
+                    )
+                    if self.source_call_frame is not None
+                    else ()
+                ),
             )
         )
 
