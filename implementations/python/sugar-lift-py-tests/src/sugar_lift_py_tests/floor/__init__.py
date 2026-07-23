@@ -76,6 +76,7 @@ from .testimony_value import TestimonyValue
 from .tuple_literal_value import TupleLiteralValue
 from .tuple_value import TupleValue
 from .universe_value import UniverseValue
+from .unpack_value_binding import GuardedUnpackValueBinding, UnpackValueBinding
 
 REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
@@ -108,6 +109,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     GuardedValue,
     GuardedReturn,
     GroundSequenceRepetitionValue,
+    GuardedUnpackValueBinding,
     GuardedScopeRebind,
     ImportAliasValue,
     LambdaCallable,
@@ -135,6 +137,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     TestimonyValue,
     TupleLiteralValue,
     TupleValue,
+    UnpackValueBinding,
     UniverseValue,
     EffectCoordinate,
     ExceptionInfoCoordinate,
@@ -180,6 +183,7 @@ __all__ = [
     "GuardedValue",
     "GuardedReturn",
     "GroundSequenceRepetitionValue",
+    "GuardedUnpackValueBinding",
     "GuardedScopeRebind",
     "ImportAliasValue",
     "LambdaCallable",
@@ -214,6 +218,7 @@ __all__ = [
     "TestimonyValue",
     "TupleLiteralValue",
     "TupleValue",
+    "UnpackValueBinding",
     "UniverseValue",
     "REGISTERED_FLOOR_TYPES",
     "require_floor_dispatch_surface",

@@ -65,6 +65,14 @@ from .binding_state import (
     branch_result_slot,
     join_binding_state,
 )
+from .unpack_assignment import (
+    Position,
+    UnpackAssignmentSlot,
+    UnpackNamePattern,
+    UnpackSequencePattern,
+    pattern_bindings,
+    unpack_assignment_slot,
+)
 
 
 # Scope metadata travels beside temporal bindings under an unforgeable key.
@@ -1250,12 +1258,103 @@ class Assign(Statement):
         being defined, not referenced -- so they are never substituted (that
         would rewrite the name being bound). The binding this introduces for the
         rest of the block is reported by substitution_binding()."""
-        from .shadow import rewrite
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of, rewrite
 
         new_value, changed = self._substitute_field(self.value, scope)
+        pattern = (
+            self._name_unpack_pattern(self.targets[0])
+            if len(self.targets) == 1
+            else None
+        )
+        if pattern is not None and self._requires_symbolic_unpack(pattern, new_value):
+            slot = unpack_assignment_slot(self.fragment, pattern)
+            desc = self.ref.describe()
+            slots = []
+            for name, backend_slot in desc.slots:
+                if name == "value":
+                    slots.append((name, Child(_handle_of(new_value))))
+                else:
+                    slots.append((name, backend_slot))
+            slots.extend(
+                (
+                    ("unpack_assignment_slot_id", Leaf(slot.slot_id)),
+                    ("unpack_pattern", Leaf(pattern)),
+                )
+            )
+            return materialize(
+                self.unit,
+                ShadowNode(desc.kind, desc.raw_span or self.span, tuple(slots)),
+                self.reporter,
+            )
         if not changed:
             return self
         return rewrite(self, value=new_value)
+
+    @classmethod
+    def _name_unpack_pattern(cls, target):
+        if isinstance(target, Name):
+            return UnpackNamePattern(target.id)
+        if not isinstance(target, (Tuple_, List)) or not target.elts:
+            return None
+        elements = tuple(cls._name_unpack_pattern(element) for element in target.elts)
+        if any(element is None for element in elements):
+            return None
+        return UnpackSequencePattern(
+            "tuple" if isinstance(target, Tuple_) else "list", elements
+        )
+
+    @classmethod
+    def _display_matches_pattern(cls, pattern, value):
+        if isinstance(pattern, UnpackNamePattern):
+            return True
+        if not isinstance(value, (Tuple_, List)):
+            return False
+        if len(pattern.elements) != len(value.elts):
+            return False
+        return all(
+            cls._display_matches_pattern(child_pattern, child_value)
+            for child_pattern, child_value in zip(pattern.elements, value.elts)
+        )
+
+    @classmethod
+    def _requires_symbolic_unpack(cls, pattern, value):
+        # Preserve the already-building flat display arm. A display with known
+        # incompatible shape remains loud; a nested matching display and every
+        # non-display RHS use the one-occurrence projection path.
+        if not isinstance(pattern, UnpackSequencePattern):
+            return False
+        if isinstance(value, (Tuple_, List)):
+            if not cls._display_matches_pattern(pattern, value):
+                return False
+            return any(
+                isinstance(element, UnpackSequencePattern)
+                for element in pattern.elements
+            )
+        return True
+
+    def _make_unpack_projection_ref(self, slot, pattern, name, path):
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        expected = dict(pattern_bindings(pattern)).get(name)
+        if expected != path:
+            backend_defect(
+                owner="Assign._make_unpack_projection_ref",
+                observed=f"binding {name!r} requested projection path {path!r}",
+                requested=f"the authenticated structural path {expected!r}",
+                fix="derive every name/path pair from the stored typed pattern",
+            )
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "UnpackProjectionRef",
+                self.span,
+                (("slot", Leaf(slot)), ("path", Leaf(path))),
+            ),
+            self.reporter,
+        )
 
     def _destructured_binding(self):
         # `a, b = <display>` -- a single Tuple/List target of plain Names,
@@ -1281,19 +1380,28 @@ class Assign(Statement):
             target = self.targets[0]
             if isinstance(target, Name):
                 return {target.id: self.value}
+            try:
+                slot = UnpackAssignmentSlot(self.unpack_assignment_slot_id)
+                pattern = self.unpack_pattern
+            except AttributeError:
+                pass
+            else:
+                return {
+                    name: self._make_unpack_projection_ref(slot, pattern, name, path)
+                    for name, path in pattern_bindings(pattern)
+                }
             return self._destructured_binding()
         if all(isinstance(t, Name) for t in self.targets):
             return {t.id: self.value for t in self.targets}
         return None
 
     def _construct_sugar(self):
-        """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
-        the deferred source). A destructured tuple/list target or a chained
-        `x = y = e` whose binding threaded constructs MultiAssignSugar -- both
-        are inert once substitute has done its work, exactly like the single
-        Name case. Any shape whose binding did NOT thread (attribute/subscript
-        targets, starred/nested tuples, arity mismatches) stays a loud gap --
-        never a partial binding rendered inert."""
+        """Construct ordinary bindings, stores, or one authenticated unpack.
+
+        Symbolic flat/nested name patterns consume the occurrence slot stored by
+        substitute. Starred and mixed store patterns remain loud; a representable
+        symbolic pattern arriving without its stored slot is a backend defect.
+        """
         if len(self.targets) == 1 and isinstance(self.targets[0], Name):
             from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
@@ -1304,6 +1412,32 @@ class Assign(Statement):
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
+            try:
+                slot = UnpackAssignmentSlot(self.unpack_assignment_slot_id)
+                pattern = self.unpack_pattern
+            except AttributeError:
+                slot = None
+            if slot is not None:
+                from sugar_lift_py_tests.sugar.unpack_assign_sugar import (
+                    UnpackAssignSugar,
+                )
+
+                return UnpackAssignSugar(
+                    rhs=self.value.sugar(),
+                    slot=slot,
+                    pattern=pattern,
+                    site=self.fragment,
+                )
+            candidate_pattern = self._name_unpack_pattern(self.targets[0])
+            if candidate_pattern is not None and self._requires_symbolic_unpack(
+                candidate_pattern, self.value
+            ):
+                backend_defect(
+                    owner="Assign._construct_sugar",
+                    observed="representable symbolic unpack without its stored slot",
+                    requested="consume the slot minted once by Assign.substitute",
+                    fix="route every symbolic destructuring Assign through substitution",
+                )
             bindings = self._destructured_binding()
             if bindings is None:
                 return super()._construct_sugar()
@@ -3925,6 +4059,24 @@ class BranchResultRef(Expression):
         return BranchResultRefSugar(
             slot=BranchResultSlot(self.slot_id), site=self.fragment
         )
+
+
+class UnpackProjectionRef(Expression):
+    """A typed structural read from one authenticated unpack occurrence."""
+
+    slot: UnpackAssignmentSlot
+    path: tuple[Position, ...]
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.unpack_projection_sugar import (
+            UnpackProjectionSugar,
+        )
+
+        return UnpackProjectionSugar(slot=self.slot, path=self.path, site=self.fragment)
 
 
 def _construct_binding_projection(state):

@@ -113,7 +113,7 @@ def test_nested_conditional_delete_retains_both_source_guards() -> None:
     assert completed[0].guard == or_([not_(outer), and_([outer, not_(inner)])])
 
 
-def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> None:
+def test_pandas_blocks_nested_if_augassign_reads_unpack_projection_node() -> None:
     source = (
         "def f(i, values):\n"
         " if isinstance(i, tuple):\n"
@@ -123,10 +123,12 @@ def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> 
         "  return loc\n"
     )
     function = _substituted(source)
-    reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
-    assert any(isinstance(read.state, UnboundBinding) for read in reads)
-    with pytest.raises(SugarNotWritten):
-        _out(source)
+    projections = [
+        node for node in function.walk() if node.kind == "UnpackProjectionRef"
+    ]
+    assert projections
+    assert all(projection.path for projection in projections)
+    assert isinstance(_out(source), Complete)
 
 
 def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
@@ -165,7 +167,7 @@ def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
     )
 
 
-def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None:
+def test_pandas_converter_if_augassign_reads_unpack_projection_nodes() -> None:
     source = (
         "def f(locs):\n"
         " vmin, vmax = locs\n"
@@ -175,11 +177,12 @@ def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None
         " return vmin\n"
     )
     function = _substituted(source)
-    reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
-    names = {read.name for read in reads if isinstance(read.state, UnboundBinding)}
-    assert {"vmin", "vmax"} <= names
-    with pytest.raises(SugarNotWritten):
-        _out(source)
+    projections = [
+        node for node in function.walk() if node.kind == "UnpackProjectionRef"
+    ]
+    assert len(projections) >= 2
+    assert len({projection.path for projection in projections}) == 2
+    assert isinstance(_out(source), Complete)
 
 
 def test_augassign_over_explicitly_unbound_local_builds_guarded_read() -> None:
