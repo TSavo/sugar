@@ -1826,6 +1826,17 @@ class FunctionDef(Statement):
             self.reporter,
         )
 
+    def _sugar_body_statement(self, stmt: "Node") -> object:
+        """Sugar one body statement under a Construct-body kind span."""
+        from sugar_lift_py_tests.engine_log import reduction_span
+
+        lc = stmt.line_col_span()
+        site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
+        with reduction_span(
+            sugar=f"Body.{stmt.kind}", role="construction", site=site
+        ):
+            return stmt.sugar()
+
     def _construct_sugar(self):
         """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
         each body statement's own sugar — the recursion, child-before-parent.
@@ -1888,21 +1899,50 @@ class FunctionDef(Statement):
                 from .binding_state import ConstructionTestimonyReporterV1
 
                 if loop_trace_required:
-                    testimony_reporter = ConstructionTestimonyReporterV1(
-                        self.reporter, trace_builder
-                    )
-                    construction_root = materialize(
-                        substituted.unit, substituted.ref, testimony_reporter
-                    )
-                    statements = tuple(stmt.sugar() for stmt in construction_root.body)
-                    substitution_trace = trace_builder.freeze(testimony_reporter)
+                    with reduction_span(
+                        sugar="Construct.rematerialize",
+                        role="construction",
+                        site=where,
+                    ):
+                        testimony_reporter = ConstructionTestimonyReporterV1(
+                            self.reporter, trace_builder
+                        )
+                        construction_root = materialize(
+                            substituted.unit, substituted.ref, testimony_reporter
+                        )
+                    body_stmts = construction_root.body
+                    with reduction_span(
+                        sugar="Construct.body", role="construction", site=where
+                    ):
+                        statements = tuple(
+                            self._sugar_body_statement(stmt) for stmt in body_stmts
+                        )
+                    with reduction_span(
+                        sugar="Construct.freeze_trace",
+                        role="construction",
+                        site=where,
+                    ):
+                        substitution_trace = trace_builder.freeze(
+                            testimony_reporter
+                        )
                 else:
                     # Every statement still has an immutable runtime snapshot.
                     # Only a loop consumer demands the sealed state projection;
-                    # ordinary functions retain the trace without re-hashing all
-                    # constructed ProofIR content merely for coexistence.
-                    statements = tuple(stmt.sugar() for stmt in substituted.body)
-                    substitution_trace = trace_builder.freeze()
+                    # ordinary functions retain the runtime trace without
+                    # sealing/hashing every binding (see freeze()).
+                    with reduction_span(
+                        sugar="Construct.body", role="construction", site=where
+                    ):
+                        statements = tuple(
+                            self._sugar_body_statement(stmt)
+                            for stmt in substituted.body
+                        )
+                    with reduction_span(
+                        sugar="Construct.freeze_trace",
+                        role="construction",
+                        site=where,
+                    ):
+                        substitution_trace = trace_builder.freeze()
                 bridge_source_symbol = None
                 context = self.unit.construction_context
                 workspace_root = getattr(context, "workspace_root", None)
