@@ -4,7 +4,7 @@ import csv
 import importlib.metadata
 from pathlib import Path
 
-from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ReturnValue, TermValue
 from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
@@ -237,3 +237,37 @@ def test_fixture_manager_class_bodies_construct_docstrings_and_class_fields():
     assert type(fields["claimed_suppression"]).__name__ == "TrueBoolLiteralSugar"
     assert observation.annotation_cids
     assert observation.decorator_cids
+
+
+def test_renamed_manager_inter_method_call_uses_constructed_method_frame(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedGuard:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def project(self):\n"
+        "        return self.marker\n\n"
+        "    def __enter__(self):\n"
+        "        return self.project()\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_guard(marker):\n"
+        "    return RenamedGuard(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="fixture-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    enter_block = protocol.enter_call.force_floor(
+        None, owner="inter-method enter", project_callsite=False
+    )
+    assert isinstance(enter_block, BlockValue)
+    returned = enter_block.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    helper_block = returned.value.force_floor(None, owner="inter-method")
+    assert isinstance(helper_block, BlockValue)
+    assert helper_block.statements == (ReturnValue(actual.value),)
