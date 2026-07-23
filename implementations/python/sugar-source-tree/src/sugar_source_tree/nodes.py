@@ -1778,7 +1778,7 @@ class ClassDef(Statement):
         unsupported = tuple(
             item
             for index, item in enumerate(self.body)
-            if not isinstance(item, (FunctionDef, Pass))
+            if not isinstance(item, (FunctionDef, ClassDef, Pass))
             and not (
                 index == 0
                 and isinstance(item, Expr)
@@ -1835,6 +1835,14 @@ class ClassDef(Statement):
             )
             for item in annotated_assignments
             if item.value is not None
+        ) + tuple(
+            ConstructedClassFieldV1(
+                item.name,
+                item.fragment.seal().cid,
+                item.sugar(),
+            )
+            for item in self.body
+            if isinstance(item, ClassDef)
         )
         return ClassDefinitionSugar(
             class_name=self.name,

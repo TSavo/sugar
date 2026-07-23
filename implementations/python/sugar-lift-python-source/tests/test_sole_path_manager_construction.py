@@ -31,7 +31,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import BindingEntryV1
-from sugar_source_tree.nodes import Call, Constant
+from sugar_source_tree.nodes import Call, ClassDef, Constant
 from sugar_source_tree.tree import SourceFile
 
 
@@ -245,6 +245,55 @@ def test_fixture_manager_class_bodies_construct_docstrings_and_class_fields():
     assert type(fields["claimed_suppression"]).__name__ == "TrueBoolLiteralSugar"
     assert observation.annotation_cids
     assert observation.decorator_cids
+
+
+def test_nested_class_member_constructs_as_exact_class_field_through_same_door():
+    source = SourceFile(
+        (
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        marker = 17\n",
+            "nested-class.py",
+            "blake3-512:" + ("34" * 64),
+        )
+    )
+    outer = next(item for item in source.root.body if isinstance(item, ClassDef))
+
+    outcome = outer.sugar().desugar()
+
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, ClassDefinitionValue)
+    nested = {field.name: field.value for field in outcome.value.class_fields}["Inner"]
+    assert isinstance(nested, ClassDefinitionValue)
+    assert nested.class_name == "Inner"
+    assert nested.class_definition_cid.startswith("blake3-512:")
+
+
+def test_decorated_method_retains_decorator_testimony_in_class_method_frame():
+    source = SourceFile(
+        (
+            "class Renamed:\n"
+            "    @wrapper\n"
+            "    def operation(self):\n"
+            "        return 1\n",
+            "decorated-method.py",
+            "blake3-512:" + ("35" * 64),
+        )
+    )
+    renamed = next(item for item in source.root.body if isinstance(item, ClassDef))
+
+    outcome = renamed.sugar().desugar()
+
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, ClassDefinitionValue)
+    method = next(item for item in outcome.value.methods if item.name == "operation")
+    assert method.source_call_frame.owner.decorators
 
 
 def test_renamed_manager_inter_method_call_uses_constructed_method_frame(tmp_path):
