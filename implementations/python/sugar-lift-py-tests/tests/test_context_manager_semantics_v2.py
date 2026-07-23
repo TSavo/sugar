@@ -15,7 +15,10 @@ from sugar_lift_py_tests.context_manager_contract import (
     NoDefaultV1,
     LiteralDefaultV1,
     ProviderValueRefV1,
-    AuthenticatedProviderValueV1,
+    AuthenticatedProviderValueCatalogV1,
+    ProviderKitKeyBindingV1,
+    ProviderValueCatalogMemberV1,
+    ResolvedProviderValueV1,
     PositionalOrKeywordV1,
     NoMessagePatternV1,
     OptionalFormalArgumentProjectionV1,
@@ -26,6 +29,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     ConstructedOperandOccurrenceV1,
     project_formal_selector_v1,
     resolve_parameter_default_v1,
+    publish_provider_value_v1,
     ProtocolResourceSemanticsV1,
     ReturnTruthinessDispositionV1,
     TotalCompletionV1,
@@ -44,6 +48,10 @@ from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.signing import Signer
 from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1
+
+
+def _cid(fill: str) -> str:
+    return "blake3-512:" + fill * 128
 
 
 def _resource(disposition=ReturnTruthinessDispositionV1()):
@@ -256,11 +264,13 @@ def test_ensure_clean_variadic_keyword_pack_projects_real_constructed_entries():
         ),
     ))
     assert isinstance(signature.parameters[2].passing, VariadicKeywordV1)
-    first = object()
-    second = object()
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+    first = NameSugar("first", None)
+    second = NameSugar("second", None)
     pack = VariadicKeywordActualV1(2, (
-        ConstructedOperandOccurrenceV1("source:1", "foo", first),
-        ConstructedOperandOccurrenceV1("source:2", "bar", second),
+        ConstructedOperandOccurrenceV1(SourceFragmentCoordinateV1(_cid("1"), 1, 0, 1, 5), "foo", first),
+        ConstructedOperandOccurrenceV1(SourceFragmentCoordinateV1(_cid("2"), 2, 0, 2, 6), "bar", second),
     ))
     assert project_formal_selector_v1(
         VariadicKeywordEntryProjectionV1(2, "bar"),
@@ -277,13 +287,15 @@ def test_variadic_parameter_with_non_value_sort_is_loud():
 
 
 def test_real_positional_and_mapping_pack_projections_preserve_occurrence_identity():
-    positional_value = object()
-    mapping_value = object()
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+    positional_value = NameSugar("positional", None)
+    mapping_value = NameSugar("mapping", None)
     positional = VariadicPositionalActualV1(0, (
-        ConstructedOperandOccurrenceV1("source:*args:0", None, positional_value),
+        ConstructedOperandOccurrenceV1(SourceFragmentCoordinateV1(_cid("3"), 1, 0, 1, 10), None, positional_value),
     ))
     mapping = VariadicKeywordActualV1(1, (
-        ConstructedOperandOccurrenceV1("source:**mapping:key", "key", mapping_value),
+        ConstructedOperandOccurrenceV1(SourceFragmentCoordinateV1(_cid("4"), 2, 0, 2, 12), "key", mapping_value),
     ))
     assert project_formal_selector_v1(
         VariadicPositionalElementProjectionV1(0, 0), fixed_actuals={},
@@ -300,9 +312,53 @@ def test_real_positional_and_mapping_pack_projections_preserve_occurrence_identi
         )
     with pytest.raises(ContextManagerContractError, match="unique real keywords"):
         VariadicKeywordActualV1(1, (
-            ConstructedOperandOccurrenceV1("source:one", "same", object()),
-            ConstructedOperandOccurrenceV1("source:two", "same", object()),
+            ConstructedOperandOccurrenceV1(SourceFragmentCoordinateV1(_cid("5"), 3, 0, 3, 4), "same", NameSugar("one", None)),
+            ConstructedOperandOccurrenceV1(SourceFragmentCoordinateV1(_cid("6"), 4, 0, 4, 4), "same", NameSugar("two", None)),
         ))
+
+
+def test_source_call_variadic_projection_returns_the_exact_constructed_child(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_source_tree.nodes import Call
+    from sugar_source_tree.tree import SourceFile
+
+    path = tmp_path / "actual.py"
+    path.write_text("def f():\n    ensure_clean(foo=side_effect())\n")
+    call = next(
+        node for node in SourceFile(path_source(str(path))).nodes()
+        if isinstance(node, Call) and getattr(node.func, "id", None) == "ensure_clean"
+    )
+    call_sugar = call.sugar()
+    constructed_child = call_sugar.keywords[0][1]
+    span = call.keywords[0].value.line_col_span()
+    occurrence = SourceFragmentCoordinateV1(
+        call.unit.source_cid, span.start_line, span.start_col, span.end_line, span.end_col
+    )
+    pack = VariadicKeywordActualV1(2, (
+        ConstructedOperandOccurrenceV1(occurrence, "foo", constructed_child),
+    ))
+
+    projected = project_formal_selector_v1(
+        VariadicKeywordEntryProjectionV1(2, "foo"), fixed_actuals={},
+        variadic_positional_actuals={}, variadic_keyword_actuals={2: pack},
+    )
+
+    assert projected is constructed_child
+
+
+def test_fabricated_variadic_occurrence_wrapper_is_loud():
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+    with pytest.raises(ContextManagerContractError, match="constructed operand occurrence"):
+        ConstructedOperandOccurrenceV1(
+            "source:invented", "key", NameSugar("real-child", None)
+        )
+    with pytest.raises(ContextManagerContractError, match="constructed operand occurrence"):
+        ConstructedOperandOccurrenceV1(
+            SourceFragmentCoordinateV1(_cid("7"), 1, 0, 1, 1), "key", object()
+        )
 
 
 def test_cross_kind_variadic_selectors_are_loud():
@@ -338,7 +394,7 @@ def test_malformed_variadic_signature_is_loud(mutation):
         decode_import_signature_v2(wire)
 
 
-def test_authenticated_defaults_round_trip_and_provider_refs_resolve_only_from_testimony():
+def test_authenticated_defaults_round_trip_and_provider_refs_resolve_only_from_catalog():
     provider_cid = "blake3-512:" + "d" * 128
     signature = ImportSignatureV2((
         CallParameterV1("mode", PrimitiveSort("String"), KeywordOnlyV1(), False, LiteralDefaultV1({"kind": "const", "value": "r", "sort": {"kind": "primitive", "name": "String"}})),
@@ -346,25 +402,106 @@ def test_authenticated_defaults_round_trip_and_provider_refs_resolve_only_from_t
     ))
     wire = json.loads(encode_jcs(import_signature_to_value(signature)))
     assert decode_import_signature_v2(wire) == signature
-    authenticated_value = object()
-    testimony = AuthenticatedProviderValueV1(
-        value=authenticated_value,
-        sort=PrimitiveSort("Value"),
+    from sugar_lift_py_tests.signing import Signer
+    signer = Signer(bytes(range(32)), "provider")
+    sealed = publish_provider_value_v1(
+        provider_kit_cid=_cid("a"), signer_key_id="provider-key",
+        sort=PrimitiveSort("Value"), value={"kind": "provider-coordinate", "export": "Warning"},
+        signer=signer, declared_at="2026-07-23T00:00:00.000Z",
     )
-    assert resolve_parameter_default_v1(
-        signature.parameters[1], {provider_cid: testimony}
-    ) is authenticated_value
+    value_cid = json.loads(sealed.canonical_bytes)["header"]["payloadCid"]
+    parameter = CallParameterV1(
+        "category", PrimitiveSort("Value"), KeywordOnlyV1(), False,
+        ProviderValueRefV1(value_cid, PrimitiveSort("Value")),
+    )
+    binding = ProviderKitKeyBindingV1(_cid("a"), "provider-key", signer.pubkey_string())
+    member = ProviderValueCatalogMemberV1(sealed.cid, sealed.canonical_bytes)
+    catalog = AuthenticatedProviderValueCatalogV1(binding, {value_cid: member})
+    resolved = resolve_parameter_default_v1(parameter, catalog)
+    assert isinstance(resolved, ResolvedProviderValueV1)
+    assert resolved.member_cid == sealed.cid
+    assert resolved.provider_kit_cid == _cid("a")
     with pytest.raises(ContextManagerContractError, match="unresolved provider default"):
-        resolve_parameter_default_v1(signature.parameters[1], {})
+        resolve_parameter_default_v1(parameter, AuthenticatedProviderValueCatalogV1(binding, {}))
+
+
+def test_forged_stale_and_wrong_provider_defaults_are_loud():
+    from sugar_lift_py_tests.signing import Signer
+    signer = Signer(bytes(range(32)), "provider")
+    sealed = publish_provider_value_v1(
+        provider_kit_cid=_cid("a"), signer_key_id="provider-key",
+        sort=PrimitiveSort("Value"), value={"kind": "provider-coordinate", "export": "Warning"},
+        signer=signer, declared_at="2026-07-23T00:00:00.000Z",
+    )
+    value_cid = json.loads(sealed.canonical_bytes)["header"]["payloadCid"]
+    parameter = CallParameterV1(
+        "category", PrimitiveSort("Value"), KeywordOnlyV1(), False,
+        ProviderValueRefV1(value_cid, PrimitiveSort("Value")),
+    )
+    binding = ProviderKitKeyBindingV1(_cid("a"), "provider-key", signer.pubkey_string())
+
+    forged = json.loads(sealed.canonical_bytes)
+    forged["header"]["payload"]["value"]["export"] = "Forged"
+    with pytest.raises(ContextManagerContractError, match="content CID"):
+        resolve_parameter_default_v1(
+            parameter,
+            AuthenticatedProviderValueCatalogV1(binding, {
+                value_cid: ProviderValueCatalogMemberV1(
+                    sealed.cid, json.dumps(forged).encode()
+                )
+            }),
+        )
+
+    stale_cid = _cid("b")
+    stale_parameter = CallParameterV1(
+        "category", PrimitiveSort("Value"), KeywordOnlyV1(), False,
+        ProviderValueRefV1(stale_cid, PrimitiveSort("Value")),
+    )
+    with pytest.raises(ContextManagerContractError, match="content CID"):
+        resolve_parameter_default_v1(
+            stale_parameter,
+            AuthenticatedProviderValueCatalogV1(binding, {
+                stale_cid: ProviderValueCatalogMemberV1(
+                    sealed.cid, sealed.canonical_bytes
+                )
+            }),
+        )
+
+    wrong_signer = Signer(bytes([9] * 32), "other-provider")
+    wrong_binding = ProviderKitKeyBindingV1(
+        _cid("a"), "provider-key", wrong_signer.pubkey_string()
+    )
+    with pytest.raises(ContextManagerContractError, match="provider signer"):
+        resolve_parameter_default_v1(
+            parameter,
+            AuthenticatedProviderValueCatalogV1(wrong_binding, {
+                value_cid: ProviderValueCatalogMemberV1(
+                    sealed.cid, sealed.canonical_bytes
+                )
+            }),
+        )
+
+    wrong_sort_member = publish_provider_value_v1(
+        provider_kit_cid=_cid("a"), signer_key_id="provider-key",
+        sort=PrimitiveSort("String"),
+        value={"kind": "provider-coordinate", "export": "Warning"},
+        signer=signer, declared_at="2026-07-23T00:00:00.000Z",
+    )
+    wrong_sort_cid = json.loads(
+        wrong_sort_member.canonical_bytes
+    )["header"]["payloadCid"]
+    wrong_sort_parameter = CallParameterV1(
+        "category", PrimitiveSort("Value"), KeywordOnlyV1(), False,
+        ProviderValueRefV1(wrong_sort_cid, PrimitiveSort("Value")),
+    )
     with pytest.raises(ContextManagerContractError, match="provider default sort"):
         resolve_parameter_default_v1(
-            signature.parameters[1],
-            {
-                provider_cid: AuthenticatedProviderValueV1(
-                    value=authenticated_value,
-                    sort=PrimitiveSort("String"),
+            wrong_sort_parameter,
+            AuthenticatedProviderValueCatalogV1(binding, {
+                wrong_sort_cid: ProviderValueCatalogMemberV1(
+                    wrong_sort_member.cid, wrong_sort_member.canonical_bytes
                 )
-            },
+            }),
         )
 
 
@@ -380,7 +517,12 @@ def test_optional_expected_and_value_message_formals_rely_on_authenticated_actua
     )
     assert decode_context_manager_semantics_v1(_wire(semantics), signature) == semantics
     with pytest.raises(ContextManagerContractError, match="unresolved provider default"):
-        resolve_parameter_default_v1(signature.parameters[0], {})
+        resolve_parameter_default_v1(
+            signature.parameters[0],
+            AuthenticatedProviderValueCatalogV1(
+                ProviderKitKeyBindingV1(_cid("e"), "missing", "ed25519:" + "A" * 44), {}
+            ),
+        )
 
 
 def test_optional_parameter_without_authenticated_default_is_loud():

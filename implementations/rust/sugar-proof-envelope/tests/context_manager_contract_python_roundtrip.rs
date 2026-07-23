@@ -352,13 +352,27 @@ import json
 from sugar_lift_py_tests.context_manager_contract import *
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.signing import Signer
-default_cid = 'blake3-512:' + 'd' * 128
+provider_kit_cid = 'blake3-512:' + 'a' * 128
+signer = Signer(bytes(range(32)), 'fixture-provider')
+value_member = publish_provider_value_v1(
+  provider_kit_cid=provider_kit_cid, signer_key_id='fixture-provider-key',
+  sort=PrimitiveSort('Value'), value={'kind':'provider-coordinate','export':'Warning'},
+  signer=signer, declared_at='2026-07-23T00:00:00.000Z')
+value_raw = json.loads(value_member.canonical_bytes)
+default_cid = value_raw['header']['payloadCid']
 signature = ImportSignatureV2((
   CallParameterV1('expected_warning', PrimitiveSort('Value'), PositionalOrKeywordV1(), False, ProviderValueRefV1(default_cid, PrimitiveSort('Value'))),
   CallParameterV1('match', PrimitiveSort('Value'), KeywordOnlyV1(), False, LiteralDefaultV1({'kind':'ctor','name':'None','args':[]})),
 ))
-m = publish_effect_boundary_context_manager_contract(bridge_source_symbol='context-manager:fixture.warning', import_signature=signature, mode=ExpectsModeV1(), effect_kind=WarningEffectKindV1(), expected_type_operand=FormalArgumentProjectionV1(0), message_pattern_operand=OptionalFormalArgumentProjectionV1(1), binding=WarningObservationBindingV1(), source_warrants=(), signer=Signer(bytes(range(32)), 'fixture-provider'), declared_at='2026-07-23T00:00:00.000Z')
-print(json.dumps({'cid':m.cid,'member':json.loads(m.canonical_bytes)}))
+m = publish_effect_boundary_context_manager_contract(bridge_source_symbol='context-manager:fixture.warning', import_signature=signature, mode=ExpectsModeV1(), effect_kind=WarningEffectKindV1(), expected_type_operand=FormalArgumentProjectionV1(0), message_pattern_operand=OptionalFormalArgumentProjectionV1(1), binding=WarningObservationBindingV1(), source_warrants=(), signer=signer, declared_at='2026-07-23T00:00:00.000Z')
+binding = ProviderKitKeyBindingV1(provider_kit_cid, 'fixture-provider-key', signer.pubkey_string())
+catalog = AuthenticatedProviderValueCatalogV1(binding, {
+  default_cid: ProviderValueCatalogMemberV1(value_member.cid, value_member.canonical_bytes)
+})
+resolved = resolve_parameter_default_v1(signature.parameters[0], catalog)
+assert resolved.member_cid == value_member.cid
+assert resolved.payload_cid == default_cid
+print(json.dumps({'cid':m.cid,'member':json.loads(m.canonical_bytes),'valueCid':default_cid}))
 "#;
     let output = Command::new("python3")
         .env("PYTHONPATH", python_path)
@@ -381,7 +395,7 @@ print(json.dumps({'cid':m.cid,'member':json.loads(m.canonical_bytes)}))
     assert!(matches!(
         &cm.import_signature.parameters[0].default,
         ParameterDefaultV1::ProviderValueRef { value_ref_cid, sort }
-            if value_ref_cid == &format!("blake3-512:{}", "d".repeat(128))
+            if value_ref_cid == wire["valueCid"].as_str().unwrap()
                 && sort == &Sort::Primitive { name: "Value".into() }
     ));
     assert_eq!(

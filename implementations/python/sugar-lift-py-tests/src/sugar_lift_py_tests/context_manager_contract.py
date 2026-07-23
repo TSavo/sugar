@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 from .canonicalizer import blake3_512_of, encode_jcs, varr, vobj, vstr
 from .claim_envelope import ClaimEnvelope, _assemble_layered
@@ -229,11 +233,54 @@ class ProviderValueRefV1:
 
 
 @dataclass(frozen=True)
-class AuthenticatedProviderValueV1:
-    """Catalog-resolved provider value testimony used by optional defaults."""
+class ProviderKitKeyBindingV1:
+    provider_kit_cid: str
+    signer_key_id: str
+    signer_public_key: str
 
-    value: Any
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"blake3-512:[0-9a-f]{128}", self.provider_kit_cid) is None:
+            raise ContextManagerContractError("provider key binding requires a provider kit CID")
+        if not self.signer_key_id or not self.signer_public_key.startswith("ed25519:"):
+            raise ContextManagerContractError("provider key binding requires an authorized signer")
+
+
+@dataclass(frozen=True)
+class ProviderValueCatalogMemberV1:
+    member_cid: str
+    canonical_bytes: bytes
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"blake3-512:[0-9a-f]{128}", self.member_cid) is None \
+                or not isinstance(self.canonical_bytes, bytes):
+            raise ContextManagerContractError("provider value catalog member is malformed")
+
+
+@dataclass(frozen=True)
+class AuthenticatedProviderValueCatalogV1:
+    key_binding: ProviderKitKeyBindingV1
+    members_by_value_cid: Mapping[str, ProviderValueCatalogMemberV1]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key_binding, ProviderKitKeyBindingV1):
+            raise ContextManagerContractError("provider value catalog requires a key binding")
+        if not isinstance(self.members_by_value_cid, Mapping):
+            raise ContextManagerContractError("provider value catalog requires canonical members")
+        for cid, member in self.members_by_value_cid.items():
+            if re.fullmatch(r"blake3-512:[0-9a-f]{128}", cid) is None \
+                    or not isinstance(member, ProviderValueCatalogMemberV1):
+                raise ContextManagerContractError("provider value catalog member is malformed")
+
+
+@dataclass(frozen=True)
+class ResolvedProviderValueV1:
+    """Opaque projection verified from one provider-signed canonical member."""
+
+    member_cid: str
+    payload_cid: str
+    provider_kit_cid: str
     sort: Sort
+    value_jcs: str
 
 
 @dataclass(frozen=True)
@@ -314,9 +361,27 @@ ContextManagerSemanticsV1 = ProtocolResourceSemanticsV1 | EffectBoundarySemantic
 
 @dataclass(frozen=True)
 class ConstructedOperandOccurrenceV1:
-    occurrence: Any
+    occurrence: SourceFragmentCoordinateV1
     keyword: str | None
-    value: Any
+    value: Sugar
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+        if not isinstance(self.occurrence, SourceFragmentCoordinateV1) \
+                or not isinstance(self.value, Sugar):
+            raise ContextManagerContractError(
+                "constructed operand occurrence requires a source coordinate and Sugar child"
+            )
+        if self.keyword is not None and (
+            not isinstance(self.keyword, str) or not self.keyword
+        ):
+            raise ContextManagerContractError(
+                "constructed operand occurrence keyword must be nonempty"
+            )
 
 
 @dataclass(frozen=True)
@@ -380,7 +445,7 @@ def project_formal_selector_v1(
 
 def resolve_parameter_default_v1(
     parameter: CallParameterV1,
-    provider_values: Mapping[str, AuthenticatedProviderValueV1],
+    provider_catalog: AuthenticatedProviderValueCatalogV1,
 ):
     default = parameter.default
     if isinstance(default, NoDefaultV1):
@@ -388,17 +453,16 @@ def resolve_parameter_default_v1(
     if isinstance(default, LiteralDefaultV1):
         return default.value
     if isinstance(default, ProviderValueRefV1):
-        try:
-            testimony = provider_values[default.value_ref_cid]
-        except KeyError as exc:
-            raise ContextManagerContractError("unresolved provider default") from exc
-        if not isinstance(testimony, AuthenticatedProviderValueV1):
+        if not isinstance(provider_catalog, AuthenticatedProviderValueCatalogV1):
             raise ContextManagerContractError(
-                "provider default lacks authenticated value testimony"
+                "provider default requires an authenticated provider catalog"
             )
-        if testimony.sort != default.sort or testimony.sort != parameter.sort:
+        resolved = _resolve_provider_value_member_v1(
+            default.value_ref_cid, provider_catalog
+        )
+        if resolved.sort != default.sort or resolved.sort != parameter.sort:
             raise ContextManagerContractError("provider default sort mismatch")
-        return testimony.value
+        return resolved
     raise ContextManagerContractError("unknown authenticated default")
 
 
@@ -595,6 +659,110 @@ def publish_context_manager_contract(
         ("producedAt", vstr(declared_at)),
     ])
     return _assemble_layered(header, metadata, declared_at, signer.seed, payload_cid)
+
+
+def publish_provider_value_v1(
+    *, provider_kit_cid: str, signer_key_id: str, sort: Sort,
+    value: Mapping[str, object], signer: Signer, declared_at: str,
+) -> ClaimEnvelope:
+    """Seal one provider-owned opaque value coordinate for signature defaults."""
+    if re.fullmatch(r"blake3-512:[0-9a-f]{128}", provider_kit_cid) is None:
+        raise ContextManagerContractError("provider value requires a provider kit CID")
+    if not signer_key_id or not isinstance(value, Mapping):
+        raise ContextManagerContractError("provider value requires a signer key and value preimage")
+    payload = vobj([
+        ("kind", vstr("provider-value")),
+        ("schemaVersion", vstr("1")),
+        ("sort", sort_to_value(sort)),
+        ("value", _json_value(dict(value))),
+    ])
+    payload_cid = blake3_512_of(encode_jcs(payload).encode())
+    header = vobj([
+        ("schemaVersion", vstr("1")),
+        ("kind", vstr("provider-value")),
+        ("cid", vstr(payload_cid)),
+        ("payloadCid", vstr(payload_cid)),
+        ("providerKitCid", vstr(provider_kit_cid)),
+        ("signerKeyId", vstr(signer_key_id)),
+        ("sort", sort_to_value(sort)),
+        ("payload", payload),
+        ("inputCids", varr([])),
+    ])
+    metadata = vobj([
+        ("authoring", vobj([
+            ("producerKind", vstr("kit-author")),
+            ("author", vstr(signer.producer_id)),
+        ])),
+        ("producedBy", vstr(signer.producer_id)),
+        ("producedAt", vstr(declared_at)),
+    ])
+    return _assemble_layered(
+        header, metadata, declared_at, signer.seed, payload_cid
+    )
+
+
+def _resolve_provider_value_member_v1(
+    requested_cid: str,
+    catalog: AuthenticatedProviderValueCatalogV1,
+) -> ResolvedProviderValueV1:
+    try:
+        catalog_member = catalog.members_by_value_cid[requested_cid]
+    except KeyError as exc:
+        raise ContextManagerContractError("unresolved provider default") from exc
+    canonical_bytes = catalog_member.canonical_bytes
+    try:
+        raw = json.loads(canonical_bytes)
+    except (TypeError, ValueError) as exc:
+        raise ContextManagerContractError("provider default member is not canonical JSON") from exc
+    if not isinstance(raw, dict) or set(raw) != {"envelope", "header", "metadata"}:
+        raise ContextManagerContractError("provider default member is malformed")
+    envelope, header, metadata = raw["envelope"], raw["header"], raw["metadata"]
+    if not isinstance(envelope, dict) or not isinstance(header, dict) or not isinstance(metadata, dict):
+        raise ContextManagerContractError("provider default member layers are malformed")
+    actual_member_cid = blake3_512_of(encode_jcs(_json_value(envelope)).encode())
+    if actual_member_cid != catalog_member.member_cid:
+        raise ContextManagerContractError("provider default member CID is stale")
+    expected_header = {
+        "schemaVersion", "kind", "cid", "payloadCid", "providerKitCid",
+        "signerKeyId", "sort", "payload", "inputCids",
+    }
+    if set(header) != expected_header or header.get("schemaVersion") != "1" \
+            or header.get("kind") != "provider-value" or header.get("inputCids") != []:
+        raise ContextManagerContractError("provider default member header is malformed")
+    payload = header["payload"]
+    if not isinstance(payload, dict) or set(payload) != {
+        "kind", "schemaVersion", "sort", "value"
+    } or payload.get("kind") != "provider-value" or payload.get("schemaVersion") != "1":
+        raise ContextManagerContractError("provider default payload is malformed")
+    payload_cid = blake3_512_of(encode_jcs(_json_value(payload)).encode())
+    if requested_cid != payload_cid or header.get("cid") != payload_cid \
+            or header.get("payloadCid") != payload_cid:
+        raise ContextManagerContractError("provider default content CID does not match preimage")
+    binding = catalog.key_binding
+    if header.get("providerKitCid") != binding.provider_kit_cid \
+            or header.get("signerKeyId") != binding.signer_key_id \
+            or envelope.get("signer") != binding.signer_public_key:
+        raise ContextManagerContractError("provider default provider signer is not authorized")
+    signing = vobj([
+        ("header", _json_value(header)),
+        ("metadata", _json_value(metadata)),
+    ])
+    if not ed25519_verify_string(
+        binding.signer_public_key,
+        envelope.get("signature", ""),
+        encode_jcs(signing).encode(),
+    ):
+        raise ContextManagerContractError("provider default signature does not verify")
+    sort = _decode_sort(payload["sort"])
+    if _decode_sort(header["sort"]) != sort:
+        raise ContextManagerContractError("provider default sort testimony disagrees")
+    return ResolvedProviderValueV1(
+        member_cid=catalog_member.member_cid,
+        payload_cid=payload_cid,
+        provider_kit_cid=binding.provider_kit_cid,
+        sort=sort,
+        value_jcs=encode_jcs(_json_value(payload["value"])),
+    )
 
 
 def _json_value(value: Any):
