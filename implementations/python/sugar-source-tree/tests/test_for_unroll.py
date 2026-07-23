@@ -130,21 +130,17 @@ if __name__ == "__main__":
     test_tuple_target_destructures_the_concrete_element()
     test_starred_target_stays_loud()
     test_arity_mismatch_stays_loud()
-    test_jump_bearing_body_never_unrolls()
+    test_jump_bearing_body_unrolls_with_exact_break_exit()
     test_for_else_splices_after_the_unroll()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
 
 
-def test_jump_bearing_body_never_unrolls():
-    # A break/continue in the body would be duplicated verbatim by the plain
-    # unroll, silently mis-threading the carried state (Python says t == 1 here;
-    # a naive unroll would say 6). The loop itself refuses to unroll -- the
-    # panic is at For.sugar (the loop), never a wrong construction saved late
-    # by Break's own panic.
+def test_jump_bearing_body_unrolls_with_exact_break_exit():
+    # The controlled unroll consumes break at its owning loop.  It must not
+    # duplicate the jump or apply later elements: Python's exact post is 1.
     src = "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n        break\n    return t\n"
-    with pytest.raises(SugarNotWritten) as e:
-        _fn(src).sugar()
-    assert "For.sugar" in str(e.value)
+    post = _fn(src).sugar().desugar().value.post()
+    assert post.args[1].value == 1
 
 
 def test_for_else_splices_after_the_unroll():

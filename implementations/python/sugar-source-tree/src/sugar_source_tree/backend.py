@@ -43,14 +43,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from .nodes import Node, SourceUnit, Typeable, resolve_kind
+from .nodes import ControlConstructionContextV1, Node, SourceUnit, Typeable, resolve_kind
 from .operators import Operator
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
 
 
 def materialize(
-    unit: SourceUnit, ref: "BackendNode", reporter: AuditReporter = NULL_REPORTER
+    unit: SourceUnit,
+    ref: "BackendNode",
+    reporter: AuditReporter = NULL_REPORTER,
+    control_context: ControlConstructionContextV1 | None = None,
 ) -> Node:
     """Typeable -> Typed: THE construction event. Panics on MISSING kind.
 
@@ -66,7 +69,12 @@ def materialize(
     does.
     """
     cls = ref.resolve_type()
-    return cls(unit=unit, ref=ref, reporter=reporter)
+    return cls(
+        unit=unit,
+        ref=ref,
+        reporter=reporter,
+        control_context=control_context or ControlConstructionContextV1(),
+    )
 
 
 @dataclass(frozen=True)
@@ -76,9 +84,12 @@ class Child:
     handle: "BackendNode"
 
     def resolve(
-        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+        control_context: ControlConstructionContextV1 | None = None,
     ) -> Node:
-        return materialize(unit, self.handle, reporter)
+        return materialize(unit, self.handle, reporter, control_context)
 
 
 @dataclass(frozen=True)
@@ -88,9 +99,12 @@ class MaybeChild:
     handle: Optional["BackendNode"]
 
     def resolve(
-        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+        control_context: ControlConstructionContextV1 | None = None,
     ) -> Optional[Node]:
-        return None if self.handle is None else materialize(unit, self.handle, reporter)
+        return None if self.handle is None else materialize(unit, self.handle, reporter, control_context)
 
 
 @dataclass(frozen=True)
@@ -100,9 +114,12 @@ class Children:
     handles: Tuple["BackendNode", ...]
 
     def resolve(
-        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+        control_context: ControlConstructionContextV1 | None = None,
     ) -> Tuple[Node, ...]:
-        return tuple(materialize(unit, h, reporter) for h in self.handles)
+        return tuple(materialize(unit, h, reporter, control_context) for h in self.handles)
 
 
 @dataclass(frozen=True)
@@ -112,8 +129,12 @@ class Leaf:
     value: object
 
     def resolve(
-        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+        control_context: ControlConstructionContextV1 | None = None,
     ) -> object:
+        del control_context
         return self.value
 
 
@@ -124,8 +145,12 @@ class OpLeaf:
     op: Operator
 
     def resolve(
-        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+        control_context: ControlConstructionContextV1 | None = None,
     ) -> Operator:
+        del control_context
         return self.op
 
 
@@ -136,8 +161,12 @@ class OpsLeaf:
     ops: Tuple[Operator, ...]
 
     def resolve(
-        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+        control_context: ControlConstructionContextV1 | None = None,
     ) -> Tuple[Operator, ...]:
+        del control_context
         return self.ops
 
 

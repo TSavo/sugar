@@ -61,7 +61,7 @@ from .binding_state import (
     BindingState,
     BranchResultSlot,
     GuardedBinding,
-    RuntimeBindingEntryFactoryV1,
+    SubstitutionTraceBuilderV1,
     UnboundBinding,
     binding_state_read_node,
     branch_result_slot,
@@ -74,8 +74,24 @@ from .binding_state import (
 # formal without substituting a fake value for that formal.
 _LEXICALLY_BOUND_NAMES = object()
 _FUNCTION_PARAMETERS = object()
-_BINDING_ENTRY_FACTORY = object()
+_SCOPE_OWNER_CID = object()
+_SUBSTITUTION_TRACE_BUILDER = object()
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class ControlConstructionContextV1:
+    loop_targets: tuple[object, ...] = ()
+
+    def enter_loop(self, target: object) -> "ControlConstructionContextV1":
+        return ControlConstructionContextV1((*self.loop_targets, target))
+
+    def nearest_loop_target(self):
+        if not self.loop_targets:
+            from sugar_lift_py_tests.loop_construction import LoopWireError
+
+            raise LoopWireError("loop-control occurrence has no enclosing loop")
+        return self.loop_targets[-1]
 
 
 def _explicit_state(name: str, state, make_formal_ref):
@@ -138,6 +154,26 @@ class SourceUnit:
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
         object.__setattr__(self, "typed_module", module)
+
+    def loop_target_coordinate_for_loop(self, owner: "Node"):
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.loop_construction import mint_loop_target_coordinate_v1
+
+        if owner.kind not in ("For", "AsyncFor", "While"):
+            raise ValueError("loop target owner must be a loop node")
+        span = owner.line_col_span()
+        return mint_loop_target_coordinate_v1(
+            owner.kind,
+            SourceFragmentCoordinateV1(
+                self.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            ),
+        )
 
     def _require_typed_module(self, owner: str) -> "Module":
         module = self.typed_module
@@ -378,6 +414,14 @@ class Node(Typed):
     # node (``__post_init__``); every child this node resolves is constructed
     # with the same reporter, so registration flows through the whole tree.
     reporter: AuditReporter
+    control_context: ControlConstructionContextV1 = field(
+        default_factory=ControlConstructionContextV1,
+        compare=False,
+        repr=False,
+    )
+    owned_loop_target: object | None = field(
+        init=False, default=None, compare=False, repr=False
+    )
 
     # Ordered names of fields holding child nodes (Node, optional
     # Node, or tuple of Node). Leaf values (str/int/...)
@@ -391,6 +435,23 @@ class Node(Typed):
         # roll -- there is no way to new a node without it. (register only
         # records the reference; the node's fields stay lazy through ref.)
         self.reporter.register(self)
+        if isinstance(self, (For, AsyncFor, While)):
+            object.__setattr__(
+                self,
+                "owned_loop_target",
+                self.unit.loop_target_coordinate_for_loop(self),
+            )
+
+    def _child_control_context(self, field_name: str) -> ControlConstructionContextV1:
+        if isinstance(self, (For, AsyncFor, While)) and field_name == "body":
+            if self.owned_loop_target is None:
+                from sugar_lift_py_tests.loop_construction import LoopWireError
+
+                raise LoopWireError("loop node has no owned target coordinate")
+            return self.control_context.enter_loop(self.owned_loop_target)
+        if isinstance(self, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)) and field_name == "body":
+            return ControlConstructionContextV1()
+        return self.control_context
 
     def __init_subclass__(cls, **kw: object) -> None:
         super().__init_subclass__(**kw)
@@ -404,7 +465,11 @@ class Node(Typed):
             raise AttributeError(name)
         for slot_name, slot in self.ref.describe().slots:
             if slot_name == name:
-                return slot.resolve(self.unit, self.reporter)
+                return slot.resolve(
+                    self.unit,
+                    self.reporter,
+                    self._child_control_context(slot_name),
+                )
         if name in _declared_fields(type(self)):
             vocabulary_missing(
                 owner="nodes.Node.__getattr__",
@@ -647,24 +712,23 @@ class Node(Typed):
         new_items, changed, _net = self._substitute_body_tracked(statements, scope)
         return new_items, changed
 
-    def _binding_entries(self, binding, scope: BindingMap):
+    def _binding_entries(
+        self, binding: BindingMap | None, scope: BindingMap
+    ) -> BindingMap | None:
         if not binding:
             return binding
-        factory = scope.get(_BINDING_ENTRY_FACTORY)
-        if not isinstance(factory, RuntimeBindingEntryFactoryV1):
-            # External/unit callers may substitute isolated expressions without
-            # opening a function binding scope.  They do not create a runtime
-            # BindingMap; production function substitution always has a factory.
+        builder = scope.get(_SUBSTITUTION_TRACE_BUILDER)
+        if not isinstance(builder, SubstitutionTraceBuilderV1):
             return binding
-        wrapped = {}
+        wrapped: BindingMap = {}
         for local_index, (name, state) in enumerate(binding.items()):
             if isinstance(state, BindingEntryV1):
                 wrapped[name] = state
                 continue
             site, path = self._binding_site_and_path(name, local_index)
-            wrapped[name] = factory.mint_entry(
+            wrapped[name] = builder.mint_entry(
                 binding_site=site,
-                projection_path=path,
+                local_projection_path=path,
                 state=state,
             )
         return wrapped
@@ -709,6 +773,7 @@ class Node(Typed):
         new_items = []
         changed = False
         for stmt in statements:
+            pre_statement_scope = dict(scope)
             lc = stmt.line_col_span()
             with reduction_span(
                 sugar="SubstituteStatement",
@@ -743,6 +808,9 @@ class Node(Typed):
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
                 projected = stmt._binding_entries(new_stmt.bindings, scope)
                 scope = {**scope, **projected}
+            trace = scope.get(_SUBSTITUTION_TRACE_BUILDER)
+            if isinstance(trace, SubstitutionTraceBuilderV1):
+                trace.record(stmt, pre_statement_scope, scope)
         net = {k: v for k, v in scope.items() if initial.get(k) is not v}
         return (tuple(new_items) if changed else statements), changed, net
 
@@ -800,6 +868,7 @@ class Node(Typed):
         silently.
         """
         result = self._construct_sugar()
+        self.reporter.present_construction(self, result)
         self.reporter.present_fact(self)
         return result
 
@@ -1410,14 +1479,40 @@ class FunctionDef(Statement):
                         "source": self.fragment.seal().to_dict(),
                     }
                 )
+                trace_builder = SubstitutionTraceBuilderV1(scope_owner_cid)
+                loop_trace_required = any(
+                    isinstance(node, (For, AsyncFor, While))
+                    for statement in self.body
+                    for node in statement.walk()
+                )
                 substituted = self.substitute(
                     {
-                        _BINDING_ENTRY_FACTORY: RuntimeBindingEntryFactoryV1(
-                            scope_owner_cid
-                        )
+                        _SCOPE_OWNER_CID: scope_owner_cid,
+                        _SUBSTITUTION_TRACE_BUILDER: trace_builder,
                     }
                 )
             with reduction_span(sugar="Construct", role="construction", site=where):
+                from .backend import materialize
+                from .binding_state import ConstructionTestimonyReporterV1
+
+                if loop_trace_required:
+                    testimony_reporter = ConstructionTestimonyReporterV1(
+                        self.reporter, trace_builder
+                    )
+                    construction_root = materialize(
+                        substituted.unit, substituted.ref, testimony_reporter
+                    )
+                    statements = tuple(
+                        stmt.sugar() for stmt in construction_root.body
+                    )
+                    substitution_trace = trace_builder.freeze(testimony_reporter)
+                else:
+                    # Every statement still has an immutable runtime snapshot.
+                    # Only a loop consumer demands the sealed state projection;
+                    # ordinary functions retain the trace without re-hashing all
+                    # constructed ProofIR content merely for coexistence.
+                    statements = tuple(stmt.sugar() for stmt in substituted.body)
+                    substitution_trace = trace_builder.freeze()
                 bridge_source_symbol = None
                 context = self.unit.construction_context
                 workspace_root = getattr(context, "workspace_root", None)
@@ -1439,9 +1534,10 @@ class FunctionDef(Statement):
                 return FunctionUniverseSugar(
                     name=self.name,
                     formals=tuple(p.name for p in self.params),
-                    statements=tuple(stmt.sugar() for stmt in substituted.body),
+                    statements=statements,
                     site=self.fragment,
                     bridge_source_symbol=bridge_source_symbol,
+                    substitution_trace=substitution_trace,
                 )
 
 
@@ -2100,20 +2196,28 @@ class For(Statement):
         # `else` is unrollable too: the jump-guard means no `break` exists, and
         # with no break the else ALWAYS runs -- it is just more block, spliced
         # after the unrolled iterations.
-        concrete = (
-            self.target.kind in ("Name", "Tuple", "List")
-            and not self._body_has_loop_control()
-        )
+        concrete = self.target.kind in ("Name", "Tuple", "List")
         elements = self._concrete_elements(subst_iter) if concrete else None
         if elements is not None and len(elements) > self._UNROLL_FUEL:
             elements = None  # past the unroll budget: the fold/universal stands
         if elements is not None:
             bindings = [self._target_bindings(e) for e in elements]
             if all(b is not None for b in bindings):
+                if self._body_has_owned_loop_control():
+                    controlled = self._unroll_concrete_controlled(bindings, scope)
+                    if controlled is not None:
+                        statements, final_bindings = controlled
+                        return _Splice(statements, final_bindings)
+                    # A symbolic guard owns a jump.  It cannot be selected by
+                    # concrete unrolling and must remain a real loop below.
+                    elements = None
+            if elements is not None and all(b is not None for b in bindings):
                 target_names = self._bound_names_in(self.target)
                 unrolled: list = []
                 carried = dict(scope)  # carries loop variables across iterations
+                final_target_bindings = None
                 for element_bindings in bindings:
+                    final_target_bindings = element_bindings
                     iter_scope = {**carried, **element_bindings}
                     new_body, _c = self._substitute_body(self.body, iter_scope)
                     unrolled.extend(new_body)
@@ -2128,9 +2232,14 @@ class For(Statement):
                         k: v for k, v in iter_scope.items() if k not in target_names
                     }
                 if self.orelse:
-                    else_body, _c = self._substitute_body(self.orelse, carried)
+                    else_scope = (
+                        {**carried, **final_target_bindings}
+                        if final_target_bindings is not None
+                        else carried
+                    )
+                    else_body, _c = self._substitute_body(self.orelse, else_scope)
                     unrolled.extend(else_body)
-                return _Splice(tuple(unrolled))
+                return _Splice(tuple(unrolled), final_target_bindings)
 
         # Symbolic (or unsupported) loop: keep the node, mask the target AND every
         # loop-carried variable (a name the body rebinds), recurse. Masking the
@@ -2200,6 +2309,12 @@ class For(Statement):
         symbolic single-accumulator `var = var OP x` shape is a fold today."""
         if self._concrete_elements(self.iter) is not None:
             return None  # concrete unrolled in substitute
+        if self._body_has_owned_loop_control():
+            # ForUniversalSugar is valid only for fact-only loops with no
+            # possible early exit.  Jump-bearing symbolic loops require the
+            # typed recursive LoopConstructionV1 arm; never quantify over the
+            # whole iterable after a reachable break/continue.
+            return super()._construct_sugar()
         if self.orelse or self.target.kind != "Name":
             return None
         carried, facts = self._carried_and_facts()
@@ -2293,6 +2408,96 @@ class For(Statement):
             and any(n.kind in ("Break", "Continue") for n in stmt.walk())
             for stmt in self.body
         )
+
+    def _body_has_owned_loop_control(self) -> bool:
+        target_cid = self.owned_loop_target.target_cid
+        return any(
+            node.kind in ("Break", "Continue")
+            and node.control_context.nearest_loop_target().target_cid == target_cid
+            for statement in self.body
+            for node in statement.walk()
+        )
+
+    def _unroll_concrete_controlled(self, bindings, scope):
+        """Exact AST-local execution of bounded jump-bearing loop structure.
+
+        Only literal-decidable branch guards are selected.  A symbolic guard
+        returns ``None`` so the source loop remains typed and loud/opaque.
+        """
+        unrolled = []
+        carried = dict(scope)
+        final_target_bindings = None
+        broke = False
+        for element_bindings in bindings:
+            final_target_bindings = element_bindings
+            iteration = {**carried, **element_bindings}
+            reduced = self._substitute_controlled_suite(self.body, iteration)
+            if reduced is None:
+                return None
+            statements, iteration, action = reduced
+            unrolled.extend(statements)
+            target_names = self._bound_names_in(self.target)
+            carried = {
+                key: value for key, value in iteration.items() if key not in target_names
+            }
+            if action == "break":
+                broke = True
+                break
+            # continue and fallthrough both advance to the next concrete item;
+            # the controlled suite already omitted the skipped tail.
+        if not broke and self.orelse:
+            else_scope = (
+                {**carried, **final_target_bindings}
+                if final_target_bindings is not None
+                else carried
+            )
+            else_body, _changed = self._substitute_body(self.orelse, else_scope)
+            unrolled.extend(else_body)
+        return tuple(unrolled), final_target_bindings
+
+    def _substitute_controlled_suite(self, statements, scope):
+        produced = []
+        current = dict(scope)
+        for statement in statements:
+            if statement.kind == "Break":
+                return produced, current, "break"
+            if statement.kind == "Continue":
+                return produced, current, "continue"
+            if statement.kind == "If" and any(
+                node.kind in ("Break", "Continue")
+                and node.control_context.nearest_loop_target().target_cid
+                == self.owned_loop_target.target_cid
+                for node in statement.walk()
+            ):
+                test, _changed = statement._substitute_field(statement.test, current)
+                verdict = While._ground_truth(self, test)
+                if verdict is None:
+                    return None
+                branch = statement.body if verdict else statement.orelse
+                nested = For._substitute_controlled_suite(self, branch, current)
+                if nested is None:
+                    return None
+                branch_statements, current, action = nested
+                produced.extend(branch_statements)
+                if action is not None:
+                    return produced, current, action
+                continue
+            substituted = statement.substitute(current)
+            expanded = (
+                substituted.statements
+                if isinstance(substituted, _Splice)
+                else (substituted,)
+            )
+            produced.extend(expanded)
+            for item in expanded:
+                binding = item.substitution_binding(current)
+                if binding:
+                    binding = item._binding_entries(binding, current)
+                    current = {**current, **binding}
+            if isinstance(substituted, _Splice) and substituted.bindings:
+                projected = statement._binding_entries(substituted.bindings, current)
+                current = {**current, **projected}
+        return produced, current, None
 
     # The unroll budget. A concrete loop within it dissolves to its unroll; past
     # it, the SYMBOLIC form (universal / fold coordinate) stands -- not merely
@@ -2461,8 +2666,7 @@ class While(Statement):
     def _try_unroll(self, scope):
         """The unrolled statement tuple, or None if the loop is not concrete
         (condition undecidable against the carried state, or fuel exhausted)."""
-        if For._body_has_loop_control(self):
-            return None  # a jump-bearing body is not a plain unroll
+        controlled = For._body_has_owned_loop_control(self)
         carried = dict(scope)
         unrolled: list = []
         for _ in range(self._FUEL):
@@ -2477,6 +2681,15 @@ class While(Statement):
                     else_body, _c = self._substitute_body(self.orelse, carried)
                     unrolled.extend(else_body)
                 return tuple(unrolled)
+            if controlled:
+                reduced = For._substitute_controlled_suite(self, self.body, carried)
+                if reduced is None:
+                    return None
+                new_body, carried, action = reduced
+                unrolled.extend(new_body)
+                if action == "break":
+                    return tuple(unrolled)
+                continue
             new_body, _c = self._substitute_body(self.body, carried)
             unrolled.extend(new_body)
             for stmt in new_body:
@@ -3549,6 +3762,14 @@ class Break(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.loop_control_sugar import LoopControlSugar
+
+        target = self.control_context.nearest_loop_target()
+        return LoopControlSugar(
+            "break", target.target_cid, self.fragment.seal().cid, self.fragment
+        )
+
 
 class Continue(Statement):
     pass
@@ -3556,6 +3777,14 @@ class Continue(Statement):
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.loop_control_sugar import LoopControlSugar
+
+        target = self.control_context.nearest_loop_target()
+        return LoopControlSugar(
+            "continue", target.target_cid, self.fragment.seal().cid, self.fragment
+        )
 
 
 class Match(Statement):

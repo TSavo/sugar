@@ -41,6 +41,7 @@ class AuditReporter(Protocol):
 
     def register(self, node: "Node") -> None: ...
     def present_fact(self, node: "Node") -> None: ...
+    def present_construction(self, node: "Node", value: object) -> None: ...
     def present_inert(self, node: "Node") -> None: ...
     def report_gap(self, node: "Node", panic: "SugarNotWritten") -> None: ...
 
@@ -54,6 +55,9 @@ class NullReporter:
         return None
 
     def present_fact(self, node: "Node") -> None:
+        return None
+
+    def present_construction(self, node: "Node", value: object) -> None:
         return None
 
     def present_inert(self, node: "Node") -> None:
@@ -88,6 +92,9 @@ class CollectingReporter:
 
     def present_fact(self, node: "Node") -> None:
         self.present.append(node)
+
+    def present_construction(self, node: "Node", value: object) -> None:
+        return None
 
     def present_inert(self, node: "Node") -> None:
         self.present.append(node)
