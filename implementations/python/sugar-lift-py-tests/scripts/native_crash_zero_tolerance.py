@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """R_native_crashes — permanent baseline-free corpus process floor.
 
-In-process enum scan. A true signal death still kills the whole process (CI
-goes red). Per-file signal isolation is retired — process restarts destroy
-enum caches. Classification helpers remain for discrimination tests.
+Supervised persistent enum worker. A signal death is attributed to the file
+currently in flight; the worker restarts and the census continues so every
+file still gets a terminal row.
 """
 
 from __future__ import annotations
@@ -13,20 +13,17 @@ import os
 from pathlib import Path
 import signal
 import sys
-from typing import Any, NamedTuple, Sequence
+from typing import NamedTuple, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _enum_floor_runtime import (  # noqa: E402
-    iter_with_tqdm,
-    open_progress,
     prepare_floor_io,
     production_roots,
-    relative_to_root,
     require_python_paths,
-    timed_enum_file,
 )
 from _production_lift_child import production_lift_bootstrap_error  # noqa: E402
+from _supervised_enum_supervisor import FileTerminal, scan_paths  # noqa: E402
 
 
 class NativeCrashOffender(NamedTuple):
@@ -79,7 +76,7 @@ def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
     lines = [
         f"R_native_crashes = {r_native_crashes(offenders)}",
         (
-            "Replacement: corpus enumeration terminates with completed testimony, "
+            "Replacement: corpus children terminate with completed testimony, "
             "typed gap, bare-exception row, or loud timeout; never signal."
         ),
         "",
@@ -92,22 +89,24 @@ def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
     return "\n".join(lines)
 
 
-def _run_one(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
-    rel, _testimony, error, _s = timed_enum_file(
-        path, root=root, file_timeout=file_timeout
-    )
-    if isinstance(error, TimeoutError):
-        return ChildResult(rel, "timeout", None, str(error), None)
-    if error is not None:
-        return ChildResult(
-            rel,
-            "non-native-red",
-            1,
-            f"{type(error).__name__}: {error}"[-2000:],
-            None,
+def _from_terminal(row: FileTerminal) -> ChildResult:
+    if row.category == "native-crash":
+        rc = row.returncode if row.returncode is not None else -1
+        offender = native_crash_offender(
+            file=row.file, returncode=rc, stderr=row.stderr_tail
         )
-    # Process survived this file — no per-file native crash without isolation.
-    return ChildResult(rel, "completed", 0, "", None)
+        if offender is None and row.signal_name:
+            offender = NativeCrashOffender(
+                row.file, rc, row.signal_name, row.stderr_tail
+            )
+        return ChildResult(
+            row.file, "native-crash", rc, row.stderr_tail, offender
+        )
+    if row.category in {"bare-exception"}:
+        return ChildResult(
+            row.file, "non-native-red", row.returncode, row.stderr_tail, None
+        )
+    return ChildResult(row.file, row.category, row.returncode, row.stderr_tail, None)
 
 
 def audit_paths(
@@ -120,92 +119,21 @@ def audit_paths(
     progress_path: Path | None = None,
     progress_stdout: bool = False,
 ) -> AuditSummary:
-    del workers
+    del workers, checkpoint_path, progress_stdout
     if file_timeout > 30:
         raise ValueError("per-file timeout may not exceed 30 seconds")
-
-    pending = list(sorted(paths))
-    done_rows: dict[str, ChildResult] = {}
-    checkpoint = None
-    if checkpoint_path is not None:
-        from pandas_census_checkpoint import Checkpoint
-
-        files = tuple(relative_to_root(p, root) for p in pending)
-        by_rel = {relative_to_root(p, root): p for p in pending}
-        checkpoint = Checkpoint(
-            floor="native-crash", files=files, path=checkpoint_path
-        )
-        for row in checkpoint.rows():
-            raw = row["result"]
-            file = str(row["file"])
-            returncode = raw.get("returncode")
-            code = int(returncode) if isinstance(returncode, int) else None
-            stderr_tail = str(raw.get("stderrTail") or "")
-            signal_name = raw.get("signal")
-            offender = (
-                NativeCrashOffender(file, code, str(signal_name), stderr_tail)
-                if raw.get("category") == "native-crash"
-                and code is not None
-                and isinstance(signal_name, str)
-                else None
-            )
-            done_rows[file] = ChildResult(
-                file, str(raw.get("category")), code, stderr_tail, offender
-            )
-        pending = [by_rel[r] for r in checkpoint.pending_files()]
-
-    progress_stream = None
+    terminals = scan_paths(paths, root=root, file_timeout=float(file_timeout))
     if progress_path is not None:
-        progress_stream = open_progress(
-            progress_path,
-            header=(
-                f"# native-crash floor (in-process enum)\n"
-                f"# files={len(paths)} pending={len(pending)}\n"
-            ),
-        )
-    try:
-        iterator: Any = pending
-        if progress_stream is not None:
-            iterator = iter_with_tqdm(
-                pending,
-                progress=progress_stream,
-                total=len(paths),
-                initial=len(paths) - len(pending),
-                desc="native-crash",
-                progress_stdout=progress_stdout,
-            )
-        for path in iterator:
-            row = _run_one(path, root=root, file_timeout=file_timeout)
-            if checkpoint is not None:
-                checkpoint.append(
-                    row.file,
-                    {
-                        "category": row.category,
-                        "returncode": row.returncode,
-                        "stderrTail": row.stderr_tail,
-                        "signal": row.offender.signal if row.offender else None,
-                    },
-                )
-            done_rows[row.file] = row
-    finally:
-        if progress_stream is not None:
-            progress_stream.close()
-
-    if checkpoint is not None:
-        rows = tuple(
-            done_rows[f]
-            if f in done_rows
-            else ChildResult(f, "missing", None, "", None)
-            for f in checkpoint.files
-        )
-    else:
-        rows = tuple(
-            done_rows[relative_to_root(p, root)] for p in sorted(paths)
-        )
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        with progress_path.open("w", encoding="utf-8") as stream:
+            stream.write(f"# native-crash supervised enum scan files={len(paths)}\n")
+            for t in terminals:
+                stream.write(f"{t.file}\t{t.category}\n")
+    rows = tuple(_from_terminal(t) for t in terminals)
     offenders = tuple(row.offender for row in rows if row.offender is not None)
     return AuditSummary(
         discovered=len(rows),
-        completed=sum(row.category == "completed" for row in rows),
+        completed=sum(row.category in {"completed", "typed-gap"} for row in rows),
         timeouts=sum(row.category == "timeout" for row in rows),
         non_native_red=sum(row.category == "non-native-red" for row in rows),
         offenders=offenders,
@@ -263,10 +191,7 @@ def main() -> int:
         paths,
         root=args.repo_root,
         file_timeout=args.file_timeout,
-        workers=1,
-        checkpoint_path=args.checkpoint_jsonl,
         progress_path=progress_path,
-        progress_stdout=args.progress_stdout,
     )
     if args.json is not None:
         from pandas_floor_summary import floor_summary, relative_files, write_json

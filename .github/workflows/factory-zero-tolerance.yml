@@ -9,8 +9,9 @@ on:
 permissions:
   contents: read
 
-# Serialize heavy Python measurement on battleaxe self-hosted runners so floors
-# and corpus scans never compete for CPU/timeout budget.
+# ONE orchestrator for heavy kit floors. Do not put other PR workflows in this
+# concurrency group — GitHub keeps only one pending run per group, so six
+# independent workflows cancel each other even with cancel-in-progress: false.
 concurrency:
   group: sugar-python-heavy-measurement
   cancel-in-progress: false
@@ -43,9 +44,12 @@ jobs:
         run: >-
           python -m pip install
           pytest
+          tqdm
           ./implementations/python/sugar-lift-python-source
           ./implementations/python/sugar-source-tree
           ./implementations/python/sugar-lift-py-tests
+      # Heavy supervised enum floors — sequential under this one job so the
+      # complete floor set is always from one pinned run.
       - name: R_native_crashes = 0
         if: always()
         run: >-
@@ -86,11 +90,6 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/silent_zero_tolerance.py
-      # Product-completeness axis (#5252). R_silent does not subsume unclassified.
-      # Discrimination proves the instrument trips on planted residue and refuses
-      # missing measurement (never fakes R=0). Live corpus R is measured by
-      # recensus shards and gated via:
-      #   scripts/factory_walk_unclassified_law.py --from-json <shard>
       - name: R_factory_walk_unclassified discrimination
         if: always()
         run: >-
@@ -150,9 +149,6 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/no_sugar_in_desugar_law.py
-      # Permanent construction-currency floor (#6115+#6121+#6128). Dual-body
-      # residual keeps main honestly red until sugar-lift-python-source is drained;
-      # sole-path R is reported in the same instrument and must stay 0.
       - name: R_construction_side_doors discrimination
         if: always()
         run: >-
