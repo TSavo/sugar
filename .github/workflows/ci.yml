@@ -36,10 +36,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Restore Rust build (source-keyed local cache)
+      - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: restore
 
       - name: Check apt installed-package fast path
         run: tools/test-ci-apt-install.sh
@@ -47,19 +45,18 @@ jobs:
       - name: Install sugarbin hashing dependency
         run: tools/ci-apt-install.sh b3sum
 
-      - name: Build shared Rust artifacts once
+      # One door: bin/sugarbin. Content-addressed filesystem shelf.
+      # Same Rust inputs → shelf hit forever on this runner; only a source
+      # change (new stamp) rebuilds. No second cargo-target cache.
+      - name: Warm sugarbin shelf (build only on stamp miss)
         run: |
+          set -euo pipefail
           for b in sugar sugar-lift rust_test_assertions_rpc coretests_sweep; do
             bin/sugarbin --profile release --bin "$b" >/dev/null
           done
           for b in sugar sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do
             bin/sugarbin --profile debug --bin "$b" >/dev/null
           done
-
-      - name: Save Rust build (source-keyed local cache)
-        uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: save
 
   core:
     name: core (${{ matrix.name }})
@@ -108,10 +105,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Consume shared Rust build (source-keyed local cache)
+      - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: consume
 
       - name: Check Rust formatting
         if: matrix.target == 'check-lift-refusal-vocabulary'
@@ -163,10 +158,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Consume shared Rust build (source-keyed local cache)
+      - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: consume
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6

@@ -28,10 +28,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Restore Rust build (source-keyed local cache)
+      - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: restore
 
       - name: Set up Python 3.12.13
         uses: actions/setup-python@v6
@@ -73,10 +71,6 @@ jobs:
             -e implementations/python/sugar-lift-python-source
           bin/sugarbin --profile release >/dev/null
 
-      - name: Save Rust build (source-keyed local cache)
-        uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: save
 
       - name: Run restored suite and retain red telemetry
         id: suite
