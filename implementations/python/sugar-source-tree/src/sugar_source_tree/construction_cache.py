@@ -8,7 +8,29 @@ the same map (different ``ref``).
 
 from __future__ import annotations
 
+import weakref
 from typing import Any
+
+# The construction-shape CID is a CATEGORY of content-addressed work: a pure
+# function of a backend ref (fragment + subtree preimage). It is NOT unit-scoped
+# -- the same content addresses to the same CID everywhere -- so its registry is
+# STATIC, shared by every construction in the process: new does the work once,
+# every view (in this file or any other) sees it done. Keyed by the ref OBJECT,
+# not id(ref): a WeakKeyDictionary auto-drops a ref's entry when it dies, so it
+# neither leaks across the corpus nor suffers the id-reuse staleness that a raw
+# id()-keyed map hits when a transient shadow ref's address is recycled -- the
+# weak key IS the live identity, no pinning needed.
+_SHAPE_CIDS: "weakref.WeakKeyDictionary[object, str]" = weakref.WeakKeyDictionary()
+
+
+def shape_cid_for(ref: object) -> str | None:
+    """The memoized construction-shape CID for ``ref``, or None if unseen."""
+    return _SHAPE_CIDS.get(ref)
+
+
+def remember_shape_cid(ref: object, cid: str) -> None:
+    """Record ``ref``'s shape CID in the static category registry."""
+    _SHAPE_CIDS[ref] = cid
 
 
 class ConstructionCache:
