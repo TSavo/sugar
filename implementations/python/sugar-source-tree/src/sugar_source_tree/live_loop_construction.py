@@ -221,6 +221,28 @@ def _record(preimage, cid_field):
     return seal_loop_record(preimage, cid_field)
 
 
+def _conserve_unique_records(records):
+    """Collapse byte-identical loop-graph records, preserving first order.
+
+    The record streams (state / completed-face / obligation / transform) can
+    re-emit a record with identical content -- e.g. a completed face and a latch
+    obligation that seal to the same bytes, or a binding-state two transforms
+    both reference. A record CID is a content hash, so equal content is the SAME
+    record; the loop-graph decoder keys records by CID and requires each once.
+    Conserving exact duplicates here (as `state_records` already does) satisfies
+    that contract without dropping any distinct record.
+    """
+    seen: set[str] = set()
+    unique = []
+    for record in records:
+        cid = cid_of_json(record)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        unique.append(record)
+    return unique
+
+
 def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectionV1:
     """Construct, decode, project, then publish a loop's guarded post-state."""
     from .nodes import For, While
@@ -576,6 +598,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             "postBindingObligationCids": post_records,
         }, "loopConstructionCid"
     )
+    records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
 
     bindings = {}
