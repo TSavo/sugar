@@ -304,10 +304,114 @@ pub struct ClosedCallerUniverseV1 {
     pub callers: Vec<AuthenticatedCallerV1>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl ClosedCallerUniverseV1 {
+    pub fn preimage(&self) -> Json {
+        serde_json::json!({
+            "kind": "closed-caller-universe",
+            "schemaVersion": "1",
+            "closed": self.closed,
+            "hasExternalCallers": self.has_external_callers,
+            "callers": self.callers,
+        })
+    }
+
+    /// The canonical CID of the exact closed caller universe that authorized a
+    /// resolution. A ClosedCallers-basis resolution carries this so a consumer
+    /// can prove WHICH universe discharged the demand, not merely that the
+    /// two-field correspondence held.
+    pub fn cid(&self) -> Cid {
+        canonical_json_cid(&self.preimage())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResolutionBasisV1 {
+    #[serde(rename = "declared-demand")]
+    DeclaredDemand,
+    #[serde(rename = "closed-callers")]
+    ClosedCallers,
+}
+
+impl ResolutionBasisV1 {
+    fn wire(self) -> &'static str {
+        match self {
+            ResolutionBasisV1::DeclaredDemand => "declared-demand",
+            ResolutionBasisV1::ClosedCallers => "closed-callers",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ParameterContractResolutionV1 {
+    pub kind: String,
+    pub schema_version: String,
     pub demand_cid: Cid,
     pub candidate_cid: Cid,
+    pub contract_cid: Cid,
+    pub basis: ResolutionBasisV1,
+    pub caller_universe_cid: Option<Cid>,
+    pub resolution_cid: Cid,
+}
+
+impl ParameterContractResolutionV1 {
+    pub fn preimage(&self) -> Json {
+        serde_json::json!({
+            "kind": self.kind,
+            "schemaVersion": self.schema_version,
+            "demandCid": self.demand_cid,
+            "candidateCid": self.candidate_cid,
+            "contractCid": self.contract_cid,
+            "basis": self.basis.wire(),
+            "callerUniverseCid": self.caller_universe_cid,
+        })
+    }
+
+    pub fn mint(
+        demand_cid: Cid,
+        candidate_cid: Cid,
+        contract_cid: Cid,
+        basis: ResolutionBasisV1,
+        caller_universe_cid: Option<Cid>,
+    ) -> Self {
+        let mut resolution = Self {
+            kind: "parameter-contract-resolution".into(),
+            schema_version: "1".into(),
+            demand_cid,
+            candidate_cid,
+            contract_cid,
+            basis,
+            caller_universe_cid,
+            resolution_cid: Cid::from("pending"),
+        };
+        resolution.resolution_cid = canonical_json_cid(&resolution.preimage());
+        resolution
+    }
+
+    /// Re-derive the resolution CID and reject any stale or basis-inconsistent
+    /// row. A declared-demand resolution never carries a caller universe; a
+    /// closed-callers resolution always does.
+    pub fn validate(&self) -> Result<(), ParameterResolutionGapV1> {
+        if self.kind != "parameter-contract-resolution"
+            || self.schema_version != "1"
+            || canonical_json_cid(&self.preimage()) != self.resolution_cid
+        {
+            return Err(ParameterResolutionGapV1::StaleResolution);
+        }
+        match self.basis {
+            ResolutionBasisV1::DeclaredDemand => {
+                if self.caller_universe_cid.is_some() {
+                    return Err(ParameterResolutionGapV1::StaleResolution);
+                }
+            }
+            ResolutionBasisV1::ClosedCallers => {
+                if self.caller_universe_cid.is_none() {
+                    return Err(ParameterResolutionGapV1::StaleResolution);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,6 +429,7 @@ pub enum ParameterResolutionGapV1 {
     NoIncomingCaller,
     OpenCallerUniverse,
     DisagreeingCallers,
+    StaleResolution,
 }
 
 pub fn discharge_parameter_candidate(
@@ -346,10 +451,13 @@ pub fn discharge_parameter_candidate(
         .declared_demand_cids
         .contains(&candidate.demand.demand_cid)
     {
-        return Ok(ParameterContractResolutionV1 {
-            demand_cid: candidate.demand.demand_cid.clone(),
-            candidate_cid: candidate.candidate_cid.clone(),
-        });
+        return Ok(ParameterContractResolutionV1::mint(
+            candidate.demand.demand_cid.clone(),
+            candidate.candidate_cid.clone(),
+            callee.contract_cid.clone(),
+            ResolutionBasisV1::DeclaredDemand,
+            None,
+        ));
     }
     if !universe.closed || universe.has_external_callers {
         return Err(ParameterResolutionGapV1::OpenCallerUniverse);
@@ -388,8 +496,11 @@ pub fn discharge_parameter_candidate(
             return Err(ParameterResolutionGapV1::DisagreeingCallers);
         }
     }
-    Ok(ParameterContractResolutionV1 {
-        demand_cid: candidate.demand.demand_cid.clone(),
-        candidate_cid: candidate.candidate_cid.clone(),
-    })
+    Ok(ParameterContractResolutionV1::mint(
+        candidate.demand.demand_cid.clone(),
+        candidate.candidate_cid.clone(),
+        callee.contract_cid.clone(),
+        ResolutionBasisV1::ClosedCallers,
+        Some(universe.cid()),
+    ))
 }

@@ -6,8 +6,8 @@ use sugar_linker::caller_parameter::{
     discharge_parameter_candidate, AuthenticatedCallerV1, CallEdgeV2, ClosedCallerUniverseV1,
     ContractConditionalConstructionV1, FormalActualBindingV1, FormalParameterCoordinateV1,
     FormalParameterDeclarationV1, ParameterContractDemandV1, ParameterKindV1,
-    ParameterOwnedContractV1, ParameterResolutionGapV1, SourceFragmentCoordinateV1,
-    ValueOccurrenceCoordinateV1,
+    ParameterContractResolutionV1, ParameterOwnedContractV1, ParameterResolutionGapV1,
+    ResolutionBasisV1, SourceFragmentCoordinateV1, ValueOccurrenceCoordinateV1,
 };
 use sugar_linker::{canonical_json_cid, Cid};
 
@@ -304,5 +304,96 @@ fn unverified_actual_contract_reference_stays_loud() {
     assert_eq!(
         gap,
         ParameterResolutionGapV1::UnauthenticatedActualContractRef
+    );
+}
+
+#[test]
+fn closed_callers_resolution_carries_basis_and_authorizing_universe_cid() {
+    let f = fixture();
+    let universe = ClosedCallerUniverseV1 {
+        closed: true,
+        has_external_callers: false,
+        callers: vec![AuthenticatedCallerV1 {
+            caller_contract_cid: f.edge.source_contract_cid.clone(),
+            caller_contract_decl: f.caller_contract_decl.clone(),
+            edge: f.edge.clone(),
+        }],
+    };
+    let resolved =
+        discharge_parameter_candidate(&f.candidate, &f.contract, &universe).unwrap();
+    assert_eq!(resolved.basis, ResolutionBasisV1::ClosedCallers);
+    assert_eq!(resolved.contract_cid, f.contract.contract_cid);
+    assert_eq!(resolved.caller_universe_cid, Some(universe.cid()));
+    // The resolution CID is self-authenticating and validates.
+    resolved.validate().unwrap();
+    // The carried universe CID names the EXACT universe that authorized it.
+    assert_eq!(resolved.caller_universe_cid.unwrap(), universe.cid());
+}
+
+#[test]
+fn declared_demand_resolution_carries_no_caller_universe() {
+    let mut f = fixture();
+    f.contract
+        .declared_demand_cids
+        .insert(f.candidate.demand.demand_cid.clone());
+    f.contract.semantic_decl["declaredDemandCids"] =
+        serde_json::to_value(&f.contract.declared_demand_cids).unwrap();
+    f.contract.contract_cid = canonical_json_cid(&f.contract.semantic_decl);
+    let resolved = discharge_parameter_candidate(
+        &f.candidate,
+        &f.contract,
+        &ClosedCallerUniverseV1 {
+            closed: false,
+            has_external_callers: true,
+            callers: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(resolved.basis, ResolutionBasisV1::DeclaredDemand);
+    assert_eq!(resolved.caller_universe_cid, None);
+    assert_eq!(resolved.contract_cid, f.contract.contract_cid);
+    resolved.validate().unwrap();
+}
+
+#[test]
+fn resolution_round_trips_and_stale_cid_is_rejected() {
+    let f = fixture();
+    let universe = ClosedCallerUniverseV1 {
+        closed: true,
+        has_external_callers: false,
+        callers: vec![AuthenticatedCallerV1 {
+            caller_contract_cid: f.edge.source_contract_cid.clone(),
+            caller_contract_decl: f.caller_contract_decl.clone(),
+            edge: f.edge.clone(),
+        }],
+    };
+    let resolved =
+        discharge_parameter_candidate(&f.candidate, &f.contract, &universe).unwrap();
+    let wire = serde_json::to_value(&resolved).unwrap();
+    let round_trip: ParameterContractResolutionV1 = serde_json::from_value(wire).unwrap();
+    assert_eq!(round_trip, resolved);
+    round_trip.validate().unwrap();
+
+    // A tampered demand CID (leaving resolution_cid stale) is rejected.
+    let mut tampered = resolved.clone();
+    tampered.demand_cid = Cid::from("forged-demand");
+    assert_eq!(
+        tampered.validate().unwrap_err(),
+        ParameterResolutionGapV1::StaleResolution
+    );
+
+    // A closed-callers basis with no caller universe is basis-inconsistent.
+    let mut orphaned = ParameterContractResolutionV1::mint(
+        resolved.demand_cid.clone(),
+        resolved.candidate_cid.clone(),
+        resolved.contract_cid.clone(),
+        ResolutionBasisV1::ClosedCallers,
+        None,
+    );
+    // mint recomputes the CID, so the CID is fresh but the basis invariant fails.
+    orphaned.caller_universe_cid = None;
+    assert_eq!(
+        orphaned.validate().unwrap_err(),
+        ParameterResolutionGapV1::StaleResolution
     );
 }
