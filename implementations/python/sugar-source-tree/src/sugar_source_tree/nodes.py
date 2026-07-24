@@ -1993,15 +1993,17 @@ class FunctionDef(Statement):
             state=ref,
         )
 
-    def _make_parameter_ref(self, parameter: Param, ordinal: int) -> "Node":
+    def _formal_coordinate(self, parameter: Param, ordinal: int):
+        """Mint the exact FormalParameterCoordinateV1 for one formal. The single
+        source of truth: both the body FormalRef (via _make_parameter_ref) and
+        the universe's own formal declarations (via formal_coordinates) mint
+        through here, so a demand keyed to a body formal coordinate and the
+        owned contract's declaration carry byte-identical coordinate CIDs."""
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
         )
         from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
         from sugar_lift_py_tests.ir import PrimitiveSort
-
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
 
         kind = {
             "positional_only": "positional-only",
@@ -2014,7 +2016,7 @@ class FunctionDef(Statement):
             from .panic import BackendDefect
 
             raise BackendDefect(
-                owner="FunctionDef._make_parameter_ref",
+                owner="FunctionDef._formal_coordinate",
                 observed=parameter.param_kind,
                 requested="one canonical Python parameter kind",
                 fix="repair the backend parameter-kind projection",
@@ -2030,7 +2032,7 @@ class FunctionDef(Statement):
                 span.end_col,
             )
 
-        formal = FormalParameterCoordinateV1.mint(
+        return FormalParameterCoordinateV1.mint(
             owner_source_identity_cid=self.unit.source_cid,
             owner_definition_locus=coordinate(self),
             declaration_locus=coordinate(parameter),
@@ -2039,6 +2041,21 @@ class FunctionDef(Statement):
             declared_name=parameter.name,
             sort=PrimitiveSort("Value"),
         )
+
+    def formal_coordinates(self) -> tuple:
+        """The ordered formal coordinates for every parameter -- the universe's
+        own structural formals, threaded into UniverseValue so
+        link_unit_projection can assemble the owned contract WITHOUT post()."""
+        return tuple(
+            self._formal_coordinate(parameter, ordinal)
+            for ordinal, parameter in enumerate(self.params)
+        )
+
+    def _make_parameter_ref(self, parameter: Param, ordinal: int) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        formal = self._formal_coordinate(parameter, ordinal)
         return materialize(
             self.unit,
             ShadowNode("FormalRef", parameter.span, (("coordinate", Leaf(formal)),)),
@@ -2183,6 +2200,7 @@ class FunctionDef(Statement):
                     site=self.fragment,
                     bridge_source_symbol=bridge_source_symbol,
                     substitution_trace=substitution_trace,
+                    formal_coordinates=self.formal_coordinates(),
                 )
 
 
