@@ -1,5 +1,7 @@
-name: Python native-crash floor (R>0 red)
+name: Python native-crash floor (discrimination)
 
+# Discrimination only. Full corpus R_native_crashes runs exclusively under
+# factory-zero-tolerance.yml (one heavy orchestrator).
 on:
   pull_request:
   push:
@@ -9,13 +11,9 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: sugar-python-heavy-measurement
-  cancel-in-progress: false
-
 jobs:
-  python-native-crash-floor:
-    name: python-native-crash-floor
+  native-crash-discrimination:
+    name: native-crash-discrimination
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +32,3 @@ jobs:
           python -m pytest --noconftest
           implementations/python/sugar-lift-py-tests/tests/test_native_crash_zero_tolerance.py
           -q
-      - name: R_native_crashes = 0
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/native_crash_zero_tolerance.py

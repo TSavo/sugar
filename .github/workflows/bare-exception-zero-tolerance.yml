@@ -1,5 +1,8 @@
-name: Bare exception zero tolerance
+name: Bare exception zero tolerance (discrimination)
 
+# Discrimination only. Full corpus R_bare_exceptions runs exclusively under
+# factory-zero-tolerance.yml so heavy floors share one pinned run and one
+# concurrency group (no multi-workflow pending-run cancellation).
 on:
   pull_request:
   push:
@@ -9,12 +12,8 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: sugar-python-heavy-measurement
-  cancel-in-progress: false
-
 jobs:
-  bare-exception-zero-tolerance:
+  bare-exception-discrimination:
     runs-on: [self-hosted, Linux, X64]
     env:
       PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-py-tests/src"
@@ -38,7 +37,3 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
-      - name: R_bare_exceptions = 0
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/bare_exception_zero_tolerance.py

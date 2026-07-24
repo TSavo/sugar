@@ -1,5 +1,7 @@
-name: Timeout zero tolerance
+name: Timeout zero tolerance (discrimination)
 
+# Discrimination only. Full corpus R_timeouts runs exclusively under
+# factory-zero-tolerance.yml (one heavy orchestrator).
 on:
   pull_request:
   push:
@@ -9,12 +11,8 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: sugar-python-heavy-measurement
-  cancel-in-progress: false
-
 jobs:
-  timeout-zero-tolerance:
+  timeout-discrimination:
     runs-on: [self-hosted, Linux, X64]
     env:
       PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-py-tests/src"
@@ -38,7 +36,3 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
-      - name: R_timeouts = 0
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/timeout_zero_tolerance.py

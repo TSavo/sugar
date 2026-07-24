@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """R_bare_exceptions — permanent baseline-free untyped-failure floor.
 
-In-process enum door (path_source → SourceFile → functions → sugar).
-One process for the whole scan — caches stay warm.
-Progress → progress.log; engine JSONL → engine.jsonl; never mixed.
+Supervised persistent enum worker: reuses process across healthy files;
+restarts on native crash / timeout. Enumeration protocol only.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -19,28 +17,17 @@ from typing import Any, Mapping, NamedTuple, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _enum_floor_runtime import (  # noqa: E402
-    iter_with_tqdm,
-    open_progress,
     prepare_floor_io,
     production_roots,
     require_python_paths,
-    timed_enum_file,
 )
-
-# Re-export for discrimination tests / external importers.
-__all__ = [
-    "BareExceptionOffender",
-    "bare_exception_offender",
-    "production_roots",
-    "r_bare_exceptions",
-    "require_python_paths",
-]
 from _production_lift_child import (  # noqa: E402
     NON_FAILURE_OUTCOMES,
     OUTCOME_COMPLETED,
     OUTCOME_TYPED_GAP,
     production_lift_bootstrap_error,
 )
+from _supervised_enum_supervisor import FileTerminal, scan_paths  # noqa: E402
 
 
 class BareExceptionOffender(NamedTuple):
@@ -84,34 +71,18 @@ def r_bare_exceptions(offenders: Sequence[BareExceptionOffender]) -> int:
     return len(offenders)
 
 
-def _classify_in_process(
-    rel: str,
-    testimony: dict[str, object] | None,
-    error: BaseException | None,
-) -> ChildResult:
-    if error is not None:
-        if isinstance(error, TimeoutError):
-            return ChildResult(rel, "timeout", None)
-        # Typed gaps are caught inside production_lift_testimony; anything else
-        # that escapes is a bare untyped failure.
+def _from_terminal(row: FileTerminal) -> ChildResult:
+    if row.category == "bare-exception":
         return ChildResult(
-            rel,
+            row.file,
             "bare-exception",
             BareExceptionOffender(
-                rel,
-                1,
-                f"{type(error).__name__}: {error}"[-2000:],
+                row.file,
+                row.returncode if row.returncode is not None else 1,
+                row.stderr_tail,
             ),
         )
-    assert testimony is not None
-    outcome = str(testimony.get("outcome") or "")
-    if outcome in NON_FAILURE_OUTCOMES:
-        return ChildResult(rel, outcome, None)
-    return ChildResult(
-        rel,
-        "bare-exception",
-        BareExceptionOffender(rel, 1, f"unexpected outcome {outcome!r}"),
-    )
+    return ChildResult(row.file, row.category, None)
 
 
 def main() -> int:
@@ -130,8 +101,6 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
-    parser.add_argument("--progress-stdout", action="store_true")
-    # Kept for CI flag compatibility; scan is always single-process.
     parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
     del args.workers
@@ -156,30 +125,21 @@ def main() -> int:
         engine_log=args.engine_log,
         progress=args.progress,
     )
-    progress = open_progress(
-        progress_path,
-        header=(
-            f"# bare-exception floor (in-process enum)\n"
-            f"# engine_log={engine_path.resolve()}\n"
-            f"# files={len(paths)}\n"
-        ),
+    progress_path.write_text(
+        f"# bare-exception supervised enum scan\n"
+        f"# engine={engine_path}\n"
+        f"# files={len(paths)}\n",
+        encoding="utf-8",
     )
-    rows: list[ChildResult] = []
-    try:
-        for path in iter_with_tqdm(
-            paths,
-            progress=progress,
-            desc="bare-exception",
-            progress_stdout=args.progress_stdout,
-        ):
-            rel, testimony, error, file_s = timed_enum_file(
-                path, root=args.repo_root, file_timeout=args.file_timeout
+    terminals = scan_paths(
+        paths, root=args.repo_root, file_timeout=float(args.file_timeout)
+    )
+    rows = tuple(_from_terminal(t) for t in terminals)
+    with progress_path.open("a", encoding="utf-8") as progress:
+        for t in terminals:
+            progress.write(
+                f"{t.file}\t{t.category}\trestarts={t.worker_restarts}\n"
             )
-            row = _classify_in_process(rel, testimony, error)
-            rows.append(row)
-            del file_s  # timed for future postfix hooks; bar shows rate already
-    finally:
-        progress.close()
 
     offenders = tuple(row.offender for row in rows if row.offender is not None)
     print(
@@ -188,6 +148,7 @@ def main() -> int:
         f"completed={sum(row.category == OUTCOME_COMPLETED for row in rows)} "
         f"typed_gaps={sum(row.category == OUTCOME_TYPED_GAP for row in rows)} "
         f"timeouts={sum(row.category == 'timeout' for row in rows)} "
+        f"native_crashes={sum(row.category == 'native-crash' for row in rows)} "
         f"bare={len(offenders)} "
         f"progress={progress_path} engine={engine_path}"
     )
