@@ -2095,7 +2095,23 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 term_table = TermTableBuilder()
                 universes = []  # (name, memento_dict, contract_dto)
                 gaps = []
+                # Phase-3: functions whose parameter-contract demands the caller
+                # already discharged (fold -> resume) are served from the resume
+                # path, not reconstructed here. Skipping them keeps post()
+                # resume-exclusive: a plain universe enumerate (empty skip set)
+                # of a pending-demand function STILL panics.
+                resolved_mementos = set(
+                    options.get("resolvedContinuationMementos") or []
+                )
                 for fn in sf.functions():
+                    if (
+                        resolved_mementos
+                        and _memento_continuation_key(
+                            _tree.function_def_memento(fn, file_rel).to_rpc()
+                        )
+                        in resolved_mementos
+                    ):
+                        continue
                     try:
                         def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     except SugarNotWritten as gap:

@@ -108,6 +108,8 @@ pub enum Level {
     ProviderContractMembers,
     ContractDemands,
     ContextManagerEdges,
+    ParameterContractLinkUnits,
+    ParameterContractResume,
 }
 
 impl Level {
@@ -125,6 +127,8 @@ impl Level {
             Level::ProviderContractMembers => "provider-contract-members",
             Level::ContractDemands => "contract-demands",
             Level::ContextManagerEdges => "context-manager-edges",
+            Level::ParameterContractLinkUnits => "parameter-contract-link-units",
+            Level::ParameterContractResume => "parameter-contract-resume",
         }
     }
 }
@@ -802,6 +806,56 @@ fn enumerate_rpc(
     at: Option<Value>,
     seek: bool,
 ) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
+    enumerate_rpc_with_extra(conn, level, at, seek, &[])
+}
+
+/// Request the Phase-3 resume level for one continuation, returning its
+/// contract nodes' `audit` payloads. Reuses the retained universe server-side.
+fn resume_rows_rpc(
+    conn: &KitConn,
+    link_unit_cid: &Value,
+    resolution_set: &Value,
+) -> Result<Vec<Value>, EnumerateError> {
+    let plugin = conn.surface.clone();
+    let response = conn
+        .transport
+        .request(&json!({
+            "level": Level::ParameterContractResume.wire(),
+            "workspace_root": conn.workspace_root.display().to_string(),
+            "options": {
+                "linkUnitCid": link_unit_cid,
+                "resolutionSet": resolution_set,
+            },
+        }))
+        .map_err(|error| EnumerateError::Unavailable {
+            plugin: plugin.clone(),
+            reason: error.to_string(),
+        })?;
+    let result = response
+        .get("result")
+        .unwrap_or(&response)
+        .as_object()
+        .ok_or_else(|| EnumerateError::Malformed {
+            plugin: plugin.clone(),
+            reason: "resume response result must be an object".into(),
+        })?;
+    result
+        .get("rows")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| EnumerateError::Malformed {
+            plugin,
+            reason: "resume response missing rows array".into(),
+        })
+}
+
+fn enumerate_rpc_with_extra(
+    conn: &KitConn,
+    level: Level,
+    at: Option<Value>,
+    seek: bool,
+    extra_options: &[(&str, Value)],
+) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
     let plugin = conn.surface.clone();
     if conn.command.is_empty() {
         return Err(EnumerateError::Unavailable {
@@ -838,6 +892,9 @@ fn enumerate_rpc(
             "catalogCid": catalog_cid,
             "tableCid": table_cid,
         });
+    }
+    for (key, value) in extra_options {
+        options[*key] = value.clone();
     }
     let response = conn
         .transport
@@ -1235,6 +1292,27 @@ pub fn fold_recovered_audit(
 /// `source_files` → per-file `universe` (all function contracts). Mint and
 /// any other full-tree client must call this (or the typed `Kit::source_files`
 /// API) and must never send JSON-RPC method `"lift"`.
+/// The Phase-1->3 continuation key for a function: its stable source identity
+/// (source_cid + span), matching lift_rpc._memento_continuation_key exactly so a
+/// resolved function is skipped by the universe scan.
+fn continuation_key_from_memento(memento: &Value) -> String {
+    let span = memento.get("span").cloned().unwrap_or(Value::Null);
+    let part = |v: Option<&Value>| match v {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Null) | None => "None".to_string(),
+        Some(other) => other.to_string(),
+    };
+    [
+        part(memento.get("source_cid")),
+        part(span.get("start_line")),
+        part(span.get("start_col")),
+        part(span.get("end_line")),
+        part(span.get("end_col")),
+    ]
+    .join("|")
+}
+
 pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
     let conn = kit.enumerate_conn(workspace_root);
     let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
@@ -1248,10 +1326,57 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     let mut ir = Vec::new();
     let mut source_mementos = Vec::new();
     let mut diagnostics = Vec::new();
+
+    // Phase 2/3: over the COMPLETELY enumerated project, discharge every enrolled
+    // parameter-contract link unit (fold), then RESUME each retained universe with
+    // its authenticated resolution set so post() projects. Resolved functions are
+    // then skipped by the universe scan (their contract comes from the resume).
+    let mut resolved_mementos: Vec<Value> = Vec::new();
+    let link_unit_rows =
+        preconstruction_rows_rpc(&conn, Level::ParameterContractLinkUnits)?;
+    if !link_unit_rows.is_empty() {
+        let units: Vec<sugar_linker::caller_parameter::ParameterContractLinkUnitV1> =
+            link_unit_rows
+                .iter()
+                .map(|row| serde_json::from_value(row.clone()))
+                .collect::<Result<_, _>>()
+                .map_err(|error| EnumerateError::Malformed {
+                    plugin: conn.surface.clone(),
+                    reason: format!("parameter-contract link unit deserialize: {error}"),
+                })?;
+        let sets = sugar_linker::caller_parameter::fold_parameter_contract_link_units(
+            &units,
+        )
+        .map_err(|gap| EnumerateError::Malformed {
+            plugin: conn.surface.clone(),
+            reason: format!("parameter-contract link gap: {gap:?}"),
+        })?;
+        for (unit, set) in units.iter().zip(sets.iter()) {
+            let cid_value = serde_json::to_value(&unit.link_unit_cid).unwrap();
+            let set_value = serde_json::to_value(set).unwrap();
+            let nodes = resume_rows_rpc(&conn, &cid_value, &set_value)?;
+            for node in nodes {
+                if let Some(audit) = node.get("audit") {
+                    if looks_like_ir_contract_row(audit) {
+                        ir.push(audit.clone());
+                    }
+                }
+            }
+            resolved_mementos
+                .push(Value::String(continuation_key_from_memento(&unit.source_memento)));
+        }
+    }
+    let resolved_option = Value::Array(resolved_mementos);
+
     for file in files {
         source_mementos.push(file.memento.to_json());
-        let (nodes, gaps) =
-            enumerate_rpc(&conn, Level::Universe, Some(file.memento.to_json()), false)?;
+        let (nodes, gaps) = enumerate_rpc_with_extra(
+            &conn,
+            Level::Universe,
+            Some(file.memento.to_json()),
+            false,
+            &[("resolvedContinuationMementos", resolved_option.clone())],
+        )?;
         for gap in gaps {
             let item = gap
                 .memento
