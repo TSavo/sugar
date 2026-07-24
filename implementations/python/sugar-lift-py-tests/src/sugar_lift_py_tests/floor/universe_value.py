@@ -19,9 +19,6 @@ class UniverseValue(FloorValue):
     record: object  # the body's BlockValue
     bridge_source_symbol: str | None = None
     formal_coordinates: tuple = ()
-    # Phase-3: authenticated {demand_cid: resolution} attached by the resume when
-    # reusing THIS retained universe (materialize-once). None on the plain path.
-    resolutions: object = None
 
     def derived_companions(self) -> tuple[Formula, ...]:
         return tuple(
@@ -42,22 +39,17 @@ class UniverseValue(FloorValue):
             ContractConditionalConstructionV1,
         )
 
+        # A pending conditional candidate is NOT projectable. The resume path
+        # MECHANICALLY REPLACES each exactly-resolved candidate with its retained
+        # .value before projecting, so a resumed record reaches post() with NO
+        # pending entry. Any candidate still standing here means no resume
+        # authorized it -- post() panics (resume-exclusive; never a fast lane).
         pending = tuple(
             entry
             for entry in self.record.statements
             if isinstance(entry, ContractConditionalConstructionV1)
         )
-        # Resume-exclusive: post() projects ONLY when every pending demand has an
-        # authenticated resolution attached by the Phase-3 resume. A plain
-        # enumerate (resolutions=None) of a pending-demand universe STILL panics
-        # -- the resume is the sole projection path, never a fast lane.
-        resolved = self.resolutions or {}
-        unresolved = tuple(
-            entry
-            for entry in pending
-            if entry.demand.demand_cid not in resolved
-        )
-        if unresolved:
+        if pending:
             from sugar_lift_py_tests.gap.info import GapKind, GapLocus
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -66,7 +58,7 @@ class UniverseValue(FloorValue):
                 blame=self.name,
                 observed=(
                     "pending parameter contract demands "
-                    + ",".join(entry.demand.demand_cid for entry in unresolved)
+                    + ",".join(entry.demand.demand_cid for entry in pending)
                 ),
                 requested="authenticated ParameterContractResolutionV1 rows",
                 fix=(

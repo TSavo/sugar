@@ -512,6 +512,30 @@ def _validate_resolution(resolution: dict) -> None:
         raise ResumeStalePanic("resolution basis is unknown")
 
 
+def resume_project(universe, accepted: dict[str, dict]):
+    """Mechanically replace each exactly-resolved ContractConditionalConstruction
+    V1 entry with its RETAINED .value (same object -> occurrence identity
+    unchanged), returning a resumed universe whose record projects post()
+    NORMALLY. The candidate's carried value contributes its own post; nothing is
+    suppressed to an implicit None. Entries with no accepted resolution are left
+    standing, so post() still panics on any unresolved candidate."""
+    import dataclasses
+
+    new_statements = tuple(
+        entry.value
+        if (
+            isinstance(entry, ContractConditionalConstructionV1)
+            and entry.demand.demand_cid in accepted
+        )
+        else entry
+        for entry in universe.record.statements
+    )
+    return dataclasses.replace(
+        universe,
+        record=dataclasses.replace(universe.record, statements=new_statements),
+    )
+
+
 def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
     """The Phase-3 resume decision. Given the RETAINED link unit (the immutable
     continuation) and the presented resolution set, honor the resume ONLY when:

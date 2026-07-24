@@ -13,6 +13,17 @@ fn encodebase64_self_declared_discharges_without_callers() {
         serde_json::from_str(raw).expect("Python link unit must deserialize");
     unit.validate().expect("link unit must validate byte-identically");
 
+    // #2 grounded report: the ACTUAL emitted link unit carries the exact pending
+    // demand CID in declaredDemandCids -- that is precisely why the fold selects
+    // ResolutionBasisV1::DeclaredDemand (the prior "empty set" claim was false).
+    let demand_cid = &unit.candidates[0].demand.demand_cid;
+    assert!(
+        unit.parameter_owned_contract
+            .declared_demand_cids
+            .contains(demand_cid),
+        "declaredDemandCids MUST contain the pending demand (non-empty)"
+    );
+
     let sets = fold_parameter_contract_link_units(std::slice::from_ref(&unit))
         .expect("self-declared candidate must discharge");
     assert_eq!(sets.len(), 1);

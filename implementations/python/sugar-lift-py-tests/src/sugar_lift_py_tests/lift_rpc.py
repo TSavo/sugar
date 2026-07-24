@@ -217,9 +217,11 @@ def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, A
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-    # Materialize-once: reuse the retained universe's own record/statements
-    # (identical occurrence identities); only attach the resolutions.
-    resolved = dataclasses.replace(universe, resolutions=accepted)
+    # Materialize-once + value correctness: replace each resolved candidate with
+    # its retained .value and project the resumed record normally.
+    from sugar_lift_py_tests.caller_parameter_contract import resume_project
+
+    resolved = resume_project(universe, accepted)
     from sugar_lift_py_tests.ir import TermTableBuilder
 
     term_table = TermTableBuilder()
@@ -242,6 +244,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it."""
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -251,14 +254,19 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for source_path in sorted(root.rglob("*.py")):
         file_rel = str(source_path.relative_to(root))
-        try:
-            sf = _tree.source_file(source_path)
-        except Exception:
-            continue
+        # No broad skip: a source that cannot be read is a LOUD failure, never a
+        # silently omitted file.
+        sf = _tree.source_file(source_path)
         for fn in sf.functions():
             try:
                 outcome = fn.sugar().desugar(None)
-            except (SugarNotWritten, Exception):
+            except (SugarNotWritten, ConstructionPanic):
+                # The TWO typed frontier signals: an unconstructed function owns no
+                # link unit (there is nothing to enroll), and its gap is still
+                # surfaced by the universe/audit scan (this function is never added
+                # to the resolved-skip set). Every OTHER exception -- an ordinary
+                # Exception, i.e. a real bug -- propagates LOUDLY; nothing vanishes
+                # through a broad except.
                 continue
             if not isinstance(outcome, Complete):
                 continue
@@ -267,10 +275,9 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
                 continue
             def_memento_dto = _tree.function_def_memento(fn, file_rel)
             def_memento = def_memento_dto.to_rpc()
-            try:
-                unit = universe.link_unit_projection(def_memento)
-            except Exception:
-                continue
+            # No broad skip: a projection failure is LOUD (it escapes), never a
+            # silently dropped link unit. `None` is the typed "no owned demand".
+            unit = universe.link_unit_projection(def_memento)
             if unit is None:
                 continue
             _RETAINED_LINK_UNITS[unit.link_unit_cid] = (

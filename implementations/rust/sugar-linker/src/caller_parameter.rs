@@ -575,32 +575,18 @@ impl ParameterContractResolutionSetV1 {
     }
 }
 
-/// Assemble the closed caller universe for `callee` from every authenticated
-/// call edge across the whole enumerated project that targets it. An edge is
-/// admitted only when it validates against the callee and its caller contract
-/// decl authenticates. `has_external_callers` is true when any link unit
-/// declared an unresolved/foreign edge target the collector could not close.
-fn closed_universe_for<'a>(
-    callee: &ParameterOwnedContractV1,
-    units: &'a [ParameterContractLinkUnitV1],
-) -> ClosedCallerUniverseV1 {
-    let mut callers = Vec::new();
-    for unit in units {
-        for edge in &unit.call_edges {
-            if edge.target_contract_cid != callee.contract_cid {
-                continue;
-            }
-            callers.push(AuthenticatedCallerV1 {
-                caller_contract_cid: unit.parameter_owned_contract.contract_cid.clone(),
-                caller_contract_decl: unit.parameter_owned_contract.semantic_decl.clone(),
-                edge: edge.clone(),
-            });
-        }
-    }
+/// v1 SCOPE: closed-callers discharge is NOT yet authorized. Authenticated call
+/// edges are not populated (Python emits `call_edges=()`) and no project-closure
+/// testimony exists, so fabricating `closed=true, has_external_callers=false`
+/// would be a lie. Until real edges + closure testimony land, every candidate is
+/// discharged against an explicitly UNESTABLISHED caller universe: a self-
+/// declared demand resolves (it returns before the universe is consulted); every
+/// non-declared candidate hits `OpenCallerUniverse` and stays LOUD (unresolved).
+fn unestablished_caller_universe() -> ClosedCallerUniverseV1 {
     ClosedCallerUniverseV1 {
-        closed: true,
-        has_external_callers: false,
-        callers,
+        closed: false,
+        has_external_callers: true,
+        callers: Vec::new(),
     }
 }
 
@@ -615,11 +601,11 @@ fn closed_universe_for<'a>(
 /// caller universe in one function must not fail the whole census.
 pub fn fold_one_link_unit(
     unit: &ParameterContractLinkUnitV1,
-    all_units: &[ParameterContractLinkUnitV1],
+    _all_units: &[ParameterContractLinkUnitV1],
 ) -> Result<ParameterContractResolutionSetV1, ParameterResolutionGapV1> {
     unit.validate()?;
     let callee = &unit.parameter_owned_contract;
-    let universe = closed_universe_for(callee, all_units);
+    let universe = unestablished_caller_universe();
     let mut resolutions = Vec::with_capacity(unit.candidates.len());
     for candidate in &unit.candidates {
         resolutions.push(discharge_parameter_candidate(candidate, callee, &universe)?);
@@ -639,7 +625,7 @@ pub fn fold_parameter_contract_link_units(
     let mut sets = Vec::with_capacity(units.len());
     for unit in units {
         let callee = &unit.parameter_owned_contract;
-        let universe = closed_universe_for(callee, units);
+        let universe = unestablished_caller_universe();
         let mut resolutions = Vec::with_capacity(unit.candidates.len());
         for candidate in &unit.candidates {
             resolutions.push(discharge_parameter_candidate(candidate, callee, &universe)?);
