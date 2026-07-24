@@ -463,3 +463,90 @@ class ParameterContractResolutionSetV1:
             "resolutions": list(self.resolutions),
             "setCid": self.set_cid,
         }
+
+
+class ResumeStalePanic(Exception):
+    """A resume that could not be honored: loud, never a silent reconstruction."""
+
+
+def _resolution_preimage(resolution: dict) -> dict:
+    return {
+        "kind": resolution["kind"],
+        "schemaVersion": resolution["schemaVersion"],
+        "demandCid": resolution["demandCid"],
+        "candidateCid": resolution["candidateCid"],
+        "contractCid": resolution["contractCid"],
+        "basis": resolution["basis"],
+        "callerUniverseCid": resolution["callerUniverseCid"],
+    }
+
+
+def _validate_resolution(resolution: dict) -> None:
+    expected = {
+        "kind", "schemaVersion", "demandCid", "candidateCid", "contractCid",
+        "basis", "callerUniverseCid", "resolutionCid",
+    }
+    if not isinstance(resolution, dict) or set(resolution) != expected:
+        raise ResumeStalePanic("resolution requires an exact key set")
+    if (
+        resolution["kind"] != "parameter-contract-resolution"
+        or resolution["schemaVersion"] != "1"
+        or _cid(_resolution_preimage(resolution)) != resolution["resolutionCid"]
+    ):
+        raise ResumeStalePanic("resolution CID is stale")
+    basis = resolution["basis"]
+    if basis == "declared-demand":
+        if resolution["callerUniverseCid"] is not None:
+            raise ResumeStalePanic("declared-demand resolution carries a caller universe")
+    elif basis == "closed-callers":
+        if resolution["callerUniverseCid"] is None:
+            raise ResumeStalePanic("closed-callers resolution lacks a caller universe")
+    else:
+        raise ResumeStalePanic("resolution basis is unknown")
+
+
+def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
+    """The Phase-3 resume decision. Given the RETAINED link unit (the immutable
+    continuation) and the presented resolution set, honor the resume ONLY when:
+
+      1. Replay guard: the set is bound to THIS continuation --
+         resolution_set.link_unit_cid == link_unit.link_unit_cid, and set_cid
+         re-derives (both checked mutually by ParameterContractResolutionSetV1.
+         from_value + this equality). A foreign/lost continuation is loud.
+      2. Exact complete bijection over the link unit's PENDING candidates: every
+         enrolled (demand_cid, candidate_cid, contract_cid) has exactly one
+         resolution; none missing, duplicated, foreign-contract, or
+         wrong-candidate; every resolution CID re-derives.
+
+    Returns {demand_cid: resolution} on success; raises ResumeStalePanic (which
+    the caller lifts to a ConstructionPanic) otherwise. Never reconstructs.
+    """
+    if resolution_set.link_unit_cid != link_unit.link_unit_cid:
+        raise ResumeStalePanic(
+            "resolution set is bound to a different continuation "
+            f"({resolution_set.link_unit_cid} != {link_unit.link_unit_cid})"
+        )
+    pending = {}
+    for candidate in link_unit.candidates:
+        key = candidate.demand.demand_cid
+        if key in pending:
+            raise ResumeStalePanic("duplicate pending demand in link unit")
+        pending[key] = candidate
+    accepted: dict[str, dict] = {}
+    for resolution in resolution_set.resolutions:
+        _validate_resolution(resolution)
+        demand_cid = resolution["demandCid"]
+        candidate = pending.get(demand_cid)
+        if candidate is None:
+            raise ResumeStalePanic(f"resolution for a foreign demand {demand_cid}")
+        if demand_cid in accepted:
+            raise ResumeStalePanic(f"duplicate resolution for demand {demand_cid}")
+        if resolution["candidateCid"] != candidate.candidate_cid:
+            raise ResumeStalePanic("resolution names the wrong candidate")
+        if resolution["contractCid"] != link_unit.parameter_owned_contract.contract_cid:
+            raise ResumeStalePanic("resolution names a foreign contract")
+        accepted[demand_cid] = resolution
+    missing = set(pending) - set(accepted)
+    if missing:
+        raise ResumeStalePanic(f"resolution set is incomplete: missing {sorted(missing)}")
+    return accepted
