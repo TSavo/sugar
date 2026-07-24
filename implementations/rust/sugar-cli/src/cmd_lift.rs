@@ -288,12 +288,14 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_VERIFY_FAIL;
                         }
                     };
-                if let Err(error) = lift_plugin::refuse_split_pipeline(
-                    &provenance.identity,
-                    env!("SUGAR_BUILD_GIT_HEAD"),
-                ) {
-                    eprintln!("{error}");
-                    return EXIT_VERIFY_FAIL;
+                let binary_stamp = option_env!("SUGAR_BUILD_STAMP").unwrap_or("unknown");
+                if binary_stamp != "unknown" && !binary_stamp.is_empty() {
+                    if let Err(error) =
+                        lift_plugin::refuse_split_pipeline(&provenance.identity, binary_stamp)
+                    {
+                        eprintln!("{error}");
+                        return EXIT_VERIFY_FAIL;
+                    }
                 }
                 Some(provenance)
             } else {
@@ -16293,8 +16295,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     #[test]
     fn content_addressed_kit_refuses_against_git_binary_head() {
         assert_eq!(
-            lift_plugin::refuse_split_pipeline("blake3-512:deadbeef", "abc123").unwrap_err(),
-            "refusing to mint from a split pipeline: kit @blake3-512:deadbeef != binary @abc123"
+            lift_plugin::refuse_split_pipeline("blake3-512_deadbeef", "abc123").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @blake3-512_deadbeef != binary @abc123"
         );
     }
 
@@ -16686,7 +16688,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "sourceContract": "sample.owner",
             "targetSymbol": "helper",
             "targetContract": "sample.helper",
-            "targetContractCid": "blake3-512:deadbeefcafe",
+            "targetContractCid": "blake3-512_deadbeefcafe",
             "callSiteLocus": {"file": "sample.py", "line": 3}
         })];
         report.implication_walk_ran = true;
@@ -18561,7 +18563,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "name": "owner", "kind": "function-contract", "formals": [],
             "post": {"kind": "atomic", "name": "=", "args": [
                 {"kind": "var", "name": "out"},
-                {"kind": "term-ref", "cid": "blake3-512:deadbeef"}
+                {"kind": "term-ref", "cid": "blake3-512_deadbeef"}
             ]}
         })];
 
