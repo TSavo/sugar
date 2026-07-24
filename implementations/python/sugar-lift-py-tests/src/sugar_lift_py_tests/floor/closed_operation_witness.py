@@ -13,15 +13,14 @@ from sugar_lift_py_tests.canonicalizer import (
 )
 from sugar_lift_py_tests.ir import Term, _term_content_cid
 
-
 _CLOSED_OPERATIONS = frozenset(
     {
         "python.issubclass",
         "python.set.contains",
         "python.set.union",
         "python.set.intersection",
-    "python.set.difference",
-    "python.set.construct",
+        "python.set.difference",
+        "python.set.construct",
     }
 )
 
@@ -34,7 +33,9 @@ class PythonRuntimeIdentity:
 
     @classmethod
     def current(cls) -> "PythonRuntimeIdentity":
-        return cls(sys.implementation.name, sys.version_info.major, sys.version_info.minor)
+        return cls(
+            sys.implementation.name, sys.version_info.major, sys.version_info.minor
+        )
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,9 @@ class ClosedSemanticOperationWitness:
             runtime, operation, operands, result
         )
         if self != expected:
-            raise ValueError("closed semantic operation witness does not authenticate operands, result, runtime identity, and operation")
+            raise ValueError(
+                "closed semantic operation witness does not authenticate operands, result, runtime identity, and operation"
+            )
 
 
 def _witness_cid(

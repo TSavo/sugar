@@ -17,7 +17,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-
 PYTHON_ROOT = Path(__file__).resolve().parents[2]
 PROOF_MODULE = (
     PYTHON_ROOT
@@ -33,11 +32,7 @@ MEASURE_SCRIPT = (
     / "measure_exit_disposition_delta.py"
 )
 WITH_NODES = (
-    PYTHON_ROOT
-    / "sugar-source-tree"
-    / "src"
-    / "sugar_source_tree"
-    / "nodes.py"
+    PYTHON_ROOT / "sugar-source-tree" / "src" / "sugar_source_tree" / "nodes.py"
 )
 PRODUCTION_ROOTS = (
     PYTHON_ROOT / "sugar-lift-py-tests" / "src" / "sugar_lift_py_tests",
@@ -85,8 +80,7 @@ def test_with_construct_sugar_does_not_call_raw_ast_exit_proof():
     with_body = text[start:end] if end != -1 else text[start:]
     hits = [tok for tok in _FORBIDDEN_SIDE_DOOR_TOKENS if tok in with_body]
     assert hits == [], (
-        "With construction reintroduced raw-AST exit disposition tokens: "
-        f"{hits}"
+        "With construction reintroduced raw-AST exit disposition tokens: " f"{hits}"
     )
     assert "exit_disposition_proof" not in with_body
     # No fresh raw-AST greening authority under another name in With.
@@ -105,9 +99,10 @@ def test_production_roots_have_zero_exit_disposition_side_door_imports():
                 tok in text for tok in _FORBIDDEN_SIDE_DOOR_TOKENS
             ):
                 offenders.append(str(path.relative_to(PYTHON_ROOT)))
-    assert offenders == [], (
-        "production still references raw-AST exit disposition side door:\n"
-        + "\n".join(offenders)
+    assert (
+        offenders == []
+    ), "production still references raw-AST exit disposition side door:\n" + "\n".join(
+        offenders
     )
 
 

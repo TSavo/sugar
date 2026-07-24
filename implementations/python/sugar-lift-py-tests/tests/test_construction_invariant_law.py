@@ -5,10 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-
-_SCRIPT = (
-    Path(__file__).parents[1] / "scripts" / "construction_invariant_law.py"
-)
+_SCRIPT = Path(__file__).parents[1] / "scripts" / "construction_invariant_law.py"
 _SPEC = importlib.util.spec_from_file_location("construction_invariant_law", _SCRIPT)
 assert _SPEC is not None and _SPEC.loader is not None
 LAW = importlib.util.module_from_spec(_SPEC)
@@ -17,38 +14,34 @@ _SPEC.loader.exec_module(LAW)
 
 
 def _classes(source: str) -> set[str]:
-    return {finding.violation_class for finding in LAW.scan_python_source(source, "planted.py")}
+    return {
+        finding.violation_class
+        for finding in LAW.scan_python_source(source, "planted.py")
+    }
 
 
 def test_each_reject_class_has_a_structural_planted_twin() -> None:
-    assert _classes(
-        """
+    assert _classes("""
 def decode(raw):
     content_cid = cid_of_json(raw)
     return AuthenticatedThing(raw=raw, cid=content_cid)
-"""
-    ) == {"SELF-HASHING-AS-AUTHORITY"}
+""") == {"SELF-HASHING-AS-AUTHORITY"}
 
-    assert _classes(
-        """
+    assert _classes("""
 def resolve(symbol):
     if symbol == "pytest.raises":
         return EffectBoundary()
-"""
-    ) == {"NAME-SPELLING-OVERLOAD-GATE"}
+""") == {"NAME-SPELLING-OVERLOAD-GATE"}
 
-    assert _classes(
-        """
+    assert _classes("""
 import ast
 def _expr(node):
     if isinstance(node, ast.Constant):
         return StringValue(node.value)
     return ObjectValue("made", ())
-"""
-    ) == {"SECOND-CONSTRUCTION-PATH"}
+""") == {"SECOND-CONSTRUCTION-PATH"}
 
-    assert _classes(
-        """
+    assert _classes("""
 import ast
 def transfer(statement: ast.stmt, state):
     if isinstance(statement, ast.If):
@@ -56,17 +49,14 @@ def transfer(statement: ast.stmt, state):
     if isinstance(statement, ast.For):
         return state
     return state
-"""
-    ) == {"NON-EXHAUSTIVE-VARIANT-COVERAGE"}
+""") == {"NON-EXHAUSTIVE-VARIANT-COVERAGE"}
 
-    assert _classes(
-        """
+    assert _classes("""
 def desugar(value):
     if value is None:
         return Complete(None)
     return Complete(value)
-"""
-    ) == {"FABRICATED-COMPLETION-FALLBACK"}
+""") == {"FABRICATED-COMPLETION-FALLBACK"}
 
 
 def test_discrimination_negatives_do_not_false_positive() -> None:
@@ -129,7 +119,9 @@ def test_report_names_file_line_class_and_required_fix() -> None:
     assert "R_construction_invariant_violations = 1" in rendered
 
 
-def test_cli_is_red_on_a_planted_violation_and_green_on_clean_source(tmp_path: Path) -> None:
+def test_cli_is_red_on_a_planted_violation_and_green_on_clean_source(
+    tmp_path: Path,
+) -> None:
     planted = tmp_path / "planted.py"
     planted.write_text(
         'def resolve(name):\n    return TABLE.get(name, "pytest.raises")\n',

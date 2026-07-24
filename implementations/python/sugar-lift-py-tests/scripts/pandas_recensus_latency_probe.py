@@ -78,9 +78,7 @@ def _analyze_engine_log(path: Path, top_n: int = 20) -> dict:
         "note": "sumExitElapsedMs double-counts nested spans",
         "bySugarMs": {k: round(v, 3) for k, v in by_sugar.most_common(30)},
         "byRoleMs": {k: round(v, 3) for k, v in by_role.most_common(20)},
-        "bySugarRoleMs": {
-            k: round(v, 3) for k, v in by_sugar_role.most_common(30)
-        },
+        "bySugarRoleMs": {k: round(v, 3) for k, v in by_sugar_role.most_common(30)},
         "topSpans": exits[:top_n],
     }
 

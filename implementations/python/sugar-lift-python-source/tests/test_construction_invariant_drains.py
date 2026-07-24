@@ -104,7 +104,9 @@ def test_decorator_spelling_never_confers_transparency_or_stub_authority() -> No
 
     result = lifter.lift_source(source, "spelling_is_not_authority.py")
 
-    refused = {row["function"] for row in result.refusals if row["kind"] == "decorator-refused"}
+    refused = {
+        row["function"] for row in result.refusals if row["kind"] == "decorator-refused"
+    }
     assert any(name and name.endswith(".f") for name in refused)
     assert any(name and name.endswith(".g") for name in refused)
     assert not any(
@@ -113,7 +115,9 @@ def test_decorator_spelling_never_confers_transparency_or_stub_authority() -> No
 
 
 def test_import_alias_does_not_turn_external_default_into_a_literal() -> None:
-    source = "from numpy import nan as renamed\ndef f(value=renamed):\n    return value\n"
+    source = (
+        "from numpy import nan as renamed\ndef f(value=renamed):\n    return value\n"
+    )
 
     result = lifter.lift_source(source, "aliased_external_default.py")
 

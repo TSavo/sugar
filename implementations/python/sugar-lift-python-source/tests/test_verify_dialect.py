@@ -637,13 +637,10 @@ def test_leaf_harvester_uses_typed_source_tree_for_renamed_call():
 
     assert not hasattr(leaf_assertions, "ast")
     result = leaf_assertions.harvest_source(
-        "def test_arbitrary():\n"
-        "    assert renamed_operation(3) == 7\n",
+        "def test_arbitrary():\n" "    assert renamed_operation(3) == 7\n",
         "renamed_fixture.py",
     )
-    assert [edge["targetSymbol"] for edge in result.call_edges] == [
-        "renamed_operation"
-    ]
+    assert [edge["targetSymbol"] for edge in result.call_edges] == ["renamed_operation"]
     assert result.diagnostics == []
 
 

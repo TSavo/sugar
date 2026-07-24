@@ -27,7 +27,9 @@ def test_two_renamed_parameter_reads_share_one_authenticated_coordinate() -> Non
 
 
 def test_reassignment_replaces_formal_coordinate_for_later_reads() -> None:
-    function = _function("def transform(items):\n first = items\n items = 3\n return items\n")
+    function = _function(
+        "def transform(items):\n first = items\n items = 3\n return items\n"
+    )
     substituted = function.substitute({})
     refs = [node for node in substituted.walk() if node.kind == "FormalRef"]
     returns = [node for node in substituted.walk() if node.kind == "Return"]

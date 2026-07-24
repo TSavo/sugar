@@ -343,9 +343,7 @@ def main() -> int:
             clean = int(row.get("functionsClean") or 0)
             families = row.get("families") or {}
             snw = int(families.get("SugarNotWritten") or 0)
-            other = sum(
-                int(v) for k, v in families.items() if k != "SugarNotWritten"
-            )
+            other = sum(int(v) for k, v in families.items() if k != "SugarNotWritten")
             live_fns += fn
             live_clean += clean
             live_snw += snw
@@ -458,9 +456,7 @@ def main() -> int:
         flush=True,
     )
     return (
-        1
-        if defects or construction_panics or files_completed != len(file_names)
-        else 0
+        1 if defects or construction_panics or files_completed != len(file_names) else 0
     )
 
 

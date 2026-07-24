@@ -29,6 +29,7 @@ class ContextManagerEdgeTransportError(ValueError):
 
 def _json(value) -> Any:
     from sugar_lift_py_tests.canonicalizer import encode_jcs
+
     return json.loads(encode_jcs(value))
 
 
@@ -60,7 +61,9 @@ class ContextManagerEdgeDtoV1:
                 "context-manager edge requires an authenticated derived ref"
             )
         if use_site != reference.use_site:
-            raise ContextManagerEdgeTransportError("context-manager edge use-site mismatch")
+            raise ContextManagerEdgeTransportError(
+                "context-manager edge use-site mismatch"
+            )
         if not _admitted(reference):
             raise ContextManagerEdgeTransportError(
                 "context-manager edge requires admitted closed semantics"
@@ -90,7 +93,9 @@ class ContextManagerEdgeDtoV1:
             "exitTestimonyCid": reference.exit_testimony_cid,
             "demandCid": reference.demand_cid,
             "resolutionCid": reference.resolution_cid,
-            "importSignature": _json(import_signature_to_value(reference.import_signature)),
+            "importSignature": _json(
+                import_signature_to_value(reference.import_signature)
+            ),
             "semantics": _json(semantics_to_value(reference.semantics)),
         }
 

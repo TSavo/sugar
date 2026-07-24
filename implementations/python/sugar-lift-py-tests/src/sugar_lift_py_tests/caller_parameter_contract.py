@@ -179,7 +179,12 @@ class FormalActualBindingV1:
 
     @classmethod
     def from_value(cls, value):
-        expected = {"formalCoordinateCid", "actualOccurrence", "actualTerm", "actualContractRefCid"}
+        expected = {
+            "formalCoordinateCid",
+            "actualOccurrence",
+            "actualTerm",
+            "actualContractRefCid",
+        }
         if not isinstance(value, dict) or set(value) != expected:
             raise ValueError("formal actual binding requires an exact key set")
         return cls(
@@ -234,7 +239,9 @@ class CallEdgeV2:
             "sourceContractCid": self.source_contract_cid,
             "targetContractCid": self.target_contract_cid,
             "callSite": self.call_site.wire(),
-            "formalActualBindings": [item.to_value() for item in self.formal_actual_bindings],
+            "formalActualBindings": [
+                item.to_value() for item in self.formal_actual_bindings
+            ],
             "edgeCid": self.edge_cid,
         }
 

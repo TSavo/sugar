@@ -75,9 +75,7 @@ class LoopRecurrenceSugar(Sugar):
 
         halted_guards = [face.guard for face in self.outward_faces]
         completed_guard = not_(
-            halted_guards[0]
-            if len(halted_guards) == 1
-            else or_(halted_guards)
+            halted_guards[0] if len(halted_guards) == 1 else or_(halted_guards)
         )
         exits = [Completed(completed_guard, recurrence)]
         for face in self.outward_faces:

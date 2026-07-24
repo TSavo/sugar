@@ -29,9 +29,7 @@ def test_source_constructed_false_exit_restores_original_effect():
         ExitSet.completed(TermValue(False)), site="renamed-fixture"
     )
 
-    assert routed.exits == (
-        Halted(true_guard(), original, TermValue("before-exit")),
-    )
+    assert routed.exits == (Halted(true_guard(), original, TermValue("before-exit")),)
 
 
 def test_source_constructed_exit_runs_on_non_exception_transfer():

@@ -2,13 +2,14 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 _REPOSITORY = Path(__file__).resolve().parents[4]
 _SCANNER_PATH = (
     _REPOSITORY
     / "implementations/python/sugar-lift-py-tests/scripts/generator_construction_law.py"
 )
-_SPEC = importlib.util.spec_from_file_location("generator_construction_law", _SCANNER_PATH)
+_SPEC = importlib.util.spec_from_file_location(
+    "generator_construction_law", _SCANNER_PATH
+)
 assert _SPEC and _SPEC.loader
 _SCANNER = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _SCANNER

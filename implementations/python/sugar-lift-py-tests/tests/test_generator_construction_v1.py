@@ -67,7 +67,9 @@ def test_close_terminates_the_suspended_machine_without_fabricated_return():
 
 def test_opaque_transition_is_typed_loud():
     api = _api()
-    gap = _machine(api.OpaqueStepV1("try-star"),).resume()
+    gap = _machine(
+        api.OpaqueStepV1("try-star"),
+    ).resume()
 
     assert isinstance(gap, api.GeneratorTransitionGapV1)
     assert gap.observed == "try-star"

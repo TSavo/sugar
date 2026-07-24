@@ -13,7 +13,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "construction_side_door_law.py"
 _SPEC = importlib.util.spec_from_file_location(
@@ -196,9 +195,10 @@ def test_sole_path_packages_are_green() -> None:
     r = _SCANNER.r_construction_side_doors(offenders)
     err = _SCANNER.r_auditor_errors(offenders)
     assert err == 0, _SCANNER.format_report(offenders)
-    assert r == 0, (
-        "sole-path packages must stay at R=0; residual:\n"
-        + _SCANNER.format_report(offenders)
+    assert (
+        r == 0
+    ), "sole-path packages must stay at R=0; residual:\n" + _SCANNER.format_report(
+        offenders
     )
     # Drained sole-path modules must not reintroduce foreign ast.
     sole_foreign = [
@@ -259,9 +259,7 @@ def test_main_json_turns_red_for_planted_side_door(
         "import ast\n\ndef parse_again(source):\n    return ast.parse(source)\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        _SCANNER, "default_production_roots", lambda _repo=None: (pkg,)
-    )
+    monkeypatch.setattr(_SCANNER, "default_production_roots", lambda _repo=None: (pkg,))
 
     code = _SCANNER.main([])
     assert code == 1
@@ -271,9 +269,7 @@ def test_main_json_turns_red_for_planted_side_door(
     assert summary["R_construction_side_doors"] > 0
     assert summary["R_foreign_ast_import"] > 0
     assert summary["offenders"]
-    assert any(
-        row["axis"] == "foreign-ast-import" for row in summary["offenders"]
-    )
+    assert any(row["axis"] == "foreign-ast-import" for row in summary["offenders"])
 
 
 def test_missing_root_is_auditor_error_not_crash(tmp_path: Path) -> None:

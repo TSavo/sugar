@@ -144,9 +144,7 @@ def _control_guards(statements, scope, outer=None):
             guard = branch_result_guard(
                 branch_result_slot(statement.test), statement.test.fragment
             )
-            b, c, h = _control_guards(
-                statement.body, current, _combine(outer, guard)
-            )
+            b, c, h = _control_guards(statement.body, current, _combine(outer, guard))
             breaks.extend(b)
             continues.extend(c)
             halted.extend(h)
@@ -262,22 +260,18 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
 
     target = loop.owned_loop_target.wire()
     target_cid = target["targetCid"]
-    true_guard = atomic(
-        "python.loop.reachable", [str_const(target_cid)]
-    )
-    break_guards, continue_guards, halted_specs = _control_guards(
-        loop.body, scope
-    )
+    true_guard = atomic("python.loop.reachable", [str_const(target_cid)])
+    break_guards, continue_guards, halted_specs = _control_guards(loop.body, scope)
     break_guard = _guard_union(break_guards, true_guard)
     continue_guard = _guard_union(continue_guards, true_guard)
 
     if isinstance(loop, For):
-        exhaustion_guard = atomic(
-            "python.loop.exhausted", [str_const(target_cid)]
-        )
+        exhaustion_guard = atomic("python.loop.exhausted", [str_const(target_cid)])
         operation_kind = "ForNext"
     else:
-        test_guard = branch_result_guard(branch_result_slot(loop.test), loop.test.fragment)
+        test_guard = branch_result_guard(
+            branch_result_slot(loop.test), loop.test.fragment
+        )
         exhaustion_guard = not_(test_guard)
         true_guard = test_guard
         operation_kind = "WhileTest"
@@ -304,8 +298,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         )
         state_record, runtime_snapshot = _sealed_state(projected_entries)
         if all(
-            prior["stateCid"] != state_record["stateCid"]
-            for prior in state_records
+            prior["stateCid"] != state_record["stateCid"] for prior in state_records
         ):
             state_records.append(state_record)
         runtime_states[state_record["stateCid"]] = runtime_snapshot
@@ -340,8 +333,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         )
         state_record, runtime_snapshot = _sealed_state(projected_entries)
         if all(
-            prior["stateCid"] != state_record["stateCid"]
-            for prior in state_records
+            prior["stateCid"] != state_record["stateCid"] for prior in state_records
         ):
             state_records.append(state_record)
         runtime_states[state_record["stateCid"]] = runtime_snapshot
@@ -369,80 +361,101 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     body_face = face_snapshots["BodyFallthrough"][0]
     records = [*state_records, *face_records, *outward_records]
     body_exit_cid = cid_of_json(
-        {"loopBodyExitSet": loop.body[0].fragment.seal().cid if loop.body else target_cid}
+        {
+            "loopBodyExitSet": (
+                loop.body[0].fragment.seal().cid if loop.body else target_cid
+            )
+        }
     )
 
     if isinstance(loop, For):
         binder = _record(
             {
-                "kind": "loop-binder-transform", "schemaVersion": "1",
-                "targetCid": target_cid, "inputStateCid": pre_state["stateCid"],
+                "kind": "loop-binder-transform",
+                "schemaVersion": "1",
+                "targetCid": target_cid,
+                "inputStateCid": pre_state["stateCid"],
                 "elementValueCid": cid_of_json({"iteratorElement": target_cid}),
                 "outputStateCid": pre_state["stateCid"],
                 "binderPatternConstructionCid": loop.target.fragment.seal().cid,
-            }, "binderTransformCid"
+            },
+            "binderTransformCid",
         )
         iterator = _record(
             {
-                "kind": "loop-iterator-testimony", "schemaVersion": "1",
+                "kind": "loop-iterator-testimony",
+                "schemaVersion": "1",
                 "targetCid": target_cid,
                 "iterableValueConstructionCid": loop.iter.fragment.seal().cid,
                 "iteratorConstructionCid": cid_of_json({"iterator": target_cid}),
                 "nextOperationCid": cid_of_json({"next": target_cid}),
                 "exhaustionOperationCid": cid_of_json({"exhaustion": target_cid}),
-            }, "iteratorTestimonyCid"
+            },
+            "iteratorTestimonyCid",
         )
         operation = _record(
             {
-                "kind": "for-operation", "schemaVersion": "1",
+                "kind": "for-operation",
+                "schemaVersion": "1",
                 "targetCid": target_cid,
                 "nativeLoopTermCid": cid_of_json({"native": "python:for"}),
                 "binderTransformCid": binder["binderTransformCid"],
                 "iteratorTestimonyCid": iterator["iteratorTestimonyCid"],
-            }, "operationCid"
+            },
+            "operationCid",
         )
         successor_cid = binder["binderTransformCid"]
         records.extend((binder, iterator, operation))
     else:
         test_transform = _record(
             {
-                "kind": "loop-test-transform", "schemaVersion": "1",
-                "targetCid": target_cid, "inputStateCid": pre_state["stateCid"],
+                "kind": "loop-test-transform",
+                "schemaVersion": "1",
+                "targetCid": target_cid,
+                "inputStateCid": pre_state["stateCid"],
                 "testValueConstructionCid": loop.test.fragment.seal().cid,
                 "trueGuardFormulaCid": _formula_cid(true_guard),
                 "falseGuardFormulaCid": _formula_cid(exhaustion_guard),
                 "haltedFaceCids": [],
-            }, "testTransformCid"
+            },
+            "testTransformCid",
         )
         operation = _record(
             {
-                "kind": "while-operation", "schemaVersion": "1",
+                "kind": "while-operation",
+                "schemaVersion": "1",
                 "targetCid": target_cid,
                 "nativeLoopTermCid": cid_of_json({"native": "python:while"}),
                 "testTransformCid": test_transform["testTransformCid"],
-            }, "operationCid"
+            },
+            "operationCid",
         )
         successor_cid = test_transform["testTransformCid"]
         records.extend((test_transform, operation))
 
     body = _record(
         {
-            "kind": "loop-body-transform", "schemaVersion": "1",
-            "targetCid": target_cid, "inputStateCid": pre_state["stateCid"],
+            "kind": "loop-body-transform",
+            "schemaVersion": "1",
+            "targetCid": target_cid,
+            "inputStateCid": pre_state["stateCid"],
             "binderTransformCid": successor_cid,
             "bodySourceFragmentCid": loop.fragment.seal().cid,
             "bodyExitTemplateCid": body_exit_cid,
-        }, "bodyTransformCid"
+        },
+        "bodyTransformCid",
     )
     latch = _record(
         {
-            "kind": "loop-latch-obligation", "schemaVersion": "1",
+            "kind": "loop-latch-obligation",
+            "schemaVersion": "1",
             "targetCid": target_cid,
             "inputCompletedFaceCid": body_face["completedFaceCid"],
             "inputStateCid": body_face["stateCid"],
             "operationKind": operation_kind,
             "successorTransformCid": successor_cid,
-        }, "latchObligationCid"
+        },
+        "latchObligationCid",
     )
     records.extend((body, latch))
 
@@ -450,13 +463,15 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     if continue_guard is not None:
         obligation = _record(
             {
-                "kind": "loop-continue-latch-obligation", "schemaVersion": "1",
+                "kind": "loop-continue-latch-obligation",
+                "schemaVersion": "1",
                 "targetCid": target_cid,
                 "continueEffectCid": cid_of_json({"continue": target_cid}),
                 "inputHaltedFaceCid": cid_of_json({"continueFace": target_cid}),
                 "inputStateCid": body_face["stateCid"],
                 "successorTransformCid": successor_cid,
-            }, "continueLatchObligationCid"
+            },
+            "continueLatchObligationCid",
         )
         records.append(obligation)
         continue_obligations.append(obligation["continueLatchObligationCid"])
@@ -466,12 +481,14 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         break_face = face_snapshots["BreakExit"][0]
         obligation = _record(
             {
-                "kind": "loop-break-exit-obligation", "schemaVersion": "1",
+                "kind": "loop-break-exit-obligation",
+                "schemaVersion": "1",
                 "targetCid": target_cid,
                 "breakEffectCid": cid_of_json({"break": target_cid}),
                 "inputHaltedFaceCid": cid_of_json({"breakFace": target_cid}),
                 "outputCompletedFaceCid": break_face["completedFaceCid"],
-            }, "breakExitObligationCid"
+            },
+            "breakExitObligationCid",
         )
         records.append(obligation)
         break_obligations.append(obligation["breakExitObligationCid"])
@@ -479,12 +496,14 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     exhaustion_face = face_snapshots["NormalExhaustion"][0]
     exhaustion = _record(
         {
-            "kind": "loop-exhaustion-exit-obligation", "schemaVersion": "1",
+            "kind": "loop-exhaustion-exit-obligation",
+            "schemaVersion": "1",
             "targetCid": target_cid,
             "operationTestimonyCid": operation["operationCid"],
             "inputStateCid": pre_state["stateCid"],
             "outputCompletedFaceCid": exhaustion_face["completedFaceCid"],
-        }, "exhaustionExitObligationCid"
+        },
+        "exhaustionExitObligationCid",
     )
     records.append(exhaustion)
 
@@ -511,10 +530,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             for name, pre_entry in zip(carried_names, pre_entries, strict=True)
         )
         else_state, else_runtime = _sealed_state(else_runtime)
-        if all(
-            prior["stateCid"] != else_state["stateCid"]
-            for prior in state_records
-        ):
+        if all(prior["stateCid"] != else_state["stateCid"] for prior in state_records):
             state_records.append(else_state)
             records.append(else_state)
         runtime_states[else_state["stateCid"]] = else_runtime
@@ -577,22 +593,27 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         for entry in pre_entries:
             post = _record(
                 {
-                    "kind": "loop-post-binding", "schemaVersion": "1",
+                    "kind": "loop-post-binding",
+                    "schemaVersion": "1",
                     "targetCid": target_cid,
                     "bindingCoordinateCid": entry.coordinate.cid,
                     "incomingStateCid": pre_state["stateCid"],
                     "completedFaceCid": face["completedFaceCid"],
                     "projectedStateCid": state_record["stateCid"],
-                }, "postBindingObligationCid"
+                },
+                "postBindingObligationCid",
             )
             records.append(post)
             post_records.append(post["postBindingObligationCid"])
 
     root = _record(
         {
-            "kind": "loop-construction", "schemaVersion": "1",
-            "target": target, "preStateCid": pre_state["stateCid"],
-            "operation": operation, "bodyTransformCid": body["bodyTransformCid"],
+            "kind": "loop-construction",
+            "schemaVersion": "1",
+            "target": target,
+            "preStateCid": pre_state["stateCid"],
+            "operation": operation,
+            "bodyTransformCid": body["bodyTransformCid"],
             "bodyExitTemplateCid": body_exit_cid,
             "latchObligationCids": [latch["latchObligationCid"]],
             "continueLatchObligationCids": continue_obligations,
@@ -603,7 +624,8 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             "completedFaceCids": [face["completedFaceCid"] for face in face_records],
             "outwardHaltedFaceCids": outward_face_cids,
             "postBindingObligationCids": post_records,
-        }, "loopConstructionCid"
+        },
+        "loopConstructionCid",
     )
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})

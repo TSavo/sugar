@@ -34,9 +34,7 @@ class PlaceAssignSugar(Sugar):
                 elif self.selector_kind == "subscript":
                     return self.selector.desugar(ctx).and_then(
                         lambda selector: Complete(
-                            PlaceAssignValue(
-                                receiver, "subscript", selector, value
-                            )
+                            PlaceAssignValue(receiver, "subscript", selector, value)
                         )
                     )
                 else:

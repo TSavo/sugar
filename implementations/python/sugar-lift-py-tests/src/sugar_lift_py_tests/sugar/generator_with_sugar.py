@@ -92,9 +92,9 @@ class GeneratorWithSugar(Sugar):
             result = ExitSet(tuple(exits)).normalize()
             facts = ()
             if self.enter_slot_id is not None:
-                facts = EnterResultBinding(
-                    self.enter_slot_id, entered.value
-                ).to_facts(site=self.site)
+                facts = EnterResultBinding(self.enter_slot_id, entered.value).to_facts(
+                    site=self.site
+                )
             routed.append(prepend_facts_to_exitset(result, facts))
 
         if not routed:

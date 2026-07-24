@@ -35,7 +35,11 @@ def _unknown_operation(graph):
 
 
 def _mutate_latch(graph, **changes):
-    latch = next(record for record in graph["records"] if record["kind"] == "loop-latch-obligation")
+    latch = next(
+        record
+        for record in graph["records"]
+        if record["kind"] == "loop-latch-obligation"
+    )
     old_cid = latch["latchObligationCid"]
     latch.update(changes)
     _reseal(latch, "latchObligationCid")
@@ -287,7 +291,9 @@ def test_binding_state_is_content_addressed_and_ordered():
     decoded = decode_binding_state_v1(state)
     assert decoded.state_cid == state["stateCid"]
     stale = copy.deepcopy(state)
-    stale["entries"][0]["state"]["testimony"]["semanticValueCid"] = _cid({"different": 1})
+    stale["entries"][0]["state"]["testimony"]["semanticValueCid"] = _cid(
+        {"different": 1}
+    )
     _reseal(
         stale["entries"][0]["state"]["testimony"],
         "constructedValueTestimonyCid",
@@ -323,10 +329,19 @@ def test_loop_graph_round_trips_and_validates_every_child():
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        (lambda graph: graph["root"].update(loopConstructionCid=_cid({"stale": 1})), "loopConstructionCid mismatch"),
+        (
+            lambda graph: graph["root"].update(loopConstructionCid=_cid({"stale": 1})),
+            "loopConstructionCid mismatch",
+        ),
         (_unknown_operation, "unknown loop record kind"),
-        (lambda graph: _mutate_latch(graph, operationKind="FutureLatch"), "unknown latch operation"),
-        (lambda graph: _mutate_latch(graph, inputStateCid=_cid({"missing": 1})), "missing binding-state"),
+        (
+            lambda graph: _mutate_latch(graph, operationKind="FutureLatch"),
+            "unknown latch operation",
+        ),
+        (
+            lambda graph: _mutate_latch(graph, inputStateCid=_cid({"missing": 1})),
+            "missing binding-state",
+        ),
     ],
 )
 def test_malformed_or_unknown_loop_wire_is_loud(mutation, message):

@@ -14,8 +14,7 @@ def _function(source: str):
 
 
 def test_live_for_projects_break_and_exhaustion_before_tail_substitution():
-    function = _function(
-        """
+    function = _function("""
 def arbitrary(items, stop):
     carried = 0
     for renamed in items:
@@ -23,8 +22,7 @@ def arbitrary(items, stop):
             break
         carried = carried + renamed
     return carried
-"""
-    )
+""")
 
     constructed = function.sugar()
 
@@ -38,31 +36,28 @@ def arbitrary(items, stop):
     post_read = constructed.statements[2].value
     assert type(post_read).__name__ == "GuardedBindingReadSugar"
     assert type(post_read.state).__name__ == "LoopGuardedProjection"
-    assert {
-        face.completion_kind for face in post_read.state.completed_faces
-    } == {"BreakExit", "NormalExhaustion"}
+    assert {face.completion_kind for face in post_read.state.completed_faces} == {
+        "BreakExit",
+        "NormalExhaustion",
+    }
 
 
 def test_renamed_lying_twin_does_not_authorize_loop_target_by_spelling():
-    truthful = _function(
-        """
+    truthful = _function("""
 def arbitrary(items):
     carried = 0
     for renamed in items:
         carried = carried + renamed
     return carried
-"""
-    ).sugar()
-    lying = _function(
-        """
+""").sugar()
+    lying = _function("""
 def arbitrary(items):
     carried = 0
     renamed = 99
     for other in items:
         carried = carried + other
     return carried
-"""
-    ).sugar()
+""").sugar()
 
     truthful_loop = truthful.statements[1]
     lying_loop = lying.statements[2]
@@ -70,29 +65,26 @@ def arbitrary(items):
 
 
 def test_live_symbolic_while_projects_false_test_exhaustion_before_tail():
-    function = _function(
-        """
+    function = _function("""
 def arbitrary(limit):
     carried = 0
     while carried < limit:
         carried = carried + 1
     return carried
-"""
-    )
+""")
 
     constructed = function.sugar()
 
     assert type(constructed.statements[1]).__name__ == "LoopRecurrenceSugar"
     post_read = constructed.statements[2].value
     assert type(post_read.state).__name__ == "LoopGuardedProjection"
-    assert {
-        face.completion_kind for face in post_read.state.completed_faces
-    } == {"NormalExhaustion"}
+    assert {face.completion_kind for face in post_read.state.completed_faces} == {
+        "NormalExhaustion"
+    }
 
 
 def test_live_for_else_projects_else_state_only_on_normal_exhaustion():
-    constructed = _function(
-        """
+    constructed = _function("""
 def arbitrary(items, stop):
     carried = 0
     for renamed in items:
@@ -102,8 +94,7 @@ def arbitrary(items, stop):
     else:
         carried = 42
     return carried
-"""
-    ).sugar()
+""").sugar()
 
     loop = constructed.statements[1]
     graph = loop.construction.wire_graph()
@@ -121,8 +112,7 @@ def arbitrary(items, stop):
 
 
 def test_renamed_else_lying_twin_cannot_run_else_on_break_face():
-    constructed = _function(
-        """
+    constructed = _function("""
 def arbitrary(items, gate):
     result = 0
     for renamed in items:
@@ -131,8 +121,7 @@ def arbitrary(items, gate):
     else:
         result = 9
     return result
-"""
-    ).sugar()
+""").sugar()
 
     post = constructed.statements[2].value.state
     by_kind = {face.completion_kind: face for face in post.completed_faces}
@@ -141,8 +130,7 @@ def arbitrary(items, gate):
 
 
 def test_live_while_else_uses_false_test_face_before_tail_substitution():
-    constructed = _function(
-        """
+    constructed = _function("""
 def arbitrary(limit):
     carried = 0
     while carried < limit:
@@ -150,8 +138,7 @@ def arbitrary(limit):
     else:
         carried = 17
     return carried
-"""
-    ).sugar()
+""").sugar()
 
     loop = constructed.statements[1]
     root = loop.construction.wire_graph()["root"]
@@ -163,8 +150,7 @@ def arbitrary(limit):
 
 
 def test_guarded_return_in_live_loop_is_an_outward_halted_face():
-    constructed = _function(
-        """
+    constructed = _function("""
 def arbitrary(items, stop):
     carried = 0
     for renamed in items:
@@ -172,8 +158,7 @@ def arbitrary(items, stop):
         if renamed == stop:
             return carried
     return carried
-"""
-    ).sugar()
+""").sugar()
 
     loop = constructed.statements[1]
     root = loop.construction.wire_graph()["root"]
@@ -195,8 +180,7 @@ def arbitrary(items, stop):
 
 
 def test_guarded_raise_in_live_while_is_an_outward_halted_face():
-    constructed = _function(
-        """
+    constructed = _function("""
 def arbitrary(limit, stop):
     carried = 0
     while carried < limit:
@@ -204,8 +188,7 @@ def arbitrary(limit, stop):
             raise ValueError(carried)
         carried = carried + 1
     return carried
-"""
-    ).sugar()
+""").sugar()
 
     loop = constructed.statements[1]
     root = loop.construction.wire_graph()["root"]
@@ -213,7 +196,6 @@ def arbitrary(limit, stop):
     exits = loop.desugar()
     assert type(exits).__name__ == "ExitSet"
     assert any(
-        type(face).__name__ == "Halted"
-        and type(face.effect).__name__ == "RaiseEffect"
+        type(face).__name__ == "Halted" and type(face.effect).__name__ == "RaiseEffect"
         for face in exits.exits
     )

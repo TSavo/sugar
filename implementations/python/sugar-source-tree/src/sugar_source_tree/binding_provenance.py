@@ -90,12 +90,19 @@ class BindingCoordinateV1:
         _cid(raw["scopeOwnerCid"], "scopeOwnerCid")
         site = _decode_source_memento(raw["bindingSite"])
         path = raw["projectionPath"]
-        if not isinstance(path, list) or not path or not all(
-            isinstance(part, (str, int)) and not isinstance(part, bool) for part in path
+        if (
+            not isinstance(path, list)
+            or not path
+            or not all(
+                isinstance(part, (str, int)) and not isinstance(part, bool)
+                for part in path
+            )
         ):
             raise BindingProvenanceGap("malformed projectionPath")
         observed = _cid(raw["bindingCoordinateCid"], "bindingCoordinateCid")
-        preimage = {key: value for key, value in raw.items() if key != "bindingCoordinateCid"}
+        preimage = {
+            key: value for key, value in raw.items() if key != "bindingCoordinateCid"
+        }
         if cid_of_json(preimage) != observed:
             raise BindingProvenanceGap("coordinate CID mismatch")
         return cls(raw["scopeOwnerCid"], site, tuple(path), observed)
@@ -205,7 +212,9 @@ class BindingEntryV1:
     @classmethod
     def decode(cls, raw: object) -> "BindingEntryV1":
         raw = _exact(raw, {"coordinate", "state"}, "BindingEntryV1")
-        return cls(BindingCoordinateV1.decode(raw["coordinate"]), _decode_state(raw["state"]))
+        return cls(
+            BindingCoordinateV1.decode(raw["coordinate"]), _decode_state(raw["state"])
+        )
 
 
 @dataclass(frozen=True)
@@ -305,7 +314,9 @@ class SubstitutionTraceV1:
         _cid(raw["scopeOwnerCid"], "scopeOwnerCid")
         if not isinstance(raw["records"], list):
             raise BindingProvenanceGap("trace records must be an array")
-        records = tuple(SubstitutionTraceRecordV1.decode(item) for item in raw["records"])
+        records = tuple(
+            SubstitutionTraceRecordV1.decode(item) for item in raw["records"]
+        )
         observed = _cid(raw["traceCid"], "traceCid")
         preimage = {key: value for key, value in raw.items() if key != "traceCid"}
         if cid_of_json(preimage) != observed:
@@ -316,7 +327,9 @@ class SubstitutionTraceV1:
 def _decode_source_memento(raw: object) -> dict[str, Any]:
     raw = _exact(raw, {"file", "span", "source_cid", "cid"}, "SourceMemento")
     span = _exact(raw["span"], {"start", "end"}, "SourceMemento span")
-    if not all(isinstance(span[key], int) and not isinstance(span[key], bool) for key in span):
+    if not all(
+        isinstance(span[key], int) and not isinstance(span[key], bool) for key in span
+    ):
         raise BindingProvenanceGap("source span offsets must be integers")
     _cid(raw["source_cid"], "source_cid")
     _cid(raw["cid"], "cid")
@@ -331,7 +344,10 @@ def _state_wire(state: BindingStateV1) -> dict[str, Any]:
             raise BindingProvenanceGap("constructed-value testimony unavailable")
         return {"kind": "bound", "testimony": state.testimony.wire()}
     if isinstance(state, UnboundBindingStateV1):
-        return {"kind": "unbound", "causeFragmentCid": _cid(state.cause_fragment_cid, "causeFragmentCid")}
+        return {
+            "kind": "unbound",
+            "causeFragmentCid": _cid(state.cause_fragment_cid, "causeFragmentCid"),
+        }
     if isinstance(state, GuardedBindingStateV1):
         return {
             "kind": "guarded",

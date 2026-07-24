@@ -7,7 +7,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
 
-
 _REPLACEMENT = "LoopConstructionV1 plus LoopProjectedBinding"
 
 
@@ -156,7 +155,11 @@ def scan_guarded_loop_recurrence(
             )
             for node in tree.body
         )
-        if legacy or "python:loop.flat_map" not in text or "python:loop.filter_guard" not in text:
+        if (
+            legacy
+            or "python:loop.flat_map" not in text
+            or "python:loop.filter_guard" not in text
+        ):
             findings.append(
                 _finding(
                     comprehension_sugar,

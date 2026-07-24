@@ -436,9 +436,11 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
                 gap={"blame": terminal, "kind": node.kind, "reason": reason},
             )
         )
-    return AuditLeafEnvelopeDto.from_rpc({
-        "semanticCore": RecoveredAuditDto(panics=panics).to_rpc(),
-        "auxiliaryRows": {
-            "sourceAudit": source_audit_from_roll_call(full_path, file_rel)
-        },
-    }).to_rpc()
+    return AuditLeafEnvelopeDto.from_rpc(
+        {
+            "semanticCore": RecoveredAuditDto(panics=panics).to_rpc(),
+            "auxiliaryRows": {
+                "sourceAudit": source_audit_from_roll_call(full_path, file_rel)
+            },
+        }
+    ).to_rpc()
