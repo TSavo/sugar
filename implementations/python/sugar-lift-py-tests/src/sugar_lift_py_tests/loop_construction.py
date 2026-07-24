@@ -111,8 +111,12 @@ def _decode_binding_entry(raw: Any) -> tuple[str, dict[str, Any]]:
     coordinate = _exact(
         raw["coordinate"],
         {
-            "kind", "schemaVersion", "scopeOwnerCid", "bindingSite",
-            "projectionPath", "bindingCoordinateCid",
+            "kind",
+            "schemaVersion",
+            "scopeOwnerCid",
+            "bindingSite",
+            "projectionPath",
+            "bindingCoordinateCid",
         },
         "BindingCoordinateV1",
     )
@@ -131,12 +135,18 @@ def _decode_binding_entry(raw: Any) -> tuple[str, dict[str, Any]]:
         testimony = _exact(
             state["testimony"],
             {
-                "kind", "schemaVersion", "sourceFragmentCid", "semanticValueCid",
+                "kind",
+                "schemaVersion",
+                "sourceFragmentCid",
+                "semanticValueCid",
                 "constructedValueTestimonyCid",
             },
             "ConstructedValueTestimonyV1",
         )
-        if testimony["kind"] != "constructed-value-testimony" or testimony["schemaVersion"] != "1":
+        if (
+            testimony["kind"] != "constructed-value-testimony"
+            or testimony["schemaVersion"] != "1"
+        ):
             raise LoopWireError("unsupported ConstructedValueTestimonyV1")
         _validate_seal(
             testimony,
@@ -215,65 +225,136 @@ _RECORD_CID_FIELDS = {
 
 _EXACT_FIELDS = {
     "loop-completed-face": {
-        "kind", "schemaVersion", "targetCid", "completionKind",
-        "guardFormulaCid", "stateCid", "completedFaceCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "completionKind",
+        "guardFormulaCid",
+        "stateCid",
+        "completedFaceCid",
     },
     "loop-outward-halted-face": {
-        "kind", "schemaVersion", "targetCid", "effectCid", "guardFormulaCid",
-        "stateCid", "outwardHaltedFaceCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "effectCid",
+        "guardFormulaCid",
+        "stateCid",
+        "outwardHaltedFaceCid",
     },
     "loop-binder-transform": {
-        "kind", "schemaVersion", "targetCid", "inputStateCid", "elementValueCid",
-        "outputStateCid", "binderPatternConstructionCid", "binderTransformCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "inputStateCid",
+        "elementValueCid",
+        "outputStateCid",
+        "binderPatternConstructionCid",
+        "binderTransformCid",
     },
     "loop-body-transform": {
-        "kind", "schemaVersion", "targetCid", "inputStateCid", "binderTransformCid",
-        "bodySourceFragmentCid", "bodyExitTemplateCid", "bodyTransformCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "inputStateCid",
+        "binderTransformCid",
+        "bodySourceFragmentCid",
+        "bodyExitTemplateCid",
+        "bodyTransformCid",
     },
     "loop-test-transform": {
-        "kind", "schemaVersion", "targetCid", "inputStateCid",
-        "testValueConstructionCid", "trueGuardFormulaCid", "falseGuardFormulaCid",
-        "haltedFaceCids", "testTransformCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "inputStateCid",
+        "testValueConstructionCid",
+        "trueGuardFormulaCid",
+        "falseGuardFormulaCid",
+        "haltedFaceCids",
+        "testTransformCid",
     },
     "loop-iterator-testimony": {
-        "kind", "schemaVersion", "targetCid", "iterableValueConstructionCid",
-        "iteratorConstructionCid", "nextOperationCid", "exhaustionOperationCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "iterableValueConstructionCid",
+        "iteratorConstructionCid",
+        "nextOperationCid",
+        "exhaustionOperationCid",
         "iteratorTestimonyCid",
     },
     "for-operation": {
-        "kind", "schemaVersion", "targetCid", "nativeLoopTermCid",
-        "binderTransformCid", "iteratorTestimonyCid", "operationCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "nativeLoopTermCid",
+        "binderTransformCid",
+        "iteratorTestimonyCid",
+        "operationCid",
     },
     "while-operation": {
-        "kind", "schemaVersion", "targetCid", "nativeLoopTermCid",
-        "testTransformCid", "operationCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "nativeLoopTermCid",
+        "testTransformCid",
+        "operationCid",
     },
     "loop-latch-obligation": {
-        "kind", "schemaVersion", "targetCid", "inputCompletedFaceCid",
-        "inputStateCid", "operationKind", "successorTransformCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "inputCompletedFaceCid",
+        "inputStateCid",
+        "operationKind",
+        "successorTransformCid",
         "latchObligationCid",
     },
     "loop-continue-latch-obligation": {
-        "kind", "schemaVersion", "targetCid", "continueEffectCid",
-        "inputHaltedFaceCid", "inputStateCid", "successorTransformCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "continueEffectCid",
+        "inputHaltedFaceCid",
+        "inputStateCid",
+        "successorTransformCid",
         "continueLatchObligationCid",
     },
     "loop-break-exit-obligation": {
-        "kind", "schemaVersion", "targetCid", "breakEffectCid",
-        "inputHaltedFaceCid", "outputCompletedFaceCid", "breakExitObligationCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "breakEffectCid",
+        "inputHaltedFaceCid",
+        "outputCompletedFaceCid",
+        "breakExitObligationCid",
     },
     "loop-exhaustion-exit-obligation": {
-        "kind", "schemaVersion", "targetCid", "operationTestimonyCid",
-        "inputStateCid", "outputCompletedFaceCid", "exhaustionExitObligationCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "operationTestimonyCid",
+        "inputStateCid",
+        "outputCompletedFaceCid",
+        "exhaustionExitObligationCid",
     },
     "loop-else-exhaustion-obligation": {
-        "kind", "schemaVersion", "targetCid", "inputCompletedFaceCid",
-        "elseBodyTransformCid", "outputCompletedFaceCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "inputCompletedFaceCid",
+        "elseBodyTransformCid",
+        "outputCompletedFaceCid",
         "elseExhaustionObligationCid",
     },
     "loop-post-binding": {
-        "kind", "schemaVersion", "targetCid", "bindingCoordinateCid",
-        "incomingStateCid", "completedFaceCid", "projectedStateCid",
+        "kind",
+        "schemaVersion",
+        "targetCid",
+        "bindingCoordinateCid",
+        "incomingStateCid",
+        "completedFaceCid",
+        "projectedStateCid",
         "postBindingObligationCid",
     },
 }
@@ -333,11 +414,14 @@ def _decode_record(raw: Any) -> LoopRecordV1:
             for item in value:
                 _require_cid(item, field)
     if kind == "loop-completed-face" and raw["completionKind"] not in {
-        "BodyFallthrough", "NormalExhaustion", "BreakExit"
+        "BodyFallthrough",
+        "NormalExhaustion",
+        "BreakExit",
     }:
         raise LoopWireError("unknown loop completion kind")
     if kind == "loop-latch-obligation" and raw["operationKind"] not in {
-        "ForNext", "WhileTest"
+        "ForNext",
+        "WhileTest",
     }:
         raise LoopWireError("unknown latch operation")
     return LoopRecordV1(kind, cid, deepcopy(raw))
@@ -345,18 +429,33 @@ def _decode_record(raw: Any) -> LoopRecordV1:
 
 def _root(raw: Any) -> dict[str, Any]:
     fields = {
-        "kind", "schemaVersion", "target", "preStateCid", "operation",
-        "bodyTransformCid", "bodyExitTemplateCid", "latchObligationCids",
+        "kind",
+        "schemaVersion",
+        "target",
+        "preStateCid",
+        "operation",
+        "bodyTransformCid",
+        "bodyExitTemplateCid",
+        "latchObligationCids",
         "continueLatchObligationCids",
-        "breakExitObligationCids", "exhaustionExitObligationCid", "elseBodyCid",
+        "breakExitObligationCids",
+        "exhaustionExitObligationCid",
+        "elseBodyCid",
         "elseExhaustionObligationCid",
-        "completedFaceCids", "outwardHaltedFaceCids", "postBindingObligationCids",
+        "completedFaceCids",
+        "outwardHaltedFaceCids",
+        "postBindingObligationCids",
         "loopConstructionCid",
     }
     raw = _exact(raw, fields, "LoopConstructionV1")
     if raw["kind"] != "loop-construction" or raw["schemaVersion"] != "1":
         raise LoopWireError("unsupported LoopConstructionV1")
-    for field in ("preStateCid", "bodyTransformCid", "bodyExitTemplateCid", "exhaustionExitObligationCid"):
+    for field in (
+        "preStateCid",
+        "bodyTransformCid",
+        "bodyExitTemplateCid",
+        "exhaustionExitObligationCid",
+    ):
         _require_cid(raw[field], field)
     if raw["elseBodyCid"] is not None:
         _require_cid(raw["elseBodyCid"], "elseBodyCid")
@@ -364,7 +463,14 @@ def _root(raw: Any) -> dict[str, Any]:
         _require_cid(raw["elseExhaustionObligationCid"], "elseExhaustionObligationCid")
     if (raw["elseBodyCid"] is None) != (raw["elseExhaustionObligationCid"] is None):
         raise LoopWireError("else body and exhaustion obligation must appear together")
-    for field in ("latchObligationCids", "continueLatchObligationCids", "breakExitObligationCids", "completedFaceCids", "outwardHaltedFaceCids", "postBindingObligationCids"):
+    for field in (
+        "latchObligationCids",
+        "continueLatchObligationCids",
+        "breakExitObligationCids",
+        "completedFaceCids",
+        "outwardHaltedFaceCids",
+        "postBindingObligationCids",
+    ):
         if not isinstance(raw[field], list):
             raise LoopWireError(f"{field} must be an array")
         for cid in raw[field]:
@@ -413,7 +519,8 @@ def decode_loop_construction_v1(graph: Any) -> LoopConstructionV1:
     pre_state = state(root["preStateCid"])
     operation_raw = root["operation"]
     if not isinstance(operation_raw, dict) or operation_raw.get("kind") not in {
-        "for-operation", "while-operation"
+        "for-operation",
+        "while-operation",
     }:
         raise LoopWireError("unknown loop operation")
     operation_record = _decode_record(operation_raw)

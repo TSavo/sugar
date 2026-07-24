@@ -103,9 +103,7 @@ def test_different_corpus_identity_cannot_reconcile() -> None:
 
 def test_expected_denominator_and_exact_file_rows_are_required() -> None:
     reports = {name: _floor(name) for name in RECONCILE.FLOORS}
-    reports["silent"]["rows"] = [
-        {"file": "renamed/other.py", "category": "completed"}
-    ]
+    reports["silent"]["rows"] = [{"file": "renamed/other.py", "category": "completed"}]
 
     result = RECONCILE.reconcile(reports, expected_files=1415)
 

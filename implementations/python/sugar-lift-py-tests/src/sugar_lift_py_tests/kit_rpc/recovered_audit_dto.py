@@ -75,9 +75,7 @@ _LEAF_SUPPRESSED_FIELDS = frozenset({"locus", "reason"})
 _LEAF_ENVELOPE_FIELDS = frozenset({"semanticCore", "auxiliaryRows"})
 _LEAF_AUXILIARY_FIELDS = frozenset({"sourceAudit"})
 _SOURCE_AUDIT_FIELDS = frozenset({"role", "loci", "totals"})
-_SOURCE_AUDIT_ROW_FIELDS = frozenset(
-    {"status", "kind", "name", "source_cid", "locus"}
-)
+_SOURCE_AUDIT_ROW_FIELDS = frozenset({"status", "kind", "name", "source_cid", "locus"})
 _SOURCE_AUDIT_LOCUS_FIELDS = frozenset({"file", "line", "col"})
 _SOURCE_AUDIT_TOTALS_FIELDS = frozenset(
     {"source_loci", "source_warranted", "source_unresolved"}
@@ -343,9 +341,7 @@ class AuditLeafEnvelopeDto:
         )
         return cls(
             semantic_core=RecoveredAuditDto.from_rpc(row.get("semanticCore")),
-            source_audit=AuditLeafSourceAuditDto.from_rpc(
-                auxiliary.get("sourceAudit")
-            ),
+            source_audit=AuditLeafSourceAuditDto.from_rpc(auxiliary.get("sourceAudit")),
         )
 
 

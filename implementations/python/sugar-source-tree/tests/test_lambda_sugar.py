@@ -135,8 +135,8 @@ def test_lambda_parameter_roles_use_the_source_call_frame(source):
 )
 def test_lambda_signature_roles_bind_through_the_shared_frame(expression, expected):
     call = _return_expression(f"def A():\n    return {expression}\n")
-    reduced = call.sugar().desugar().value.force_floor(
-        None, owner="lambda-signature-twin"
+    reduced = (
+        call.sugar().desugar().value.force_floor(None, owner="lambda-signature-twin")
     )
 
     assert reduced.statements[0].value == expected

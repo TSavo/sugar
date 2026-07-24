@@ -75,9 +75,7 @@ def test_projection_reauthenticates_coordinate_and_testimony_cids():
             coordinate=replace(ready.coordinate, cid="blake3-512:stale"),
         ).wire()
     with pytest.raises(ValueError, match="testimony CID mismatch"):
-        ready.with_testimony(
-            replace(testimony, cid="blake3-512:stale")
-        ).wire()
+        ready.with_testimony(replace(testimony, cid="blake3-512:stale")).wire()
 
 
 def test_distinct_occurrences_borrowing_one_span_never_collide():

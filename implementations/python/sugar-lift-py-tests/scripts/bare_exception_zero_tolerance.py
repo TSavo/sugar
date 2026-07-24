@@ -137,9 +137,7 @@ def main() -> int:
     rows = tuple(_from_terminal(t) for t in terminals)
     with progress_path.open("a", encoding="utf-8") as progress:
         for t in terminals:
-            progress.write(
-                f"{t.file}\t{t.category}\trestarts={t.worker_restarts}\n"
-            )
+            progress.write(f"{t.file}\t{t.category}\trestarts={t.worker_restarts}\n")
 
     offenders = tuple(row.offender for row in rows if row.offender is not None)
     print(

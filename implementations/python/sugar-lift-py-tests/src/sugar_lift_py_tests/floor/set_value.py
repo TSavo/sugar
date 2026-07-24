@@ -49,7 +49,9 @@ class SetValue(FloorValue):
         return Complete(TermValue(len(self.elements)))
 
     def contains(self, item, site):
-        decisions = tuple(_closed_member_equal(item, element) for element in self.elements)
+        decisions = tuple(
+            _closed_member_equal(item, element) for element in self.elements
+        )
         if any(decision is True for decision in decisions):
             return _bool_result(True, site)
         if all(decision is False for decision in decisions):
@@ -77,6 +79,7 @@ class SetValue(FloorValue):
     def subtract(self, other, site):
         if type(other) is SetValue:
             from sugar_lift_py_tests.outcome import Complete
+
             result = _finite_difference(self.elements, other.elements)
             if result is not None:
                 return Complete(SetValue(result))
@@ -86,6 +89,7 @@ class SetValue(FloorValue):
     def bitwise_or(self, other, site):
         if type(other) is SetValue:
             from sugar_lift_py_tests.outcome import Complete
+
             result = _finite_union(self.elements, other.elements)
             if result is not None:
                 return Complete(SetValue(result))

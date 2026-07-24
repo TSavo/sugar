@@ -43,7 +43,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from .nodes import ControlConstructionContextV1, Node, SourceUnit, Typeable, resolve_kind
+from .nodes import (
+    ControlConstructionContextV1,
+    Node,
+    SourceUnit,
+    Typeable,
+    resolve_kind,
+)
 from .operators import Operator
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
@@ -109,7 +115,11 @@ class MaybeChild:
         reporter: AuditReporter = NULL_REPORTER,
         control_context: ControlConstructionContextV1 | None = None,
     ) -> Optional[Node]:
-        return None if self.handle is None else materialize(unit, self.handle, reporter, control_context)
+        return (
+            None
+            if self.handle is None
+            else materialize(unit, self.handle, reporter, control_context)
+        )
 
 
 @dataclass(frozen=True)
@@ -124,7 +134,9 @@ class Children:
         reporter: AuditReporter = NULL_REPORTER,
         control_context: ControlConstructionContextV1 | None = None,
     ) -> Tuple[Node, ...]:
-        return tuple(materialize(unit, h, reporter, control_context) for h in self.handles)
+        return tuple(
+            materialize(unit, h, reporter, control_context) for h in self.handles
+        )
 
 
 @dataclass(frozen=True)

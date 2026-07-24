@@ -134,9 +134,7 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
     return result
 
 
-def _call_edges(
-    stmt: Assert, source_path: str, *, source_contract: str
-) -> list[Json]:
+def _call_edges(stmt: Assert, source_path: str, *, source_contract: str) -> list[Json]:
     """Project the call coordinates already admitted by ``_lift_assert``.
 
     This runs only after the assertion translated successfully, so an edge can
@@ -181,9 +179,7 @@ def _lift_assert(stmt: Assert) -> Json:
 
     op = _CMP.get(test.ops[0].kind)
     if op is None:
-        raise _Unsupported(
-            f"comparison op {test.ops[0].kind} not in whitelist"
-        )
+        raise _Unsupported(f"comparison op {test.ops[0].kind} not in whitelist")
     return _comparison(op, lhs, rhs)
 
 

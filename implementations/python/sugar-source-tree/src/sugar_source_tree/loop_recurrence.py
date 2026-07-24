@@ -64,7 +64,9 @@ def project_loop_post_binding(
                 f"completed face {face.cid} has no authenticated runtime state"
             )
         matches = [
-            entry for entry in snapshot if entry.coordinate.cid == binding_coordinate.cid
+            entry
+            for entry in snapshot
+            if entry.coordinate.cid == binding_coordinate.cid
         ]
         if len(matches) != 1:
             raise BindingStateWireGap(

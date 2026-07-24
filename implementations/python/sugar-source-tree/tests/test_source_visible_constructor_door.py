@@ -154,8 +154,10 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
     )
     assert outcome.value.initializer is not None
     assert outcome.value.class_definition_cid.startswith("blake3-512:")
-    receiver = call.sugar().desugar().value.force_floor(
-        None, owner="typed-class-call", project_callsite=False
+    receiver = (
+        call.sugar()
+        .desugar()
+        .value.force_floor(None, owner="typed-class-call", project_callsite=False)
     )
 
     assert receiver.class_name == "RenamedGuard"

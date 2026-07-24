@@ -7,12 +7,13 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-
 SCHEMA = "pandas-floor-summary-v1"
 
 
 def relative_files(paths: Sequence[Path], root: Path) -> list[str]:
-    return sorted(path.resolve().relative_to(root.resolve()).as_posix() for path in paths)
+    return sorted(
+        path.resolve().relative_to(root.resolve()).as_posix() for path in paths
+    )
 
 
 def corpus_cid(files: Sequence[str]) -> str:
@@ -55,4 +56,6 @@ def floor_summary(
 
 def write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )

@@ -484,6 +484,3 @@ def importlib_library_dir(library_tag: str) -> str | None:
         return str(Path(next(iter(locations))))
     origin = getattr(spec, "origin", None)
     return str(Path(origin).parent) if origin else None
-
-
-

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "loop_construction"
 EXPECTED_CASES = {
     "continue_backedge",
@@ -53,8 +52,7 @@ def test_truth_set_is_complete_and_structural():
     }
     assert all(required_case_fields <= case.keys() for case in manifest["cases"])
     assert all(
-        case["truthfulVerdict"] != case["lyingVerdict"]
-        for case in manifest["cases"]
+        case["truthfulVerdict"] != case["lyingVerdict"] for case in manifest["cases"]
     )
     assert all(
         case["lyingDisposition"] in {"reject", "typed-loud"}

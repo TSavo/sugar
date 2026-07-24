@@ -99,9 +99,7 @@ def _from_terminal(row: FileTerminal) -> ChildResult:
             offender = NativeCrashOffender(
                 row.file, rc, row.signal_name, row.stderr_tail
             )
-        return ChildResult(
-            row.file, "native-crash", rc, row.stderr_tail, offender
-        )
+        return ChildResult(row.file, "native-crash", rc, row.stderr_tail, offender)
     if row.category in {"bare-exception"}:
         return ChildResult(
             row.file, "non-native-red", row.returncode, row.stderr_tail, None

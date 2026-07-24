@@ -6786,9 +6786,7 @@ class ObjectPlaceStateV1(Expression):
             ),
             construction_testimony_cid=projected.construction_testimony.cid,
         )
-        return SubscriptFieldCoordinateV1.mint(
-            self.object_coordinate, key_coordinate
-        )
+        return SubscriptFieldCoordinateV1.mint(self.object_coordinate, key_coordinate)
 
     def with_subscript_store(self, key, value, occurrence):
         selector = self._subscript_coordinate(key)
@@ -6802,9 +6800,7 @@ class ObjectPlaceStateV1(Expression):
         if constructed is None:
             return None
         floor_value, testimony = constructed
-        projected = ConstructedValueProjectionV1.create(
-            value, floor_value, testimony
-        )
+        projected = ConstructedValueProjectionV1.create(value, floor_value, testimony)
         from .object_identity import (
             AttributeFieldCoordinateV1,
             AttributeFieldVersionV1,

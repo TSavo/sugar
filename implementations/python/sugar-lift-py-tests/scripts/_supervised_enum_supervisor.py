@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
-
 _WORKER = Path(__file__).resolve().parent / "_supervised_enum_worker.py"
 
 
@@ -269,9 +268,7 @@ class SupervisedEnumSupervisor:
             worker_restarts=self.worker_restarts,
         )
 
-    def scan(
-        self, paths: Sequence[tuple[Path, str]]
-    ) -> list[FileTerminal]:
+    def scan(self, paths: Sequence[tuple[Path, str]]) -> list[FileTerminal]:
         """Lift every (path, rel); guarantee one terminal row per file."""
         rows: list[FileTerminal] = []
         try:

@@ -141,9 +141,7 @@ def walk(node: AST):
 
 def parse(source: str, *, filename: str) -> Module:
     """Materialize one authenticated typed module through the sole adapter."""
-    return SourceFile(
-        (source, filename, blake3_512_of(source.encode("utf-8")))
-    ).root
+    return SourceFile((source, filename, blake3_512_of(source.encode("utf-8")))).root
 
 
 def iter_child_nodes(node: AST):

@@ -535,7 +535,3 @@ def _cannot_raise_during_module_init(statement: ast.AST) -> bool:
         or any(parameter.annotation is not None for parameter in parameters)
         or getattr(statement, "type_params", ())
     )
-
-
-
-

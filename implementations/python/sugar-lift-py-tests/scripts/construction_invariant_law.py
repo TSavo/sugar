@@ -17,7 +17,6 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-
 SELF_HASH = "SELF-HASHING-AS-AUTHORITY"
 NAME_GATE = "NAME-SPELLING-OVERLOAD-GATE"
 SECOND_PATH = "SECOND-CONSTRUCTION-PATH"
@@ -163,11 +162,15 @@ def _call_name(node: ast.AST) -> str:
 
 
 def _depends_on(node: ast.AST, names: set[str]) -> bool:
-    return any(isinstance(child, ast.Name) and child.id in names for child in ast.walk(node))
+    return any(
+        isinstance(child, ast.Name) and child.id in names for child in ast.walk(node)
+    )
 
 
 def _finding(path: str, node: ast.AST, kind: str, observed: str) -> Finding:
-    return Finding(path, getattr(node, "lineno", 1), getattr(node, "col_offset", 0), kind, observed)
+    return Finding(
+        path, getattr(node, "lineno", 1), getattr(node, "col_offset", 0), kind, observed
+    )
 
 
 def _function_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
@@ -188,7 +191,9 @@ def _has_revalidation(function: ast.AST) -> bool:
     for node in ast.walk(function):
         if isinstance(node, ast.Call):
             call = _call_name(node).lower().split(".")[-1]
-            if call in _REVALIDATION_WORDS or call.startswith(("revalidate_", "reconstruct_", "resolve_")):
+            if call in _REVALIDATION_WORDS or call.startswith(
+                ("revalidate_", "reconstruct_", "resolve_")
+            ):
                 return True
         if isinstance(node, ast.Compare) and any(
             isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops
@@ -200,7 +205,9 @@ def _has_revalidation(function: ast.AST) -> bool:
 def _self_hash_findings(tree: ast.Module, path: str) -> list[Finding]:
     findings: list[Finding] = []
     for function in (
-        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ):
         parameters = _function_parameters(function)
         hashes: dict[str, ast.Call] = {}
@@ -226,7 +233,9 @@ def _self_hash_findings(tree: ast.Module, path: str) -> list[Finding]:
             sink_name = _call_name(sink).lower().replace(".", "")
             uses_hash = _depends_on(sink, set(hashes))
             uses_input = _depends_on(sink, parameters)
-            has_cid_slot = any("cid" in keyword.arg.lower() for keyword in sink.keywords if keyword.arg)
+            has_cid_slot = any(
+                "cid" in keyword.arg.lower() for keyword in sink.keywords if keyword.arg
+            )
             authority_sink = any(word in sink_name for word in _AUTHORITY_WORDS)
             if uses_hash and uses_input and (has_cid_slot or authority_sink):
                 findings.append(
@@ -254,27 +263,44 @@ def _is_gate_context(node: ast.Constant, parents: dict[ast.AST, ast.AST]) -> boo
 
 
 def _name_gate_findings(tree: ast.Module, path: str) -> list[Finding]:
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
     findings: list[Finding] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in _FORBIDDEN_API_NAMES:
-            findings.append(_finding(path, node, NAME_GATE, f"spelling authority API `{node.attr}`"))
+            findings.append(
+                _finding(path, node, NAME_GATE, f"spelling authority API `{node.attr}`")
+            )
         elif isinstance(node, ast.Name) and node.id in _FORBIDDEN_API_NAMES:
-            findings.append(_finding(path, node, NAME_GATE, f"spelling authority name `{node.id}`"))
+            findings.append(
+                _finding(path, node, NAME_GATE, f"spelling authority name `{node.id}`")
+            )
         elif (
             isinstance(node, ast.Constant)
             and isinstance(node.value, str)
-            and (_FORBIDDEN_SPELLING.search(node.value) or "overload" in node.value.lower())
+            and (
+                _FORBIDDEN_SPELLING.search(node.value)
+                or "overload" in node.value.lower()
+            )
             and _is_gate_context(node, parents)
         ):
-            findings.append(_finding(path, node, NAME_GATE, f"semantic gate literal {node.value!r}"))
+            findings.append(
+                _finding(path, node, NAME_GATE, f"semantic gate literal {node.value!r}")
+            )
     return findings
 
 
 def _ast_test_names(function: ast.AST) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(function):
-        if not isinstance(node, ast.Call) or _call_name(node) != "isinstance" or len(node.args) < 2:
+        if (
+            not isinstance(node, ast.Call)
+            or _call_name(node) != "isinstance"
+            or len(node.args) < 2
+        ):
             continue
         for candidate in ast.walk(node.args[1]):
             if isinstance(candidate, ast.Attribute) and _name(candidate.value) == "ast":
@@ -283,11 +309,15 @@ def _ast_test_names(function: ast.AST) -> set[str]:
 
 
 def _second_path_findings(tree: ast.Module, path: str) -> list[Finding]:
-    if path.endswith(("sugar_source_tree/nodes.py", "sugar_lift_python_source/lifter.py")):
+    if path.endswith(
+        ("sugar_source_tree/nodes.py", "sugar_lift_python_source/lifter.py")
+    ):
         return []
     findings: list[Finding] = []
     for function in (
-        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ):
         ast_tests = _ast_test_names(function)
         makers = {
@@ -328,14 +358,22 @@ def _terminal_loud(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         return True
     if isinstance(last, ast.Return) and isinstance(last.value, ast.Call):
         name = _call_name(last.value).lower()
-        return any(word in name for word in ("gap", "unsupported", "incomplete", "error"))
+        return any(
+            word in name for word in ("gap", "unsupported", "incomplete", "error")
+        )
     return False
 
 
-def _declares_statement_transfer(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _declares_statement_transfer(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
     """Separate grammar transfers from helpers that incidentally inspect AST nodes."""
 
-    for argument in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs):
+    for argument in (
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+    ):
         annotation = argument.annotation
         if annotation is None:
             continue
@@ -349,7 +387,9 @@ def _non_exhaustive_findings(tree: ast.Module, path: str) -> list[Finding]:
     coverage = _has_stmt_coverage_audit(tree)
     findings: list[Finding] = []
     for function in (
-        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ):
         if not _declares_statement_transfer(function):
             continue
@@ -377,10 +417,17 @@ def _fabricated_findings(tree: ast.Module, path: str) -> list[Finding]:
             for argument in (*node.args, *(keyword.value for keyword in node.keywords))
         ):
             findings.append(
-                _finding(path, node, FABRICATED, "completion manufactures None as a fallback value")
+                _finding(
+                    path,
+                    node,
+                    FABRICATED,
+                    "completion manufactures None as a fallback value",
+                )
             )
         if name in {"unwrap_or_default", "get_or_default"}:
-            findings.append(_finding(path, node, FABRICATED, f"benign default fallback `{name}`"))
+            findings.append(
+                _finding(path, node, FABRICATED, f"benign default fallback `{name}`")
+            )
     return findings
 
 
@@ -412,20 +459,42 @@ def scan_rust_source(source: str, path: str) -> list[Finding]:
         # projections.  The invariant concerns a semantic outcome/default,
         # so require the catch-all itself to manufacture that outcome.
         if match and _RUST_BENIGN_ARM.search(line):
-            findings.append(Finding(path, index, match.start(), NON_EXHAUSTIVE, "Rust catch-all variant arm silently accepts an unknown variant"))
-            findings.append(Finding(path, index, match.start(), FABRICATED, "Rust catch-all manufactures a benign completion/default"))
+            findings.append(
+                Finding(
+                    path,
+                    index,
+                    match.start(),
+                    NON_EXHAUSTIVE,
+                    "Rust catch-all variant arm silently accepts an unknown variant",
+                )
+            )
+            findings.append(
+                Finding(
+                    path,
+                    index,
+                    match.start(),
+                    FABRICATED,
+                    "Rust catch-all manufactures a benign completion/default",
+                )
+            )
     return sorted(set(findings))
 
 
 def _default_roots(repo: Path) -> tuple[Path, ...]:
     return (
         repo / "implementations/python/sugar-source-tree/src",
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_contract.py",
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py",
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/call_contract_resolution.py",
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/import_binding.py",
-        repo / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+        repo
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar",
+        repo
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_contract.py",
+        repo
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py",
+        repo
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/call_contract_resolution.py",
+        repo
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/import_binding.py",
+        repo
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
         repo / "implementations/python/sugar-lift-python-source/src",
         repo / "implementations/rust/sugar-linker/src",
         repo / "implementations/rust/sugar-compiler/src",
@@ -440,19 +509,31 @@ def _source_files(roots: Iterable[Path]) -> list[Path]:
         if root.is_file() and root.suffix in {".py", ".rs"}:
             files.add(root)
         elif root.is_dir():
-            files.update(path for path in root.rglob("*") if path.suffix in {".py", ".rs"})
+            files.update(
+                path for path in root.rglob("*") if path.suffix in {".py", ".rs"}
+            )
     return sorted(files)
 
 
-def scan_roots(roots: Iterable[Path], *, repo: Path | None = None) -> tuple[list[Finding], list[str]]:
+def scan_roots(
+    roots: Iterable[Path], *, repo: Path | None = None
+) -> tuple[list[Finding], list[str]]:
     base = (repo or Path.cwd()).resolve()
     findings: list[Finding] = []
     errors: list[str] = []
     for path in _source_files(roots):
-        label = str(path.resolve().relative_to(base)) if path.resolve().is_relative_to(base) else str(path)
+        label = (
+            str(path.resolve().relative_to(base))
+            if path.resolve().is_relative_to(base)
+            else str(path)
+        )
         try:
             source = path.read_text(encoding="utf-8")
-            findings.extend(scan_python_source(source, label) if path.suffix == ".py" else scan_rust_source(source, label))
+            findings.extend(
+                scan_python_source(source, label)
+                if path.suffix == ".py"
+                else scan_rust_source(source, label)
+            )
         except (OSError, UnicodeError, SyntaxError) as exc:
             errors.append(f"{label}: {type(exc).__name__}: {exc}")
     return sorted(set(findings)), sorted(errors)
@@ -468,7 +549,9 @@ def format_report(findings: Iterable[Finding], errors: Iterable[str] = ()) -> st
             f"{finding.observed}; required fix: {finding.required_fix}"
         )
     lines.extend(f"AUDITOR-ERROR: {error}" for error in error_rows)
-    by_class = {kind: sum(row.violation_class == kind for row in rows) for kind in REQUIRED_FIX}
+    by_class = {
+        kind: sum(row.violation_class == kind for row in rows) for kind in REQUIRED_FIX
+    }
     lines.append(f"R_construction_invariant_violations = {len(rows)}")
     for kind, count in by_class.items():
         lines.append(f"R_{kind.lower().replace('-', '_')} = {count}")

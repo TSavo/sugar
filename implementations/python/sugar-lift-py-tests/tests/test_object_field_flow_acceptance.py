@@ -20,7 +20,6 @@ from sugar_source_tree.backend import Child, Children, Leaf, materialize
 from sugar_source_tree.shadow import ShadowNode, _handle_of
 from sugar_source_tree.tree import SourceFile
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "object_field_flow"
 MATRIX = json.loads((FIXTURES / "verdict_matrix.json").read_text())
 POSITIVE_IDS = {
@@ -31,11 +30,21 @@ POSITIVE_IDS = {
     "distinct-version-flow",
 }
 LOUD_IDS = {"symbolic-receiver", "opaque-mutation", "opaque-alias"}
-FORBIDDEN_MECHANISM_CALLS = {"getattr", "setattr", "hasattr", "id", "type", "isinstance"}
+FORBIDDEN_MECHANISM_CALLS = {
+    "getattr",
+    "setattr",
+    "hasattr",
+    "id",
+    "type",
+    "isinstance",
+}
 
 
 def _functions(path: Path):
-    return {function.name: function for function in SourceFile(path_source(path)).functions()}
+    return {
+        function.name: function
+        for function in SourceFile(path_source(path)).functions()
+    }
 
 
 def _outcome_or_panic(path: Path, function_name: str):
@@ -155,11 +164,13 @@ def test_fixtures_are_renamed_structural_twins_without_name_or_vendor_authority(
     renamed = case["renamed"]
     if isinstance(canonical, dict):
         for verdict in ("truthful", "lying"):
-            assert _normalized_function(module, canonical[verdict]) == _normalized_function(
-                module, renamed[verdict]
-            )
+            assert _normalized_function(
+                module, canonical[verdict]
+            ) == _normalized_function(module, renamed[verdict])
     else:
-        assert _normalized_function(module, canonical) == _normalized_function(module, renamed)
+        assert _normalized_function(module, canonical) == _normalized_function(
+            module, renamed
+        )
 
 
 @pytest.mark.parametrize(
@@ -193,9 +204,7 @@ def _object_states(path: Path, function_name: str):
     substituted = function.substitute(
         {_SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(owner)}
     )
-    return [
-        node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"
-    ]
+    return [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
 
 
 def test_object_and_field_versions_reresolve_and_distinct_objects_do_not_collide():
@@ -217,7 +226,9 @@ def test_object_and_field_versions_reresolve_and_distinct_objects_do_not_collide
 def test_a_type_name_does_not_admit_a_lying_object_identity():
     state = _object_states(FIXTURES / "store_then_read.py", "truthful")[0]
     forged = _forge_state(state, object_identity_cid="blake3-512:stale")
-    with pytest.raises(BindingProvenanceGap, match="object place identity CID mismatch"):
+    with pytest.raises(
+        BindingProvenanceGap, match="object place identity CID mismatch"
+    ):
         forged.validate_identity()
 
 
@@ -308,7 +319,11 @@ def test_opaque_call_invalidates_only_the_exposed_object(
     )
     function = _functions(path)["boundary"]
     substituted = function.substitute(
-        {_SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(function.fragment.seal().cid)}
+        {
+            _SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(
+                function.fragment.seal().cid
+            )
+        }
     )
     returned = next(node for node in substituted.walk() if node.kind == "Return")
     assert returned.value.kind == "ConstructedValueProjectionV1"
@@ -323,7 +338,11 @@ def test_opaque_result_mints_occurrence_identity_without_fields():
     path = FIXTURES / "opaque_alias.py"
     function = _functions(path)["read_through_opaque_alias"]
     substituted = function.substitute(
-        {_SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(function.fragment.seal().cid)}
+        {
+            _SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(
+                function.fragment.seal().cid
+            )
+        }
     )
     states = [node for node in substituted.walk() if node.kind == "OpaqueObjectStateV1"]
     assert states
@@ -352,9 +371,7 @@ def test_unknown_place_selector_kind_is_typed_loud():
 def test_custom_dispatch_stays_loud_without_constructed_behavior(tmp_path, member):
     path = tmp_path / "dispatch.py"
     path.write_text(
-        "class Vessel:\n    "
-        + member
-        + "\n\ndef boundary():\n    item = Vessel()\n"
+        "class Vessel:\n    " + member + "\n\ndef boundary():\n    item = Vessel()\n"
         "    item.payload = 7\n    return item.payload\n"
     )
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
@@ -500,10 +517,7 @@ def test_unhashable_subscript_key_stays_typed_loud(tmp_path):
 def test_out_of_range_list_store_stays_loud(tmp_path):
     path = tmp_path / "out_of_range_list.py"
     path.write_text(
-        "def boundary():\n"
-        "    item = []\n"
-        "    item[0] = 7\n"
-        "    return item[0]\n"
+        "def boundary():\n" "    item = []\n" "    item[0] = 7\n" "    return item[0]\n"
     )
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 
@@ -592,7 +606,10 @@ def _forge_state(state, **overrides):
                 ("version_records", Leaf(values["version_records"])),
                 ("prior_version_cids", Leaf(values["prior_version_cids"])),
                 ("store_occurrence_cids", Leaf(values["store_occurrence_cids"])),
-                ("invalidated_by_opaque_call", Leaf(values["invalidated_by_opaque_call"])),
+                (
+                    "invalidated_by_opaque_call",
+                    Leaf(values["invalidated_by_opaque_call"]),
+                ),
             ),
         ),
         state.reporter,

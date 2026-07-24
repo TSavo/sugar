@@ -26,9 +26,7 @@ class BuiltinClosedOperationReport:
             "name_or_vendor_gates",
             "panic_catches",
         )
-        return {
-            axis: sum(row.axis == axis for row in self.offenders) for axis in axes
-        }
+        return {axis: sum(row.axis == axis for row in self.offenders) for axis in axes}
 
 
 def collect_builtin_closed_operation_report(
@@ -77,7 +75,10 @@ class _Visitor(ast.NodeVisitor):
             for value in ast.walk(node)
             if isinstance(value, ast.Constant) and isinstance(value.value, str)
         }
-        if any("pytest.raises" in value or "contextlib.suppress" in value for value in string_values):
+        if any(
+            "pytest.raises" in value or "contextlib.suppress" in value
+            for value in string_values
+        ):
             self._add(
                 "name_or_vendor_gates",
                 node,
@@ -101,7 +102,10 @@ class _Visitor(ast.NodeVisitor):
             for value in ast.walk(node)
             if isinstance(value, ast.Constant) and type(value.value) is bool
         }
-        if any("builtin_result" in name or "builtin_verdict" in name for name in names) and bools:
+        if (
+            any("builtin_result" in name or "builtin_verdict" in name for name in names)
+            and bools
+        ):
             self._add(
                 "generic_builtin_verdicts",
                 node,
@@ -121,9 +125,7 @@ class _Visitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
-    def _add(
-        self, axis: str, node: ast.AST, observed: str, replacement: str
-    ) -> None:
+    def _add(self, axis: str, node: ast.AST, observed: str, replacement: str) -> None:
         self.offenders.append(
             BuiltinClosedOperationOffender(
                 axis=axis,

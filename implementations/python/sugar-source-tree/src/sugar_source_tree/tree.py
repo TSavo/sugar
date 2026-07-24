@@ -84,9 +84,7 @@ class SourceFile:
                     construction_context=construction_context,
                 )
             with reduction_span(sugar="BackendSelect", role="file", site=site):
-                self.backend = (
-                    backend if backend is not None else _default_backend()
-                )
+                self.backend = backend if backend is not None else _default_backend()
             # The reporter enters the whole tree here: the root carries it and
             # hands it to every child it resolves. An audit walk passes a
             # CollectingReporter; everyone else takes the do-nothing default.

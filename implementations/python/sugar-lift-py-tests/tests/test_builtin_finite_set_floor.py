@@ -18,7 +18,9 @@ def test_finite_set_membership_is_decided_from_constructed_members():
 
     finite = _numbers(1, 2)
     assert isinstance(finite.contains(TermValue(2), "site").value, TrueBoolLiteralSugar)
-    assert isinstance(finite.contains(TermValue(3), "site").value, FalseBoolLiteralSugar)
+    assert isinstance(
+        finite.contains(TermValue(3), "site").value, FalseBoolLiteralSugar
+    )
 
 
 def test_finite_set_union_intersection_and_difference_are_closed():
@@ -31,9 +33,11 @@ def test_symbolic_finite_membership_emits_typed_obligation():
     from sugar_lift_py_tests.floor import SetValue, SymbolicValue, TermValue
     from sugar_lift_py_tests.ir import _Atomic, make_var
 
-    result = SetValue((TermValue(1),)).contains(
-        SymbolicValue(make_var("member")), "site"
-    ).value
+    result = (
+        SetValue((TermValue(1),))
+        .contains(SymbolicValue(make_var("member")), "site")
+        .value
+    )
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "python.set.contains"
 

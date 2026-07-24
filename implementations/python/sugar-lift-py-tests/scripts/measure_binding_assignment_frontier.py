@@ -26,7 +26,6 @@ from sugar_source_tree.cpython_adapter import _Handle
 from sugar_source_tree.nodes import SourceUnit
 from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
 
-
 ASSIGNMENT = (ast.Assign, ast.AnnAssign, ast.AugAssign)
 
 
@@ -84,15 +83,19 @@ def _panic_key(panic: BaseException) -> str:
 
 
 def _gap_key(info: dict[str, str]) -> str:
-    return "|".join(
-        info.get(field, "") for field in ("owner", "observed", "requested")
-    )
+    return "|".join(info.get(field, "") for field in ("owner", "observed", "requested"))
 
 
 def _plain_class_names(module: ast.Module) -> frozenset[str]:
     forbidden = {
-        "__new__", "__getattr__", "__getattribute__", "__setattr__",
-        "__delattr__", "__getitem__", "__setitem__", "__delitem__",
+        "__new__",
+        "__getattr__",
+        "__getattribute__",
+        "__setattr__",
+        "__delattr__",
+        "__getitem__",
+        "__setitem__",
+        "__delitem__",
     }
     return frozenset(
         node.name
@@ -159,7 +162,9 @@ def measure(
             source, filename, source_cid = path_source(path)
             parsed = ast.parse(source, filename=str(path))
             plain_class_names = _plain_class_names(parsed)
-            native_assignments = [node for node in ast.walk(parsed) if isinstance(node, ASSIGNMENT)]
+            native_assignments = [
+                node for node in ast.walk(parsed) if isinstance(node, ASSIGNMENT)
+            ]
             if not native_assignments:
                 counts["files_without_assignment"] += 1
                 continue
@@ -174,7 +179,9 @@ def measure(
                     )
                 except SugarNotWritten as panic:
                     own = getattr(panic, "owner", "") in {
-                        "Assign.sugar", "AnnAssign.sugar", "AugAssign.sugar"
+                        "Assign.sugar",
+                        "AnnAssign.sugar",
+                        "AugAssign.sugar",
                     }
                     direct[shape]["direct_gap" if own else "blocked_descendant"] += 1
                     roots[_panic_key(panic)] += 1
@@ -188,15 +195,20 @@ def measure(
                         direct[shape]["construction_panic"] += 1
                         roots[_gap_key(gap.info)] += 1
 
-            functions = [] if direct_only else [
-                node for node in ast.walk(parsed)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and any(isinstance(child, ASSIGNMENT) for child in ast.walk(node))
-                and (
-                    not object_field_only
-                    or _has_object_field_candidate(node, plain_class_names)
-                )
-            ]
+            functions = (
+                []
+                if direct_only
+                else [
+                    node
+                    for node in ast.walk(parsed)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and any(isinstance(child, ASSIGNMENT) for child in ast.walk(node))
+                    and (
+                        not object_field_only
+                        or _has_object_field_candidate(node, plain_class_names)
+                    )
+                ]
+            )
             for native_function in functions:
                 enclosing_functions["total"] += 1
                 object_field_candidate = _has_object_field_candidate(
@@ -209,7 +221,13 @@ def measure(
                     "line": native_function.lineno,
                     "function": native_function.name,
                 }
-                shapes = sorted({_shape(node) for node in ast.walk(native_function) if isinstance(node, ASSIGNMENT)})
+                shapes = sorted(
+                    {
+                        _shape(node)
+                        for node in ast.walk(native_function)
+                        if isinstance(node, ASSIGNMENT)
+                    }
+                )
                 function = materialize(unit, _Handle(unit, native_function))
                 try:
                     _, gap = collect_construction_panic(
@@ -225,7 +243,9 @@ def measure(
                     roots[_panic_key(panic)] += 1
                     for shape in shapes:
                         enclosing[shape]["loud"] += 1
-                        enclosing[shape][f"root:{getattr(panic, 'owner', type(panic).__name__)}"] += 1
+                        enclosing[shape][
+                            f"root:{getattr(panic, 'owner', type(panic).__name__)}"
+                        ] += 1
                 except Exception as panic:
                     enclosing_functions["non_source_failure"] += 1
                     if object_field_candidate:
@@ -275,12 +295,18 @@ def measure(
         "root": str(root),
         "pandas_version": importlib.metadata.version("pandas"),
         "counts": dict(sorted(counts.items())),
-        "direct_by_shape": {key: dict(sorted(value.items())) for key, value in sorted(direct.items())},
-        "enclosing_by_shape": {key: dict(sorted(value.items())) for key, value in sorted(enclosing.items())},
+        "direct_by_shape": {
+            key: dict(sorted(value.items())) for key, value in sorted(direct.items())
+        },
+        "enclosing_by_shape": {
+            key: dict(sorted(value.items())) for key, value in sorted(enclosing.items())
+        },
         "enclosing_functions": dict(sorted(enclosing_functions.items())),
         "object_field_enclosing": dict(sorted(object_field_enclosing.items())),
         "object_field_rows": object_field_rows,
-        "root_panics": dict(sorted(roots.items(), key=lambda item: (-item[1], item[0]))),
+        "root_panics": dict(
+            sorted(roots.items(), key=lambda item: (-item[1], item[0]))
+        ),
     }
 
 

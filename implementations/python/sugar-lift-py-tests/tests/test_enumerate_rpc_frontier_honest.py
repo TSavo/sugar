@@ -136,24 +136,26 @@ def test_shared_cid_at_distinct_loci_stays_distinct_and_located():
 
     panics = leaf["semanticCore"]["panics"]
     owners = [(p["demandedSource"], p["terminalGapLocus"]) for p in panics]
-    assert len(owners) == len(set(owners)), (
-        f"duplicate recovered-panic owner identity: {owners}"
-    )
+    assert len(owners) == len(
+        set(owners)
+    ), f"duplicate recovered-panic owner identity: {owners}"
 
     alias_lines = sorted(
         p["terminalGapLocus"]
         for p in panics
         if p["terminalGapLocus"].endswith("[ImportAlias]")
     )
-    assert alias_lines == ["t.py:1:7-1:9[ImportAlias]", "t.py:2:7-2:9[ImportAlias]"], (
-        f"each import alias must keep its own locus, got {alias_lines}"
-    )
+    assert alias_lines == [
+        "t.py:1:7-1:9[ImportAlias]",
+        "t.py:2:7-2:9[ImportAlias]",
+    ], f"each import alias must keep its own locus, got {alias_lines}"
 
     # The panic list conserves the roll-call minority exactly: one row per
     # absent source site, no fusion, no inflation.
-    assert len(panics) == leaf["auxiliaryRows"]["sourceAudit"]["totals"][
-        "source_unresolved"
-    ], "panic count must equal R (source_unresolved)"
+    assert (
+        len(panics)
+        == leaf["auxiliaryRows"]["sourceAudit"]["totals"]["source_unresolved"]
+    ), "panic count must equal R (source_unresolved)"
 
 
 if __name__ == "__main__":

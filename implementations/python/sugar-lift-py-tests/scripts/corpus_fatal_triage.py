@@ -61,6 +61,7 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
         configure_live_log()
     try:
         from _production_lift_child import production_lift_testimony
+
         if progress:
             with reduction_span(sugar="production_lift", role="file", site=rel):
                 terminal = production_lift_testimony(path, rel)

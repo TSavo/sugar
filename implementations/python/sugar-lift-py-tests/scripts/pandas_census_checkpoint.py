@@ -10,7 +10,6 @@ from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from pandas_floor_summary import corpus_cid
 
-
 SCHEMA = "pandas-census-checkpoint-row-v1"
 
 
@@ -86,13 +85,11 @@ class Checkpoint:
             "result": dict(result),
         }
         self._validate_row(row)
-        encoded = (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode(
-            "utf-8"
-        )
+        encoded = (
+            json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(
-            self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644
-        )
+        descriptor = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
         try:
             view = memoryview(encoded)
             while view:
@@ -146,9 +143,7 @@ def checkpointed_path_results(
         path.resolve().relative_to(root.resolve()).as_posix(): path
         for path in sorted(paths)
     }
-    checkpoint = Checkpoint(
-        floor=floor, files=tuple(by_rel), path=checkpoint_path
-    )
+    checkpoint = Checkpoint(floor=floor, files=tuple(by_rel), path=checkpoint_path)
     rows = run_pending(
         checkpoint,
         lambda rel: serialize(worker(by_rel[rel])),
@@ -158,7 +153,4 @@ def checkpointed_path_results(
         raise CheckpointError(
             f"incomplete {floor} checkpoint: {len(rows)}/{len(by_rel)} rows"
         )
-    return tuple(
-        deserialize(str(row["file"]), row["result"])
-        for row in rows
-    )
+    return tuple(deserialize(str(row["file"]), row["result"]) for row in rows)

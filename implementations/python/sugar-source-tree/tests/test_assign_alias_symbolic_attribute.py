@@ -53,7 +53,9 @@ def test_renamed_alias_has_the_same_single_binding_path():
         second["projected_value"].state.fragment.seal().cid
         == first["source_value"].state.fragment.seal().cid
     )
-    assert second["projected_value"].coordinate.cid != first["source_value"].coordinate.cid
+    assert (
+        second["projected_value"].coordinate.cid != first["source_value"].coordinate.cid
+    )
 
 
 def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():

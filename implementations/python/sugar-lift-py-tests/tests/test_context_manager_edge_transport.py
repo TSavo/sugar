@@ -1,16 +1,22 @@
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
-    EnterResultContractV1, ExitContractV1, ImportSignatureV2,
-    NeverSuppressesDispositionV1, ProtocolResourceSemanticsV1,
+    EnterResultContractV1,
+    ExitContractV1,
+    ImportSignatureV2,
+    NeverSuppressesDispositionV1,
+    ProtocolResourceSemanticsV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
-    ContextManagerContractRefV1, ContextManagerResolutionGapV1,
-    SourceFragmentCoordinateV1, _hash_json,
+    ContextManagerContractRefV1,
+    ContextManagerResolutionGapV1,
+    SourceFragmentCoordinateV1,
+    _hash_json,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.kit_rpc.context_manager_edge_dto import (
-    ContextManagerEdgeDtoV1, ContextManagerEdgeTransportError,
+    ContextManagerEdgeDtoV1,
+    ContextManagerEdgeTransportError,
 )
 from sugar_lift_py_tests.kit_rpc.lift_report_payload_dto import LiftReportPayloadDto
 
@@ -22,14 +28,24 @@ def _cid(char):
 def _ref():
     site = SourceFragmentCoordinateV1(_cid("s"), 3, 9, 3, 18)
     return ContextManagerContractRefV1(
-        resolution_cid=_cid("r"), demand_cid=_cid("d"), use_site=site,
-        use_site_cid=_hash_json(site.wire()), authenticated_import_use_cid=_cid("u"),
-        import_binding_cid=_cid("i"), construction_context_generation_cid=_cid("g"),
-        contract_cid=_cid("m"), payload_cid=_cid("p"), provenance_cid=_cid("v"),
-        distribution_artifact_cid=_cid("a"), dependency_artifact_graph_cid=_cid("b"),
-        module_source_cid=_cid("s"), resolved_definition_cid=_cid("f"),
-        manager_construction_cid=_cid("n"), enter_testimony_cid=_cid("1"),
-        exit_testimony_cid=_cid("2"), import_signature=ImportSignatureV2(()),
+        resolution_cid=_cid("r"),
+        demand_cid=_cid("d"),
+        use_site=site,
+        use_site_cid=_hash_json(site.wire()),
+        authenticated_import_use_cid=_cid("u"),
+        import_binding_cid=_cid("i"),
+        construction_context_generation_cid=_cid("g"),
+        contract_cid=_cid("m"),
+        payload_cid=_cid("p"),
+        provenance_cid=_cid("v"),
+        distribution_artifact_cid=_cid("a"),
+        dependency_artifact_graph_cid=_cid("b"),
+        module_source_cid=_cid("s"),
+        resolved_definition_cid=_cid("f"),
+        manager_construction_cid=_cid("n"),
+        enter_testimony_cid=_cid("1"),
+        exit_testimony_cid=_cid("2"),
+        import_signature=ImportSignatureV2(()),
         semantics=ProtocolResourceSemanticsV1(
             EnterResultContractV1(PrimitiveSort("Value")),
             ExitContractV1(NeverSuppressesDispositionV1()),

@@ -12,6 +12,8 @@ from .ast_template import function_body_template, function_param_names
 from .canonical import blake3_512_of, cid_of_json, template_cid_of_json
 
 Json = Any
+
+
 class UnsupportedStatementGrammar(RuntimeError):
     pass
 
@@ -48,8 +50,12 @@ AST_STATEMENT_TYPE_NAMES = frozenset(
         "Continue",
     }
 )
-AST_STATEMENT_TYPES = frozenset(getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES)
-if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+AST_STATEMENT_TYPES = frozenset(
+    getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES
+)
+if {
+    statement.__name__ for statement in AST_STATEMENT_TYPES
+} != AST_STATEMENT_TYPE_NAMES:
     raise UnsupportedStatementGrammar("unsupported running typed.stmt grammar")
 CID_RE = re.compile(r"^blake3-512:[0-9a-f]{128}$")
 CONTRACT_COMMENT_KIND = "sugar-contract-comment-sugar"
