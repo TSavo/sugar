@@ -243,7 +243,6 @@ class FunctionUniverseSugar(Sugar):
     site: object = dataclass_field(compare=False, default=None)
     bridge_source_symbol: str | None = None
     substitution_trace: object | None = dataclass_field(compare=False, default=None)
-    formal_coordinates: tuple = ()
 
     @classmethod
     def witnesses(cls):
@@ -271,7 +270,6 @@ class FunctionUniverseSugar(Sugar):
                     formals=self.formals,
                     record=record,
                     bridge_source_symbol=self.bridge_source_symbol,
-                    formal_coordinates=self.formal_coordinates,
                 )
             )
         )
