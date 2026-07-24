@@ -23,10 +23,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Restore Rust build (source-keyed local cache)
+      - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: restore
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -167,11 +165,6 @@ jobs:
           gh issue comment 4263 --repo "$GITHUB_REPOSITORY" \
             --body-file .sugar/pandas-wall/ledger-comment.md
 
-      - name: Save Rust build (source-keyed local cache)
-        if: always()
-        uses: ./.github/actions/setup-rust-cache
-        with:
-          mode: save
 
       - name: Upload pandas wall artifacts
         if: always()
