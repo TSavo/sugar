@@ -586,6 +586,18 @@ def _canonical_constructed_value(value: object) -> Any:
         return {"sourceFragment": value.seal().to_dict()}
     if isinstance(value, SourceMemento):
         return {"sourceMemento": value.to_dict()}
+    from sugar_source_tree.nodes import Node
+
+    if isinstance(value, Node):
+        # A Node is a tree VIEW, not content. Its content identity is its
+        # construction-shape CID (fragment + subtree preimage); its unit/span
+        # are positional infrastructure that must never enter a content CID.
+        # A constructed value can legitimately carry a Node (e.g. a
+        # SourceVisibleCallFrameV1 holding the Lambda it will construct when
+        # called), but field-walking it drags in unit -> SourceUnit ->
+        # LineTable and fails to serialize (core/groupby/generic.value_counts).
+        # Represent the node by its content key, like every other node view.
+        return {"nodeShape": node_construction_shape_cid(value)}
     if isinstance(value, (tuple, list)):
         return [_canonical_constructed_value(item) for item in value]
     if isinstance(value, (set, frozenset)):
