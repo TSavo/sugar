@@ -1,6 +1,7 @@
 # Expectation: sugarbin builds once until Rust FS changes
 
-**Pin:** after #6210 (monorepo HEAD removed from shelf `build_identity`).
+**Pin:** after #6210 (monorepo HEAD removed from shelf `build_identity` for
+non-sugar tools) plus the sugar-only monorepo-HEAD carve-out for #4577.
 
 ## Law
 On a given self-hosted runner, after a stamp has been built and published to
@@ -8,8 +9,13 @@ the filesystem shelf (`~/.cache/sugar/binary-shelf-v2/…`):
 
 - The **next** CI run with **no** change under the Rust package input closure
   (and no change to toolchain/platform/profile that enter the stamp) must log
-  **`filesystem shelf hit`** for each warmed binary.
-- It must **not** log `filesystem shelf miss` + `Compiling …` for those stamps.
+  **`filesystem shelf hit`** for each warmed **non-sugar** binary.
+- **`sugar` is different (#4577):** its shelf identity includes monorepo HEAD
+  so kit `@HEAD` equals binary `@SUGAR_BUILD_GIT_HEAD`. A docs-only monorepo
+  commit still rebuilds sugar (small) and must **not** rebuild discharge_cli /
+  witness_rpc / etc.
+- It must **not** log `filesystem shelf miss` + `Compiling …` for non-sugar
+  stamps when only monorepo HEAD moved.
 
 ## Remembered first-warm stamp (post-#6210)
 
