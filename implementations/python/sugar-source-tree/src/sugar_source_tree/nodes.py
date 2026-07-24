@@ -2263,6 +2263,7 @@ class ClassDef(Statement):
             if isinstance(item, Assign)
             and len(item.targets) == 1
             and isinstance(item.targets[0], Name)
+            and isinstance(item.value, Constant)
         )
         annotated_assignments = tuple(
             item
@@ -2283,6 +2284,7 @@ class ClassDef(Statement):
                 isinstance(item, Assign)
                 and len(item.targets) == 1
                 and isinstance(item.targets[0], Name)
+                and isinstance(item.value, Constant)
             )
             and not (isinstance(item, AnnAssign) and isinstance(item.target, Name))
         )
@@ -6516,6 +6518,8 @@ class Call(Expression):
         """
         if isinstance(callee, Name):
             return callee.id
+        if isinstance(callee, FormalRef):
+            return callee.coordinate.declared_name
         if isinstance(callee, Attribute):
             base = Call._spread_callee_name(callee.value)
             return f"{base}.{callee.attr}" if base is not None else None

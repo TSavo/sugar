@@ -166,10 +166,18 @@ class SourceVisibleCallFrameV1:
             if self.generator_steps is None
             else self.owner._source_visible_generator_steps(scope)
         )
+        # Specialize the body by inlining the exact typed actual Nodes for each
+        # formal. A source-visible callback (a formal invoked as ``fn(value)``)
+        # then reduces through the actual callable's own construction, rather
+        # than raising on the unspecialized BindingCoordinateRef formal.
+        node_scope = dict(zip(self.parameters, bound, strict=True))
+        rebuild = getattr(self.owner, "_source_visible_body", None)
+        body = self.body if rebuild is None else rebuild(node_scope)
         return replace(
             self,
             runtime_entries=entries,
             generator_steps=generator_steps,
+            body=body,
         )
 
     def _tuple_node(self, values: tuple):
