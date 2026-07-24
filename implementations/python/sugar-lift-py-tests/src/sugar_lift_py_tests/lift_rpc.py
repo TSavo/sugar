@@ -173,6 +173,68 @@ def _memento_continuation_key(memento: Dict[str, Any]) -> str:
     )
 
 
+def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Phase-3 resume: reuse the RETAINED universe for this linkUnitCid
+    (materialize-once, NEVER reconstruct), verify the presented resolution set is
+    bound to THIS continuation and forms the exact-complete bijection, attach the
+    authenticated resolutions, and project post(). A lost continuation or any
+    stale/foreign/incomplete set raises a loud ConstructionPanic; it never
+    silently reconstructs through another path."""
+    import dataclasses
+
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        ParameterContractResolutionSetV1,
+        ResumeStalePanic,
+        resume_apply_resolutions,
+    )
+    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    link_unit_cid = options.get("linkUnitCid")
+    raw_set = options.get("resolutionSet")
+    retained = _RETAINED_LINK_UNITS.get(link_unit_cid)
+    if retained is None:
+        construction_panic_gap(
+            owner="parameter-contract-resume",
+            blame=str(link_unit_cid),
+            observed="no retained continuation for this linkUnitCid",
+            requested="the retained universe enrolled in phase 1",
+            fix="resume in the SAME server session that enrolled the link unit",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    universe, def_memento_dto, def_memento, unit = retained
+    try:
+        resolution_set = ParameterContractResolutionSetV1.from_value(raw_set)
+        accepted = resume_apply_resolutions(unit, resolution_set)
+    except (ResumeStalePanic, ValueError) as exc:
+        construction_panic_gap(
+            owner="parameter-contract-resume",
+            blame=unit.parameter_owned_contract.contract_cid,
+            observed=str(exc),
+            requested="an exact, replay-bound ParameterContractResolutionSetV1",
+            fix="present the fold's authenticated resolution set for THIS continuation",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    # Materialize-once: reuse the retained universe's own record/statements
+    # (identical occurrence identities); only attach the resolutions.
+    resolved = dataclasses.replace(universe, resolutions=accepted)
+    from sugar_lift_py_tests.ir import TermTableBuilder
+
+    term_table = TermTableBuilder()
+    rows = resolved.payload_rows(def_memento_dto)
+    nodes = [
+        {
+            "memento": def_memento,
+            "audit": dto.to_rpc_with_term_table(term_table),
+            "payload": None,
+        }
+        for dto in rows
+    ]
+    return nodes
+
+
 def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     """Phase-1 enrollment: one closed ParameterContractLinkUnitV1 per function
     that enrolled a parameter-contract demand. Builds each function's universe
@@ -203,14 +265,20 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
             universe = outcome.value
             if not isinstance(universe, UniverseValue):
                 continue
-            def_memento = _tree.function_def_memento(fn, file_rel).to_rpc()
+            def_memento_dto = _tree.function_def_memento(fn, file_rel)
+            def_memento = def_memento_dto.to_rpc()
             try:
                 unit = universe.link_unit_projection(def_memento)
             except Exception:
                 continue
             if unit is None:
                 continue
-            _RETAINED_LINK_UNITS[unit.link_unit_cid] = (universe, def_memento, unit)
+            _RETAINED_LINK_UNITS[unit.link_unit_cid] = (
+                universe,
+                def_memento_dto,
+                def_memento,
+                unit,
+            )
             _RETAINED_BY_MEMENTO[_memento_continuation_key(def_memento)] = (
                 unit.link_unit_cid
             )
@@ -1592,6 +1660,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {"rows": _parameter_contract_link_unit_rows(root)},
+                }
+            )
+            return
+        if level == "parameter-contract-resume":
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"rows": _parameter_contract_resume_rows(options)},
                 }
             )
             return

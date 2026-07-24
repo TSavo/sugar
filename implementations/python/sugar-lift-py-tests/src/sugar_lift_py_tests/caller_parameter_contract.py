@@ -110,6 +110,13 @@ class ContractConditionalConstructionV1:
     def inv_contribution(self):
         return ()
 
+    def mint_contribution(self, name, formals):
+        # A resolved candidate mints no independent contract row: its constructed
+        # value already flows through the return term. The demand is discharged
+        # by the linker, not re-stated as an inv here.
+        del name, formals
+        return ()
+
     def post_contribution(self):
         return ()
 
