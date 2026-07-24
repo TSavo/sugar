@@ -1,31 +1,10 @@
-"""Shared production-lift child body for the zero-tolerance floor scanners.
+"""Enumerate one source file and construct each function's sugar.
 
-The floors (bare-exception, native-crash, timeout, silent) each isolate one
-source file in a subprocess and observe how the CURRENT production construction
-path behaves on it. This module is the ONE adapter every scanner's child uses so
-they all lift through the exact census/production door -- there is no
-scanner-only construction door.
+Enumeration protocol only — one file at a time:
 
-The production door (identical to ``census.census``): construct every function
-of a file once via ``SourceFile.from_path(...).functions()`` then ``fn.sugar()``.
-The reporter witnesses nested gaps during construction.
+  path_source → SourceFile → functions() → fn.sugar()
 
-Outcome taxonomy (the child EMITS one ``lift-terminal`` row; its absence on a
-zero exit is the silent axis, and a signal death / timeout are observed by the
-parent):
-  - ``completed``  -- every function constructed with no gap.
-  - ``typed-gap``  -- at least one known typed construction failure:
-    tree ``SourceTreePanic`` (incl. ``SugarNotWritten`` / ``BackendDefect`` /
-    ``VocabularyMissing`` / …), kit ``ConstructionPanic``, or
-    ``SourceCallBindingGap``. INTENTIONAL loud residue; floors do NOT count it
-    as bare-exception red.
-  - (bare exception) -- any OTHER exception propagates out of this child
-    unhandled, so the child exits nonzero and the parent classifies it a bare
-    Python exception. We never swallow untyped failures here.
-
-Known typed construction failures are always serialized as ``typed-gap`` and
-the child exits 0. They must never be reported as success without testimony,
-and must never escape as unclassified exit 1.
+No package-wide preconstruction, no call-frame populate, no subprocess.
 """
 
 from __future__ import annotations
@@ -85,28 +64,21 @@ def _typed_construction_row(error) -> dict[str, object] | None:
 
 
 def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
-    """Construct once and return closed terminal testimony for every scanner."""
+    """Enumerate one file and construct each function once."""
+    from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.reporter import CollectingReporter
-    from _production_source_file import (
-        corpus_root_from_relative,
-        production_source_file,
-    )
+    from sugar_source_tree.tree import SourceFile
 
     gaps: list[dict[str, object]] = []
     reporter = CollectingReporter()
     try:
-        sf = production_source_file(
-            path,
-            root=corpus_root_from_relative(path, rel),
-            reporter=reporter,
-        )
+        # Enumeration protocol: one file identity → one SourceFile → functions.
+        source_file = SourceFile(path_source(str(path)), reporter=reporter)
     except BaseException as error:
         row = _typed_construction_row(error)
         if row is None:
             raise
         gaps.append(row)
-        sf = None
-    if sf is None:
         return {
             "kind": _TERMINAL_KIND,
             "outcome": OUTCOME_TYPED_GAP,
@@ -114,7 +86,7 @@ def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
             "typed_gap_count": len(gaps),
             "typed_gaps": gaps,
         }
-    for fn in sf.functions():
+    for fn in source_file.functions():
         try:
             fn.sugar()
         except BaseException as error:
@@ -147,12 +119,10 @@ def production_lift_bootstrap_error() -> str | None:
 
 
 def run_production_lift_child(path: Path, rel: str) -> int:
-    """Lift one file through the production door and emit its terminal row.
+    """Enumerate one file, construct each function, emit one terminal row.
 
-    A known typed construction failure anywhere in the file's construction
-    marks the whole file ``typed-gap`` (intentional) and exits 0 with a
-    serialized terminal row. Any other exception is left to propagate -- that
-    is the bare-exception signal.
+    Typed construction failures → ``typed-gap`` and exit 0.
+    Any other exception propagates (bare-exception signal to the caller).
     """
     print(json.dumps(production_lift_testimony(path, rel)), flush=True)
     return 0
