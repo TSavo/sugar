@@ -214,3 +214,25 @@ def test_nested_continue_is_consumed_only_by_the_inner_bounded_loop():
         .value.post()
     )
     assert post.args[1].value == 22
+
+
+def test_loop_else_preserves_a_carried_name_it_never_rebinds():
+    # A name carried through the loop (rebound in the body) that the else clause
+    # does NOT touch keeps its loop-exhaustion value. The else-net holds only
+    # names the else REBOUND, so it must fall back to the exhaustion state, not
+    # KeyError (regression: pandas io/html, io/excel/_xlsxwriter, _version).
+    post = (
+        _function(
+            "def arbitrary():\n"
+            "    total = 0\n"
+            "    for i in (1, 2):\n"
+            "        total = total + i\n"
+            "    else:\n"
+            "        seen = True\n"
+            "    return total\n"
+        )
+        .sugar()
+        .desugar()
+        .value.post()
+    )
+    assert post.args[1].value == 3
