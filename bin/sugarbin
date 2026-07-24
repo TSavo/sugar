@@ -706,16 +706,14 @@ tool_versions() {
 build_identity() {
   local stamp="$1"
   require_b3sum || return 1
-  # sourceStamp is the BLAKE3 package-input closure. Monorepo HEAD is also part
-  # of identity so a shelf/cache hit cannot serve a binary whose compile-time
-  # monorepo HEAD disagrees with the live Python kit identity (#4577 split-
-  # pipeline refuse: kit @HEAD != binary @oldHEAD).
+  # Shelf / artifact identity is FS + toolchain + package + binary only.
+  # Monorepo git HEAD is NOT part of the key: a docs-only commit must not
+  # force rebuild. Compile-time monorepo head is still stamped into the binary
+  # via SUGARBIN_MONOREPO_HEAD for #4577 diagnostics; it does not change the
+  # content-addressed shelf cell.
   local incremental="0"
   [[ "$profile" != debug ]] || incremental="1"
-  local monorepo_head
-  monorepo_head="$(attestation_git_head)"
-  [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" "$monorepo_head" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
@@ -723,7 +721,7 @@ def emit(label, value):
     sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
 for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
                          "platform", "targetTriple", "profile", "sortedFeatures",
-                         "package", "binary", "incremental", "monorepoHead"), sys.argv[1:]):
+                         "package", "binary", "incremental"), sys.argv[1:]):
     emit(label, value)
 PY
 }
