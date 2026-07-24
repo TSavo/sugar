@@ -4546,6 +4546,10 @@ class Raise(Statement):
             node = node.value
         if node is not None and node.kind == "Name":
             parts.append(node.id)
+        elif node is not None and node.kind == "FormalRef":
+            # After substitution a raised formal name is a FormalRef, not a
+            # Name; its label is the formal's declared name (`raise exc` -> exc).
+            parts.append(node.coordinate.declared_name)
         if not parts:
             return None
         return ".".join(reversed(parts))
