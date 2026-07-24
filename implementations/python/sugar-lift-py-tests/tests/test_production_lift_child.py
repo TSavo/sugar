@@ -79,17 +79,17 @@ def test_kit_construction_panic_is_typed_gap_not_failure(
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
 
 
-def test_preconstruction_panic_is_typed_gap_not_failure(
+def test_sourcefile_construction_panic_is_typed_gap_not_failure(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    import _production_source_file as production_source_file
+    import sugar_source_tree.tree as tree_mod
 
     def _typed_gap(*_args, **_kwargs):
         raise ConstructionPanic(
             ConstructionGap(
-                owner="renamed-preconstruction-door",
+                owner="planted-SourceFile",
                 blame="arbitrary.py:1:0",
                 observed="constructed value without a floor",
                 requested="typed construction",
@@ -99,18 +99,18 @@ def test_preconstruction_panic_is_typed_gap_not_failure(
             )
         )
 
-    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    monkeypatch.setattr(tree_mod, "SourceFile", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
 
     assert _CHILD.run_production_lift_child(path, "arbitrary.py") == 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
-def test_preconstruction_unwritten_is_typed_gap_not_failure(
+def test_sourcefile_unwritten_is_typed_gap_not_failure(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     from sugar_source_tree.panic import SugarNotWritten
-    import _production_source_file as production_source_file
+    import sugar_source_tree.tree as tree_mod
 
     def _typed_gap(*_args, **_kwargs):
         raise SugarNotWritten(
@@ -120,7 +120,7 @@ def test_preconstruction_unwritten_is_typed_gap_not_failure(
             fix="write its construction",
         )
 
-    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    monkeypatch.setattr(tree_mod, "SourceFile", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
 
     assert _CHILD.run_production_lift_child(path, "arbitrary.py") == 0
@@ -131,7 +131,7 @@ def test_backend_defect_is_typed_gap_not_failure(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     from sugar_source_tree.panic import BackendDefect
-    import _production_source_file as production_source_file
+    import sugar_source_tree.tree as tree_mod
 
     def _typed_gap(*_args, **_kwargs):
         raise BackendDefect(
@@ -141,7 +141,7 @@ def test_backend_defect_is_typed_gap_not_failure(
             fix="repair prereq-2 demand/table generation; never search at construction",
         )
 
-    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    monkeypatch.setattr(tree_mod, "SourceFile", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
     assert _CHILD.run_production_lift_child(path, "mod.py") == 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
@@ -151,30 +151,25 @@ def test_source_call_binding_gap_is_typed_gap_not_failure(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-    import _production_source_file as production_source_file
+    import sugar_source_tree.tree as tree_mod
 
     def _typed_gap(*_args, **_kwargs):
         raise SourceCallBindingGap("unconsumed call actual")
 
-    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    monkeypatch.setattr(tree_mod, "SourceFile", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
     assert _CHILD.run_production_lift_child(path, "mod.py") == 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
 def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) -> None:
-    # If construction raises a non-typed-gap exception, the child must let
-    # it propagate (so the parent's subprocess exits nonzero = bare exception).
-    # We force a bare exception from the production door and assert it escapes.
+    # Untyped failure must propagate — not swallowed as typed-gap or completed.
     def _boom(*a, **k):
         raise RuntimeError("planted bare exception in construction")
 
-    import sys
+    import sugar_source_tree.tree as tree_mod
 
-    production_source_file = sys.modules.get("_production_source_file")
-    if production_source_file is None:
-        import _production_source_file as production_source_file
-    monkeypatch.setattr(production_source_file, "production_source_file", _boom)
+    monkeypatch.setattr(tree_mod, "SourceFile", _boom)
     path = _write(tmp_path, "def a():\n    return 1\n")
     with pytest.raises(RuntimeError, match="planted bare exception"):
         _CHILD.run_production_lift_child(path, "mod.py")
