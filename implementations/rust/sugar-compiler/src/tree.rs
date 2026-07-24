@@ -1229,6 +1229,62 @@ pub fn fold_recovered_audit(
     }))
 }
 
+/// Enumerate the **entire** source tree and fold function-contract IR.
+///
+/// There is no `lift` RPC. What used to be called "lift" is this walk:
+/// `source_files` → per-file `universe` (all function contracts). Mint and
+/// any other full-tree client must call this (or the typed `Kit::source_files`
+/// API) and must never send JSON-RPC method `"lift"`.
+pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
+    let conn = kit.enumerate_conn(workspace_root);
+    let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
+    if !source_gaps.is_empty() {
+        return Err(EnumerateError::Malformed {
+            plugin: conn.surface.clone(),
+            reason: format!("source census returned {} gaps", source_gaps.len()),
+        }
+        .into());
+    }
+    let mut ir = Vec::new();
+    let mut source_mementos = Vec::new();
+    let mut diagnostics = Vec::new();
+    for file in files {
+        source_mementos.push(file.memento.to_json());
+        let (nodes, gaps) =
+            enumerate_rpc(&conn, Level::Universe, Some(file.memento.to_json()), false)?;
+        for gap in gaps {
+            let item = gap
+                .memento
+                .as_ref()
+                .and_then(|m| m.source_function_name())
+                .map(|name| Value::String(name.to_string()))
+                .unwrap_or(Value::Null);
+            diagnostics.push(json!({
+                "path": file.memento.file,
+                "reason": gap.reason,
+                "item": item,
+            }));
+        }
+        for node in nodes {
+            if let Some(audit) = node.audit {
+                if looks_like_ir_contract_row(&audit) {
+                    ir.push(audit);
+                }
+            }
+        }
+    }
+    Ok(json!({
+        "kind": "ir-document",
+        "ir": ir,
+        "sourceMementos": source_mementos,
+        "diagnostics": diagnostics,
+        "sourceLedger": {
+            "source_files": source_mementos.len(),
+            "contracts": ir.len(),
+        },
+    }))
+}
+
 /// The lift REPORT as an enumeration client -- lift and mint are just clients
 /// of `sugar.enumerate`, not callers of a `lift` method. Same walk as
 /// `fold_recovered_audit` (SourceFiles -> Functions -> Facts), but each leaf

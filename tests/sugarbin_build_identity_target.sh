@@ -65,7 +65,7 @@ export SUGARBIN_FAKE_CARGO_LOG="$tmp/cargo.log"
 export SUGAR_BINARY_CARGO="$tmp/bin/cargo"
 export SUGAR_BINARY_TARGET_ROOT="$tmp/target"
 export SUGAR_BINARY_CACHE_DIR="$tmp/cache"
-export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '7%.0s' {1..128})"
+export SUGAR_BINARY_SOURCE_STAMP="blake3-512_$(printf '7%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0
 export SUGARBIN_FAKE_GIT_HEAD="head-before-unrelated-change"
 
@@ -93,12 +93,12 @@ resolved_from_make="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_make)" == "fresh:sugar" ]]
 [[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
-# #4577: monorepo HEAD is a build input so kit @HEAD == binary @HEAD. An
-# unrelated commit must miss the cache and invoke Cargo for a new identity.
+# cargo.log is already 2 (initial + after target disappeared). An unrelated
+# monorepo HEAD change must NOT invoke Cargo again — identity is sourceStamp only.
 export SUGARBIN_FAKE_GIT_HEAD="head-after-unrelated-change"
 resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$resolved_again" == "$tmp/target/release/sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 [[ "$($resolved_again)" == "fresh:sugar" ]]
 
 # BX/CI filesystem shelf: a local artifact contributes an atomic cell, then a
@@ -106,21 +106,23 @@ resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
 export SUGAR_BINARY_NO_SHELF=0 SUGAR_BINARY_PUBLISH=1
 export SUGAR_BINARY_SHELF_ROOT="$tmp/shelf"
 "$repo/bin/sugarbin" --bin sugar >/dev/null
-find "$tmp/shelf" -type f -name 'sugar-*.gz' | grep -q .
+# Cell layout: shelf/<platform>/<profile>/<sourceStamp>/<artifactName>/*.gz
+ls "$tmp/shelf"/*/*/*/*/*.gz >/dev/null 2>&1 \
+  || { echo 'shelf cell missing after publish' >&2; ls -laR "$tmp/shelf" >&2; exit 1; }
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 export SUGAR_BINARY_ALLOW_BUILD=0
 resolved_from_shelf="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_shelf)" == "fresh:sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
 # A real source-closure change misses the artifact shelf and calls Cargo, but
 # reuses the same persistent toolchain/profile target so incremental state is
 # available. Cargo, not Make's target existence, owns freshness here.
-export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '8%.0s' {1..128})"
+export SUGAR_BINARY_SOURCE_STAMP="blake3-512_$(printf '8%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0 SUGAR_BINARY_ALLOW_BUILD=1
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 "$repo/bin/sugarbin" --bin sugar >/dev/null
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 4 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
 [[ "$(cut -d'|' -f1 "$tmp/cargo.log" | sort -u | wc -l | tr -d ' ')" == 1 ]]
 
-echo 'PASS: sugarbin Cargo output is isolated by build identity'
+echo 'PASS: sugarbin identity is sourceStamp only (HEAD does not bust the shelf)'

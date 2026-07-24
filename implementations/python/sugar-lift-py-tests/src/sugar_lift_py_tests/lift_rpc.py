@@ -662,7 +662,8 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": ENUMERATE_RPC_METHOD, "required": False},
                 {"name": BIND_CONTRACT_REFS_RPC_METHOD, "required": False},
                 {"name": BIND_CALL_CONTRACT_REFS_RPC_METHOD, "required": False},
-                {"name": "lift", "required": True},
+                # lift is not a kit method: full-tree construction is sugar.enumerate only
+                # {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
                 {"name": "sugar.plugin.resolve_dependency_proofs", "required": False},
                 {"name": "shutdown", "required": False},

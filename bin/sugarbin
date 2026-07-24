@@ -680,7 +680,9 @@ source_stamp() {
     log "crime=invalid-blake3-output owner=bin/sugarbin illegal shape=b3sum -l 64 emitted '$digest' replacement=repair or upgrade b3sum so it emits 64-byte lowercase hex digests"
     return 1
   }
-  printf 'blake3-512:%s\n' "$digest"
+  # Underscore, never colon: this stamp is a shelf/path coordinate on every
+  # host including Windows, where `:` is illegal in filenames.
+  printf 'blake3-512_%s\n' "$digest"
 }
 
 attestation_git_head() {
@@ -688,7 +690,20 @@ attestation_git_head() {
 }
 
 stamp_for_filename() {
+  # Defensive: any leftover `:` (legacy blake3-512: form) becomes `_`.
+  # New stamps already use `_` so this is a no-op for them.
   printf '%s\n' "${1//:/_}"
+}
+
+# Hex body of a source stamp. Accepts blake3-512_<hex> (current, path-safe)
+# and legacy blake3-512:<hex>. Never leaves a `:` in the result.
+stamp_digest() {
+  local stamp="$1"
+  case "$stamp" in
+    blake3-512_*) printf '%s\n' "${stamp#blake3-512_}" ;;
+    blake3-512:*) printf '%s\n' "${stamp#blake3-512:}" ;;
+    *) printf '%s\n' "${stamp##*[:_]}" ;;
+  esac
 }
 
 artifact_name() {
@@ -704,43 +719,14 @@ tool_versions() {
 }
 
 build_identity() {
+  # Shelf / artifact identity is ONLY the authenticated source matter:
+  # sourceStamp = blake3 of the cargo package's local dependency FS closure
+  # (rust_build_input_stream). Not monorepo HEAD. Not toolchain strings.
+  # Platform / profile / binary name live in the cell path (artifact_name),
+  # not in this content key — so a docs-only commit cannot bust the shelf.
   local stamp="$1"
-  require_b3sum || return 1
-  # Shelf / artifact identity is FS + toolchain + package + binary by default.
-  # A docs-only monorepo commit must not rebuild every tool (#6210).
-  #
-  # sugar is the exception (#4577): the Python kit reports monorepo HEAD as
-  # kit_source.identity, and mint refuses a split pipeline when that HEAD
-  # differs from the binary's compile-time SUGAR_BUILD_GIT_HEAD. After #6210
-  # removed HEAD from the shelf key, a shelf hit on a newer checkout served a
-  # sugar binary baked with an older HEAD and every surface=python mint
-  # correctly refused. Re-key *only* sugar by monorepo HEAD so kit @HEAD ==
-  # binary @HEAD without reintroducing rebuild storms for discharge_cli etc.
-  # Compile-time monorepo head is still stamped via SUGARBIN_MONOREPO_HEAD.
-  local incremental="0"
-  [[ "$profile" != debug ]] || incremental="1"
-  local monorepo_head=""
-  if [[ "$bin_name" == "sugar" ]]; then
-    monorepo_head="$(attestation_git_head)"
-    [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
-  fi
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" "$monorepo_head" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
-import sys
-def emit(label, value):
-    label = label.encode(); value = value.encode()
-    sys.stdout.buffer.write(str(len(label)).encode() + b":" + label)
-    sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
-labels = ("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
-          "platform", "targetTriple", "profile", "sortedFeatures",
-          "package", "binary", "incremental")
-values = list(sys.argv[1:11])
-for label, value in zip(labels, values):
-    emit(label, value)
-# Optional monorepo HEAD (sugar only). Empty for every other binary so their
-# shelf cells stay stable across docs-only commits.
-if len(sys.argv) > 11 and sys.argv[11]:
-    emit("monorepoHead", sys.argv[11])
-PY
+  [[ -n "$stamp" ]] || { log "build_identity: empty sourceStamp"; return 1; }
+  printf '%s\n' "$stamp"
 }
 
 # Cargo freshness belongs to the source/toolchain/profile family, not to one
@@ -754,7 +740,7 @@ build_family_identity() {
   # Cargo's working target is shared across source stamps. Exact source
   # identity belongs to the finished artifact; Cargo owns incremental
   # freshness inside this toolchain/target/profile family.
-  python3 - "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  python3 - "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512_" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
@@ -830,7 +816,8 @@ shelf_tag_for_stamp() {
     printf '%s\n' "$SUGAR_BINARY_SHELF_TAG"
     return 0
   fi
-  local digest="${stamp#*:}"
+  local digest
+  digest="$(stamp_digest "$stamp")"
   printf 'sugar-binary-shelf-v2-%s-%s-%.24s\n' "$(platform_key)" "$profile" "$digest"
 }
 
@@ -953,7 +940,7 @@ publish_if_absent() {
   local repo shelf_tag stamp_short
   repo="$(github_repo)" || { log "gh repo identity unavailable; cannot publish $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
   shelf_tag="$(shelf_tag_for_stamp "$stamp")"
-  stamp_short="${stamp#*:}"; stamp_short="${stamp_short:0:24}"
+  stamp_short="$(stamp_digest "$stamp")"; stamp_short="${stamp_short:0:24}"
   # Ensure the shelf release exists. Concurrent prepares can race create; treat
   # "already exists" (view succeeds after create fails) as success.
   if ! ensure_shelf_release "$shelf_tag" "$repo" "$stamp_short"; then
@@ -1127,10 +1114,8 @@ build_from_source() {
   local build_root="$build_base/$(stamp_for_filename "$family_identity")"
   mkdir -p "$build_root"
   local built="$build_root/$profile/$bin_name"
-  # Pin compile-time monorepo HEAD so the #4577 split-pipeline gate compares
-  # kit source to the checkout that produced this binary. Avoid the obsolete
-  # SUGAR_BUILD_* names in this broker; the makefile maps monorepo head into
-  # the cargo rustc-env slot.
+  # SUGAR_BUILD_STAMP is the authenticated sourceStamp (source matter only).
+  # SUGAR_BUILD_GIT_HEAD remains a version/attestation label, not a shelf key.
   local monorepo_head
   monorepo_head="$(attestation_git_head)"
   [[ -n "$monorepo_head" ]] || monorepo_head="unknown"

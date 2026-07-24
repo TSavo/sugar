@@ -56,7 +56,7 @@ export SUGARBIN_FAKE_CHILD_LOG="$tmp/child.log"
 export SUGAR_BINARY_CARGO="$tmp/bin/cargo"
 export SUGAR_BINARY_TARGET_ROOT="$tmp/target"
 export SUGAR_BINARY_CACHE_DIR="$tmp/cache"
-export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '1%.0s' {1..128})"
+export SUGAR_BINARY_SOURCE_STAMP="blake3-512_$(printf '1%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0
 
 # SUGAR_BIN is a single-binary override. A differently requested executable
@@ -94,7 +94,8 @@ required = {"schema", "binary", "package", "sourceStamp", "buildIdentity", "plat
             "targetTriple", "profile", "features", "rustc", "cargo", "sha256", "built", "executed"}
 assert set(data) == required
 assert data["binary"] == "sugar" and data["package"] == "sugar-cli"
-assert data["buildIdentity"].startswith("blake3-512:")
+assert data["buildIdentity"].startswith("blake3-512_")
+assert ":" not in data["buildIdentity"], "identity must be path-safe (no colon)"
 assert data["cargo"].startswith("cargo 1.96.0")
 assert "\nrelease: 1.96.0\n" in data["cargo"]
 assert "\nhost: x86_64-unknown-linux-gnu\n" in data["cargo"]
