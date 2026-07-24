@@ -500,7 +500,14 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             loop.orelse, exhaustion_scope
         )
         else_runtime = tuple(
-            replace(else_net[name], coordinate=pre_entry.coordinate)
+            # `else_net` holds only the names the else body REBOUND. A carried
+            # name the else clause never touches keeps its loop-exhaustion value
+            # (the state entering the else, already in `exhaustion_scope`), not a
+            # KeyError.
+            replace(
+                else_net.get(name, exhaustion_scope[name]),
+                coordinate=pre_entry.coordinate,
+            )
             for name, pre_entry in zip(carried_names, pre_entries, strict=True)
         )
         else_state, else_runtime = _sealed_state(else_runtime)

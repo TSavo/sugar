@@ -682,6 +682,15 @@ def binding_state_read_node(
         return state
     if isinstance(state, (UnboundBinding, GuardedBinding)):
         return make_read(state)
+    if isinstance(state, LoopProjectedBinding):
+        # A single completion face is the TOTAL post-value (a no-break loop
+        # exits only by NormalExhaustion), so read straight through it. A
+        # multi-face join stays loud rather than silently pick one arm.
+        if len(state.completed_faces) == 1:
+            return binding_state_read_node(
+                state.completed_faces[0].state, make_read=make_read
+            )
+        raise TypeError(type(state))
     raise TypeError(type(state))
 
 

@@ -266,3 +266,37 @@ def test_conserve_unique_records_collapses_identical_keeps_distinct():
     assert _conserve_unique_records([a, b, dict(a), dict(b)]) == [a, b]
     # distinct records (different content) are all retained
     assert _conserve_unique_records([a, c, b]) == [a, c, b]
+
+
+def test_binding_state_read_node_reads_through_single_face_projection():
+    # A single-face LoopProjectedBinding is the TOTAL post-value; the read path
+    # must read straight through it (regression: pandas core/util/hashing).
+    # A multi-face join stays loud rather than silently pick one arm.
+    from sugar_source_tree.binding_state import binding_state_read_node
+
+    _a, node, _e = _entry("def f():\n    y = 1\n")
+    target_cid = cid_of_json({"target": "loop"})
+    single = LoopProjectedBinding(
+        target_cid,
+        (
+            LoopProjectedCompletedFace(
+                target_cid, "NormalExhaustion", cid_of_json({"g": "x"}), node
+            ),
+        ),
+    )
+    sentinel = object()
+    assert binding_state_read_node(single, make_read=lambda s: sentinel) is node
+
+    multi = LoopProjectedBinding(
+        target_cid,
+        (
+            LoopProjectedCompletedFace(
+                target_cid, "BreakExit", cid_of_json({"g": "b"}), node
+            ),
+            LoopProjectedCompletedFace(
+                target_cid, "NormalExhaustion", cid_of_json({"g": "x"}), node
+            ),
+        ),
+    )
+    with pytest.raises(TypeError):
+        binding_state_read_node(multi, make_read=lambda s: sentinel)
