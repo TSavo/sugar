@@ -706,40 +706,30 @@ tool_versions() {
 build_identity() {
   local stamp="$1"
   require_b3sum || return 1
-  # Shelf / artifact identity is FS + toolchain + package + binary by default.
-  # A docs-only monorepo commit must not rebuild every tool (#6210).
+  # Shelf / artifact identity is the authenticated Rust build-input dependency
+  # closure only: FS source stamp + toolchain + package + binary. Monorepo git
+  # HEAD is NOT part of the key. A docs-only or Python-only commit leaves the
+  # source stamp unchanged, so it must reuse the shelf cell; a change to any
+  # Rust build input (crate source, Cargo.lock, workspace config) changes the
+  # source stamp and mints a distinct cell. This is the real blast radius.
   #
-  # sugar is the exception (#4577): the Python kit reports monorepo HEAD as
-  # kit_source.identity, and mint refuses a split pipeline when that HEAD
-  # differs from the binary's compile-time SUGAR_BUILD_GIT_HEAD. After #6210
-  # removed HEAD from the shelf key, a shelf hit on a newer checkout served a
-  # sugar binary baked with an older HEAD and every surface=python mint
-  # correctly refused. Re-key *only* sugar by monorepo HEAD so kit @HEAD ==
-  # binary @HEAD without reintroducing rebuild storms for discharge_cli etc.
-  # Compile-time monorepo head is still stamped via SUGARBIN_MONOREPO_HEAD.
+  # #4577 (stale artifacts) is satisfied by content-addressing itself: a binary
+  # can never be served for Rust sources it was not built from, because the
+  # source stamp keys the cell. Do NOT re-introduce monorepo HEAD here (#6220):
+  # keying the shelf by whole-repo HEAD invalidates the entire Rust binary shelf
+  # on every unrelated commit, which is the rebuild-storm this closure fixes.
   local incremental="0"
   [[ "$profile" != debug ]] || incremental="1"
-  local monorepo_head=""
-  if [[ "$bin_name" == "sugar" ]]; then
-    monorepo_head="$(attestation_git_head)"
-    [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
-  fi
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" "$monorepo_head" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
     sys.stdout.buffer.write(str(len(label)).encode() + b":" + label)
     sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
-labels = ("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
-          "platform", "targetTriple", "profile", "sortedFeatures",
-          "package", "binary", "incremental")
-values = list(sys.argv[1:11])
-for label, value in zip(labels, values):
+for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
+                         "platform", "targetTriple", "profile", "sortedFeatures",
+                         "package", "binary", "incremental"), sys.argv[1:]):
     emit(label, value)
-# Optional monorepo HEAD (sugar only). Empty for every other binary so their
-# shelf cells stay stable across docs-only commits.
-if len(sys.argv) > 11 and sys.argv[11]:
-    emit("monorepoHead", sys.argv[11])
 PY
 }
 

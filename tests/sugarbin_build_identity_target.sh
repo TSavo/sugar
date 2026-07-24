@@ -93,12 +93,17 @@ resolved_from_make="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_make)" == "fresh:sugar" ]]
 [[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
-# #4577: monorepo HEAD is a build input so kit @HEAD == binary @HEAD. An
-# unrelated commit must miss the cache and invoke Cargo for a new identity.
+# #4577 fixed by dependency closure, NOT whole-repo HEAD (overrides #6220): the
+# shelf key is the Rust build-input source stamp only. An unrelated commit
+# (docs- or Python-only) moves monorepo HEAD but leaves the source stamp
+# untouched, so it MUST reuse the existing shelf cell and never invoke Cargo.
+# Whole-repo HEAD keying (#6220) would force a rebuild here; it must not.
 export SUGARBIN_FAKE_GIT_HEAD="head-after-unrelated-change"
 resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$resolved_again" == "$tmp/target/release/sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]] || {
+  echo "unrelated monorepo HEAD change invalidated the Rust binary shelf" >&2; exit 1;
+}
 [[ "$($resolved_again)" == "fresh:sugar" ]]
 
 # BX/CI filesystem shelf: a local artifact contributes an atomic cell, then a
@@ -111,7 +116,7 @@ rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 export SUGAR_BINARY_ALLOW_BUILD=0
 resolved_from_shelf="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_shelf)" == "fresh:sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
 # A real source-closure change misses the artifact shelf and calls Cargo, but
 # reuses the same persistent toolchain/profile target so incremental state is
@@ -120,7 +125,9 @@ export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '8%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0 SUGAR_BINARY_ALLOW_BUILD=1
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 "$repo/bin/sugarbin" --bin sugar >/dev/null
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 4 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]] || {
+  echo "a real Rust build-input change did not rebuild the shelf cell" >&2; exit 1;
+}
 [[ "$(cut -d'|' -f1 "$tmp/cargo.log" | sort -u | wc -l | tr -d ' ')" == 1 ]]
 
 echo 'PASS: sugarbin Cargo output is isolated by build identity'

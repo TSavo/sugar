@@ -1,7 +1,9 @@
 # Expectation: sugarbin builds once until Rust FS changes
 
-**Pin:** after #6210 (monorepo HEAD removed from shelf `build_identity` for
-non-sugar tools) plus the sugar-only monorepo-HEAD carve-out for #4577.
+**Pin:** after #6210 (monorepo HEAD removed from shelf `build_identity`). #6220
+re-added a sugar-only monorepo-HEAD carve-out and was reverted: shelf identity is
+the authenticated Rust build-input dependency closure only, for every binary
+including `sugar`. Whole-repo HEAD must never key the shelf.
 
 ## Law
 On a given self-hosted runner, after a stamp has been built and published to
@@ -9,13 +11,15 @@ the filesystem shelf (`~/.cache/sugar/binary-shelf-v2/…`):
 
 - The **next** CI run with **no** change under the Rust package input closure
   (and no change to toolchain/platform/profile that enter the stamp) must log
-  **`filesystem shelf hit`** for each warmed **non-sugar** binary.
-- **`sugar` is different (#4577):** its shelf identity includes monorepo HEAD
-  so kit `@HEAD` equals binary `@SUGAR_BUILD_GIT_HEAD`. A docs-only monorepo
-  commit still rebuilds sugar (small) and must **not** rebuild discharge_cli /
-  witness_rpc / etc.
-- It must **not** log `filesystem shelf miss` + `Compiling …` for non-sugar
-  stamps when only monorepo HEAD moved.
+  **`filesystem shelf hit`** for each warmed binary, **`sugar` included**.
+- A docs-only or Python-only monorepo commit moves monorepo HEAD but leaves the
+  source stamp untouched, so it must **not** rebuild any binary — `sugar` or
+  discharge_cli / witness_rpc / etc.
+- It must **not** log `filesystem shelf miss` + `Compiling …` for any stamp when
+  only monorepo HEAD moved. #4577's stale-artifact concern is satisfied by the
+  content-addressed source stamp itself: a binary is never served for Rust
+  sources it was not built from. A change to any Rust build input **does** change
+  the stamp and rebuilds.
 
 ## Remembered first-warm stamp (post-#6210)
 
