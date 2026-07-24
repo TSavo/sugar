@@ -36,10 +36,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Rust build owner
+      - name: Restore Rust build (source-keyed local cache)
         uses: ./.github/actions/setup-rust-cache
         with:
-          mode: seed
+          mode: restore
 
       - name: Check apt installed-package fast path
         run: tools/test-ci-apt-install.sh
@@ -55,6 +55,11 @@ jobs:
           for b in sugar sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do
             bin/sugarbin --profile debug --bin "$b" >/dev/null
           done
+
+      - name: Save Rust build (source-keyed local cache)
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          mode: save
 
   core:
     name: core (${{ matrix.name }})
@@ -103,7 +108,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Consume shared Rust build
+      - name: Consume shared Rust build (source-keyed local cache)
         uses: ./.github/actions/setup-rust-cache
         with:
           mode: consume
@@ -158,7 +163,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Consume shared Rust build
+      - name: Consume shared Rust build (source-keyed local cache)
         uses: ./.github/actions/setup-rust-cache
         with:
           mode: consume

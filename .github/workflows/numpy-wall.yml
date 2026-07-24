@@ -23,10 +23,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Reuse or seed the commit's Rust build
+      - name: Restore Rust build (source-keyed local cache)
         uses: ./.github/actions/setup-rust-cache
         with:
-          mode: seed
+          mode: restore
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -128,6 +128,12 @@ jobs:
             --body-file .sugar/numpy-wall/ledger-comment.md
           gh issue comment 4263 --repo "$GITHUB_REPOSITORY" \
             --body-file .sugar/numpy-wall/ledger-comment.md
+
+      - name: Save Rust build (source-keyed local cache)
+        if: always()
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          mode: save
 
       - name: Upload NumPy wall artifacts
         if: always()
