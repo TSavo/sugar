@@ -69,6 +69,11 @@ _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
+# Phase-1->3 cross-request continuation: retained immutable universes keyed
+# by linkUnitCid, and a def-memento index so resume reuses the SAME universe
+# object (materialize-once) instead of reconstructing the function.
+_RETAINED_LINK_UNITS = {}
+_RETAINED_BY_MEMENTO = {}
 
 
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
@@ -148,6 +153,68 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         )
         rows.extend(authenticated_module_exports(root, path, source, source_cid))
         rows.extend(enrolled)
+    return rows
+
+
+def _memento_continuation_key(memento: Dict[str, Any]) -> str:
+    """The retained-universe index key: a function's stable source identity
+    (source_cid + span). Lets the resume path reuse the SAME retained universe
+    without reconstructing the function."""
+    span = memento.get("span") or {}
+    return "|".join(
+        str(part)
+        for part in (
+            memento.get("source_cid"),
+            span.get("start_line"),
+            span.get("start_col"),
+            span.get("end_line"),
+            span.get("end_col"),
+        )
+    )
+
+
+def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
+    """Phase-1 enrollment: one closed ParameterContractLinkUnitV1 per function
+    that enrolled a parameter-contract demand. Builds each function's universe
+    (never calls post()), projects its link unit, and RETAINS the immutable
+    universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it."""
+    from sugar_lift_py_tests import tree_enumerate as _tree
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
+
+    global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
+    _RETAINED_LINK_UNITS = {}
+    _RETAINED_BY_MEMENTO = {}
+    rows: List[Dict[str, Any]] = []
+    for source_path in sorted(root.rglob("*.py")):
+        file_rel = str(source_path.relative_to(root))
+        try:
+            sf = _tree.source_file(source_path)
+        except Exception:
+            continue
+        for fn in sf.functions():
+            try:
+                outcome = fn.sugar().desugar(None)
+            except (SugarNotWritten, Exception):
+                continue
+            if not isinstance(outcome, Complete):
+                continue
+            universe = outcome.value
+            if not isinstance(universe, UniverseValue):
+                continue
+            def_memento = _tree.function_def_memento(fn, file_rel).to_rpc()
+            try:
+                unit = universe.link_unit_projection(def_memento)
+            except Exception:
+                continue
+            if unit is None:
+                continue
+            _RETAINED_LINK_UNITS[unit.link_unit_cid] = (universe, def_memento, unit)
+            _RETAINED_BY_MEMENTO[_memento_continuation_key(def_memento)] = (
+                unit.link_unit_cid
+            )
+            rows.append(unit.to_value())
     return rows
 
 
@@ -1516,6 +1583,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {"rows": _preconstruction_demand_rows(root)},
+                }
+            )
+            return
+        if level == "parameter-contract-link-units":
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"rows": _parameter_contract_link_unit_rows(root)},
                 }
             )
             return

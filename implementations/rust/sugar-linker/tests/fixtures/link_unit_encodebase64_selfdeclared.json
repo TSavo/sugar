@@ -3,37 +3,52 @@
   "schemaVersion": "1",
   "sourceMemento": {
     "kind": "source-memento",
-    "file": "vendor/b64vendor.py",
-    "source_function_name": "encodeBase64"
+    "file": "b64vendor.py",
+    "span": {
+      "start_line": 4,
+      "start_col": 0,
+      "end_line": 14,
+      "end_col": 5
+    },
+    "source_cid": "blake3-512:18794a094bbb3e204545dcfb213f605382cb2ce888961721261f59530f9af7110ed9a116e1e8325728a8bbf5adee31617d123ecca62e943f2091916620f8c7aa",
+    "sourceCid": "blake3-512:18794a094bbb3e204545dcfb213f605382cb2ce888961721261f59530f9af7110ed9a116e1e8325728a8bbf5adee31617d123ecca62e943f2091916620f8c7aa",
+    "source_function_name": "encodeBase64",
+    "sourceFunctionName": "encodeBase64",
+    "param_names": [
+      "value"
+    ],
+    "paramNames": [
+      "value"
+    ]
   },
   "parameterOwnedContract": {
-    "contractCid": "blake3-512:5f23865e6adc0645db46b8b36edce80fc12860c28c820d476d4df5ee01dbc0d2ca82cf7de10654704437fdb8b6c969b3e4b38eb70b1b8a993280fc34925a778a",
+    "contractCid": "blake3-512:eb049bc022684c19dd646fc9bd13ae596c6db7b0ba1689bc2d732039815fe5fde3b23400774229f2119a328872447a474bf169934a109d3748513703bc91cf5e",
     "semanticDecl": {
       "declaredDemandCids": [
-        "blake3-512:a18ecd019d416e239cf7c7a4a9f201165bce8cf0f96911c9009a5d3644214c229198eb4f7a7bd4ff3eb39dea25fc8556e30d53f29bb4f853a193623a1f100d36"
+        "blake3-512:672893230b0daa4991a1892889bf593306b37f4e717b85cd828ba199d22dbc2ecc69e7a90b774bcf5efea1f9367bae7446db98404fd368e51769db0f655a4aba"
       ],
       "formalDeclarations": [
         {
           "coordinate": {
-            "coordinateCid": "blake3-512:c25f8feb5f68d19fac7f680af4bbb46779e9b72aa42f78336d6ccb3bf7ffb3abc2111709cb1d43c0ce1521106558e11b5b7c02d3f6f7ac99294aef284789d358",
+            "coordinateCid": "blake3-512:c0c6bffc866caa980f4e4593309897af70e153d8383f30263a2b5e4a66351cc49b638379c5a3a462276c2bca4ada8bba5092bea72a0dbc8a141613c8f20f4b48",
             "declarationLocus": {
               "endCol": 22,
-              "endLine": 1,
-              "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "endLine": 4,
+              "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
               "startCol": 17,
-              "startLine": 1
+              "startLine": 4
             },
             "declaredName": "value",
             "kind": "formal-parameter-coordinate",
             "ordinal": 0,
             "ownerDefinitionLocus": {
-              "endCol": 4,
-              "endLine": 10,
-              "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "endCol": 5,
+              "endLine": 14,
+              "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
               "startCol": 0,
-              "startLine": 1
+              "startLine": 4
             },
-            "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ownerSourceIdentityCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
             "parameterKind": "positional-or-keyword",
             "schemaVersion": "1",
             "sort": {
@@ -47,40 +62,40 @@
       "name": "encodeBase64",
       "outBinding": "out",
       "ownerDefinitionLocus": {
-        "endCol": 4,
-        "endLine": 10,
-        "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "endCol": 5,
+        "endLine": 14,
+        "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
         "startCol": 0,
-        "startLine": 1
+        "startLine": 4
       },
-      "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "ownerSourceIdentityCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376"
     },
-    "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ownerSourceIdentityCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
     "ownerDefinitionLocus": {
-      "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "startLine": 1,
+      "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
+      "startLine": 4,
       "startCol": 0,
-      "endLine": 10,
-      "endCol": 4
+      "endLine": 14,
+      "endCol": 5
     },
     "formalDeclarations": [
       {
         "coordinate": {
           "kind": "formal-parameter-coordinate",
           "schemaVersion": "1",
-          "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ownerSourceIdentityCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
           "ownerDefinitionLocus": {
-            "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "startLine": 1,
+            "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
+            "startLine": 4,
             "startCol": 0,
-            "endLine": 10,
-            "endCol": 4
+            "endLine": 14,
+            "endCol": 5
           },
           "declarationLocus": {
-            "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "startLine": 1,
+            "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
+            "startLine": 4,
             "startCol": 17,
-            "endLine": 1,
+            "endLine": 4,
             "endCol": 22
           },
           "ordinal": 0,
@@ -90,7 +105,7 @@
             "kind": "primitive",
             "name": "Value"
           },
-          "coordinateCid": "blake3-512:c25f8feb5f68d19fac7f680af4bbb46779e9b72aa42f78336d6ccb3bf7ffb3abc2111709cb1d43c0ce1521106558e11b5b7c02d3f6f7ac99294aef284789d358"
+          "coordinateCid": "blake3-512:c0c6bffc866caa980f4e4593309897af70e153d8383f30263a2b5e4a66351cc49b638379c5a3a462276c2bca4ada8bba5092bea72a0dbc8a141613c8f20f4b48"
         }
       }
     ],
@@ -101,7 +116,7 @@
       }
     ],
     "declaredDemandCids": [
-      "blake3-512:a18ecd019d416e239cf7c7a4a9f201165bce8cf0f96911c9009a5d3644214c229198eb4f7a7bd4ff3eb39dea25fc8556e30d53f29bb4f853a193623a1f100d36"
+      "blake3-512:672893230b0daa4991a1892889bf593306b37f4e717b85cd828ba199d22dbc2ecc69e7a90b774bcf5efea1f9367bae7446db98404fd368e51769db0f655a4aba"
     ]
   },
   "candidates": [
@@ -109,11 +124,11 @@
       "kind": "contract-conditional-construction",
       "schemaVersion": "1",
       "sourceNode": {
-        "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "startLine": 3,
-        "startCol": 9,
-        "endLine": 3,
-        "endCol": 17
+        "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
+        "startLine": 8,
+        "startCol": 13,
+        "endLine": 8,
+        "endCol": 21
       },
       "candidate": {
         "args": [
@@ -127,24 +142,24 @@
               "kind": "primitive",
               "name": "Int"
             },
-            "value": 0
+            "value": 2
           }
         ],
         "kind": "ctor",
         "name": "py.subscript"
       },
-      "candidateCid": "blake3-512:aeee391ec24f33ab0260f03b81013d0d455b2c51728157a91dff679e6a21301133ee695536dd8791514562200911a77a43d3e9fbb43f22fb93e2f2b0154b4e72",
+      "candidateCid": "blake3-512:235af9e59262abc3b59ef22f9b4c2f596e10bb83a32660b6124691c80804b02392568b95cd13d657adb92421ae324f0c435c9ff1ae98da76f160ac806e3707ca",
       "demand": {
         "kind": "parameter-contract-demand",
         "schemaVersion": "1",
-        "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "formalCoordinateCid": "blake3-512:c25f8feb5f68d19fac7f680af4bbb46779e9b72aa42f78336d6ccb3bf7ffb3abc2111709cb1d43c0ce1521106558e11b5b7c02d3f6f7ac99294aef284789d358",
+        "ownerSourceIdentityCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
+        "formalCoordinateCid": "blake3-512:c0c6bffc866caa980f4e4593309897af70e153d8383f30263a2b5e4a66351cc49b638379c5a3a462276c2bca4ada8bba5092bea72a0dbc8a141613c8f20f4b48",
         "operationSite": {
-          "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "startLine": 3,
-          "startCol": 9,
-          "endLine": 3,
-          "endCol": 17
+          "sourceCid": "blake3-512:77cf8e77830049df8626cc48edd11de6352ab0188331941b391edb97cf5fc54fd10a493fca62fb2cfd7457570eda6ee2f7b9ee4942c87227738f226dc6e0f376",
+          "startLine": 8,
+          "startCol": 13,
+          "endLine": 8,
+          "endCol": 21
         },
         "demandedFormula": {
           "args": [
@@ -157,11 +172,11 @@
           "name": "python:indexable"
         },
         "demandedEffectBound": null,
-        "candidateCid": "blake3-512:aeee391ec24f33ab0260f03b81013d0d455b2c51728157a91dff679e6a21301133ee695536dd8791514562200911a77a43d3e9fbb43f22fb93e2f2b0154b4e72",
-        "demandCid": "blake3-512:a18ecd019d416e239cf7c7a4a9f201165bce8cf0f96911c9009a5d3644214c229198eb4f7a7bd4ff3eb39dea25fc8556e30d53f29bb4f853a193623a1f100d36"
+        "candidateCid": "blake3-512:235af9e59262abc3b59ef22f9b4c2f596e10bb83a32660b6124691c80804b02392568b95cd13d657adb92421ae324f0c435c9ff1ae98da76f160ac806e3707ca",
+        "demandCid": "blake3-512:672893230b0daa4991a1892889bf593306b37f4e717b85cd828ba199d22dbc2ecc69e7a90b774bcf5efea1f9367bae7446db98404fd368e51769db0f655a4aba"
       }
     }
   ],
   "callEdges": [],
-  "linkUnitCid": "blake3-512:bdb4f63d6cddf255e13a9544798031f41ddeccdf923d3bac90be696a3f7ef2eb7aad28d7940f5906c856bd9f5397da1319374c1f0ef88a8855dd8dead5a3bf3f"
+  "linkUnitCid": "blake3-512:76776b75637ed63ca81da524de8be1c8492813fa0c370f77eaca26bf9935f7f3b44ace257178c8d1dd0bfc3ea0ffcaa40c5c43ffe7978d63d7c328f8a62b582a"
 }
