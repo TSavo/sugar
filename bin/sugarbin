@@ -1197,15 +1197,37 @@ with open(path, "w", encoding="utf-8") as out:
     }, out, indent=2, sort_keys=True)
     out.write("\n")
 PY
-  if python3 - "$tmp" "$cell" <<'PY'
+  # Atomic cell install. Concurrent publishers race on the same cell:
+  # Linux raises ENOTEMPTY (not FileExistsError) when renaming onto a
+  # non-empty destination directory. Treat complete peer cells as success;
+  # reclaim incomplete leftovers once and retry.
+  if python3 - "$tmp" "$cell" "$name" <<'PY'
+import errno
 import os
+import shutil
 import sys
 
-source, destination = sys.argv[1:]
-try:
-    os.rename(source, destination)
-except FileExistsError:
-    raise SystemExit(3)
+source, destination, name = sys.argv[1:]
+
+def complete(path: str) -> bool:
+    return all(
+        os.path.isfile(os.path.join(path, f"{name}{suffix}"))
+        for suffix in (".gz", ".sugarbin.json", ".metadata.json")
+    )
+
+for attempt in range(2):
+    try:
+        os.rename(source, destination)
+        raise SystemExit(0)
+    except OSError as e:
+        if e.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+            raise
+        if complete(destination):
+            raise SystemExit(3)  # peer won
+        if attempt == 0 and os.path.isdir(destination):
+            shutil.rmtree(destination)
+            continue
+        raise SystemExit(1)
 PY
   then
     log "published $name to filesystem shelf"
