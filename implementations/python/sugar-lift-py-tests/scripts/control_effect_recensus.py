@@ -30,7 +30,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 
 def _git_commit(root: Path) -> str:
@@ -74,7 +74,12 @@ def _configure_engine_log(path: Path) -> None:
     logger.setLevel(logging.DEBUG)
 
 
-def _measure_file(path: Path, *, relative: str) -> dict[str, Any]:
+def _measure_file(
+    path: Path,
+    *,
+    relative: str,
+    on_function: "Callable[[int, int, str, float | None], None] | None" = None,
+) -> dict[str, Any]:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.panic import SugarNotWritten
@@ -92,10 +97,25 @@ def _measure_file(path: Path, *, relative: str) -> dict[str, Any]:
         for function in source_file.functions():
             functions_total += 1
             try:
+                line = function.line_col_span().start_line
+            except Exception:  # noqa: BLE001 -- name is best-effort display
+                line = "?"
+            fn_name = f"{getattr(function, 'name', '?')}:{line}"
+            # Announce the function BEFORE constructing it (elapsed=None), so a
+            # hang shows the exact function it is stuck on -- not the one before.
+            if on_function is not None:
+                on_function(functions_total - 1, functions_clean, fn_name, None)
+            t_fn = time.perf_counter()
+            try:
                 function.sugar()
                 functions_clean += 1
             except SugarNotWritten as gap:
                 families[type(gap).__name__] += 1
+            fn_s = time.perf_counter() - t_fn
+            # Report completion WITH this function's own construction time, so
+            # `last=` is per-function and a slow/blowup function is obvious.
+            if on_function is not None:
+                on_function(functions_total, functions_clean, fn_name, fn_s)
         for _node, panic in reporter.gaps:
             families[type(panic).__name__] += 1
         return reporter
@@ -282,7 +302,7 @@ def main() -> int:
             desc="pandas enum",
             file=progress_stream,
             dynamic_ncols=False,
-            ncols=200,
+            ncols=320,
             mininterval=0.15,
             smoothing=0.05,
             bar_format=bar_format,
@@ -323,8 +343,54 @@ def main() -> int:
                 refresh=True,
             )
             t_file = time.perf_counter()
+
+            fn_stat = {
+                "slow_s": 0.0,
+                "slow_name": "-",
+                "fn_seen": 0,
+                "fn_time": 0.0,
+                "file_start": time.perf_counter(),
+            }
+
+            def _on_function(
+                in_total: int, in_clean: int, fn_name: str, elapsed: "float | None"
+            ) -> None:
+                # live_clean/live_fns are the completed-file base; add this
+                # file's running counts so `fn=` climbs per function, live.
+                shown_fns = live_fns + in_total
+                shown_clean = live_clean + in_clean
+                clean_pct = (100.0 * shown_clean / shown_fns) if shown_fns else 0.0
+                if elapsed is not None:
+                    fn_stat["fn_seen"] += 1
+                    fn_stat["fn_time"] += elapsed
+                    if elapsed > fn_stat["slow_s"]:
+                        fn_stat["slow_s"] = elapsed
+                        fn_stat["slow_name"] = fn_name
+                seen = fn_stat["fn_seen"] or 1
+                avg = fn_stat["fn_time"] / seen
+                wall = time.perf_counter() - fn_stat["file_start"]
+                rate = fn_stat["fn_seen"] / wall if wall > 0 else 0.0
+                post = {
+                    "file": relative,
+                    "func": fn_name,
+                    "status": "lifting…" if elapsed is None else "ok",
+                    "last": "…" if elapsed is None else f"{elapsed:.3f}s",
+                    "avg": f"{avg:.3f}s",
+                    "fn/s": f"{rate:.1f}",
+                    "slowest": f"{fn_stat['slow_name']} {fn_stat['slow_s']:.2f}s",
+                    "snw": live_snw,
+                    "gaps": live_other_gaps,
+                    "cpanic": live_panic,
+                    "defect": live_defect,
+                    "fn": f"{shown_clean}/{shown_fns}",
+                    "clean%": f"{clean_pct:.0f}",
+                }
+                _set_bars(post, refresh=True)
+
             try:
-                row = _measure_file(path, relative=relative)
+                row = _measure_file(
+                    path, relative=relative, on_function=_on_function
+                )
             except Exception as error:  # noqa: BLE001 -- per-file terminal
                 row = {
                     "category": "backend-defect",
