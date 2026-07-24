@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: sugar-python-heavy-measurement
+  cancel-in-progress: false
+
 jobs:
   bare-exception-zero-tolerance:
     runs-on: [self-hosted, Linux, X64]

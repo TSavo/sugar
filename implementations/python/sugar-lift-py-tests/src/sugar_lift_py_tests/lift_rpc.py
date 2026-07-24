@@ -2125,7 +2125,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     except SourceTreePanic:
         # Preserve the concrete tree taxonomy for the resident RPC boundary;
         # VocabularyMissing, BackendDefect, SugarNotWritten, and its
-        # RuntimeSelected specialization are different repair roles.
+        # RuntimeSelected specialization are different repair roles. The
+        # outer serve loop serializes them as typed-loud JSON-RPC errors
+        # (never unclassified exit 1).
         raise
     except Exception as exc:
         _TRANSPORT_LOG.exception(
@@ -2313,6 +2315,33 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
     return True
 
 
+def _serialize_typed_construction_failure(exc: BaseException) -> dict[str, Any] | None:
+    """JSON-RPC data payload for known typed construction failures, else None."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+    if isinstance(exc, ConstructionPanic):
+        return {
+            "kind": "typed-loud",
+            "exception_type": type(exc).__name__,
+            "stage": "dispatch",
+            "diagnostic": exc.info.to_json(),
+        }
+    if isinstance(exc, SourceCallBindingGap):
+        return {
+            "kind": "typed-loud",
+            "exception_type": type(exc).__name__,
+            "stage": "dispatch",
+            "diagnostic": {
+                "owner": "SourceCallFrame.bind_node_actuals",
+                "observed": str(exc),
+                "requested": "every call actual consumed by the authenticated frame",
+                "fix": "bind or reject the unconsumed actual at the call frame",
+            },
+        }
+    return None
+
+
 def _serve() -> None:
     request_count = 0
     while True:
@@ -2335,14 +2364,17 @@ def _serve() -> None:
         try:
             keep_serving = _dispatch_request(msg)
         except SourceTreePanic as panic:
+            # Typed construction failure: serialize as JSON-RPC error and keep
+            # serving. Never exit 1 unclassified after the client has a typed row.
             _send(
                 {
                     "jsonrpc": "2.0",
                     "id": msg.get("id"),
                     "error": {
-                        "code": -32603,
+                        "code": -32001,
                         "message": str(panic),
                         "data": {
+                            "kind": "typed-loud",
                             "exception_type": type(panic).__name__,
                             "stage": "dispatch",
                             "diagnostic": {
@@ -2356,7 +2388,25 @@ def _serve() -> None:
                 }
             )
             _log_resident_profile(request_count, msg.get("method"))
-            raise SystemExit(1) from panic
+            continue
+        except BaseException as exc:
+            # ConstructionPanic is BaseException; other kit typed gaps may be too.
+            typed = _serialize_typed_construction_failure(exc)
+            if typed is None:
+                raise
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "error": {
+                        "code": -32001,
+                        "message": str(exc),
+                        "data": typed,
+                    },
+                }
+            )
+            _log_resident_profile(request_count, msg.get("method"))
+            continue
         _log_resident_profile(request_count, msg.get("method"))
         _maybe_trim_resident(request_count)
         if not keep_serving:

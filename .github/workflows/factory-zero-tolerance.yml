@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Serialize heavy Python measurement on battleaxe self-hosted runners so floors
+# and corpus scans never compete for CPU/timeout budget.
+concurrency:
+  group: sugar-python-heavy-measurement
+  cancel-in-progress: false
+
 jobs:
   python-sole-construction-floors:
     name: python-sole-construction-floors
