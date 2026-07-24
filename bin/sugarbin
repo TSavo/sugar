@@ -541,131 +541,12 @@ require_b3sum() {
 }
 
 rust_build_input_stream() {
-  python3 - "$rust_workspace" "$package" "${SUGAR_BINARY_CARGO:-cargo}" <<'PY'
-import json
-import os
-import stat
-import subprocess
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-selected_name = sys.argv[2]
-cargo = sys.argv[3]
-if not root.is_dir():
-    raise SystemExit(f"rust workspace not found: {root}")
-
-# Cargo owns the dependency graph. Hash only the selected workspace package and
-# its transitive local dependencies, together with the workspace files that can
-# affect every build. Registry/git dependency identity remains pinned by
-# Cargo.lock and Cargo's checksums.
-metadata = json.loads(subprocess.check_output(
-    [cargo, "metadata", "--locked", "--format-version", "1", "--manifest-path", str(root / "Cargo.toml")],
-    text=True,
-))
-packages = {package["id"]: package for package in metadata["packages"]}
-selected = [package["id"] for package in metadata["packages"]
-            if package["name"] == selected_name and package["id"] in metadata["workspace_members"]]
-if len(selected) != 1:
-    raise SystemExit(f"expected one workspace package named {selected_name!r}, found {len(selected)}")
-nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
-closure = set()
-pending = selected[:]
-while pending:
-    package_id = pending.pop()
-    if package_id in closure:
-        continue
-    closure.add(package_id)
-    pending.extend(dep["pkg"] for dep in nodes[package_id]["deps"])
-
-local_roots = sorted({Path(packages[package_id]["manifest_path"]).parent
-                      for package_id in closure
-                      if Path(packages[package_id]["manifest_path"]).is_relative_to(root)},
-                     key=lambda path: path.as_posix())
-SKIP_DIRS = {
-    ".git",
-    ".hg",
-    ".jj",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".sugar",
-    "node_modules",
-    "target",
-    "__pycache__",
-}
-SKIP_FILES = {
-    ".DS_Store",
-}
-
-
-def emit(label: bytes, value: bytes) -> None:
-    out = sys.stdout.buffer
-    out.write(str(len(label)).encode("ascii"))
-    out.write(b":")
-    out.write(label)
-    out.write(str(len(value)).encode("ascii"))
-    out.write(b":")
-    out.write(value)
-
-
-graph = []
-def stable_id(package_id):
-    package = packages[package_id]
-    manifest = Path(package["manifest_path"])
-    if manifest.is_relative_to(root):
-        return f"workspace:{manifest.relative_to(root).as_posix()}:{package['name']}@{package['version']}"
-    return package_id
-
-
-for package_id in sorted(closure):
-    package = packages[package_id]
-    node = nodes[package_id]
-    graph.append({
-        "id": stable_id(package_id),
-        "name": package["name"],
-        "version": package["version"],
-        "source": package.get("source"),
-        "checksum": package.get("checksum"),
-        "features": sorted(node.get("features", [])),
-        "dependencies": sorted(stable_id(dep["pkg"]) for dep in node.get("deps", [])),
-    })
-emit(b"cargo-closure", json.dumps(graph, sort_keys=True, separators=(",", ":")).encode())
-
-
-def emit_path(path: Path) -> None:
-    rel = path.relative_to(root).as_posix()
-    st = os.lstat(path)
-    if stat.S_ISLNK(st.st_mode):
-        kind = b"symlink"
-        content = os.readlink(path).encode("utf-8", "surrogateescape")
-    elif stat.S_ISREG(st.st_mode):
-        kind = b"file"
-        content = path.read_bytes()
-    else:
-        return
-    executable = b"1" if (st.st_mode & 0o111) else b"0"
-    emit(b"path", rel.encode("utf-8", "surrogateescape"))
-    emit(b"kind", kind)
-    emit(b"exec", executable)
-    emit(b"bytes", content)
-
-seen = set()
-for common in (root / "Cargo.toml", root / ".cargo" / "config",
-               root / ".cargo" / "config.toml"):
-    if common.exists():
-        emit_path(common)
-        seen.add(common)
-
-for package_root in local_roots:
-    for dirpath, dirnames, filenames in os.walk(package_root, topdown=True, followlinks=False):
-        dirnames[:] = sorted(name for name in dirnames if name not in SKIP_DIRS)
-        for filename in sorted(name for name in filenames if name not in SKIP_FILES):
-            path = Path(dirpath) / filename
-            if path not in seen:
-                emit_path(path)
-                seen.add(path)
-PY
+  # Shared preimage with tools/sugar_source_stamp.py (kit + binary identity).
+  python3 "$repo_root/tools/sugar_source_stamp.py" --stream \
+    --repo-root "$repo_root" \
+    --rust-workspace "$rust_workspace" \
+    --package "$package" \
+    --cargo "${SUGAR_BINARY_CARGO:-cargo}"
 }
 
 source_stamp() {
@@ -673,17 +554,14 @@ source_stamp() {
     printf '%s\n' "$SUGAR_BINARY_SOURCE_STAMP"
     return 0
   fi
-  require_b3sum
-  local digest
-  digest="$(rust_build_input_stream | b3sum -l 64 --no-names | awk '{print $1}')"
-  [[ "$digest" =~ ^[0-9a-f]{128}$ ]] || {
-    log "crime=invalid-blake3-output owner=bin/sugarbin illegal shape=b3sum -l 64 emitted '$digest' replacement=repair or upgrade b3sum so it emits 64-byte lowercase hex digests"
-    return 1
-  }
-  # Underscore, never colon: this stamp is a shelf/path coordinate on every
-  # host including Windows, where `:` is illegal in filenames.
-  printf 'blake3-512_%s\n' "$digest"
+  # Same stamp the kit declares and the binary embeds (SUGAR_BUILD_STAMP).
+  python3 "$repo_root/tools/sugar_source_stamp.py" \
+    --repo-root "$repo_root" \
+    --rust-workspace "$rust_workspace" \
+    --package "$package" \
+    --cargo "${SUGAR_BINARY_CARGO:-cargo}"
 }
+
 
 attestation_git_head() {
   git -C "$repo_root" rev-parse HEAD 2>/dev/null || true

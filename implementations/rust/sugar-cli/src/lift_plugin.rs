@@ -500,10 +500,9 @@ fn claim_from_enumerate_response(
     Ok(claim)
 }
 
-/// Refuse when kit source identity differs from the binary's compile-time
-/// monorepo HEAD (#4577). Dirty matched trees keep the same base identity and
-/// pass; a content CID cannot equal a git HEAD and therefore refuses rather
-/// than weakening the gate.
+/// Refuse when kit sourceStamp differs from the binary's compile-time
+/// sourceStamp (#4577). Both sides testify to the authenticated source
+/// closure only — Git HEAD and toolchain are attestations, not identity.
 pub(crate) fn refuse_split_pipeline(identity: &str, binary: &str) -> Result<(), String> {
     if identity == binary {
         Ok(())
@@ -512,6 +511,13 @@ pub(crate) fn refuse_split_pipeline(identity: &str, binary: &str) -> Result<(), 
             "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
         ))
     }
+}
+
+/// Compile-time sourceStamp embedded by sugarbin (`SUGAR_BUILD_STAMP`).
+/// `"unknown"` means a development cargo build without a stamp — no
+/// source-authority was baked in; the gate cannot fire.
+fn binary_source_stamp() -> &'static str {
+    option_env!("SUGAR_BUILD_STAMP").unwrap_or("unknown")
 }
 
 fn enforce_python_kit_source(
@@ -534,8 +540,16 @@ fn enforce_python_kit_source(
             "python kit initialize response supplied an empty kit_source identity".to_string(),
         ));
     }
-    refuse_split_pipeline(identity, env!("SUGAR_BUILD_GIT_HEAD"))
-        .map_err(LiftPluginError::SplitPipeline)?;
+    let binary = binary_source_stamp();
+    if binary == "unknown" || binary.is_empty() {
+        // Development binary: no sourceStamp authority embedded. Do not
+        // pretend Git HEAD is source identity.
+        if let Ok(mut slot) = last_python_kit_source_slot().lock() {
+            *slot = initialize_response.get("kit_source").cloned();
+        }
+        return Ok(());
+    }
+    refuse_split_pipeline(identity, binary).map_err(LiftPluginError::SplitPipeline)?;
     if let Ok(mut slot) = last_python_kit_source_slot().lock() {
         *slot = initialize_response.get("kit_source").cloned();
     }
@@ -1252,8 +1266,8 @@ mod tests {
     #[test]
     fn content_addressed_kit_refuses_against_git_binary_head() {
         assert_eq!(
-            refuse_split_pipeline("blake3-512:deadbeef", "abc123").unwrap_err(),
-            "refusing to mint from a split pipeline: kit @blake3-512:deadbeef != binary @abc123"
+            refuse_split_pipeline("blake3-512_deadbeef", "abc123").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @blake3-512_deadbeef != binary @abc123"
         );
     }
 }

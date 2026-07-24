@@ -4,16 +4,28 @@ fn main() {
     for path in git_paths_to_watch() {
         println!("cargo:rerun-if-changed={path}");
     }
+    // Rebuild when protocol Python sources change (they are part of sourceStamp
+    // for sugar-cli via tools/sugar_source_stamp.py).
+    for rel in [
+        "../../python/sugar-lift-py-tests/src",
+        "../../python/sugar-lift-python-source/src",
+        "../../python/sugar-source-tree/src",
+        "../../../tools/sugar_source_stamp.py",
+    ] {
+        println!("cargo:rerun-if-changed={rel}");
+    }
     println!("cargo:rerun-if-env-changed=SUGAR_BUILD_STAMP");
     println!("cargo:rerun-if-env-changed=SUGAR_BUILD_GIT_HEAD");
+    // Git HEAD is informational attestation only — never default for identity.
     let git_head = std::env::var("SUGAR_BUILD_GIT_HEAD")
         .ok()
         .or_else(|| git_output(&["rev-parse", "HEAD"]))
         .unwrap_or_else(|| "unknown".to_string());
+    // sourceStamp only. Missing stamp ⇒ "unknown" (dev cargo build; gate skips).
     let build_stamp = std::env::var("SUGAR_BUILD_STAMP")
         .ok()
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| git_head.clone());
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=SUGAR_BUILD_GIT_HEAD={git_head}");
     println!("cargo:rustc-env=SUGAR_BUILD_STAMP={build_stamp}");
 }
