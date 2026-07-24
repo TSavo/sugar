@@ -182,7 +182,9 @@ def _read_source(path: Path) -> tuple[str | None, SideDoorOffender | None]:
 
 def _import_is_ast(node: ast.AST) -> bool:
     if isinstance(node, ast.Import):
-        return any(alias.name == "ast" or alias.name.startswith("ast.") for alias in node.names)
+        return any(
+            alias.name == "ast" or alias.name.startswith("ast.") for alias in node.names
+        )
     if isinstance(node, ast.ImportFrom):
         return bool(node.module and node.module.split(".", 1)[0] == "ast")
     return False
@@ -191,9 +193,11 @@ def _import_is_ast(node: ast.AST) -> bool:
 def _import_is_old_lifter(node: ast.AST) -> tuple[bool, str]:
     if isinstance(node, ast.Import):
         for alias in node.names:
-            if alias.name in _OLD_LIFTER_MODULES or alias.name.startswith(
-                "sugar_lift_python_source.lifter"
-            ) or alias.name.startswith("sugar_lift_python_source.bind_lifter"):
+            if (
+                alias.name in _OLD_LIFTER_MODULES
+                or alias.name.startswith("sugar_lift_python_source.lifter")
+                or alias.name.startswith("sugar_lift_python_source.bind_lifter")
+            ):
                 return True, alias.name
     if isinstance(node, ast.ImportFrom):
         module = node.module or ""
@@ -312,13 +316,18 @@ def scan_file(path: Path, *, rel: str) -> list[SideDoorOffender]:
         for node in ast.walk(tree):
             # --- membrane admission (all production files, including adapters) ---
             for name, expression in _membrane_name_hits(node):
-                if name.endswith(".json") or name in {
-                    "community_context_managers.json",
-                    "community_context_managers",
-                } or (
-                    isinstance(node, ast.Constant)
-                    and isinstance(node.value, str)
-                    and "community_context_managers" in node.value
+                if (
+                    name.endswith(".json")
+                    or name
+                    in {
+                        "community_context_managers.json",
+                        "community_context_managers",
+                    }
+                    or (
+                        isinstance(node, ast.Constant)
+                        and isinstance(node.value, str)
+                        and "community_context_managers" in node.value
+                    )
                 ):
                     kind = "membrane-spelling-manifest"
                     note = (
@@ -380,12 +389,16 @@ def scan_file(path: Path, *, rel: str) -> list[SideDoorOffender]:
                     )
 
             # --- dual old-lifter on production enumerate path ---
-            if basename in {
-                "lift_rpc.py",
-                "tree_enumerate.py",
-                "bind_rpc.py",
-                "rpc.py",
-            } or "enumerate" in basename:
+            if (
+                basename
+                in {
+                    "lift_rpc.py",
+                    "tree_enumerate.py",
+                    "bind_rpc.py",
+                    "rpc.py",
+                }
+                or "enumerate" in basename
+            ):
                 is_old, expression = _import_is_old_lifter(node)
                 if is_old:
                     offenders.append(
@@ -588,7 +601,9 @@ def format_report(offenders: Sequence[SideDoorOffender]) -> str:
     return "\n".join(lines)
 
 
-def offenders_to_jsonable(offenders: Sequence[SideDoorOffender]) -> list[dict[str, object]]:
+def offenders_to_jsonable(
+    offenders: Sequence[SideDoorOffender],
+) -> list[dict[str, object]]:
     return [
         {
             "path": row.path,
@@ -604,15 +619,15 @@ def offenders_to_jsonable(offenders: Sequence[SideDoorOffender]) -> list[dict[st
 
 def discrimination_self_test() -> bool:
     """Planted membrane + foreign-ast + ast-semantic twins trip; clean stays quiet."""
-    membrane_plant = '''
+    membrane_plant = """
 from sugar_lift_py_tests.manifest_membrane import contract_for_manager
 
 def admit(manager_node):
     return contract_for_manager(default_community_manifest(), manager_node)
 
 _SPELLING = "community_context_managers.json"
-'''
-    ast_plant = '''
+"""
+    ast_plant = """
 import ast
 
 def resolve_exit(source: str):
@@ -624,24 +639,24 @@ def resolve_exit(source: str):
         if isinstance(node, ast.FunctionDef) and node.name == "__exit__":
             return node
     return None
-'''
-    from_ast_plant = '''
+"""
+    from_ast_plant = """
 from ast import parse, walk, NodeVisitor
 
 def resolve(source: str):
     return parse(source)
-'''
-    dual_plant = '''
+"""
+    dual_plant = """
 from sugar_lift_python_source.lifter import lift_source
 
 def enumerate_file(source, path):
     return lift_source(source, path)
-'''
-    clean = '''
+"""
+    clean = """
 def sugar_from_tree(node, prebound_refs):
     # meaning is tree + prebound refs only
     return node.sugar()
-'''
+"""
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw) / "pkg"
         root.mkdir()
@@ -676,8 +691,7 @@ def sugar_from_tree(node, prebound_refs):
         adapter_foreign = [
             row
             for row in adapter_only + adapter_mid
-            if row.kind == "foreign-ast-import"
-            or row.kind.startswith("ast-semantic-")
+            if row.kind == "foreign-ast-import" or row.kind.startswith("ast-semantic-")
         ]
     return (
         r >= 4
@@ -718,9 +732,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parser.parse_args(argv)
         if args.self_test:
             ok = discrimination_self_test()
-            print(
-                "CONSTRUCTION-SIDE-DOOR SELF-TEST " + ("GREEN" if ok else "RED")
-            )
+            print("CONSTRUCTION-SIDE-DOOR SELF-TEST " + ("GREEN" if ok else "RED"))
             print(
                 json.dumps(
                     {

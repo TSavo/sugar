@@ -5,6 +5,7 @@ from typing import Any
 
 Json = Any
 
+
 class UnsupportedStatementGrammar(RuntimeError):
     pass
 
@@ -41,8 +42,12 @@ AST_STATEMENT_TYPE_NAMES = frozenset(
         "Continue",
     }
 )
-AST_STATEMENT_TYPES = frozenset(getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES)
-if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+AST_STATEMENT_TYPES = frozenset(
+    getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES
+)
+if {
+    statement.__name__ for statement in AST_STATEMENT_TYPES
+} != AST_STATEMENT_TYPE_NAMES:
     raise UnsupportedStatementGrammar("unsupported running typed.stmt grammar")
 
 

@@ -103,9 +103,7 @@ def test_exceptional_exit_throws_into_machine_and_preserves_both_body_faces():
 
 
 def test_contextmanager_style_try_finally_resumes_cleanup_before_termination():
-    sugar = _with_sugar(
-        "    try:\n        yield 7\n    finally:\n        pass"
-    )
+    sugar = _with_sugar("    try:\n        yield 7\n    finally:\n        pass")
 
     outcome = sugar.desugar()
 

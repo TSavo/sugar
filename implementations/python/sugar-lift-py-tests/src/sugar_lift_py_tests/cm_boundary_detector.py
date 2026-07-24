@@ -71,9 +71,7 @@ _SOURCE_CALLS = frozenset({"path_source", "installed_module_source"})
 _IMPORT_LINE = re.compile(r"^\s*import\s+(.+?)(?:\s*#.*)?$")
 # from sugar_linker import resolve_context_manager_demand as lookup
 # from sugar_linker import (
-_FROM_IMPORT_LINE = re.compile(
-    r"^\s*from\s+([\w.]+)\s+import\s+(.+?)(?:\s*#.*)?$"
-)
+_FROM_IMPORT_LINE = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(.+?)(?:\s*#.*)?$")
 # hidden.resolve_context_manager_demand(  /  resolve_context_manager_demand(
 _CALL_SITE = re.compile(r"(?<![\w.])([\w]+(?:\.[\w]+)*)\s*\(")
 _NAME_AS = re.compile(r"^([\w.]+)(?:\s+as\s+(\w+))?$")
@@ -143,7 +141,9 @@ def _scan_file(path: Path) -> list[str]:
     def record(line_no: int, reason: str) -> None:
         offenders.append(f"{path}:{line_no}:{reason}")
 
-    def ingest_import(module_name: str, line_no: int, asname: str | None = None) -> None:
+    def ingest_import(
+        module_name: str, line_no: int, asname: str | None = None
+    ) -> None:
         local = asname or module_name.split(".", 1)[0]
         aliases[local] = module_name
         if _module_is_hard(module_name):

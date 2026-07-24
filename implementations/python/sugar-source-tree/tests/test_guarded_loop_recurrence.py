@@ -87,14 +87,16 @@ def test_break_and_exhaustion_faces_project_exact_runtime_states_by_coordinate()
     }
     runtime_states = {
         state_cid: (
-            break_entry
-            if state_cid
-            == next(
-                face.state_cid
-                for face in construction.completed_faces
-                if face.completion_kind == "BreakExit"
-            )
-            else exhaustion_entry,
+            (
+                break_entry
+                if state_cid
+                == next(
+                    face.state_cid
+                    for face in construction.completed_faces
+                    if face.completion_kind == "BreakExit"
+                )
+                else exhaustion_entry
+            ),
         )
         for state_cid in state_cids
     }
@@ -137,7 +139,9 @@ def test_projection_redecodes_and_rejects_a_spliced_public_dataclass():
     construction = _sample_construction()
     graph = copy.deepcopy(construction.wire_graph())
     face = next(
-        record for record in graph["records"] if record.get("kind") == "loop-completed-face"
+        record
+        for record in graph["records"]
+        if record.get("kind") == "loop-completed-face"
     )
     face["completionKind"] = "NormalExhaustion"
     spliced = LoopConstructionV1(
@@ -215,9 +219,7 @@ def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
         _state_wire(_seal_runtime_state(node_false))
     )
     # the guard is the SAME branch-result guard the loop control faces use
-    assert sealed.guard_formula_cid == _formula_cid(
-        branch_result_guard(slot, slot)
-    )
+    assert sealed.guard_formula_cid == _formula_cid(branch_result_guard(slot, slot))
     # a constructed Node arm seals to a bound value, not a guard
     assert isinstance(_seal_runtime_state(node_true), BoundBindingStateV1)
 

@@ -81,9 +81,7 @@ def test_trace_round_trip_authenticates_every_preimage():
         assignments[0].value.fragment, cid_of_json({"value": 1})
     )
     entry = BindingEntryV1(coordinate, BoundBindingStateV1(testimony))
-    record = SubstitutionTraceRecordV1.mint(
-        assignments[0].fragment, (), (entry,)
-    )
+    record = SubstitutionTraceRecordV1.mint(assignments[0].fragment, (), (entry,))
     trace = SubstitutionTraceV1.mint(owner, (record,))
     assert SubstitutionTraceV1.decode(trace.wire()) == trace
 
@@ -93,6 +91,4 @@ def test_trace_round_trip_authenticates_every_preimage():
         SubstitutionTraceV1.decode(stale)
 
     with pytest.raises(BindingProvenanceGap, match="coordinate CID mismatch"):
-        BindingCoordinateV1.decode(
-            replace(coordinate, cid="blake3-512:stale").wire()
-        )
+        BindingCoordinateV1.decode(replace(coordinate, cid="blake3-512:stale").wire())

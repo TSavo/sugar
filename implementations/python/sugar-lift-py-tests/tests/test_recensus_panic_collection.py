@@ -8,7 +8,6 @@ import pytest
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 
@@ -61,9 +60,7 @@ def test_unresolved_with_is_typed_gap_on_enum_path(tmp_path: Path) -> None:
     module = _load("control_effect_recensus")
     path = tmp_path / "consumer.py"
     path.write_text(
-        "def use_resource(manager):\n"
-        "    with manager:\n"
-        "        pass\n",
+        "def use_resource(manager):\n" "    with manager:\n" "        pass\n",
         encoding="utf-8",
     )
     row = module._measure_file(path, relative="consumer.py")

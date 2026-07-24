@@ -106,6 +106,4 @@ def rewrite(origin: Node, **children: object) -> Node:
     shadow = ShadowNode(desc.kind, desc.raw_span or origin.span, tuple(new_slots))
     # Same materialize door as source backends: shadow ref is another memoized
     # backend identity; field data is interned on the unit, shells are free.
-    return materialize(
-        origin.unit, shadow, origin.reporter, origin.control_context
-    )
+    return materialize(origin.unit, shadow, origin.reporter, origin.control_context)

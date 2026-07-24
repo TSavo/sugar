@@ -32,6 +32,8 @@ from .ir import (
 VALUE_PIN_BOUNDARY_KIND = "value-pin-boundary"
 ENUM_PIN_BOUNDARY_KIND = "enum-pin-boundary"
 FINAL_CONFESSION = "typing.Final"
+
+
 class UnsupportedStatementGrammar(RuntimeError):
     pass
 
@@ -68,8 +70,12 @@ AST_STATEMENT_TYPE_NAMES = frozenset(
         "Continue",
     }
 )
-AST_STATEMENT_TYPES = frozenset(getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES)
-if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+AST_STATEMENT_TYPES = frozenset(
+    getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES
+)
+if {
+    statement.__name__ for statement in AST_STATEMENT_TYPES
+} != AST_STATEMENT_TYPE_NAMES:
     raise UnsupportedStatementGrammar("unsupported running typed.stmt grammar")
 
 # Scope boundaries: bindings inside these do not bind module names.
@@ -86,7 +92,9 @@ _SCOPE_BOUNDARY_NODES = (
     typed.GeneratorExp,
 )
 
-_TRY_NODES: tuple = (typed.Try, typed.TryStar) if hasattr(typed, "TryStar") else (typed.Try,)
+_TRY_NODES: tuple = (
+    (typed.Try, typed.TryStar) if hasattr(typed, "TryStar") else (typed.Try,)
+)
 _TYPE_ALIAS_NODE = getattr(typed, "TypeAlias", None)
 
 
@@ -500,7 +508,9 @@ def _is_final_annotation(annotation: typed.expr) -> bool:
 def _is_literal_shaped(node: typed.expr) -> bool:
     if isinstance(node, typed.Constant):
         return True
-    if isinstance(node, typed.UnaryOp) and isinstance(node.op, (typed.UAdd, typed.USub)):
+    if isinstance(node, typed.UnaryOp) and isinstance(
+        node.op, (typed.UAdd, typed.USub)
+    ):
         return isinstance(node.operand, typed.Constant)
     if isinstance(node, (typed.Tuple, typed.List, typed.Set)):
         return all(_is_literal_shaped(element) for element in node.elts)
@@ -545,7 +555,9 @@ def _render_value_term(node: typed.expr) -> Json:
         if value is None:
             return none_const()
         raise _NotAdmissible(f"no IR term shape for {type(value).__name__} constants")
-    if isinstance(node, typed.UnaryOp) and isinstance(node.op, (typed.UAdd, typed.USub)):
+    if isinstance(node, typed.UnaryOp) and isinstance(
+        node.op, (typed.UAdd, typed.USub)
+    ):
         operand = node.operand
         if isinstance(operand, typed.Constant) and type(operand.value) is int:
             value = operand.value
@@ -768,12 +780,20 @@ _DECLARED_NONBINDING_STMT = frozenset(
     )
 )
 
-_BINDING_HANDLED_PATTERN = frozenset((typed.MatchAs, typed.MatchStar, typed.MatchMapping))
+_BINDING_HANDLED_PATTERN = frozenset(
+    (typed.MatchAs, typed.MatchStar, typed.MatchMapping)
+)
 
 _DECLARED_NONBINDING_PATTERN = frozenset(
     # Children are recursed generically in _match_pattern_bindings via
     # iter_child_nodes; these kinds carry no name binding of their own.
-    (typed.MatchValue, typed.MatchSingleton, typed.MatchSequence, typed.MatchClass, typed.MatchOr)
+    (
+        typed.MatchValue,
+        typed.MatchSingleton,
+        typed.MatchSequence,
+        typed.MatchClass,
+        typed.MatchOr,
+    )
 )
 
 

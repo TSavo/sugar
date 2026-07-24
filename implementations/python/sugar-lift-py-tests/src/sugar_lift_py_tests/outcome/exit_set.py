@@ -290,9 +290,7 @@ class ExitSet(Generic[T]):
                     if _is_true(truth)
                     else true_guard() if _is_false(truth) else not_(truth)
                 )
-                exits.append(
-                    Completed(_and_guards(guard, truth), incoming.state)
-                )
+                exits.append(Completed(_and_guards(guard, truth), incoming.state))
                 exits.append(
                     Halted(
                         _and_guards(guard, falsity),

@@ -75,15 +75,19 @@ class ComprehensionSugar(Sugar):
                 ),
                 ctx,
             )
-        return generator.filters[filter_index].desugar(ctx).and_then(
-            lambda guard: self._desugar_filters(
-                generator,
-                filter_index + 1,
-                (*filters, guard),
-                iterable,
-                index,
-                resolved,
-                ctx,
+        return (
+            generator.filters[filter_index]
+            .desugar(ctx)
+            .and_then(
+                lambda guard: self._desugar_filters(
+                    generator,
+                    filter_index + 1,
+                    (*filters, guard),
+                    iterable,
+                    index,
+                    resolved,
+                    ctx,
+                )
             )
         )
 
@@ -111,7 +115,9 @@ class ComprehensionSugar(Sugar):
         )
         body = element_term
         recurrence_rows = []
-        for source_name, binding_coordinate_cid, iterable, filters in reversed(resolved):
+        for source_name, binding_coordinate_cid, iterable, filters in reversed(
+            resolved
+        ):
             coordinate_var = make_var(binding_coordinate_cid)
             body = subst_var_in_term(body, source_name, coordinate_var)
             for guard in reversed(filters):

@@ -33,6 +33,8 @@ from .ir import (
 )
 
 PANIC_FREEDOM_EFFECT_KIND = "panic-freedom"
+
+
 class UnsupportedStatementGrammar(RuntimeError):
     pass
 
@@ -69,8 +71,12 @@ AST_STATEMENT_TYPE_NAMES = frozenset(
         "Continue",
     }
 )
-AST_STATEMENT_TYPES = frozenset(getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES)
-if {statement.__name__ for statement in AST_STATEMENT_TYPES} != AST_STATEMENT_TYPE_NAMES:
+AST_STATEMENT_TYPES = frozenset(
+    getattr(typed, name) for name in AST_STATEMENT_TYPE_NAMES
+)
+if {
+    statement.__name__ for statement in AST_STATEMENT_TYPES
+} != AST_STATEMENT_TYPE_NAMES:
     raise UnsupportedStatementGrammar("unsupported running typed.stmt grammar")
 RUNTIME_FAILURE_SITE_CONCEPT = "concept:panic-freedom.leaf.runtime-failure-site"
 CLASS_SHAPE_ASSUMPTIONS = [
@@ -557,7 +563,9 @@ class _MethodAttributeScanner(typed.TypedNodeWalker):
         finally:
             self._conditional_depth -= 1
 
-    def _record_assignment_target(self, target: typed.AST, source_node: typed.AST) -> None:
+    def _record_assignment_target(
+        self, target: typed.AST, source_node: typed.AST
+    ) -> None:
         attr = self._instance_attr_name(target)
         if attr is None:
             self.visit(target)
@@ -2455,7 +2463,9 @@ def _method_kind(node: typed.FunctionDef | typed.AsyncFunctionDef) -> str:
     return "instance"
 
 
-def _method_has_unknown_decorator(node: typed.FunctionDef | typed.AsyncFunctionDef) -> bool:
+def _method_has_unknown_decorator(
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
+) -> bool:
     for decorator in node.decorators:
         if _is_transparent_decorator(decorator):
             continue
@@ -2465,7 +2475,9 @@ def _method_has_unknown_decorator(node: typed.FunctionDef | typed.AsyncFunctionD
     return False
 
 
-def _first_parameter_name(node: typed.FunctionDef | typed.AsyncFunctionDef) -> str | None:
+def _first_parameter_name(
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
+) -> str | None:
     positional = [*node.args.posonlyargs, *node.args.args]
     if not positional:
         return None
@@ -2484,7 +2496,9 @@ def _slot_entries(stmt: typed.stmt) -> tuple[list[Json], bool]:
     if not isinstance(stmt, typed.Assign) and type(stmt) in AST_STATEMENT_TYPES:
         return [], False
     if not isinstance(stmt, typed.Assign):
-        raise _UnsupportedSyntax(stmt, f"unknown statement variant: {type(stmt).__name__}")
+        raise _UnsupportedSyntax(
+            stmt, f"unknown statement variant: {type(stmt).__name__}"
+        )
     if not any(
         isinstance(target, typed.Name) and target.id == "__slots__"
         for target in stmt.targets
@@ -2731,7 +2745,9 @@ def _literal_default(
             return ellipsis_const()
         if value is None:
             return none_const()
-    if isinstance(node, typed.UnaryOp) and isinstance(node.op, (typed.UAdd, typed.USub)):
+    if isinstance(node, typed.UnaryOp) and isinstance(
+        node.op, (typed.UAdd, typed.USub)
+    ):
         operand = node.operand
         if isinstance(operand, typed.Constant) and type(operand.value) is int:
             value = operand.value
@@ -2937,7 +2953,9 @@ def _function_locals(fn: typed.FunctionDef, formals: list[str]) -> set[str]:
     return set(formals) | collector.names
 
 
-def _import_bound_name(node: typed.Import | typed.ImportFrom, alias: typed.alias) -> str:
+def _import_bound_name(
+    node: typed.Import | typed.ImportFrom, alias: typed.alias
+) -> str:
     if alias.name == "*":
         raise _UnsupportedSyntax(node, "star imports are refused")
     if alias.asname:
@@ -3070,7 +3088,9 @@ def _lift_guard_membership_compare(
         return None
     equalities = [_atomic("=", [left, option]) for option in options]
     membership = _fold_connective("or", equalities)
-    return _negate_formula(membership) if isinstance(op_node, typed.NotIn) else membership
+    return (
+        _negate_formula(membership) if isinstance(op_node, typed.NotIn) else membership
+    )
 
 
 def _lift_guard_literal_options(node: typed.expr) -> list[Json] | None:
@@ -3115,7 +3135,9 @@ def _lift_guard_term(node: typed.expr) -> Json | None:
                 return None
             return ctor("python:len", operand)
         return None
-    if isinstance(node, typed.UnaryOp) and isinstance(node.op, (typed.UAdd, typed.USub)):
+    if isinstance(node, typed.UnaryOp) and isinstance(
+        node.op, (typed.UAdd, typed.USub)
+    ):
         operand = node.operand
         if isinstance(operand, typed.Constant) and type(operand.value) is int:
             value = operand.value
@@ -3199,7 +3221,9 @@ def _negate_formula(formula: Json) -> Json:
 def _module_global_names(tree: typed.Module) -> set[str]:
     names: set[str] = set()
     for stmt in tree.body:
-        if isinstance(stmt, (typed.FunctionDef, typed.AsyncFunctionDef, typed.ClassDef)):
+        if isinstance(
+            stmt, (typed.FunctionDef, typed.AsyncFunctionDef, typed.ClassDef)
+        ):
             names.add(stmt.name)
         elif isinstance(stmt, typed.Assign):
             for target in stmt.targets:
@@ -3366,7 +3390,9 @@ def _is_type_argument_expr(node: typed.expr | typed.slice_) -> bool:
 
 def _callee_has_subscript_receiver(node: typed.expr) -> bool:
     if isinstance(node, typed.Attribute):
-        return any(isinstance(child, typed.Subscript) for child in typed.walk(node.value))
+        return any(
+            isinstance(child, typed.Subscript) for child in typed.walk(node.value)
+        )
     return False
 
 

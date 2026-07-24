@@ -232,9 +232,7 @@ def audit_paths(
 
     if checkpoint is not None:
         rows = tuple(
-            done_rows[f]
-            if f in done_rows
-            else ChildResult(f, "missing", (), None, "")
+            done_rows[f] if f in done_rows else ChildResult(f, "missing", (), None, "")
             for f in checkpoint.files
         )
     else:

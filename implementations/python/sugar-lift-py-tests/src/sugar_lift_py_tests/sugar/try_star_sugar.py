@@ -114,6 +114,7 @@ class TryStarSugar(Sugar):
         if self.finalbody:
             cleanup = reduce_block_to_exitset(self.finalbody, ctx)
             from sugar_lift_py_tests.floor.return_value import ReturnValue
+
             def restores(value):
                 return not (
                     isinstance(value, _ReducedBlock)

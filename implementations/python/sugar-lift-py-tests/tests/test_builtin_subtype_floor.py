@@ -20,8 +20,12 @@ def test_constructed_subtype_graph_closes_direct_transitive_and_unrelated():
     unrelated = _class("RenamedOther")
 
     assert isinstance(leaf.test_python_subtype(base, "site"), Complete)
-    assert isinstance(leaf.test_python_subtype(base, "site").value, TrueBoolLiteralSugar)
-    assert isinstance(leaf.test_python_subtype(unrelated, "site").value, FalseBoolLiteralSugar)
+    assert isinstance(
+        leaf.test_python_subtype(base, "site").value, TrueBoolLiteralSugar
+    )
+    assert isinstance(
+        leaf.test_python_subtype(unrelated, "site").value, FalseBoolLiteralSugar
+    )
 
 
 def test_tuple_of_types_is_finite_subtype_disjunction():
@@ -33,8 +37,14 @@ def test_tuple_of_types_is_finite_subtype_disjunction():
     leaf = _class("Leaf", base)
     other = _class("Other")
 
-    assert isinstance(leaf.test_python_subtype(TupleValue((other, base)), "site").value, TrueBoolLiteralSugar)
-    assert isinstance(base.test_python_subtype(TupleValue((other, leaf)), "site").value, FalseBoolLiteralSugar)
+    assert isinstance(
+        leaf.test_python_subtype(TupleValue((other, base)), "site").value,
+        TrueBoolLiteralSugar,
+    )
+    assert isinstance(
+        base.test_python_subtype(TupleValue((other, leaf)), "site").value,
+        FalseBoolLiteralSugar,
+    )
 
 
 def test_symbolic_subtype_emits_typed_obligation():
@@ -65,13 +75,23 @@ def test_closed_operation_witness_rejects_each_lying_coordinate():
     from sugar_lift_py_tests.ir import bool_const, ctor, str_const
 
     runtime = PythonRuntimeIdentity.current()
-    operands = (ctor("python:type", [str_const("Leaf")]), ctor("python:type", [str_const("Base")]))
+    operands = (
+        ctor("python:type", [str_const("Leaf")]),
+        ctor("python:type", [str_const("Base")]),
+    )
     result = bool_const(True)
-    witness = ClosedSemanticOperationWitness.mint(runtime, "python.issubclass", operands, result)
+    witness = ClosedSemanticOperationWitness.mint(
+        runtime, "python.issubclass", operands, result
+    )
     witness.verify(runtime, "python.issubclass", operands, result)
 
     lies = (
-        (replace(runtime, minor=runtime.minor + 1), "python.issubclass", operands, result),
+        (
+            replace(runtime, minor=runtime.minor + 1),
+            "python.issubclass",
+            operands,
+            result,
+        ),
         (runtime, "python.set.contains", operands, result),
         (runtime, "python.issubclass", tuple(reversed(operands)), result),
         (runtime, "python.issubclass", operands, bool_const(False)),
@@ -97,9 +117,12 @@ def test_authenticated_builtin_issubclass_callable_uses_floor_not_spelling():
     )
     assert isinstance(result.value, TrueBoolLiteralSugar)
     witness = receiver.witness_for((leaf, base), result.value)
-    witness.verify(receiver.runtime_identity, receiver.operation, (
-        leaf.to_term(owner="test"), base.to_term(owner="test")
-    ), result.value.to_term(owner="test"))
+    witness.verify(
+        receiver.runtime_identity,
+        receiver.operation,
+        (leaf.to_term(owner="test"), base.to_term(owner="test")),
+        result.value.to_term(owner="test"),
+    )
 
 
 def test_shadowed_issubclass_does_not_inherit_builtin_semantics():

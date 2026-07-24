@@ -37,9 +37,7 @@ def mint_binding_coordinate_v1(
     binding_site: SourceFragment,
     projection_path: tuple[str | int, ...],
 ) -> BindingCoordinateV1:
-    return BindingCoordinateV1.mint(
-        scope_owner_cid, binding_site, projection_path
-    )
+    return BindingCoordinateV1.mint(scope_owner_cid, binding_site, projection_path)
 
 
 def mint_constructed_value_testimony_v1(
@@ -122,9 +120,7 @@ class LoopProjectedBinding:
     def __post_init__(self) -> None:
         _require_runtime_cid(self.target_cid, "targetCid")
         if not self.completed_faces:
-            raise BindingStateWireGap(
-                "loop projected binding requires completed faces"
-            )
+            raise BindingStateWireGap("loop projected binding requires completed faces")
         if any(face.target_cid != self.target_cid for face in self.completed_faces):
             raise BindingStateWireGap("loop projected binding target mismatch")
 
@@ -162,9 +158,7 @@ class BindingEntryV1:
         from sugar_source_tree.nodes import Node
 
         if not isinstance(self.state, Node):
-            raise BindingStateWireGap(
-                "binding state is not a constructed bound value"
-            )
+            raise BindingStateWireGap("binding state is not a constructed bound value")
         if self.constructed_value_testimony is None:
             raise BindingStateWireGap("constructed-value testimony unavailable")
         return self.constructed_value_testimony
@@ -431,8 +425,7 @@ def _seal_snapshot(
 ) -> tuple[tuple[str, SealedBindingEntryV1], ...]:
     testified = _testify_snapshot(snapshot, testimony_source)
     return tuple(
-        (name, SealedBindingEntryV1.decode(entry.wire()))
-        for name, entry in testified
+        (name, SealedBindingEntryV1.decode(entry.wire())) for name, entry in testified
     )
 
 
@@ -514,9 +507,9 @@ def _backend_node_preimage(ref: object) -> dict[str, Any]:
             value = {"child": _backend_node_preimage(slot.handle)}
         elif isinstance(slot, MaybeChild):
             value = {
-                "maybeChild": None
-                if slot.handle is None
-                else _backend_node_preimage(slot.handle)
+                "maybeChild": (
+                    None if slot.handle is None else _backend_node_preimage(slot.handle)
+                )
             }
         elif isinstance(slot, Children):
             value = {
@@ -610,7 +603,7 @@ def _snapshot(scope: BindingMap) -> tuple[tuple[str, BindingEntryV1], ...]:
 
 
 def _snapshot_preimage(
-    snapshot: tuple[tuple[str, BindingEntryV1], ...]
+    snapshot: tuple[tuple[str, BindingEntryV1], ...],
 ) -> list[dict[str, Any]]:
     del_names = []
     for _name, entry in snapshot:
@@ -627,9 +620,7 @@ def _snapshot_preimage(
             # yet. They remain present in the in-memory snapshot but cannot mint
             # a state CID; callers that need wire admission must stay loud.
             cell = {"kind": "unserializable"}
-        del_names.append(
-            {"bindingCoordinateCid": entry.coordinate.cid, "cell": cell}
-        )
+        del_names.append({"bindingCoordinateCid": entry.coordinate.cid, "cell": cell})
     return del_names
 
 
@@ -650,9 +641,7 @@ def seal_binding_state_v1(
         if isinstance(entry.sealed_state, BoundBindingStateV1):
             testimony = entry.require_constructed_value_testimony()
             if cid_of_json(testimony.preimage) != testimony.cid:
-                raise BindingStateWireGap(
-                    "constructed-value testimony CID mismatch"
-                )
+                raise BindingStateWireGap("constructed-value testimony CID mismatch")
         entries.append(entry.wire())
     from sugar_lift_py_tests.loop_construction import seal_binding_state_v1 as seal
 

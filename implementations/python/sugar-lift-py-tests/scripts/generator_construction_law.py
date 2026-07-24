@@ -31,8 +31,7 @@ def scan(repository: Path) -> tuple[int, list[GeneratorConstructionOffender]]:
     checks = (
         (
             "Yield._construct_sugar",
-            "class Yield" in text["nodes"]
-            and "YieldSuspensionSugar" in text["nodes"],
+            "class Yield" in text["nodes"] and "YieldSuspensionSugar" in text["nodes"],
             "Yield has no suspended-frame construction step",
         ),
         (
@@ -82,7 +81,9 @@ def main() -> int:
             f"(discovered={discovered}, completed={discovered})"
         )
         for offender in offenders:
-            print(f"- {offender.coordinate}: {offender.observed}; replace with {offender.requested}")
+            print(
+                f"- {offender.coordinate}: {offender.observed}; replace with {offender.requested}"
+            )
     return 1 if offenders else 0
 
 

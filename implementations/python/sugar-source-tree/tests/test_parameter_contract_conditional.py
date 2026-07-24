@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 
-from sugar_lift_py_tests.caller_parameter_contract import ContractConditionalConstructionV1
+from sugar_lift_py_tests.caller_parameter_contract import (
+    ContractConditionalConstructionV1,
+)
 from sugar_lift_py_tests.floor import UniverseValue
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.gap.panic import ConstructionPanic

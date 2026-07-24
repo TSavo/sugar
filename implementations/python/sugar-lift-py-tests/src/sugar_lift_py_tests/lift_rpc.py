@@ -69,6 +69,8 @@ _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
+
+
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll typed With occurrences without constructing any Sugar.
 
@@ -1364,6 +1366,7 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
 
     demanded_source = f"module:{source_file.unit.source_cid}"
     panics = []
+
     # Key nodes by the roll-call identity (sealed CID + source coordinate +
     # kind) -- the SAME identity `MinorityReport` uses. One sealed fragment CID
     # is shared by equal source text at DISTINCT loci (e.g. `os` at 3:7 and Name
@@ -1431,17 +1434,19 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
     # `kind` and `recoveryOverride` are closed-envelope discriminators required
     # by the current Rust reader. No recovery policy is consulted here; every
     # semantic value is projected from the roll call above.
-    return AuditLeafEnvelopeDto.from_rpc({
-        "semanticCore": {
-            "kind": "recovered-construction-audit",
-            "recoveryOverride": True,
-            "status": "failed" if panics else "clean",
-            "panics": panics,
-            "effects": [],
-            "suppressedDescendants": [],
-        },
-        "auxiliaryRows": {"sourceAudit": source_audit},
-    }).to_rpc()
+    return AuditLeafEnvelopeDto.from_rpc(
+        {
+            "semanticCore": {
+                "kind": "recovered-construction-audit",
+                "recoveryOverride": True,
+                "status": "failed" if panics else "clean",
+                "panics": panics,
+                "effects": [],
+                "suppressedDescendants": [],
+            },
+            "auxiliaryRows": {"sourceAudit": source_audit},
+        }
+    ).to_rpc()
 
 
 def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:

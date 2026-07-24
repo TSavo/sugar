@@ -43,9 +43,7 @@ def test_supervised_scan_completes_clean_and_typed_gap(tmp_path: Path) -> None:
     assert rows[1].worker_restarts == 0
 
 
-def test_supervised_timeout_restarts_and_continues(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_supervised_timeout_restarts_and_continues(tmp_path: Path, monkeypatch) -> None:
     # Construction does not execute body sleep(); plant hangs the worker.
     sleeper = _write(tmp_path, "sleep.py", "def a():\n    return 1\n")
     after = _write(tmp_path, "after.py", "def a(z):\n    return z\n")

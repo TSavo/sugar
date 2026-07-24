@@ -277,8 +277,7 @@ def test_nested_arm_composes_already_built_comprehension_kinds(
 
 def test_nested_comprehension_retains_inner_filtered_guard():
     term = _out(
-        "def A(xs, ys, keep):\n"
-        "    return [[y for y in ys if keep(y)] for x in xs]\n"
+        "def A(xs, ys, keep):\n" "    return [[y for y in ys if keep(y)] for x in xs]\n"
     )
     assert term.args[1].body.name == "py.listcomp"
     assert term.args[1].body.args[1].body.name == "python:loop.filter_guard"
@@ -373,9 +372,7 @@ def test_shadowed_range_is_not_unrolled_but_builds_symbolic_coordinate():
 
 
 def test_every_symbolic_filter_becomes_an_ordered_guard():
-    term = _out(
-        "def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n"
-    )
+    term = _out("def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n")
     first = term.args[1].body
     assert first.name == "python:loop.filter_guard"
     assert first.args[1].name == "python:loop.filter_guard"

@@ -89,9 +89,7 @@ def test_typed_gap_child_testimony_classifies_nonfatal() -> None:
     assert not _is_fatal_category(row["category"])
 
 
-def test_genuine_python_bug_remains_bare_exception(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_genuine_python_bug_remains_bare_exception(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "bug.py"
     source.write_text("def exercise():\n    return 1\n", encoding="utf-8")
 
@@ -101,9 +99,7 @@ def test_genuine_python_bug_remains_bare_exception(
     import _production_lift_child as production_child
 
     monkeypatch.setattr(production_child, "production_lift_testimony", broken_lift)
-    testimony, returncode = corpus_fatal_triage._child_payload(
-        source, "demo/bug.py"
-    )
+    testimony, returncode = corpus_fatal_triage._child_payload(source, "demo/bug.py")
 
     assert returncode == 3
     assert testimony["outcome"] == "exception"
@@ -123,7 +119,9 @@ def test_genuine_python_bug_remains_bare_exception(
     assert row["category"] == "bare-exception"
 
 
-def test_completed_child_uses_the_same_production_terminal_shape(tmp_path: Path) -> None:
+def test_completed_child_uses_the_same_production_terminal_shape(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "clean.py"
     source.write_text("def identity(value):\n    return value\n", encoding="utf-8")
     testimony, returncode = _child_payload(source, "demo/clean.py")

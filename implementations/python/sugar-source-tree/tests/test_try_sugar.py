@@ -518,13 +518,17 @@ def test_nested_exception_group_constructs_tree_without_flattening():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "def A():\n"
-        "    raise ExceptionGroup('outer', [\n"
-        "        ValueError(),\n"
-        "        ExceptionGroup('inner', [TypeError(), KeyError()]),\n"
-        "    ])\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    raise ExceptionGroup('outer', [\n"
+            "        ValueError(),\n"
+            "        ExceptionGroup('inner', [TypeError(), KeyError()]),\n"
+            "    ])\n"
+        )
+        .sugar()
+        .desugar()
+    )
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GroupedRaiseEffect)
@@ -542,13 +546,17 @@ def test_except_star_partitions_nested_group_and_propagates_only_residual():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('outer', [TypeError(), ExceptionGroup('inner', [ValueError(), KeyError()])])\n"
-        "    except* ValueError:\n"
-        "        pass\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('outer', [TypeError(), ExceptionGroup('inner', [ValueError(), KeyError()])])\n"
+            "    except* ValueError:\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     residual = outcome.effect
     assert isinstance(residual, GroupedRaiseEffect)
@@ -560,15 +568,19 @@ def test_except_star_partitions_nested_group_and_propagates_only_residual():
 
 
 def test_except_star_residual_flows_to_subsequent_handlers():
-    outcome = _fn(
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
-        "    except* ValueError:\n"
-        "        pass\n"
-        "    except* TypeError:\n"
-        "        pass\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
+            "    except* ValueError:\n"
+            "        pass\n"
+            "    except* TypeError:\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
     from sugar_lift_py_tests.outcome import Complete
 
     assert isinstance(outcome, Complete)
@@ -578,13 +590,17 @@ def test_except_star_bare_reraise_regroups_original_tree():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
-        "    except* ValueError:\n"
-        "        raise\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
+            "    except* ValueError:\n"
+            "        raise\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GroupedRaiseEffect)
     assert [leaf.exception_name for leaf in outcome.effect.children] == [
@@ -597,13 +613,17 @@ def test_except_star_never_selects_only_first_leaf():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('g', [TypeError(), ValueError(), ValueError()])\n"
-        "    except* ValueError:\n"
-        "        pass\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [TypeError(), ValueError(), ValueError()])\n"
+            "    except* ValueError:\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GroupedRaiseEffect)
     assert [leaf.exception_name for leaf in outcome.effect.children] == ["TypeError"]
@@ -613,15 +633,19 @@ def test_except_star_matches_renamed_source_subclass_by_mro_identity():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "class Renamed(ValueError):\n"
-        "    pass\n"
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('g', [Renamed(), TypeError()])\n"
-        "    except* ValueError:\n"
-        "        pass\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "class Renamed(ValueError):\n"
+            "    pass\n"
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [Renamed(), TypeError()])\n"
+            "    except* ValueError:\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GroupedRaiseEffect)
     assert [leaf.exception_name for leaf in outcome.effect.children] == ["TypeError"]
@@ -631,13 +655,17 @@ def test_except_star_handler_raise_regroups_with_unmatched_residual():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
-        "    except* ValueError:\n"
-        "        raise KeyError()\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
+            "    except* ValueError:\n"
+            "        raise KeyError()\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GroupedRaiseEffect)
     assert isinstance(outcome.effect.children[0], RaiseEffect)
@@ -649,11 +677,15 @@ def test_shadowed_exception_group_spelling_does_not_construct_group_effect():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "ExceptionGroup = lambda message, members: ValueError()\n"
-        "def A():\n"
-        "    raise ExceptionGroup('g', [ValueError()])\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "ExceptionGroup = lambda message, members: ValueError()\n"
+            "def A():\n"
+            "    raise ExceptionGroup('g', [ValueError()])\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RaiseEffect)
     assert not isinstance(outcome.effect, GroupedRaiseEffect)
@@ -663,13 +695,17 @@ def test_ordinary_except_does_not_consume_grouped_raise():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = _fn(
-        "def A():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('g', [ValueError()])\n"
-        "    except ValueError:\n"
-        "        pass\n"
-    ).sugar().desugar()
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError()])\n"
+            "    except ValueError:\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GroupedRaiseEffect)
 

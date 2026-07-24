@@ -677,8 +677,13 @@ def validate_derivation_provenance_v1(
     provenance: ContextManagerDerivationProvenanceV1,
 ) -> None:
     if not isinstance(provenance, ContextManagerDerivationProvenanceV1):
-        raise ContextManagerContractError("derived CM contract requires typed provenance")
-    if provenance.kind != "python-context-manager-derivation" or provenance.schema_version != "1":
+        raise ContextManagerContractError(
+            "derived CM contract requires typed provenance"
+        )
+    if (
+        provenance.kind != "python-context-manager-derivation"
+        or provenance.schema_version != "1"
+    ):
         raise ContextManagerContractError("unsupported CM derivation provenance")
     wire = derivation_provenance_to_dict(provenance)
     cid_fields = (
@@ -705,12 +710,16 @@ def validate_derivation_provenance_v1(
     ):
         raise ContextManagerContractError("re-export warrants must be ordered CIDs")
     if provenance.resolved_definition.source_cid != provenance.module_source_cid:
-        raise ContextManagerContractError("resolved definition is outside module source")
+        raise ContextManagerContractError(
+            "resolved definition is outside module source"
+        )
     if _cid_of_json(wire["resolvedDefinition"]) != provenance.resolved_definition_cid:
         raise ContextManagerContractError("resolved definition CID mismatch")
     if _cid_of_json(wire["useSite"]) != provenance.use_site_cid:
         raise ContextManagerContractError("use-site CID mismatch")
-    derivation_preimage = {key: value for key, value in wire.items() if key != "derivationCid"}
+    derivation_preimage = {
+        key: value for key, value in wire.items() if key != "derivationCid"
+    }
     if _cid_of_json(derivation_preimage) != provenance.derivation_cid:
         raise ContextManagerContractError("derivation CID mismatch")
 
@@ -729,22 +738,31 @@ def seal_derived_context_manager_contract(
     validate_derivation_provenance_v1(provenance)
     payload = semantics_to_value(semantics)
     decoded_payload = json.loads(encode_jcs(payload))
-    if decode_context_manager_semantics_v1(decoded_payload, import_signature) != semantics:
-        raise ContextManagerContractError("context-manager semantics failed canonical validation")
+    if (
+        decode_context_manager_semantics_v1(decoded_payload, import_signature)
+        != semantics
+    ):
+        raise ContextManagerContractError(
+            "context-manager semantics failed canonical validation"
+        )
     payload_cid = blake3_512_of(encode_jcs(payload).encode())
     provenance_wire = derivation_provenance_to_dict(provenance)
     provenance_cid = _cid_of_json(provenance_wire)
     contract_preimage = {
         "kind": "context-manager-contract",
         "schemaVersion": "derived-1",
-        "importSignature": json.loads(encode_jcs(import_signature_to_value(import_signature))),
+        "importSignature": json.loads(
+            encode_jcs(import_signature_to_value(import_signature))
+        ),
         "semantics": decoded_payload,
         "payloadCid": payload_cid,
         "provenance": provenance_wire,
         "provenanceCid": provenance_cid,
     }
     contract_cid = _cid_of_json(contract_preimage)
-    header = _json_value({**contract_preimage, "cid": contract_cid, "contractCid": contract_cid})
+    header = _json_value(
+        {**contract_preimage, "cid": contract_cid, "contractCid": contract_cid}
+    )
     metadata = vobj(
         [
             (
@@ -1116,7 +1134,9 @@ def decode_context_manager_semantics_v1(
 def decode_context_manager_contract(
     canonical_bytes: bytes, member_cid: str
 ) -> DerivedContextManagerContractV1:
-    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
 
     try:
         raw = json.loads(canonical_bytes)
@@ -1128,8 +1148,12 @@ def decode_context_manager_contract(
     if not all(isinstance(value, dict) for value in (envelope, header, metadata)):
         raise ContextManagerContractError("CM contract layers must be objects")
     if blake3_512_of(encode_jcs(_json_value(envelope)).encode()) != member_cid:
-        raise ContextManagerContractError("member attestation CID does not match envelope")
-    signing = vobj([("header", _json_value(header)), ("metadata", _json_value(metadata))])
+        raise ContextManagerContractError(
+            "member attestation CID does not match envelope"
+        )
+    signing = vobj(
+        [("header", _json_value(header)), ("metadata", _json_value(metadata))]
+    )
     if not ed25519_verify_string(
         envelope.get("signer", ""),
         envelope.get("signature", ""),

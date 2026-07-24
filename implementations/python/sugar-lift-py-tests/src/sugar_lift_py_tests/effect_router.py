@@ -111,9 +111,7 @@ def route_except_star(effect, expected, *, slot_id=None, site=None):
     split = effect.partition(expected, site)
     bindings = ()
     if split.matched.children and slot_id is not None:
-        bindings = (
-            EffectBinding(slot_id, "grouped-raise", None, split.matched),
-        )
+        bindings = (EffectBinding(slot_id, "grouped-raise", None, split.matched),)
     return GroupedRoutedOutcome(split.matched, split.residual, bindings)
 
 
@@ -139,6 +137,7 @@ def regroup_except_star(original, effects):
     original_leaves = leaves(original)
     supplied = set().union(*(leaves(effect) for effect in effects))
     if supplied and supplied <= original_leaves:
+
         def retain(group):
             children = []
             for child in group.children:
@@ -149,6 +148,7 @@ def regroup_except_star(original, effects):
                 elif child.occurrence_id in supplied:
                     children.append(child)
             return group.derive(tuple(children))
+
         return retain(original)
 
     # Newly raised handler effects and the residual remain distinct children.

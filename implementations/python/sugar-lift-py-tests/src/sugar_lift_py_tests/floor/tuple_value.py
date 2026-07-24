@@ -119,9 +119,7 @@ class TupleValue(FloorValue):
         if type(result) is TrueBoolLiteralSugar:
             return Complete(TrueBoolLiteralSugar(site=site))
         if type(result) is FalseBoolLiteralSugar:
-            return self._collect_subtype_tests(
-                subtype, site, index + 1, predicates
-            )
+            return self._collect_subtype_tests(subtype, site, index + 1, predicates)
         if type(result) is PredicateValue:
             return self._collect_subtype_tests(
                 subtype, site, index + 1, (*predicates, result)

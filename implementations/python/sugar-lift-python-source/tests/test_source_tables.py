@@ -84,9 +84,7 @@ def test_source_lines_matches_parser_split_including_form_feed() -> None:
 def test_public_source_tables_module_has_no_foreign_ast_import() -> None:
     """Construction currency: line tables never import stdlib ast."""
     text = (
-        __import__("pathlib")
-        .Path(source_tables.__file__)
-        .read_text(encoding="utf-8")
+        __import__("pathlib").Path(source_tables.__file__).read_text(encoding="utf-8")
     )
     tree = ast.parse(text)
     for node in ast.walk(tree):

@@ -11,11 +11,14 @@ import time
 
 import pytest
 
-
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from pandas_census_checkpoint import Checkpoint, CheckpointError, run_pending  # noqa: E402
+from pandas_census_checkpoint import (
+    Checkpoint,
+    CheckpointError,
+    run_pending,
+)  # noqa: E402
 
 
 def test_killed_run_resumes_without_redoing_completed_file(tmp_path: Path) -> None:
@@ -24,8 +27,7 @@ def test_killed_run_resumes_without_redoing_completed_file(tmp_path: Path) -> No
     blocked = tmp_path / "blocked"
     driver = tmp_path / "driver.py"
     driver.write_text(
-        textwrap.dedent(
-            f"""
+        textwrap.dedent(f"""
             import json
             from pathlib import Path
             import sys
@@ -52,8 +54,7 @@ def test_killed_run_resumes_without_redoing_completed_file(tmp_path: Path) -> No
                 return {{"category": "completed"}}
 
             run_pending(checkpoint, worker, workers=1)
-            """
-        ),
+            """),
         encoding="utf-8",
     )
 

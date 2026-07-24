@@ -77,9 +77,7 @@ def audit_paths(
             stream.write(f"# timeout supervised enum scan files={len(paths)}\n")
             for t in terminals:
                 stream.write(f"{t.file}\t{t.category}\n")
-    rows = tuple(
-        _from_terminal(t, file_timeout=float(file_timeout)) for t in terminals
-    )
+    rows = tuple(_from_terminal(t, file_timeout=float(file_timeout)) for t in terminals)
     return AuditSummary(
         rows=rows,
         offenders=tuple(row.offender for row in rows if row.offender is not None),
@@ -158,9 +156,7 @@ def main() -> int:
                 "completed": sum(row.category == "completed" for row in rows),
                 "typedGaps": sum(row.category == "typed-gap" for row in rows),
                 "nativeCrashes": sum(row.category == "native-crash" for row in rows),
-                "bareExceptions": sum(
-                    row.category == "bare-exception" for row in rows
-                ),
+                "bareExceptions": sum(row.category == "bare-exception" for row in rows),
             },
             measured=True,
         )

@@ -101,7 +101,9 @@ def main() -> int:
     parser.add_argument("--expected-files", type=int, default=1415)
     args = parser.parse_args()
     reports = {
-        floor: json.loads(getattr(args, floor.replace("-", "_")).read_text(encoding="utf-8"))
+        floor: json.loads(
+            getattr(args, floor.replace("-", "_")).read_text(encoding="utf-8")
+        )
         for floor in FLOORS
     }
     result = reconcile(reports, expected_files=args.expected_files)

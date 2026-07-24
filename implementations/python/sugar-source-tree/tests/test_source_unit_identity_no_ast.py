@@ -41,10 +41,7 @@ def _raise_name(source: str, name: str | None = None):
 def test_nodes_py_has_no_ast_import_or_parse():
     """R: raw stdlib parse must not be semantic authority in SourceUnit."""
     nodes_path = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "sugar_source_tree"
-        / "nodes.py"
+        Path(__file__).resolve().parents[1] / "src" / "sugar_source_tree" / "nodes.py"
     )
     tree = _stdlib_ast.parse(nodes_path.read_text(encoding="utf-8"))
     for node in _stdlib_ast.walk(tree):
@@ -127,7 +124,9 @@ def test_exception_type_identity_truthful_arms():
     identity = sf.unit.exception_type_identity(name)
     assert identity is not None
     assert identity.args[0].value == "source-class"
-    class_def = next(n for n in sf.root.walk() if n.kind == "ClassDef" and n.name == "MyErr")
+    class_def = next(
+        n for n in sf.root.walk() if n.kind == "ClassDef" and n.name == "MyErr"
+    )
     lc = class_def.line_col_span()
     expected = (
         f"{sf.unit.source_cid}:{lc.start_line}:{lc.start_col}:"
