@@ -1,9 +1,15 @@
 name: Set up Sugar Rust build
-description: Install the pinned toolchain and either seed or consume the exact-commit build cache.
+description: >
+  Install the pinned toolchain and restore/save the Rust build using a
+  content-addressed key of Rust sources on the runner filesystem — never
+  github.sha and never the GitHub Actions cache service for the object store.
 
 inputs:
   mode:
-    description: "seed may build/save; consume requires an exact cache hit"
+    description: >
+      restore = warm target if this source key exists (seed jobs);
+      save = write target into the source-keyed local slot (after build);
+      consume = require a hit for this source key (matrix jobs)
     required: true
   components:
     description: Additional rustup components
@@ -13,40 +19,116 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Validate cache ownership mode
+    - name: Validate mode
       shell: bash
       env:
         MODE: ${{ inputs.mode }}
       run: |
+        # seed → restore (warm if present). save must be a separate step after build.
         case "$MODE" in
-          seed|consume) ;;
-          *) echo "::error::invalid Rust cache mode: $MODE (expected seed or consume)"; exit 2 ;;
+          restore|seed) echo "EFFECTIVE_MODE=restore" >>"$GITHUB_ENV" ;;
+          save)         echo "EFFECTIVE_MODE=save" >>"$GITHUB_ENV" ;;
+          consume)      echo "EFFECTIVE_MODE=consume" >>"$GITHUB_ENV" ;;
+          *)
+            echo "::error::invalid Rust cache mode: $MODE (expected restore|save|consume|seed)"
+            exit 2
+            ;;
         esac
 
     - name: Set up Rust 1.96.0
+      if: env.EFFECTIVE_MODE != 'save'
       uses: dtolnay/rust-toolchain@1.96.0
       with:
         components: ${{ inputs.components }}
 
-    - name: Seed exact-commit Rust build cache
-      if: inputs.mode == 'seed'
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          implementations/rust/target
-        key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-
+    - name: Compute Rust source content key
+      id: rustsrc
+      shell: bash
+      run: tools/ci-rust-source-key.sh
 
-    - name: Consume exact-commit Rust build cache
-      if: inputs.mode == 'consume'
-      uses: actions/cache/restore@v5
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          implementations/rust/target
-        key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-        fail-on-cache-miss: true
+    - name: Resolve local source-keyed slot
+      id: slot
+      shell: bash
+      env:
+        KEY: ${{ steps.rustsrc.outputs.key }}
+      run: |
+        set -euo pipefail
+        CACHE_ROOT="${SUGAR_RUST_CACHE_ROOT:-${HOME}/.cache/sugar-rust-build}"
+        SLOT="${CACHE_ROOT}/${KEY}"
+        mkdir -p "$CACHE_ROOT"
+        echo "cache_root=${CACHE_ROOT}" >>"$GITHUB_OUTPUT"
+        echo "slot=${SLOT}" >>"$GITHUB_OUTPUT"
+        echo "key=${KEY}" >>"$GITHUB_OUTPUT"
+        echo "Rust source key: ${KEY}"
+        echo "Local slot: ${SLOT}"
+
+    - name: Restore Rust build from source-keyed local cache
+      if: env.EFFECTIVE_MODE == 'restore' || env.EFFECTIVE_MODE == 'consume'
+      shell: bash
+      env:
+        MODE: ${{ env.EFFECTIVE_MODE }}
+        SLOT: ${{ steps.slot.outputs.slot }}
+        KEY: ${{ steps.slot.outputs.key }}
+      run: |
+        set -euo pipefail
+        if [[ -d "${SLOT}/target" && -f "${SLOT}/RUST_SOURCE_KEY" ]]; then
+          stored="$(cat "${SLOT}/RUST_SOURCE_KEY")"
+          if [[ "$stored" != "$KEY" ]]; then
+            echo "::error::slot key mismatch stored=${stored} want=${KEY}"
+            exit 1
+          fi
+          echo "Local source-keyed Rust cache HIT"
+          rm -rf implementations/rust/target
+          # Copy only — never hardlink: cargo must not mutate the durable slot.
+          cp -a "${SLOT}/target" implementations/rust/target
+          if [[ -d "${SLOT}/cargo-registry" ]]; then
+            mkdir -p "${HOME}/.cargo"
+            rm -rf "${HOME}/.cargo/registry"
+            cp -a "${SLOT}/cargo-registry" "${HOME}/.cargo/registry"
+          fi
+          if [[ -d "${SLOT}/cargo-git" ]]; then
+            mkdir -p "${HOME}/.cargo"
+            rm -rf "${HOME}/.cargo/git"
+            cp -a "${SLOT}/cargo-git" "${HOME}/.cargo/git"
+          fi
+          echo "hit=true" >>"$GITHUB_OUTPUT"
+        else
+          echo "Local source-keyed Rust cache MISS"
+          if [[ "$MODE" == "consume" ]]; then
+            echo "::error::consume requires a seed/save for this Rust source key on this runner"
+            echo "::error::key=${KEY}"
+            echo "::error::slot=${SLOT}"
+            exit 1
+          fi
+        fi
+
+    - name: Save Rust build into source-keyed local cache
+      if: env.EFFECTIVE_MODE == 'save'
+      shell: bash
+      env:
+        SLOT: ${{ steps.slot.outputs.slot }}
+        KEY: ${{ steps.slot.outputs.key }}
+      run: |
+        set -euo pipefail
+        if [[ ! -d implementations/rust/target ]]; then
+          echo "save: no implementations/rust/target — skip (nothing to stamp)"
+          exit 0
+        fi
+        tmp="${SLOT}.tmp.$$"
+        rm -rf "$tmp"
+        mkdir -p "$tmp"
+        echo "Copying target into durable slot (this can take a few minutes)…"
+        cp -a implementations/rust/target "$tmp/target"
+        if [[ -d "${HOME}/.cargo/registry" ]]; then
+          cp -a "${HOME}/.cargo/registry" "$tmp/cargo-registry"
+        fi
+        if [[ -d "${HOME}/.cargo/git" ]]; then
+          cp -a "${HOME}/.cargo/git" "$tmp/cargo-git"
+        fi
+        printf '%s\n' "$KEY" >"$tmp/RUST_SOURCE_KEY"
+        date -u +%Y-%m-%dT%H:%M:%SZ >"$tmp/SAVED_AT"
+        rm -rf "${SLOT}"
+        mv "$tmp" "${SLOT}"
+        echo "Saved source-keyed Rust cache"
+        echo "key=${KEY}"
+        echo "slot=${SLOT}"
