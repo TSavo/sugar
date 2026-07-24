@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: sugar-python-heavy-measurement
+  cancel-in-progress: false
+
 jobs:
   python-native-crash-floor:
     name: python-native-crash-floor

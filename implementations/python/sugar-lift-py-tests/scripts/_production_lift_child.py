@@ -14,14 +14,18 @@ Outcome taxonomy (the child EMITS one ``lift-terminal`` row; its absence on a
 zero exit is the silent axis, and a signal death / timeout are observed by the
 parent):
   - ``completed``  -- every function constructed with no gap.
-  - ``typed-gap``  -- at least one sanctioned typed construction gap:
-    tree ``SugarNotWritten`` or kit ``ConstructionPanic``. INTENTIONAL; NOT a
-    failure; the floors do not count it red.
+  - ``typed-gap``  -- at least one known typed construction failure:
+    tree ``SourceTreePanic`` (incl. ``SugarNotWritten`` / ``BackendDefect`` /
+    ``VocabularyMissing`` / …), kit ``ConstructionPanic``, or
+    ``SourceCallBindingGap``. INTENTIONAL loud residue; floors do NOT count it
+    as bare-exception red.
   - (bare exception) -- any OTHER exception propagates out of this child
     unhandled, so the child exits nonzero and the parent classifies it a bare
-    Python exception. We never swallow it here.
+    Python exception. We never swallow untyped failures here.
 
-Only the two typed gap types above are caught. Nothing else is.
+Known typed construction failures are always serialized as ``typed-gap`` and
+the child exits 0. They must never be reported as success without testimony,
+and must never escape as unclassified exit 1.
 """
 
 from __future__ import annotations
@@ -53,11 +57,36 @@ def _construction_panic_row(error) -> dict[str, object]:
     }
 
 
+def _source_call_binding_gap_row(error) -> dict[str, object]:
+    return {
+        "exception_type": type(error).__name__,
+        "gap": {
+            "owner": "SourceCallFrame.bind_node_actuals",
+            "observed": str(error),
+            "requested": "every call actual consumed by the authenticated frame",
+            "fix": "bind or reject the unconsumed actual at the call frame",
+        },
+    }
+
+
+def _typed_construction_row(error) -> dict[str, object] | None:
+    """Serialize a known typed construction failure, or None if untyped."""
+    from sugar_source_tree.panic import SourceTreePanic
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+    if isinstance(error, ConstructionPanic):
+        return _construction_panic_row(error)
+    if isinstance(error, SourceTreePanic):
+        return _source_tree_gap_row(error)
+    if isinstance(error, SourceCallBindingGap):
+        return _source_call_binding_gap_row(error)
+    return None
+
+
 def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
     """Construct once and return closed terminal testimony for every scanner."""
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.panic import SugarNotWritten
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from _production_source_file import (
         corpus_root_from_relative,
         production_source_file,
@@ -71,11 +100,11 @@ def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
             root=corpus_root_from_relative(path, rel),
             reporter=reporter,
         )
-    except SugarNotWritten as error:
-        gaps.append(_source_tree_gap_row(error))
-        sf = None
-    except ConstructionPanic as error:
-        gaps.append(_construction_panic_row(error))
+    except BaseException as error:
+        row = _typed_construction_row(error)
+        if row is None:
+            raise
+        gaps.append(row)
         sf = None
     if sf is None:
         return {
@@ -88,10 +117,11 @@ def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
     for fn in sf.functions():
         try:
             fn.sugar()
-        except SugarNotWritten as error:
-            gaps.append(_source_tree_gap_row(error))
-        except ConstructionPanic as error:
-            gaps.append(_construction_panic_row(error))
+        except BaseException as error:
+            row = _typed_construction_row(error)
+            if row is None:
+                raise
+            gaps.append(row)
     return {
         "kind": _TERMINAL_KIND,
         "outcome": OUTCOME_TYPED_GAP if gaps else OUTCOME_COMPLETED,
@@ -119,10 +149,10 @@ def production_lift_bootstrap_error() -> str | None:
 def run_production_lift_child(path: Path, rel: str) -> int:
     """Lift one file through the production door and emit its terminal row.
 
-    A sanctioned typed gap (``SugarNotWritten`` or kit ``ConstructionPanic``)
-    anywhere in the file's construction marks the whole file ``typed-gap``
-    (intentional) but does not stop scanning the rest. Any other exception is
-    left to propagate -- that is the bare-exception signal.
+    A known typed construction failure anywhere in the file's construction
+    marks the whole file ``typed-gap`` (intentional) and exits 0 with a
+    serialized terminal row. Any other exception is left to propagate -- that
+    is the bare-exception signal.
     """
     print(json.dumps(production_lift_testimony(path, rel)), flush=True)
     return 0

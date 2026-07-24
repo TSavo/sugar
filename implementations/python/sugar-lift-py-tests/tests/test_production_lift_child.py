@@ -127,6 +127,41 @@ def test_preconstruction_unwritten_is_typed_gap_not_failure(
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
+def test_backend_defect_is_typed_gap_not_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    from sugar_source_tree.panic import BackendDefect
+    import _production_source_file as production_source_file
+
+    def _typed_gap(*_args, **_kwargs):
+        raise BackendDefect(
+            owner="With._construct_sugar",
+            observed="authenticated preconstruction resolution gap",
+            requested="one resolved authenticated ContextManagerContractRefV1",
+            fix="repair prereq-2 demand/table generation; never search at construction",
+        )
+
+    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    path = _write(tmp_path, "def a():\n    return 1\n")
+    assert _CHILD.run_production_lift_child(path, "mod.py") == 0
+    assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
+
+
+def test_source_call_binding_gap_is_typed_gap_not_failure(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    import _production_source_file as production_source_file
+
+    def _typed_gap(*_args, **_kwargs):
+        raise SourceCallBindingGap("unconsumed call actual")
+
+    monkeypatch.setattr(production_source_file, "production_source_file", _typed_gap)
+    path = _write(tmp_path, "def a():\n    return 1\n")
+    assert _CHILD.run_production_lift_child(path, "mod.py") == 0
+    assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
+
+
 def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) -> None:
     # If construction raises a non-typed-gap exception, the child must let
     # it propagate (so the parent's subprocess exits nonzero = bare exception).

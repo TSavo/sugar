@@ -9,6 +9,10 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: sugar-python-heavy-measurement
+  cancel-in-progress: false
+
 jobs:
   numpy-wall:
     name: build numpy wall
