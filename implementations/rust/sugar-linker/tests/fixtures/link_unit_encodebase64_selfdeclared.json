@@ -1,0 +1,167 @@
+{
+  "kind": "parameter-contract-link-unit",
+  "schemaVersion": "1",
+  "sourceMemento": {
+    "kind": "source-memento",
+    "file": "vendor/b64vendor.py",
+    "source_function_name": "encodeBase64"
+  },
+  "parameterOwnedContract": {
+    "contractCid": "blake3-512:5f23865e6adc0645db46b8b36edce80fc12860c28c820d476d4df5ee01dbc0d2ca82cf7de10654704437fdb8b6c969b3e4b38eb70b1b8a993280fc34925a778a",
+    "semanticDecl": {
+      "declaredDemandCids": [
+        "blake3-512:a18ecd019d416e239cf7c7a4a9f201165bce8cf0f96911c9009a5d3644214c229198eb4f7a7bd4ff3eb39dea25fc8556e30d53f29bb4f853a193623a1f100d36"
+      ],
+      "formalDeclarations": [
+        {
+          "coordinate": {
+            "coordinateCid": "blake3-512:c25f8feb5f68d19fac7f680af4bbb46779e9b72aa42f78336d6ccb3bf7ffb3abc2111709cb1d43c0ce1521106558e11b5b7c02d3f6f7ac99294aef284789d358",
+            "declarationLocus": {
+              "endCol": 22,
+              "endLine": 1,
+              "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "startCol": 17,
+              "startLine": 1
+            },
+            "declaredName": "value",
+            "kind": "formal-parameter-coordinate",
+            "ordinal": 0,
+            "ownerDefinitionLocus": {
+              "endCol": 4,
+              "endLine": 10,
+              "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "startCol": 0,
+              "startLine": 1
+            },
+            "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "parameterKind": "positional-or-keyword",
+            "schemaVersion": "1",
+            "sort": {
+              "kind": "primitive",
+              "name": "Value"
+            }
+          }
+        }
+      ],
+      "kind": "contract",
+      "name": "encodeBase64",
+      "outBinding": "out",
+      "ownerDefinitionLocus": {
+        "endCol": 4,
+        "endLine": 10,
+        "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "startCol": 0,
+        "startLine": 1
+      },
+      "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ownerDefinitionLocus": {
+      "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "startLine": 1,
+      "startCol": 0,
+      "endLine": 10,
+      "endCol": 4
+    },
+    "formalDeclarations": [
+      {
+        "coordinate": {
+          "kind": "formal-parameter-coordinate",
+          "schemaVersion": "1",
+          "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "ownerDefinitionLocus": {
+            "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "startLine": 1,
+            "startCol": 0,
+            "endLine": 10,
+            "endCol": 4
+          },
+          "declarationLocus": {
+            "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "startLine": 1,
+            "startCol": 17,
+            "endLine": 1,
+            "endCol": 22
+          },
+          "ordinal": 0,
+          "parameterKind": "positional-or-keyword",
+          "declaredName": "value",
+          "sort": {
+            "kind": "primitive",
+            "name": "Value"
+          },
+          "coordinateCid": "blake3-512:c25f8feb5f68d19fac7f680af4bbb46779e9b72aa42f78336d6ccb3bf7ffb3abc2111709cb1d43c0ce1521106558e11b5b7c02d3f6f7ac99294aef284789d358"
+        }
+      }
+    ],
+    "formalSorts": [
+      {
+        "kind": "primitive",
+        "name": "Value"
+      }
+    ],
+    "declaredDemandCids": [
+      "blake3-512:a18ecd019d416e239cf7c7a4a9f201165bce8cf0f96911c9009a5d3644214c229198eb4f7a7bd4ff3eb39dea25fc8556e30d53f29bb4f853a193623a1f100d36"
+    ]
+  },
+  "candidates": [
+    {
+      "kind": "contract-conditional-construction",
+      "schemaVersion": "1",
+      "sourceNode": {
+        "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "startLine": 3,
+        "startCol": 9,
+        "endLine": 3,
+        "endCol": 17
+      },
+      "candidate": {
+        "args": [
+          {
+            "kind": "var",
+            "name": "value"
+          },
+          {
+            "kind": "const",
+            "sort": {
+              "kind": "primitive",
+              "name": "Int"
+            },
+            "value": 0
+          }
+        ],
+        "kind": "ctor",
+        "name": "py.subscript"
+      },
+      "candidateCid": "blake3-512:aeee391ec24f33ab0260f03b81013d0d455b2c51728157a91dff679e6a21301133ee695536dd8791514562200911a77a43d3e9fbb43f22fb93e2f2b0154b4e72",
+      "demand": {
+        "kind": "parameter-contract-demand",
+        "schemaVersion": "1",
+        "ownerSourceIdentityCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "formalCoordinateCid": "blake3-512:c25f8feb5f68d19fac7f680af4bbb46779e9b72aa42f78336d6ccb3bf7ffb3abc2111709cb1d43c0ce1521106558e11b5b7c02d3f6f7ac99294aef284789d358",
+        "operationSite": {
+          "sourceCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "startLine": 3,
+          "startCol": 9,
+          "endLine": 3,
+          "endCol": 17
+        },
+        "demandedFormula": {
+          "args": [
+            {
+              "kind": "var",
+              "name": "value"
+            }
+          ],
+          "kind": "atomic",
+          "name": "python:indexable"
+        },
+        "demandedEffectBound": null,
+        "candidateCid": "blake3-512:aeee391ec24f33ab0260f03b81013d0d455b2c51728157a91dff679e6a21301133ee695536dd8791514562200911a77a43d3e9fbb43f22fb93e2f2b0154b4e72",
+        "demandCid": "blake3-512:a18ecd019d416e239cf7c7a4a9f201165bce8cf0f96911c9009a5d3644214c229198eb4f7a7bd4ff3eb39dea25fc8556e30d53f29bb4f853a193623a1f100d36"
+      }
+    }
+  ],
+  "callEdges": [],
+  "linkUnitCid": "blake3-512:bdb4f63d6cddf255e13a9544798031f41ddeccdf923d3bac90be696a3f7ef2eb7aad28d7940f5906c856bd9f5397da1319374c1f0ef88a8855dd8dead5a3bf3f"
+}

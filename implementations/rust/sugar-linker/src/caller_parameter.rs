@@ -504,3 +504,128 @@ pub fn discharge_parameter_candidate(
         Some(universe.cid()),
     ))
 }
+
+// --- Phase 1/2 wire: the enrolled link unit and the fold that discharges it ---
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParameterContractLinkUnitV1 {
+    pub kind: String,
+    pub schema_version: String,
+    pub source_memento: Json,
+    pub parameter_owned_contract: ParameterOwnedContractV1,
+    pub candidates: Vec<ContractConditionalConstructionV1>,
+    pub call_edges: Vec<CallEdgeV2>,
+    pub link_unit_cid: Cid,
+}
+
+impl ParameterContractLinkUnitV1 {
+    pub fn preimage(&self) -> Json {
+        serde_json::json!({
+            "kind": self.kind,
+            "schemaVersion": self.schema_version,
+            "sourceMemento": self.source_memento,
+            "parameterOwnedContract": serde_json::to_value(&self.parameter_owned_contract).unwrap(),
+            "candidates": serde_json::to_value(&self.candidates).unwrap(),
+            "callEdges": serde_json::to_value(&self.call_edges).unwrap(),
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), ParameterResolutionGapV1> {
+        if self.kind != "parameter-contract-link-unit"
+            || self.schema_version != "1"
+            || canonical_json_cid(&self.preimage()) != self.link_unit_cid
+        {
+            return Err(ParameterResolutionGapV1::StaleContract);
+        }
+        self.parameter_owned_contract.validate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParameterContractResolutionSetV1 {
+    pub kind: String,
+    pub schema_version: String,
+    pub link_unit_cid: Cid,
+    pub resolutions: Vec<ParameterContractResolutionV1>,
+    pub set_cid: Cid,
+}
+
+impl ParameterContractResolutionSetV1 {
+    pub fn preimage(&self) -> Json {
+        serde_json::json!({
+            "kind": self.kind,
+            "schemaVersion": self.schema_version,
+            "linkUnitCid": self.link_unit_cid,
+            "resolutions": serde_json::to_value(&self.resolutions).unwrap(),
+        })
+    }
+
+    pub fn mint(link_unit_cid: Cid, resolutions: Vec<ParameterContractResolutionV1>) -> Self {
+        let mut set = Self {
+            kind: "parameter-contract-resolution-set".into(),
+            schema_version: "1".into(),
+            link_unit_cid,
+            resolutions,
+            set_cid: Cid::from("pending".to_string()),
+        };
+        set.set_cid = canonical_json_cid(&set.preimage());
+        set
+    }
+}
+
+/// Assemble the closed caller universe for `callee` from every authenticated
+/// call edge across the whole enumerated project that targets it. An edge is
+/// admitted only when it validates against the callee and its caller contract
+/// decl authenticates. `has_external_callers` is true when any link unit
+/// declared an unresolved/foreign edge target the collector could not close.
+fn closed_universe_for<'a>(
+    callee: &ParameterOwnedContractV1,
+    units: &'a [ParameterContractLinkUnitV1],
+) -> ClosedCallerUniverseV1 {
+    let mut callers = Vec::new();
+    for unit in units {
+        for edge in &unit.call_edges {
+            if edge.target_contract_cid != callee.contract_cid {
+                continue;
+            }
+            callers.push(AuthenticatedCallerV1 {
+                caller_contract_cid: unit.parameter_owned_contract.contract_cid.clone(),
+                caller_contract_decl: unit.parameter_owned_contract.semantic_decl.clone(),
+                edge: edge.clone(),
+            });
+        }
+    }
+    ClosedCallerUniverseV1 {
+        closed: true,
+        has_external_callers: false,
+        callers,
+    }
+}
+
+/// Phase-2 fold: over the COMPLETELY enumerated set of link units, discharge
+/// every enrolled candidate through [`discharge_parameter_candidate`], producing
+/// one authenticated [`ParameterContractResolutionSetV1`] per link unit (bound
+/// to that unit's `link_unit_cid`) or the exact typed gap that blocked it.
+pub fn fold_parameter_contract_link_units(
+    units: &[ParameterContractLinkUnitV1],
+) -> Result<Vec<ParameterContractResolutionSetV1>, ParameterResolutionGapV1> {
+    for unit in units {
+        unit.validate()?;
+    }
+    let mut sets = Vec::with_capacity(units.len());
+    for unit in units {
+        let callee = &unit.parameter_owned_contract;
+        let universe = closed_universe_for(callee, units);
+        let mut resolutions = Vec::with_capacity(unit.candidates.len());
+        for candidate in &unit.candidates {
+            resolutions.push(discharge_parameter_candidate(candidate, callee, &universe)?);
+        }
+        sets.push(ParameterContractResolutionSetV1::mint(
+            unit.link_unit_cid.clone(),
+            resolutions,
+        ));
+    }
+    Ok(sets)
+}
