@@ -69,11 +69,6 @@ _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
 _BOUND_CALL_CONTRACT_REFS = None
-# Phase-1->3 cross-request continuation: retained immutable universes keyed
-# by linkUnitCid, and a def-memento index so resume reuses the SAME universe
-# object (materialize-once) instead of reconstructing the function.
-_RETAINED_LINK_UNITS = {}
-_RETAINED_BY_MEMENTO = {}
 
 
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
@@ -153,136 +148,6 @@ def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
         )
         rows.extend(authenticated_module_exports(root, path, source, source_cid))
         rows.extend(enrolled)
-    return rows
-
-
-def _memento_continuation_key(memento: Dict[str, Any]) -> str:
-    """The retained-universe index key: a function's stable source identity
-    (source_cid + span). Lets the resume path reuse the SAME retained universe
-    without reconstructing the function."""
-    span = memento.get("span") or {}
-    return "|".join(
-        str(part)
-        for part in (
-            memento.get("source_cid"),
-            span.get("start_line"),
-            span.get("start_col"),
-            span.get("end_line"),
-            span.get("end_col"),
-        )
-    )
-
-
-def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Phase-3 resume: reuse the RETAINED universe for this linkUnitCid
-    (materialize-once, NEVER reconstruct), verify the presented resolution set is
-    bound to THIS continuation and forms the exact-complete bijection, attach the
-    authenticated resolutions, and project post(). A lost continuation or any
-    stale/foreign/incomplete set raises a loud ConstructionPanic; it never
-    silently reconstructs through another path."""
-    import dataclasses
-
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        ParameterContractResolutionSetV1,
-        ResumeStalePanic,
-        resume_apply_resolutions,
-    )
-    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    link_unit_cid = options.get("linkUnitCid")
-    raw_set = options.get("resolutionSet")
-    retained = _RETAINED_LINK_UNITS.get(link_unit_cid)
-    if retained is None:
-        construction_panic_gap(
-            owner="parameter-contract-resume",
-            blame=str(link_unit_cid),
-            observed="no retained continuation for this linkUnitCid",
-            requested="the retained universe enrolled in phase 1",
-            fix="resume in the SAME server session that enrolled the link unit",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-    universe, def_memento_dto, def_memento, unit = retained
-    try:
-        resolution_set = ParameterContractResolutionSetV1.from_value(raw_set)
-        accepted = resume_apply_resolutions(unit, resolution_set)
-    except (ResumeStalePanic, ValueError) as exc:
-        construction_panic_gap(
-            owner="parameter-contract-resume",
-            blame=unit.parameter_owned_contract.contract_cid,
-            observed=str(exc),
-            requested="an exact, replay-bound ParameterContractResolutionSetV1",
-            fix="present the fold's authenticated resolution set for THIS continuation",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-    # Materialize-once: reuse the retained universe's own record/statements
-    # (identical occurrence identities); only attach the resolutions.
-    resolved = dataclasses.replace(universe, resolutions=accepted)
-    from sugar_lift_py_tests.ir import TermTableBuilder
-
-    term_table = TermTableBuilder()
-    rows = resolved.payload_rows(def_memento_dto)
-    nodes = [
-        {
-            "memento": def_memento,
-            "audit": dto.to_rpc_with_term_table(term_table),
-            "payload": None,
-        }
-        for dto in rows
-    ]
-    return nodes
-
-
-def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
-    """Phase-1 enrollment: one closed ParameterContractLinkUnitV1 per function
-    that enrolled a parameter-contract demand. Builds each function's universe
-    (never calls post()), projects its link unit, and RETAINS the immutable
-    universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it."""
-    from sugar_lift_py_tests import tree_enumerate as _tree
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import Complete
-    from sugar_source_tree.panic import SugarNotWritten
-
-    global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
-    _RETAINED_LINK_UNITS = {}
-    _RETAINED_BY_MEMENTO = {}
-    rows: List[Dict[str, Any]] = []
-    for source_path in sorted(root.rglob("*.py")):
-        file_rel = str(source_path.relative_to(root))
-        try:
-            sf = _tree.source_file(source_path)
-        except Exception:
-            continue
-        for fn in sf.functions():
-            try:
-                outcome = fn.sugar().desugar(None)
-            except (SugarNotWritten, Exception):
-                continue
-            if not isinstance(outcome, Complete):
-                continue
-            universe = outcome.value
-            if not isinstance(universe, UniverseValue):
-                continue
-            def_memento_dto = _tree.function_def_memento(fn, file_rel)
-            def_memento = def_memento_dto.to_rpc()
-            try:
-                unit = universe.link_unit_projection(def_memento)
-            except Exception:
-                continue
-            if unit is None:
-                continue
-            _RETAINED_LINK_UNITS[unit.link_unit_cid] = (
-                universe,
-                def_memento_dto,
-                def_memento,
-                unit,
-            )
-            _RETAINED_BY_MEMENTO[_memento_continuation_key(def_memento)] = (
-                unit.link_unit_cid
-            )
-            rows.append(unit.to_value())
     return rows
 
 
@@ -1654,24 +1519,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 }
             )
             return
-        if level == "parameter-contract-link-units":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"rows": _parameter_contract_link_unit_rows(root)},
-                }
-            )
-            return
-        if level == "parameter-contract-resume":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"rows": _parameter_contract_resume_rows(options)},
-                }
-            )
-            return
         if level == "context-manager-edges":
             if _BOUND_CONTRACT_REFS is None:
                 raise ValueError(
@@ -2095,23 +1942,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 term_table = TermTableBuilder()
                 universes = []  # (name, memento_dict, contract_dto)
                 gaps = []
-                # Phase-3: functions whose parameter-contract demands the caller
-                # already discharged (fold -> resume) are served from the resume
-                # path, not reconstructed here. Skipping them keeps post()
-                # resume-exclusive: a plain universe enumerate (empty skip set)
-                # of a pending-demand function STILL panics.
-                resolved_mementos = set(
-                    options.get("resolvedContinuationMementos") or []
-                )
                 for fn in sf.functions():
-                    if (
-                        resolved_mementos
-                        and _memento_continuation_key(
-                            _tree.function_def_memento(fn, file_rel).to_rpc()
-                        )
-                        in resolved_mementos
-                    ):
-                        continue
                     try:
                         def_memento, rows = _tree.function_contract_rows(fn, file_rel)
                     except SugarNotWritten as gap:

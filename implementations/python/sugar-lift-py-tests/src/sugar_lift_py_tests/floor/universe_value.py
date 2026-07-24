@@ -18,10 +18,6 @@ class UniverseValue(FloorValue):
     formals: tuple[str, ...]
     record: object  # the body's BlockValue
     bridge_source_symbol: str | None = None
-    formal_coordinates: tuple = ()
-    # Phase-3: authenticated {demand_cid: resolution} attached by the resume when
-    # reusing THIS retained universe (materialize-once). None on the plain path.
-    resolutions: object = None
 
     def derived_companions(self) -> tuple[Formula, ...]:
         return tuple(
@@ -47,17 +43,7 @@ class UniverseValue(FloorValue):
             for entry in self.record.statements
             if isinstance(entry, ContractConditionalConstructionV1)
         )
-        # Resume-exclusive: post() projects ONLY when every pending demand has an
-        # authenticated resolution attached by the Phase-3 resume. A plain
-        # enumerate (resolutions=None) of a pending-demand universe STILL panics
-        # -- the resume is the sole projection path, never a fast lane.
-        resolved = self.resolutions or {}
-        unresolved = tuple(
-            entry
-            for entry in pending
-            if entry.demand.demand_cid not in resolved
-        )
-        if unresolved:
+        if pending:
             from sugar_lift_py_tests.gap.info import GapKind, GapLocus
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -66,7 +52,7 @@ class UniverseValue(FloorValue):
                 blame=self.name,
                 observed=(
                     "pending parameter contract demands "
-                    + ",".join(entry.demand.demand_cid for entry in unresolved)
+                    + ",".join(entry.demand.demand_cid for entry in pending)
                 ),
                 requested="authenticated ParameterContractResolutionV1 rows",
                 fix=(
@@ -167,64 +153,6 @@ class UniverseValue(FloorValue):
                 provenance=post_provenance,
                 formals=self.formals,
             ),
-        )
-
-    def link_unit_projection(self, def_memento):
-        """PRE-POST projection: assemble this function's ParameterContractLinkUnitV1
-        WITHOUT calling post(). Gathers the pending ContractConditionalConstructionV1
-        the body enrolled, emits the ParameterOwnedContractV1 (its own formals +
-        the demands it STRUCTURALLY OWNS), and returns the link unit. The RPC
-        level retains this immutable universe keyed by link_unit_cid so Phase-3
-        resume reuses it (materialize-once) rather than reconstructing."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            ContractConditionalConstructionV1,
-            ParameterContractLinkUnitV1,
-            ParameterOwnedContractV1,
-        )
-
-        pending = tuple(
-            entry
-            for entry in self.record.statements
-            if isinstance(entry, ContractConditionalConstructionV1)
-        )
-        coords = tuple(self.formal_coordinates)
-        if not coords:
-            # No formals -> no formal coordinate -> no demand can be owned here.
-            if pending:
-                from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="UniverseValue.link_unit_projection",
-                    blame=self.name,
-                    observed="pending demands without any formal coordinate",
-                    requested="a formal coordinate that owns each demand",
-                    fix="thread formal coordinates into the universe",
-                    gap_kind=GapKind.FLOOR,
-                    gap_locus=GapLocus.CONSTRUCTION,
-                )
-            return None
-        owner_cid = coords[0].owner_source_identity_cid
-        owner_locus = coords[0].owner_definition_locus
-        coord_cids = {coordinate.coordinate_cid for coordinate in coords}
-        owned_demands = [
-            entry.demand.demand_cid
-            for entry in pending
-            if entry.demand.formal_coordinate_cid in coord_cids
-            and entry.demand.owner_source_identity_cid == owner_cid
-        ]
-        owned = ParameterOwnedContractV1.mint(
-            name=self.name,
-            owner_source_identity_cid=owner_cid,
-            owner_definition_locus=owner_locus,
-            formal_coordinates=coords,
-            declared_demand_cids=owned_demands,
-        )
-        return ParameterContractLinkUnitV1.mint(
-            source_memento=def_memento,
-            parameter_owned_contract=owned,
-            candidates=pending,
-            call_edges=(),
         )
 
     def payload_rows(self, def_memento):
