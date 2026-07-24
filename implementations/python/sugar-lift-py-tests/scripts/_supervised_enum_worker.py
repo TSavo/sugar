@@ -100,9 +100,10 @@ def main() -> int:
             rel = str(msg.get("rel") or path)
             try:
                 print(json.dumps(_lift(path, rel)), flush=True)
-            except BaseException as error:  # noqa: BLE001 -- parent classifies
-                # Untyped failure: emit then re-raise so bare-exception path
-                # can also see nonzero exit if the supervisor cares.
+            except Exception as error:
+                # Bare Python failures only. ConstructionPanic is BaseException:
+                # it is not caught here — the worker dies; the supervisor records
+                # the active file and restarts a fresh worker.
                 print(
                     json.dumps(
                         {
@@ -114,9 +115,6 @@ def main() -> int:
                     ),
                     flush=True,
                 )
-                # Stay alive after bare exceptions so the supervisor can
-                # continue the census without a restart (typed path already
-                # stays alive). Native crashes never reach here.
             continue
         print(
             json.dumps(

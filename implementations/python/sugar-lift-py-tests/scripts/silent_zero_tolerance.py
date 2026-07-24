@@ -135,7 +135,9 @@ def _run_one(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
         return ChildResult(rel, category, offenders, 0, "")
     except TimeoutError as error:
         return ChildResult(rel, "timeout", (), None, str(error))
-    except BaseException as error:  # noqa: BLE001 -- floor classification
+    # ConstructionPanic is BaseException — must not be held here. Let it kill
+    # the process; supervised floors attribute the in-flight file loudly.
+    except Exception as error:
         return ChildResult(
             rel,
             "non-native-red",
