@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
-"""R_silent — independent disk census versus current construction roll call."""
+"""R_silent — independent disk census versus current construction roll call.
+
+In-process enum scan. Progress and engine logs never mix.
+"""
 
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
-import json
-import os
 from pathlib import Path
-import subprocess
 import sys
-from typing import Any, Mapping, NamedTuple, Sequence
+from typing import Any, Mapping, NamedTuple, Sequence  # Any used in audit_paths
 
-from sugar_lift_py_tests.idd.lift_coverage_census import DiskCensus
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sugar_lift_py_tests.idd.lift_coverage_census import DiskCensus  # noqa: E402
+
+from _enum_floor_runtime import (  # noqa: E402
+    iter_with_tqdm,
+    open_progress,
+    prepare_floor_io,
+    production_roots,
+    relative_to_root,
+    require_python_paths,
+    with_file_timeout,
+)
 
 
 class SilentOffender(NamedTuple):
@@ -113,99 +124,25 @@ def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...
     return "completed", tuple(silent_offenders(census, audit))
 
 
-def _python_paths(roots: Sequence[Path]) -> list[Path]:
-    return sorted(
-        {
-            path
-            for root in roots
-            for path in (root.rglob("*.py") if root.is_dir() else (root,))
-            if path.is_file() and "__pycache__" not in path.parts
-        }
-    )
-
-
-def production_roots(repo_root: Path) -> tuple[Path, Path]:
-    kit = repo_root / "implementations/python/sugar-lift-py-tests"
-    return (kit / "src/sugar_lift_py_tests", kit / "scripts")
-
-
-def require_python_paths(roots: Sequence[Path]) -> list[Path]:
-    paths = _python_paths(roots)
-    if not paths:
-        raise ValueError(f"no Python source files found under {list(roots)}")
-    return paths
-
-
-def _parse_child(stdout: str) -> Mapping[str, Any] | None:
-    for line in reversed(stdout.splitlines()):
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, Mapping) and value.get("kind") == "silent-audit-row":
-            return value
-    return None
-
-
-def _run_isolated(
-    path: Path,
-    *,
-    root: Path,
-    file_timeout: int,
-) -> ChildResult:
-    rel = path.resolve().relative_to(root.resolve()).as_posix()
-    env = dict(os.environ)
-    env["PYTHONFAULTHANDLER"] = "1"
+def _run_one(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
+    rel = relative_to_root(path, root)
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "--child-file",
-                str(path),
-                "--child-rel",
-                rel,
-            ],
-            text=True,
-            capture_output=True,
-            timeout=file_timeout,
-            env=env,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
+
+        def _work() -> tuple[str, tuple[SilentOffender, ...]]:
+            return _audit_file(path, rel=rel)
+
+        category, offenders = with_file_timeout(file_timeout, _work)
+        return ChildResult(rel, category, offenders, 0, "")
+    except TimeoutError as error:
+        return ChildResult(rel, "timeout", (), None, str(error))
+    except BaseException as error:  # noqa: BLE001 -- floor classification
         return ChildResult(
             rel,
-            "timeout",
+            "non-native-red",
             (),
-            None,
-            (error.stderr or "")[-2000:] if isinstance(error.stderr, str) else "",
+            1,
+            f"{type(error).__name__}: {error}"[-2000:],
         )
-    if result.returncode < 0:
-        return ChildResult(
-            rel, "native-crash", (), result.returncode, result.stderr[-2000:]
-        )
-    testimony = _parse_child(result.stdout)
-    if result.returncode or testimony is None:
-        return ChildResult(
-            rel, "non-native-red", (), result.returncode, result.stderr[-2000:]
-        )
-    rows = tuple(
-        SilentOffender(
-            file=str(raw["file"]),
-            kind=str(raw["kind"]),
-            count=int(raw["count"]),
-            note=str(raw["note"]),
-        )
-        for raw in testimony.get("offenders", [])
-        if isinstance(raw, Mapping)
-    )
-    return ChildResult(
-        rel,
-        str(testimony.get("category")),
-        rows,
-        result.returncode,
-        "",
-    )
 
 
 def audit_paths(
@@ -213,23 +150,27 @@ def audit_paths(
     *,
     root: Path,
     file_timeout: int,
-    workers: int,
+    workers: int = 1,
     checkpoint_path: Path | None = None,
+    progress_path: Path | None = None,
+    progress_stdout: bool = False,
 ) -> AuditSummary:
+    del workers
     if file_timeout > 30:
         raise ValueError("per-file timeout may not exceed 30 seconds")
+
+    pending = list(sorted(paths))
+    done_rows: dict[str, ChildResult] = {}
+    checkpoint = None
     if checkpoint_path is not None:
-        from pandas_census_checkpoint import checkpointed_path_results
+        from pandas_census_checkpoint import Checkpoint
 
-        def serialize(row: ChildResult) -> Mapping[str, Any]:
-            return {
-                "category": row.category,
-                "offenders": [offender._asdict() for offender in row.offenders],
-                "returncode": row.returncode,
-                "stderrTail": row.stderr_tail,
-            }
-
-        def deserialize(file: str, raw: Mapping[str, Any]) -> ChildResult:
+        files = tuple(relative_to_root(p, root) for p in pending)
+        by_rel = {relative_to_root(p, root): p for p in pending}
+        checkpoint = Checkpoint(floor="silent", files=files, path=checkpoint_path)
+        for row in checkpoint.rows():
+            raw = row["result"]
+            file = str(row["file"])
             offenders = tuple(
                 SilentOffender(
                     file=str(offender["file"]),
@@ -241,49 +182,62 @@ def audit_paths(
                 if isinstance(offender, Mapping)
             )
             returncode = raw.get("returncode")
-            return ChildResult(
+            done_rows[file] = ChildResult(
                 file,
                 str(raw.get("category")),
                 offenders,
                 int(returncode) if isinstance(returncode, int) else None,
                 str(raw.get("stderrTail") or ""),
             )
+        pending = [by_rel[r] for r in checkpoint.pending_files()]
 
-        rows = list(
-            checkpointed_path_results(
-                floor="silent",
-                paths=paths,
-                root=root,
-                checkpoint_path=checkpoint_path,
-                worker=lambda path: _run_isolated(
-                    path, root=root, file_timeout=file_timeout
-                ),
-                serialize=serialize,
-                deserialize=deserialize,
-                workers=workers,
+    progress_stream = None
+    if progress_path is not None:
+        progress_stream = open_progress(
+            progress_path,
+            header=(
+                f"# silent floor (in-process enum)\n"
+                f"# files={len(paths)} pending={len(pending)}\n"
+            ),
+        )
+    try:
+        iterator: Any = pending
+        if progress_stream is not None:
+            iterator = iter_with_tqdm(
+                pending,
+                progress=progress_stream,
+                total=len(paths),
+                initial=len(paths) - len(pending),
+                desc="silent",
+                progress_stdout=progress_stdout,
             )
+        for path in iterator:
+            row = _run_one(path, root=root, file_timeout=file_timeout)
+            if checkpoint is not None:
+                checkpoint.append(
+                    row.file,
+                    {
+                        "category": row.category,
+                        "offenders": [o._asdict() for o in row.offenders],
+                        "returncode": row.returncode,
+                        "stderrTail": row.stderr_tail,
+                    },
+                )
+            done_rows[row.file] = row
+    finally:
+        if progress_stream is not None:
+            progress_stream.close()
+
+    if checkpoint is not None:
+        rows = tuple(
+            done_rows[f]
+            if f in done_rows
+            else ChildResult(f, "missing", (), None, "")
+            for f in checkpoint.files
         )
     else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            rows = list(
-                executor.map(
-                    lambda path: _run_isolated(
-                        path,
-                        root=root,
-                        file_timeout=file_timeout,
-                    ),
-                    sorted(paths),
-                )
-            )
-    offenders = tuple(offender for row in rows for offender in row.offenders)
-    for row in rows:
-        if row.category in {
-            "factory-panic",
-            "timeout",
-            "non-native-red",
-            "native-crash",
-        }:
-            print(f"LOUD {row.category} row: {row.file}", flush=True)
+        rows = tuple(done_rows[relative_to_root(p, root)] for p in sorted(paths))
+    offenders = tuple(o for row in rows for o in row.offenders)
     return AuditSummary(
         discovered=len(rows),
         completed=sum(row.category == "completed" for row in rows),
@@ -292,25 +246,8 @@ def audit_paths(
         non_native_red=sum(row.category == "non-native-red" for row in rows),
         native_crashes=sum(row.category == "native-crash" for row in rows),
         offenders=offenders,
-        rows=tuple(rows),
+        rows=rows,
     )
-
-
-def _run_child(path: Path, rel: str) -> int:
-    category, offenders = _audit_file(path, rel=rel)
-    print(
-        json.dumps(
-            {
-                "kind": "silent-audit-row",
-                "file": rel,
-                "category": category,
-                "offenders": [row._asdict() for row in offenders],
-            },
-            sort_keys=True,
-        ),
-        flush=True,
-    )
-    return 0
 
 
 def main() -> int:
@@ -321,29 +258,18 @@ def main() -> int:
             pass
     repo_root = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "paths",
-        nargs="*",
-        type=Path,
-    )
+    parser.add_argument("paths", nargs="*", type=Path)
     parser.add_argument("--live-root", action="append", type=Path, default=[])
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=min(16, max(1, os.cpu_count() or 1)),
-    )
-    parser.add_argument("--child-file", type=Path)
-    parser.add_argument("--child-rel")
+    parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--json", type=Path)
     parser.add_argument("--checkpoint-jsonl", type=Path)
+    parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument("--engine-log", type=Path, default=None)
+    parser.add_argument("--progress", type=Path, default=None)
+    parser.add_argument("--progress-stdout", action="store_true")
     args = parser.parse_args()
-
-    if args.child_file or args.child_rel:
-        if args.child_file is None or args.child_rel is None:
-            parser.error("child mode requires --child-file and --child-rel")
-        return _run_child(args.child_file, args.child_rel)
 
     try:
         roots = args.live_root or args.paths or list(production_roots(repo_root))
@@ -351,15 +277,22 @@ def main() -> int:
     except ValueError as error:
         print(f"SILENT ZERO-TOLERANCE RED: {error}")
         return 1
+
+    _base, engine_path, progress_path = prepare_floor_io(
+        repo_root=args.repo_root,
+        floor="silent",
+        out_dir=args.out_dir,
+        engine_log=args.engine_log,
+        progress=args.progress,
+    )
     summary = audit_paths(
         paths,
         root=args.repo_root,
         file_timeout=args.file_timeout,
-        workers=max(1, args.workers),
+        workers=1,
         checkpoint_path=args.checkpoint_jsonl,
-    )
-    incomplete = tuple(
-        sorted({row.category for row in summary.rows if row.category != "completed"})
+        progress_path=progress_path,
+        progress_stdout=args.progress_stdout,
     )
     if args.json is not None:
         from pandas_floor_summary import floor_summary, relative_files, write_json
@@ -392,23 +325,13 @@ def main() -> int:
     print(
         "SILENT SURFACE: "
         f"files_discovered={summary.discovered} files_completed={summary.completed} "
-        f"auditor_errors={summary.non_native_red} "
         f"construction_panics={summary.construction_panics} "
         f"non_native_red={summary.non_native_red} "
-        f"native_crashes={summary.native_crashes} timeouts={summary.timeouts}"
+        f"timeouts={summary.timeouts} "
+        f"progress={progress_path} engine={engine_path}"
     )
-    if incomplete:
-        print(
-            "SILENT ZERO-TOLERANCE RED: measurement incomplete: "
-            + ", ".join(incomplete)
-        )
-        return 1
-    if summary.offenders:
-        print("SILENT ZERO-TOLERANCE RED")
-        print(format_report(summary.offenders))
-        return 1
-    print("SILENT ZERO-TOLERANCE GREEN: R_silent = 0")
-    return 0
+    print(format_report(summary.offenders))
+    return 1 if r_silent(summary.offenders) else 0
 
 
 if __name__ == "__main__":

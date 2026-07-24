@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 """R_timeouts — permanent baseline-free bounded-termination floor.
 
-Every production source file is lifted in an isolated child under a fixed wall
-clock bound. A child exceeding that bound is one timeout offender. Completed,
-ConstructionPanic, bare-exception, and native-crash terminals remain separate axes.
+In-process enum door. Per-file wall clock via SIGALRM (same process — caches
+stay warm). Progress and engine logs never mix.
 """
 
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
-import subprocess
 import sys
-from typing import Any, Mapping
+from typing import Any, Mapping, NamedTuple, Sequence
 
-# Floors share ``_production_lift_child`` (this directory); make it
-# importable whether run standalone, as a child, or spec-loaded by a test.
-from pathlib import Path as _P
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-sys.path.insert(0, str(_P(__file__).resolve().parent))
-from typing import NamedTuple, Sequence
+from _enum_floor_runtime import (  # noqa: E402
+    iter_with_tqdm,
+    open_progress,
+    prepare_floor_io,
+    production_roots,
+    relative_to_root,
+    require_python_paths,
+    timed_enum_file,
+)
+from _production_lift_child import production_lift_bootstrap_error  # noqa: E402
 
 
 class TimeoutOffender(NamedTuple):
@@ -48,66 +51,19 @@ def r_timeouts(offenders: Sequence[TimeoutOffender]) -> int:
     return len(offenders)
 
 
-def _python_paths(roots: Sequence[Path]) -> list[Path]:
-    return sorted(
-        {
-            path
-            for root in roots
-            for path in (root.rglob("*.py") if root.is_dir() else (root,))
-            if path.is_file() and "__pycache__" not in path.parts
-        }
+def _run_one(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
+    rel, _testimony, error, _s = timed_enum_file(
+        path, root=root, file_timeout=file_timeout
     )
-
-
-def production_roots(repo_root: Path) -> tuple[Path, Path]:
-    kit = repo_root / "implementations/python/sugar-lift-py-tests"
-    return (kit / "src/sugar_lift_py_tests", kit / "scripts")
-
-
-def require_python_paths(roots: Sequence[Path]) -> list[Path]:
-    paths = _python_paths(roots)
-    if not paths:
-        raise ValueError(f"no Python source files found under {list(roots)}")
-    return paths
-
-
-def _run_isolated(path: Path, *, root: Path, file_timeout: int) -> ChildResult:
-    rel = path.resolve().relative_to(root.resolve()).as_posix()
-    env = dict(os.environ)
-    env["PYTHONFAULTHANDLER"] = "1"
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "--child-file",
-                str(path),
-                "--child-rel",
-                rel,
-            ],
-            text=True,
-            capture_output=True,
-            timeout=file_timeout,
-            env=env,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
+    if isinstance(error, TimeoutError):
         return ChildResult(
             rel,
             "timeout",
-            timeout_offender(file=rel, timeout_seconds=error.timeout),
+            timeout_offender(file=rel, timeout_seconds=float(file_timeout)),
         )
-    if result.returncode < 0:
-        return ChildResult(rel, "native-crash", None)
-    if result.returncode:
+    if error is not None:
         return ChildResult(rel, "non-native-red", None)
     return ChildResult(rel, "completed", None)
-
-
-def _run_child(path: Path, rel: str) -> int:
-    from _production_lift_child import run_production_lift_child
-
-    return run_production_lift_child(path, rel)
 
 
 def audit_paths(
@@ -115,56 +71,93 @@ def audit_paths(
     *,
     root: Path,
     file_timeout: int,
-    workers: int,
+    workers: int = 1,
     checkpoint_path: Path | None = None,
+    progress_path: Path | None = None,
+    progress_stdout: bool = False,
 ) -> AuditSummary:
+    del workers  # always single-process
     if file_timeout > 30:
         raise ValueError("per-file timeout may not exceed 30 seconds")
+
+    pending = list(sorted(paths))
+    done_rows: dict[str, ChildResult] = {}
+
     if checkpoint_path is not None:
-        from pandas_census_checkpoint import checkpointed_path_results
+        from pandas_census_checkpoint import Checkpoint
 
-        def serialize(row: ChildResult) -> Mapping[str, Any]:
-            return {
-                "category": row.category,
-                "timeoutSeconds": (
-                    row.offender.timeout_seconds if row.offender else None
-                ),
-            }
-
-        def deserialize(file: str, raw: Mapping[str, Any]) -> ChildResult:
+        files = tuple(relative_to_root(p, root) for p in pending)
+        by_rel = {relative_to_root(p, root): p for p in pending}
+        checkpoint = Checkpoint(
+            floor="timeout", files=files, path=checkpoint_path
+        )
+        for row in checkpoint.rows():
+            raw = row["result"]
+            file = str(row["file"])
             seconds = raw.get("timeoutSeconds")
             offender = (
                 timeout_offender(file=file, timeout_seconds=float(seconds))
-                if raw.get("category") == "timeout" and isinstance(seconds, (int, float))
+                if raw.get("category") == "timeout"
+                and isinstance(seconds, (int, float))
                 else None
             )
-            return ChildResult(file, str(raw.get("category")), offender)
+            done_rows[file] = ChildResult(file, str(raw.get("category")), offender)
+        pending_rels = list(checkpoint.pending_files())
+        pending = [by_rel[r] for r in pending_rels]
+    else:
+        checkpoint = None
+        by_rel = {}
 
-        rows = checkpointed_path_results(
-            floor="timeout",
-            paths=paths,
-            root=root,
-            checkpoint_path=checkpoint_path,
-            worker=lambda path: _run_isolated(
-                path, root=root, file_timeout=file_timeout
+    progress_stream = None
+    if progress_path is not None:
+        progress_stream = open_progress(
+            progress_path,
+            header=(
+                f"# timeout floor (in-process enum)\n"
+                f"# files={len(paths)} pending={len(pending)}\n"
             ),
-            serialize=serialize,
-            deserialize=deserialize,
-            workers=workers,
+        )
+
+    try:
+        iterator: Sequence[Path] | Any = pending
+        if progress_stream is not None:
+            iterator = iter_with_tqdm(
+                pending,
+                progress=progress_stream,
+                total=len(paths),
+                initial=len(paths) - len(pending),
+                desc="timeout",
+                progress_stdout=progress_stdout,
+            )
+        for path in iterator:
+            row = _run_one(path, root=root, file_timeout=file_timeout)
+            if checkpoint is not None:
+                checkpoint.append(
+                    row.file,
+                    {
+                        "category": row.category,
+                        "timeoutSeconds": (
+                            row.offender.timeout_seconds if row.offender else None
+                        ),
+                    },
+                )
+            done_rows[row.file] = row
+    finally:
+        if progress_stream is not None:
+            progress_stream.close()
+
+    if checkpoint is not None:
+        ordered = tuple(
+            done_rows[f] if f in done_rows else ChildResult(f, "missing", None)
+            for f in checkpoint.files
         )
     else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            rows = tuple(
-                executor.map(
-                    lambda path: _run_isolated(
-                        path, root=root, file_timeout=file_timeout
-                    ),
-                    sorted(paths),
-                )
-            )
+        ordered = tuple(
+            done_rows[relative_to_root(p, root)] for p in sorted(paths)
+        )
     return AuditSummary(
-        rows=rows,
-        offenders=tuple(row.offender for row in rows if row.offender is not None),
+        rows=ordered,
+        offenders=tuple(row.offender for row in ordered if row.offender is not None),
     )
 
 
@@ -181,23 +174,17 @@ def main() -> int:
     )
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
-    parser.add_argument(
-        "--workers", type=int, default=min(16, max(1, os.cpu_count() or 1))
-    )
-    parser.add_argument("--child-file", type=Path)
-    parser.add_argument("--child-rel")
+    parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--json", type=Path)
     parser.add_argument("--checkpoint-jsonl", type=Path)
+    parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument("--engine-log", type=Path, default=None)
+    parser.add_argument("--progress", type=Path, default=None)
+    parser.add_argument("--progress-stdout", action="store_true")
     args = parser.parse_args()
-    if args.child_file or args.child_rel:
-        if args.child_file is None or args.child_rel is None:
-            parser.error("child mode requires --child-file and --child-rel")
-        return _run_child(args.child_file, args.child_rel)
-    from _production_lift_child import production_lift_bootstrap_error
 
     boot_error = production_lift_bootstrap_error()
     if boot_error is not None:
-        # ONE infrastructure failure -- never multiplied per source file.
         print(
             "TIMEOUT SCANNER INFRASTRUCTURE FAILURE: the production "
             f"lift door did not bootstrap: {boot_error}"
@@ -208,12 +195,22 @@ def main() -> int:
     except ValueError as error:
         print(f"TIMEOUT ZERO-TOLERANCE RED: {error}")
         return 1
+
+    _base, engine_path, progress_path = prepare_floor_io(
+        repo_root=args.repo_root,
+        floor="timeout",
+        out_dir=args.out_dir,
+        engine_log=args.engine_log,
+        progress=args.progress,
+    )
     summary = audit_paths(
         paths,
         root=args.repo_root,
         file_timeout=args.file_timeout,
-        workers=max(1, args.workers),
+        workers=1,
         checkpoint_path=args.checkpoint_jsonl,
+        progress_path=progress_path,
+        progress_stdout=args.progress_stdout,
     )
     rows = summary.rows
     offenders = summary.offenders
@@ -248,7 +245,8 @@ def main() -> int:
         f"discovered={len(rows)} "
         f"completed={sum(row.category == 'completed' for row in rows)} "
         f"non_native_red={sum(row.category == 'non-native-red' for row in rows)} "
-        f"native_crashes={sum(row.category == 'native-crash' for row in rows)}"
+        f"timeouts={len(offenders)} "
+        f"progress={progress_path} engine={engine_path}"
     )
     print(f"R_timeouts = {len(offenders)}")
     for row in offenders:
