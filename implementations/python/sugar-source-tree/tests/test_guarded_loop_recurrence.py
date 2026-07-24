@@ -250,3 +250,19 @@ def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
     )
     with pytest.raises(BindingStateWireGap, match="multi-face"):
         _seal_runtime_state(multi)
+
+
+def test_conserve_unique_records_collapses_identical_keeps_distinct():
+    # Loop-graph assembly can re-emit a byte-identical record; the decoder keys
+    # records by CID and requires each once. Conservation collapses exact
+    # duplicates (first order preserved) but never a genuinely distinct record.
+    from sugar_source_tree.live_loop_construction import _conserve_unique_records
+
+    a = {"kind": "loop-body-transform", "bodyTransformCid": "cid-a"}
+    b = {"kind": "loop-latch-obligation", "latchObligationCid": "cid-b"}
+    c = {"kind": "loop-body-transform", "bodyTransformCid": "cid-c"}
+
+    # identical re-emissions of a and b collapse to one each, in first order
+    assert _conserve_unique_records([a, b, dict(a), dict(b)]) == [a, b]
+    # distinct records (different content) are all retained
+    assert _conserve_unique_records([a, c, b]) == [a, c, b]
