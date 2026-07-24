@@ -1208,6 +1208,7 @@ import errno
 import os
 import shutil
 import sys
+import time
 
 source, destination, name = sys.argv[1:]
 
@@ -1217,7 +1218,14 @@ def complete(path: str) -> bool:
         for suffix in (".gz", ".sugarbin.json", ".metadata.json")
     )
 
-for attempt in range(2):
+# A concurrent publisher may be mid-install at `destination` (the cell dir
+# exists but is not yet complete). NEVER rmtree a live peer's cell -- that
+# corrupts an in-progress publish and re-triggers the race. Wait for the peer
+# to finish and defer to it. Only a cell that stays incomplete past the window
+# is genuinely abandoned by a dead publisher; reclaim that once, then retry.
+deadline = time.monotonic() + 15.0
+reclaimed = False
+while True:
     try:
         os.rename(source, destination)
         raise SystemExit(0)
@@ -1225,9 +1233,13 @@ for attempt in range(2):
         if e.errno not in (errno.EEXIST, errno.ENOTEMPTY):
             raise
         if complete(destination):
-            raise SystemExit(3)  # peer won
-        if attempt == 0 and os.path.isdir(destination):
-            shutil.rmtree(destination)
+            raise SystemExit(3)  # a peer won; its cell is complete
+        if time.monotonic() < deadline:
+            time.sleep(0.25)  # peer is mid-install; let it finish
+            continue
+        if not reclaimed and os.path.isdir(destination):
+            shutil.rmtree(destination, ignore_errors=True)
+            reclaimed = True
             continue
         raise SystemExit(1)
 PY
@@ -1237,7 +1249,12 @@ PY
   fi
   local status=$?
   rm -rf "$tmp"
-  if [[ "$status" == 3 ]] && filesystem_shelf_complete "$cell" "$name"; then
+  # Any nonzero exit: a concurrent peer may have completed the cell during our
+  # attempt (status 3 = we observed it complete; status 1 = we gave up, but a
+  # peer could still have won the rename). Success iff the cell is complete by
+  # ANY publisher -- content is content-addressed and immutable, so a peer's
+  # complete cell is exactly ours.
+  if filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf publish raced for $name; peer won"
     return 0
   fi
