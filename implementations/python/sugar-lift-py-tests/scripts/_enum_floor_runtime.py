@@ -209,5 +209,7 @@ def timed_enum_file(
         return rel, testimony, None, time.perf_counter() - t0
     except TimeoutError as error:
         return rel, None, error, time.perf_counter() - t0
-    except BaseException as error:  # noqa: BLE001 -- floor classification
+    # ConstructionPanic is BaseException: must not be held here. It kills the
+    # process; the supervisor records the in-flight file as a loud terminal.
+    except Exception as error:  # bare Python failures only
         return rel, None, error, time.perf_counter() - t0

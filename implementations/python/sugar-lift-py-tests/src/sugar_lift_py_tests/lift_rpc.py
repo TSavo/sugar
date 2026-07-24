@@ -2315,18 +2315,10 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
     return True
 
 
-def _serialize_typed_construction_failure(exc: BaseException) -> dict[str, Any] | None:
-    """JSON-RPC data payload for known typed construction failures, else None."""
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+def _serialize_source_call_binding_gap(exc: BaseException) -> dict[str, Any] | None:
+    """JSON-RPC data for SourceCallBindingGap only — never ConstructionPanic."""
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
-    if isinstance(exc, ConstructionPanic):
-        return {
-            "kind": "typed-loud",
-            "exception_type": type(exc).__name__,
-            "stage": "dispatch",
-            "diagnostic": exc.info.to_json(),
-        }
     if isinstance(exc, SourceCallBindingGap):
         return {
             "kind": "typed-loud",
@@ -2343,6 +2335,8 @@ def _serialize_typed_construction_failure(exc: BaseException) -> dict[str, Any] 
 
 
 def _serve() -> None:
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     request_count = 0
     while True:
         msg = _recv()
@@ -2363,9 +2357,30 @@ def _serve() -> None:
         request_count += 1
         try:
             keep_serving = _dispatch_request(msg)
+        except ConstructionPanic as panic:
+            # Fatal to this resident: emit a protocol error then die. Never
+            # convert ConstructionPanic into a successful result, None, or
+            # keep-serving soft continue. Parent may use --allow-failed-components
+            # to continue other components after this process exits.
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "error": {
+                        "code": -32603,
+                        "message": str(panic),
+                        "data": {
+                            "exception_type": type(panic).__name__,
+                            "stage": "dispatch",
+                            "diagnostic": panic.info.to_json(),
+                        },
+                    },
+                }
+            )
+            raise SystemExit(1) from panic
         except SourceTreePanic as panic:
-            # Typed construction failure: serialize as JSON-RPC error and keep
-            # serving. Never exit 1 unclassified after the client has a typed row.
+            # Tree-gap (not ConstructionPanic): serialize as JSON-RPC error and
+            # keep serving. Never exit 1 unclassified after the client has a row.
             _send(
                 {
                     "jsonrpc": "2.0",
@@ -2389,9 +2404,26 @@ def _serve() -> None:
             )
             _log_resident_profile(request_count, msg.get("method"))
             continue
-        except BaseException as exc:
-            # ConstructionPanic is BaseException; other kit typed gaps may be too.
-            typed = _serialize_typed_construction_failure(exc)
+        except RecursionError as exc:
+            # C-stack overflow: typed frame, keep resident for the next request.
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "error": {
+                        "code": -32603,
+                        "message": f"recursion limit exceeded: {exc}",
+                        "data": {
+                            "exception_type": "RecursionError",
+                            "stage": "dispatch",
+                        },
+                    },
+                }
+            )
+            _log_resident_profile(request_count, msg.get("method"))
+            continue
+        except Exception as exc:
+            typed = _serialize_source_call_binding_gap(exc)
             if typed is None:
                 raise
             _send(
