@@ -399,7 +399,34 @@ pub(crate) fn dispatch_lift_path(
     let initialize_response = kit.initialize_response().clone();
     enforce_python_kit_source(surface, &initialize_response)?;
     let before = current_rss_kib();
-    let claim = kit.lift(lift_params).map_err(lift_error_from_kit)?;
+
+    // There is no lift RPC. Full-tree "lift" is enumerate(SourceTree) via
+    // sugar.enumerate. Sending method "lift" is the retired factory door.
+    let claim = if kit.supports_rpc_method("sugar.enumerate") {
+        let root = project_root_for_enumerate(project_root, &lift_params);
+        let response = sugar_compiler::tree::fold_enumerate_source_tree(&kit, root.as_path())
+            .map_err(lift_error_from_kit)?;
+        claim_from_enumerate_response(surface, &lift_params, response)?
+    } else if let Some(method) = manifest.method.as_deref().filter(|m| *m != "lift") {
+        // Consumer plugins (e.g. sugar.plugin.lift_implications) keep an
+        // explicit non-lift method from the manifest. Default/empty/"lift"
+        // is never sent.
+        let _ = method;
+        kit.lift(lift_params).map_err(lift_error_from_kit)?
+    } else {
+        return Err(LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::PathExecution,
+            "lift.enumerate",
+            format!(
+                "surface `{surface}` does not advertise sugar.enumerate and has no \
+                 non-lift plugin method; sending JSON-RPC method `lift` is retired \
+                 — kits construct only through sugar.enumerate over SourceTree"
+            ),
+            "Advertise sugar.enumerate on the kit declaration, or set manifest \
+             method to a real plugin method (never `lift`).",
+        ));
+    };
+
     trace_lift_plugin_claim_checkpoint_with_delta(
         "dispatch_lift_path.after_kit_lift",
         &claim,
@@ -413,6 +440,64 @@ pub(crate) fn dispatch_lift_path(
     let mut session = LiftPluginSession::from_claim(claim)?;
     session.initialize_response = Some(initialize_response);
     Ok(session)
+}
+
+/// Workspace root for full-tree enumeration: honor per-plugin workspace_override
+/// on the typed lift request when present.
+fn project_root_for_enumerate(project_root: &Path, lift_params: &LiftRequest) -> PathBuf {
+    // LiftRequest serializes workspace_root; prefer that when set.
+    let wire = lift_params.to_wire_value().ok();
+    if let Some(Value::String(root)) = wire
+        .as_ref()
+        .and_then(|v| v.get("workspace_root"))
+        .or_else(|| wire.as_ref().and_then(|v| v.get("workspaceRoot")))
+    {
+        if !root.is_empty() {
+            return PathBuf::from(root);
+        }
+    }
+    project_root.to_path_buf()
+}
+
+/// Wrap a full-tree enumerate `ir-document` as the DomainClaim mint expects.
+fn claim_from_enumerate_response(
+    surface: &str,
+    lift_params: &LiftRequest,
+    response: Value,
+) -> Result<DomainClaim, LiftPluginError> {
+    use libsugar::core::Term;
+    use sugar_ir_types::Sort;
+
+    let wire = lift_params.to_wire_value().map_err(|error| {
+        LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::RequestEncoding,
+            "lift.request",
+            format!("encode lift request: {error}"),
+            "Inspect LiftPluginOptions and build_lift_params.",
+        )
+    })?;
+    let input = Input::Spec(wire);
+    // Same membrane as the old lift-plugin path: Term::Const payload carrying
+    // the wire response. Sort name is opaque for address identity.
+    let response_term = Term::Const {
+        value: response,
+        sort: Sort::Primitive {
+            name: "EnumerateSourceTreeResponse".to_string(),
+        },
+    };
+    let transport = LiftPluginKit::new(surface, Vec::new(), None);
+    let mut claim = transport
+        .claim_from_response_term(&input, response_term)
+        .map_err(|error| {
+            LiftPluginError::diagnostic(
+                LiftPluginDiagnosticKind::PathExecution,
+                "lift.enumerate.claim",
+                error.to_string(),
+                "Full-tree sugar.enumerate response must form a DomainClaim payload.",
+            )
+        })?;
+    claim.from = vec![address(&input)];
+    Ok(claim)
 }
 
 /// Refuse when kit source identity differs from the binary's compile-time
