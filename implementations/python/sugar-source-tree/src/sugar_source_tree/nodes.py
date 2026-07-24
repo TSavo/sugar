@@ -3420,6 +3420,25 @@ class For(Statement):
                             )
                             unrolled.extend(else_body)
                         return _Splice(tuple(unrolled), final_target_bindings)
+                if elements is not None:
+                    # A concrete iterable whose target did not destructure its
+                    # elements -- a starred/nested target, or an arity the
+                    # display does not match -- is a runtime binding error, never
+                    # a symbolic universal. It stays loud. (The symbolic-jump
+                    # case set `elements = None` above and falls through.)
+                    raise SugarNotWritten(
+                        owner="For.substitute",
+                        observed=(
+                            f"concrete for-loop target {self.target.kind} does not "
+                            "destructure its elements"
+                        ),
+                        requested="a target that binds every concrete element by name",
+                        fix=(
+                            "use a Name or a flat tuple/list of Names matching the "
+                            "element arity; a starred, nested, or arity-mismatched "
+                            "target stays loud until its destructuring is written"
+                        ),
+                    )
 
             # Symbolic (or unsupported) loop: keep the node, mask the target AND
             # every loop-carried variable (a name the body rebinds), recurse.
