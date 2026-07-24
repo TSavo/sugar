@@ -1344,16 +1344,29 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
                     plugin: conn.surface.clone(),
                     reason: format!("parameter-contract link unit deserialize: {error}"),
                 })?;
-        let sets = sugar_linker::caller_parameter::fold_parameter_contract_link_units(
-            &units,
-        )
-        .map_err(|gap| EnumerateError::Malformed {
-            plugin: conn.surface.clone(),
-            reason: format!("parameter-contract link gap: {gap:?}"),
-        })?;
-        for (unit, set) in units.iter().zip(sets.iter()) {
+        // Per-unit tolerant: a unit that cannot fully discharge (e.g. an open
+        // caller universe) is LEFT unresolved -- its post() stays a conserved
+        // panic-gap, exactly as before this feature. A single un-dischargeable
+        // demand never aborts the rest of the project.
+        for unit in &units {
+            let set = match sugar_linker::caller_parameter::fold_one_link_unit(
+                unit, &units,
+            ) {
+                Ok(set) => set,
+                Err(gap) => {
+                    diagnostics.push(json!({
+                        "reason": format!("parameter-contract demand unresolved: {gap:?}"),
+                        "item": unit
+                            .source_memento
+                            .get("source_function_name")
+                            .cloned()
+                            .unwrap_or(Value::Null),
+                    }));
+                    continue;
+                }
+            };
             let cid_value = serde_json::to_value(&unit.link_unit_cid).unwrap();
-            let set_value = serde_json::to_value(set).unwrap();
+            let set_value = serde_json::to_value(&set).unwrap();
             let nodes = resume_rows_rpc(&conn, &cid_value, &set_value)?;
             for node in nodes {
                 if let Some(audit) = node.get("audit") {

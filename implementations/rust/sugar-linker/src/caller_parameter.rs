@@ -608,6 +608,28 @@ fn closed_universe_for<'a>(
 /// every enrolled candidate through [`discharge_parameter_candidate`], producing
 /// one authenticated [`ParameterContractResolutionSetV1`] per link unit (bound
 /// to that unit's `link_unit_cid`) or the exact typed gap that blocked it.
+/// Discharge ONE link unit against the whole enumerated project. Returns the
+/// authenticated resolution set, or the exact gap that blocked it. The caller
+/// decides per unit: a gap leaves that function unresolved (its post() stays a
+/// conserved panic-gap), NEVER aborting the rest of the project -- an open
+/// caller universe in one function must not fail the whole census.
+pub fn fold_one_link_unit(
+    unit: &ParameterContractLinkUnitV1,
+    all_units: &[ParameterContractLinkUnitV1],
+) -> Result<ParameterContractResolutionSetV1, ParameterResolutionGapV1> {
+    unit.validate()?;
+    let callee = &unit.parameter_owned_contract;
+    let universe = closed_universe_for(callee, all_units);
+    let mut resolutions = Vec::with_capacity(unit.candidates.len());
+    for candidate in &unit.candidates {
+        resolutions.push(discharge_parameter_candidate(candidate, callee, &universe)?);
+    }
+    Ok(ParameterContractResolutionSetV1::mint(
+        unit.link_unit_cid.clone(),
+        resolutions,
+    ))
+}
+
 pub fn fold_parameter_contract_link_units(
     units: &[ParameterContractLinkUnitV1],
 ) -> Result<Vec<ParameterContractResolutionSetV1>, ParameterResolutionGapV1> {
