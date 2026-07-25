@@ -174,24 +174,46 @@ def construct_manager_behavior(
         source_call_frame_cid=frame.frame_cid,
         formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
     )
+    # Unwrap `block -> return <call>` as many times as the authenticated source
+    # actually nests it.  One hop is a factory that returns a constructor call;
+    # N hops is a factory that returns a call to a helper that returns a
+    # constructor call.  Every hop's prefix statements are KEPT, in execution
+    # order, in factory_prefix -- an unwrapped hop must never silently drop the
+    # statements it stepped over.  The chain is finite because the frame graph
+    # refused its own cycles at resolution; a repeated call identity is still
+    # reported as a typed gap rather than looped on.
+    #
+    # Every force_floor in the chain -- the factory call and each unwrapped hop
+    # -- projects under ONE typed membrane: a ConstructionPanic raised by the
+    # floor is the force-floor STAGE refusing, and becomes the stage-keyed
+    # `force-floor` residual rather than a bare crash or a collapsed
+    # `no-derived-contract`.  Nothing but ConstructionPanic is caught here, and
+    # the typed gaps returned inside (cycle, non-manager) are returns, not
+    # exceptions, so they pass through the membrane untouched.
+    factory_prefix: tuple[FloorValue, ...] = ()
+    seen_calls: set[int] = set()
     try:
         result = call.force_floor(
             None, owner="construct_manager_behavior", project_callsite=False
         )
-        factory_prefix: tuple[FloorValue, ...] = ()
-        if (
+        while (
             isinstance(result, BlockValue)
             and result.statements
             and isinstance(result.statements[-1], ReturnValue)
         ):
-            factory_prefix = result.statements[:-1]
+            factory_prefix = factory_prefix + result.statements[:-1]
             returned = result.statements[-1].value
-            if isinstance(returned, CallSiteValue):
-                result = returned.force_floor(
-                    None, owner="construct_manager_behavior returned object"
-                )
-            else:
+            if not isinstance(returned, CallSiteValue):
                 result = returned
+                break
+            if id(returned) in seen_calls:
+                return ManagerConstructionGapV1(
+                    "opaque-call-target", resolved.cid, "recursive source call graph"
+                )
+            seen_calls.add(id(returned))
+            result = returned.force_floor(
+                None, owner="construct_manager_behavior returned object"
+            )
     except ConstructionPanic as panic:
         # Typed floor projection failure — not a bare crash, not soft silence.
         # Surface as a construction gap so derivation can install a stage-keyed
@@ -244,12 +266,17 @@ _SOURCE_VISIBLE_FRAME_CACHE: dict[
 _SOURCE_VISIBLE_FRAME_HOLD: dict[
     tuple[str, str, str, str, int, int, int, int], object
 ] = {}
+# In-progress definition coordinates.  A cross-module call graph that re-enters
+# a definition already being projected is a cycle: it stays typed-loud exactly
+# like the local recursive case, and never loops.
+_SOURCE_VISIBLE_FRAME_ACTIVE: set[tuple[str, str, str, str, int, int, int, int]] = set()
 
 
 def clear_source_visible_frame_cache() -> None:
     """Drop amortized source-visible frames (tests / hermetic process reuse)."""
     _SOURCE_VISIBLE_FRAME_CACHE.clear()
     _SOURCE_VISIBLE_FRAME_HOLD.clear()
+    _SOURCE_VISIBLE_FRAME_ACTIVE.clear()
 
 
 def resolve_source_visible_frame(
@@ -285,10 +312,20 @@ def resolve_source_visible_frame(
     hit = _SOURCE_VISIBLE_FRAME_CACHE.get(cache_key)
     if hit is not None:
         return hit
+    if cache_key in _SOURCE_VISIBLE_FRAME_ACTIVE:
+        # Re-entered while its own frame is still being projected.  Not cached:
+        # the cycle is a property of the traversal, not of this definition.
+        return ManagerConstructionGapV1(
+            "opaque-call-target", resolved.cid, "recursive source call graph"
+        )
 
-    result = _resolve_source_visible_frame_uncached(
-        resolved, graph=graph, module=module
-    )
+    _SOURCE_VISIBLE_FRAME_ACTIVE.add(cache_key)
+    try:
+        result = _resolve_source_visible_frame_uncached(
+            resolved, graph=graph, module=module
+        )
+    finally:
+        _SOURCE_VISIBLE_FRAME_ACTIVE.discard(cache_key)
     if isinstance(result, tuple) and len(result) == 3:
         frame, target, source_file = result
         # Hold the SourceFile that owns target/frame node identity.
@@ -354,14 +391,38 @@ def _resolve_source_visible_frame_uncached(
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 
     builtin_floor = builtin_name_temporal()
+
+    # Non-local call targets, resolved through the ONE authenticated export
+    # door.  Demand (a name called in this module and neither locally defined
+    # nor a semantic builtin) maps bijectively onto resolution: exactly one
+    # entry per demanded name, in `external_frames` when the defining source is
+    # authenticated in this artifact, otherwise in `external_opaque`.
+    external_frames: dict[str, object] = {}
+    external_opaque: set[str] = set()
+
+    def _opaque_call_targets(function: FunctionDef) -> tuple[str, ...]:
+        opaque: list[str] = []
+        for call in _local_named_calls(function):
+            name = call.func.id
+            if name in external_frames:
+                continue
+            if not _named_call_is_source_opaque(
+                name, definition_names, builtin_floor
+            ):
+                continue
+            if name in external_opaque:
+                opaque.append(name)
+                continue
+            frame = _resolve_external_call_frame(name, resolved=resolved, graph=graph)
+            if frame is None:
+                external_opaque.add(name)
+                opaque.append(name)
+            else:
+                external_frames[name] = frame
+        return tuple(opaque)
+
     if isinstance(target, FunctionDef):
-        opaque = tuple(
-            call.func.id
-            for call in _local_named_calls(target)
-            if _named_call_is_source_opaque(
-                call.func.id, definition_names, builtin_floor
-            )
-        )
+        opaque = _opaque_call_targets(target)
         if opaque:
             return ManagerConstructionGapV1(
                 "opaque-call-target", resolved.cid, opaque[0]
@@ -390,13 +451,7 @@ def _resolve_source_visible_frame_uncached(
         progressed = False
         for function in tuple(pending):
             local_calls = tuple(_local_named_calls(function))
-            opaque = tuple(
-                call.func.id
-                for call in local_calls
-                if _named_call_is_source_opaque(
-                    call.func.id, definition_names, builtin_floor
-                )
-            )
+            opaque = _opaque_call_targets(function)
             if opaque:
                 return ManagerConstructionGapV1(
                     "opaque-call-target", resolved.cid, opaque[0]
@@ -410,6 +465,8 @@ def _resolve_source_visible_frame_uncached(
                 continue
             for call in local_calls:
                 nested = frames.get(call.func.id)
+                if nested is None:
+                    nested = external_frames.get(call.func.id)
                 if nested is not None:
                     context.source_call_frames[_call_coordinate(call)] = nested
             frames[function.name] = function.source_visible_call_frame()
@@ -425,6 +482,54 @@ def _resolve_source_visible_frame_uncached(
             "definition-missing", resolved.cid, "ordinary source call frame"
         )
     return frame, target, source_file
+
+
+def _resolve_external_call_frame(
+    name: str,
+    *,
+    resolved: ResolvedPythonObjectV1,
+    graph: DependencyArtifactGraph,
+) -> object | None:
+    """Project one non-local call target through the authenticated export door.
+
+    A name called inside an authenticated module but not defined there is bound
+    by that module's own top-level import -- which IS a static export of that
+    module.  So the callee is resolved by the SAME static export/re-export
+    resolver that authenticated the outer callable (`resolve_export`), against
+    the SAME artifact graph, and is then projected by the same
+    `resolve_source_visible_frame` door.  There is no second resolver, no
+    executed import, and no name arm: the only question asked is whether the
+    defining source is authenticated inside this artifact.
+
+    Returns the ordinary source frame, or ``None`` when the callee has no
+    authenticated defining source in this artifact (native/builtin callables,
+    modules outside the distribution manifest, dynamic or ambiguous exports,
+    free names).  ``None`` keeps the call site typed-loud at
+    ``opaque-call-target``; it never yields a fabricated contract.
+    """
+    from .dependency_artifact import ResolvedPythonObjectV1 as _Resolved
+
+    callee = _resolve_export(
+        graph,
+        resolved.import_binding_cid,
+        resolved.module_name,
+        name,
+        (),
+        frozenset(),
+    )
+    if not isinstance(callee, _Resolved):
+        return None
+    projected = resolve_source_visible_frame(callee, graph=graph)
+    if isinstance(projected, ManagerConstructionGapV1):
+        return None
+    frame, _target = projected
+    return frame
+
+
+def _resolve_export(*args, **kwargs):
+    from .dependency_artifact import _resolve_export as _door
+
+    return _door(*args, **kwargs)
 
 
 def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:
@@ -458,6 +563,11 @@ def _named_call_is_source_opaque(
     A name bound in the builtin temporal is not source-opaque. Construction may
     still refuse at force_floor when the builtin is not yet reducible; that is a
     later, stage-keyed gap, not a false free-name opaque.
+
+    This is the LOCAL question only.  A name that is source-opaque here is then
+    offered to the one authenticated export door (``_opaque_call_targets`` ->
+    ``_resolve_external_call_frame``); it is reported as ``opaque-call-target``
+    only when that door also declines.
     """
     if name in definition_names:
         return False
