@@ -384,7 +384,14 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         next(source.functions()).sugar()
 
 
-def test_multiple_items_and_non_name_binding_stay_typed_loud(tmp_path):
+def test_multiple_items_nest_and_non_name_binding_stays_typed_loud(tmp_path):
+    """Multi-item With is no longer a gap: it nests into single-item Withs.
+
+    ``MultipleContextManagerItems`` was the shell that watched this; it is
+    deleted, because the illegal shape (a multi-manager With reaching the
+    resource router) is now unconstructable — construction rewrites it into
+    Python's own nested spelling first. Non-Name binding targets stay loud.
+    """
     from sugar_lift_python_source.source_oracle import path_source
 
     multiple = tmp_path / "multiple.py"
@@ -404,9 +411,22 @@ def test_multiple_items_and_non_name_binding_stay_typed_loud(tmp_path):
         ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
     )
     source = SourceFile(path_source(str(multiple)), construction_context=context)
-    with pytest.raises(SugarNotWritten) as caught:
-        next(source.functions()).sugar()
-    assert type(caught.value).__name__ == "MultipleContextManagerItems"
+    nested = next(source.functions()).sugar()
+    chain = []
+
+    def _walk(node):
+        if isinstance(node, WithResourceSugar):
+            chain.append(node)
+            for child in node.body:
+                _walk(child)
+            return
+        for field in ("body", "statements", "entries"):
+            for child in getattr(node, field, ()) or ():
+                _walk(child)
+
+    _walk(nested)
+    assert len(chain) == 2
+    assert chain[1] in chain[0].body
 
     target = tmp_path / "target.py"
     target.write_text(
