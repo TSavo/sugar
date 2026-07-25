@@ -2722,29 +2722,9 @@ class Assign(Statement):
         ):
             return None
 
-        starred = [
-            index
-            for index, element in enumerate(target.elts)
-            if isinstance(element, Starred)
-        ]
-        if len(starred) > 1:
+        pairs = self._display_unpack_pairs(target, value)
+        if pairs is None:
             return None
-        pairs = []
-        if not starred:
-            if len(target.elts) != len(value.elts):
-                return None
-            pairs = list(zip(target.elts, value.elts))
-        else:
-            star_index = starred[0]
-            suffix = len(target.elts) - star_index - 1
-            if len(value.elts) < len(target.elts) - 1:
-                return None
-            pairs.extend(zip(target.elts[:star_index], value.elts[:star_index]))
-            rest_end = len(value.elts) - suffix if suffix else len(value.elts)
-            rest = self._make_unpack_rest_list(value.elts[star_index:rest_end])
-            pairs.append((target.elts[star_index].value, rest))
-            if suffix:
-                pairs.extend(zip(target.elts[-suffix:], value.elts[-suffix:]))
 
         bindings = {}
         for child_target, child_value in pairs:
@@ -2752,6 +2732,92 @@ class Assign(Statement):
             if child is None:
                 return None
             bindings.update(child)
+        return bindings
+
+    def _display_unpack_pairs(self, target, value):
+        """Zip one Tuple/List target against a matching display RHS.
+
+        Supports at most one starred element. Returns ``None`` when arity or
+        structure cannot be authenticated from a concrete display.
+        """
+        if not isinstance(target, (Tuple_, List)) or not isinstance(
+            value, (Tuple_, List)
+        ):
+            return None
+        starred = [
+            index
+            for index, element in enumerate(target.elts)
+            if isinstance(element, Starred)
+        ]
+        if len(starred) > 1:
+            return None
+        if not starred:
+            if len(target.elts) != len(value.elts):
+                return None
+            return list(zip(target.elts, value.elts))
+        star_index = starred[0]
+        suffix = len(target.elts) - star_index - 1
+        if len(value.elts) < len(target.elts) - 1:
+            return None
+        pairs = list(zip(target.elts[:star_index], value.elts[:star_index]))
+        rest_end = len(value.elts) - suffix if suffix else len(value.elts)
+        rest = self._make_unpack_rest_list(value.elts[star_index:rest_end])
+        pairs.append((target.elts[star_index].value, rest))
+        if suffix:
+            pairs.extend(zip(target.elts[-suffix:], value.elts[-suffix:]))
+        return pairs
+
+    def _flat_store_unpack_pairs(self):
+        """Flat Name|Attribute|Subscript leaves against a display RHS.
+
+        Nested unpack patterns stay on the name-only destructure path (or
+        loud). This is the mass residual: ``o.x, o.y = p, q`` and mixed
+        ``x, o.a = p, q``.
+
+        A leaf is admitted ONLY when the constructed store retains the exact
+        receiver term AND the exact RHS member it is paired with -- positional
+        correspondence is the whole claim of an unpack, so a store that cannot
+        carry its own value is not allowed to stand in for one. Attribute
+        leaves qualify (``AttributeStoreEffectSugar`` carries receiver, attr
+        and value). A Subscript leaf qualifies only over an authenticated
+        object place (``PlaceAssignSugar`` carries receiver, selector, value);
+        over an opaque receiver the only available store sugar is
+        ``SubscriptStoreEffectSugar``, which carries neither receiver nor
+        value -- ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct
+        identically -- so that shape stays loud rather than silently
+        mis-modelling the pairing.
+        """
+        if len(self.targets) != 1:
+            return None
+        target = self.targets[0]
+        if not isinstance(target, (Tuple_, List)):
+            return None
+        if not isinstance(self.value, (Tuple_, List)):
+            return None
+        pairs = self._display_unpack_pairs(target, self.value)
+        if pairs is None:
+            return None
+        for leaf, _value in pairs:
+            if not isinstance(leaf, (Name, Attribute, Subscript)):
+                return None
+            if isinstance(leaf, Subscript) and not isinstance(
+                leaf.value, ObjectPlaceStateV1
+            ):
+                return None
+        # Only useful when at least one leaf is a store (Attribute/Subscript);
+        # pure-Name flat unpack is MultiAssignSugar via _destructured_binding.
+        if not any(isinstance(leaf, (Attribute, Subscript)) for leaf, _ in pairs):
+            return None
+        return pairs
+
+    def _name_bindings_from_store_unpack(self, pairs):
+        """Lexical Name leaves only — stores are not temporal bindings."""
+        bindings = {}
+        for leaf, value in pairs:
+            if isinstance(leaf, Name):
+                bindings[leaf.id] = value
+            elif isinstance(leaf, Starred) and isinstance(leaf.value, Name):
+                bindings[leaf.value.id] = value
         return bindings
 
     def _make_unpack_rest_list(self, elements):
@@ -2844,7 +2910,18 @@ class Assign(Statement):
                     and entry.state.object_identity_cid
                     == target.value.object_identity_cid
                 }
-            return self._destructured_binding()
+            # Name-only nested/flat display unpack.
+            name_only = self._destructured_binding()
+            if name_only is not None:
+                return name_only
+            # Mixed Name + Attribute/Subscript leaves against a display: bind
+            # only the Name leaves; stores are construction effects, not
+            # temporal bindings.
+            store_pairs = self._flat_store_unpack_pairs()
+            if store_pairs is not None:
+                names = self._name_bindings_from_store_unpack(store_pairs)
+                return names if names else None
+            return None
         if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             # Store targets do not bind lexical names, but they also do not
             # erase the Name targets in the same left-to-right assignment.
@@ -3048,29 +3125,98 @@ class Assign(Statement):
 
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
             bindings = self._destructured_binding()
-            if bindings is None:
-                target = self.targets[0]
-                if (
-                    not isinstance(self.value, (Tuple_, List))
-                    and target.elts
-                    and all(isinstance(item, Name) for item in target.elts)
-                ):
-                    from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
-                        DynamicUnpackAssignSugar,
-                    )
+            if bindings is not None:
+                from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
 
-                    return DynamicUnpackAssignSugar(
-                        tuple(item.id for item in target.elts),
-                        self.value.sugar(),
-                        self.fragment,
-                    )
-                return super()._construct_sugar()
-            from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
+                return MultiAssignSugar(
+                    bindings=tuple(
+                        (name, val.sugar()) for name, val in bindings.items()
+                    ),
+                    site=self.fragment,
+                )
+            # Flat Name|Attribute|Subscript leaves against a display RHS —
+            # historical factory mass (dual-subscript / multi-attribute unpack).
+            store_pairs = self._flat_store_unpack_pairs()
+            if store_pairs is not None:
+                from sugar_lift_py_tests.sugar.assign_sugar import (
+                    UnpackStoreAssignSugar,
+                )
+                from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                    AttributeStoreEffectSugar,
+                )
 
-            return MultiAssignSugar(
-                bindings=tuple((name, val.sugar()) for name, val in bindings.items()),
-                site=self.fragment,
-            )
+                name_bindings = []
+                stores = []
+                for leaf, val in store_pairs:
+                    if isinstance(leaf, Name):
+                        name_bindings.append((leaf.id, val.sugar()))
+                        continue
+                    if isinstance(leaf, Attribute):
+                        if isinstance(leaf.value, ObjectPlaceStateV1):
+                            from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                                PlaceAssignSugar,
+                            )
+
+                            stores.append(
+                                PlaceAssignSugar(
+                                    receiver=leaf.value.sugar(),
+                                    selector_kind="attribute",
+                                    selector=leaf.attr,
+                                    value=val.sugar(),
+                                    site=leaf.fragment,
+                                )
+                            )
+                        else:
+                            stores.append(
+                                AttributeStoreEffectSugar(
+                                    receiver=leaf.value.sugar(),
+                                    value=val.sugar(),
+                                    attr=leaf.attr,
+                                    site=leaf.fragment,
+                                )
+                            )
+                        continue
+                    if isinstance(leaf, Subscript):
+                        # `_flat_store_unpack_pairs` admits a Subscript leaf
+                        # only over an authenticated object place, because
+                        # PlaceAssignSugar is the only subscript store that
+                        # retains its receiver AND its paired RHS member.
+                        from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                            PlaceAssignSugar,
+                        )
+
+                        stores.append(
+                            PlaceAssignSugar(
+                                receiver=leaf.value.sugar(),
+                                selector_kind="subscript",
+                                selector=leaf.slice_.sugar(),
+                                value=val.sugar(),
+                                site=leaf.fragment,
+                            )
+                        )
+                        continue
+                    return super()._construct_sugar()
+                return UnpackStoreAssignSugar(
+                    bindings=tuple(name_bindings),
+                    stores=tuple(stores),
+                    site=self.fragment,
+                )
+            target = self.targets[0]
+            if (
+                not isinstance(self.value, (Tuple_, List))
+                and target.elts
+                and all(isinstance(item, Name) for item in target.elts)
+            ):
+                from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
+                    DynamicUnpackAssignSugar,
+                )
+
+                return DynamicUnpackAssignSugar(
+                    tuple(item.id for item in target.elts),
+                    self.value.sugar(),
+                    self.fragment,
+                )
+            return super()._construct_sugar()
 
         if len(self.targets) > 1 and all(isinstance(t, Name) for t in self.targets):
             from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
