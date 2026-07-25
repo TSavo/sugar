@@ -38,9 +38,13 @@ on:
   pull_request:
 
 # Cancel superseded runs on the same branch / PR.
+# A superseded run may be the only evidence we will ever get for its commit,
+# so it is allowed to finish. Cancelling it was the same instinct that cost us
+# five package-suite runs and three sole-construction floor runs: treating a
+# measurement as disposable because a newer push exists.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read

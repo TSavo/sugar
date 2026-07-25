@@ -9,15 +9,18 @@ permissions:
   contents: read
   issues: write
 
-concurrency:
-  group: sugar-python-heavy-measurement
-  cancel-in-progress: false
+# NO `concurrency:` BLOCK. GitHub keeps one pending run per group and evicts
+# the rest, which is how five package-suite runs and three sole-construction
+# floor runs were lost. GitHub now retains every run; the machine-wide lease in
+# tools/heavy_measurement_lease.py decides which one measures. A wall census
+# saturates the box, so it is exactly the workload the lease exists for.
 
 jobs:
   numpy-wall:
     name: build numpy wall
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 180
+    # Census budget plus the wait for the lease.
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -59,11 +62,32 @@ jobs:
           : > "$SUGAR_ENGINE_LOG"
           : > "$SUGAR_KIT_LOG"
           set +e
-          make numpy-wall
+          python3 tools/heavy_measurement_lease.py \
+            --class numpy-wall \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --status-file "$GITHUB_WORKSPACE/.sugar/numpy-wall/measurement-status" \
+            -- make numpy-wall
           wall_exit=$?
           set -e
+          if [ "$wall_exit" = "75" ]; then
+            echo "::error::heavy-measurement lease not acquired; the NumPy wall was NOT minted."
+            echo "wall_exit=lease-refused" >> "$GITHUB_OUTPUT"
+            exit 75
+          fi
           echo "wall_exit=$wall_exit" >> "$GITHUB_OUTPUT"
           test -s .sugar/numpy-wall/frontier.json
+
+      # A frontier whose numbers were taken beside another census is a frontier
+      # about the box, not about NumPy.
+      - name: Lease gate (R_lease = 0)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/heavy_measurement_lease_gate.py \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Publish NumPy conservation vector + ΔR
         env:
@@ -135,4 +159,5 @@ jobs:
             .sugar/numpy-wall-logs/engine.jsonl
             .sugar/numpy-wall-logs/transport.jsonl
             .sugar/numpy-wall/
+            lease-record.json
           if-no-files-found: error
