@@ -5803,7 +5803,18 @@ class ListComp(Expression):
         )
 
     def _contains_named_expression(self, roots: tuple) -> bool:
-        """True when a walrus would bind outside the comprehension coordinate."""
+        """True when a walrus would bind outside the comprehension coordinate.
+
+        This -- not `_contains_forbidden_shape` -- is the obstruction every
+        comprehension kind consults when constructing its sugar. A walrus in
+        the element (or a dict's key/value) binds into the ENCLOSING scope,
+        a binding the scoped guarded fold does not model, so the node stays
+        loud. A nested comprehension is no obstruction at all: it is simply
+        another sugar in that position, constructed by its own
+        `_construct_sugar` when the element is lifted. All four kinds share
+        this one reader; `_contains_forbidden_shape` remains the separate,
+        stricter question asked only when DISSOLVING to a display.
+        """
         return any(node.kind == "NamedExpr" for root in roots for node in root.walk())
 
     def _calls_shadowed_range(self, iterable, scope) -> bool:
@@ -6029,7 +6040,7 @@ class SetComp(Expression):
 
     def _construct_sugar(self):
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -6137,7 +6148,7 @@ class DictComp(Expression):
 
     def _construct_sugar(self):
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_forbidden_shape(
+        if generators is None or ListComp._contains_named_expression(
             self, (self.key, self.value)
         ):
             return super()._construct_sugar()
