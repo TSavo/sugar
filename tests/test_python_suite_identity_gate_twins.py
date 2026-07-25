@@ -526,9 +526,7 @@ def test_gate_replaces_provisional_crimes_with_full_current_list():
         authority = decided["authority"]
         assert authority["status"] == "provisional"
         assert authority["profileIdentity"] == "unresolved"
-        assert authority["crimes"] == [
-            crime.split(" ", 1)[0] for crime in gate.gate(report, COMMIT)
-        ]
+        assert authority["crimes"] == ["crime=profile-identity-mismatch"]
         assert returncode == 1
 
 
