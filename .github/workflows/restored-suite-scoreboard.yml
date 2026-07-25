@@ -59,6 +59,7 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/restored-suite-python"
           "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --upgrade pip
+          # Sole dep authority: sugar-lift-py-tests[test] (pyproject.toml).
           "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --no-cache-dir \
             -e implementations/python/libsugar-py \
             -e implementations/python/sugar-emit-python-hypothesis \

@@ -310,31 +310,31 @@ test-python: build-python
 		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e ../sugar-lift-python-source -e '.[test]' numpy pandas scikit-learn && \
+		python -m pip install --quiet -e ../sugar-lift-python-source -e '.[test]' && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-tests"; \
 	(cd implementations/python/sugar-emit-python-pytest && \
 		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e . pytest && \
+		python -m pip install --quiet -e . -e '../sugar-lift-py-tests[test]' && \
 		pytest) || failed="$$failed sugar-emit-python-pytest"; \
 	(cd implementations/python/sugar-lift-python-source && \
 		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest blake3 numpy pandas && \
+		python -m pip install --quiet -e '../sugar-lift-py-tests[test]' -e . && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-python-source"; \
 	(cd implementations/python/sugar-lift-py-pytest-witness && \
 		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest pynacl blake3 cbor2 && \
+		python -m pip install --quiet -e '../sugar-lift-py-tests[test]' -e . && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-pytest-witness"; \
 	(cd implementations/python/sugar-build-witness && \
 		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
-		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest pynacl blake3 cbor2 && \
+		python -m pip install --quiet -e '../sugar-lift-py-tests[test]' -e . && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-build-witness"; \
 	if [ -n "$$failed" ]; then echo "test-python FAIL:$$failed"; exit 1; fi
 
