@@ -505,3 +505,147 @@ def test_a_name_target_construction_carries_no_destructuring_obligation():
     assert "python:unpack.destructure" not in names, names
     assert "python:unpack.project" not in names, names
     assert "python:loop.filter_guard" in names, names
+
+
+# -- a nested comprehension is just another sugar in that position -----------
+#
+# A comprehension appearing in another comprehension's element (or in a dict
+# comprehension's key or value) is NOT a shape the fold must refuse: it is one
+# more sugar the element position lifts, folded over the ENCLOSING coordinate.
+# Every collection form shares that one reader, so none of the four may refuse
+# what the others accept. The only obstruction is a walrus, which binds into
+# the enclosing scope -- a binding the scoped guarded fold does not model.
+
+
+def _exhaustion():
+    return _ctor("python:loop.exhaustion", [], symbol_kind="coordinate")
+
+
+def _inner_listcomp(iterable, coordinate_body):
+    return _ctor(
+        "py.listcomp",
+        [iterable, coordinate_body, _exhaustion()],
+        symbol_kind="coordinate",
+    )
+
+
+def test_a_comprehension_nested_in_a_dict_comprehension_value_is_constructed():
+    # The exact formula, not merely "it did not raise": the outer dictcomp
+    # folds over `xs`, and each entry pairs the outer coordinate with an INNER
+    # listcomp folded over that SAME outer coordinate.
+    post = _post_of("def f(xs, g):\n    return {x: [g(y) for y in x] for x in xs}\n")
+    kind, iterable, body = _fold(post)
+    assert kind == "py.dictcomp"
+    assert iterable == make_var("xs")
+    outer = _coordinate(body)
+    entry = body.body
+    assert entry.name == "python:dict_entry", f"entry was {entry!r}"
+    key, value = entry.args
+    assert key == outer, f"key was {key!r}"
+    assert value.name == "py.listcomp", f"value was {value!r}"
+    # The DISCRIMINATION that makes this test worth running: the inner fold
+    # ranges over the outer COORDINATE, not over the outer iterable. A lying
+    # construction that folded the inner comprehension over `xs` would satisfy
+    # "a listcomp is present" and be flatly wrong.
+    assert value.args[0] == outer, f"inner iterable was {value.args[0]!r}"
+    assert value.args[0] != make_var("xs"), f"inner iterable was {value.args[0]!r}"
+    inner = _coordinate(value.args[1])
+    assert inner != outer, "inner and outer coordinates must be distinct"
+    assert value.args[1].body == _ctor(
+        "py.call", [make_var("g"), inner]
+    ), f"inner body was {value.args[1].body!r}"
+    assert value == _inner_listcomp(outer, value.args[1]), f"value was {value!r}"
+
+
+def test_a_comprehension_nested_in_a_dict_comprehension_key_is_constructed():
+    # The key position is the value position's twin: same obligation, same
+    # coordinate, so a construction that served one and refused the other
+    # would be reading the dict's punctuation rather than its meaning.
+    post = _post_of(
+        "def f(xs, g):\n    return {tuple([g(y) for y in x]): x for x in xs}\n"
+    )
+    _kind, _iterable, body = _fold(post)
+    outer = _coordinate(body)
+    entry = body.body
+    assert entry.name == "python:dict_entry", f"entry was {entry!r}"
+    key, value = entry.args
+    assert value == outer, f"value was {value!r}"
+    nested = key.args[-1]
+    assert nested.name == "py.listcomp", f"nested was {nested!r}"
+    assert nested.args[0] == outer, f"inner iterable was {nested.args[0]!r}"
+
+
+def test_a_comprehension_nested_in_a_set_comprehension_element_is_constructed():
+    post = _post_of("def f(xs, g):\n    return {tuple([g(y) for y in x]) for x in xs}\n")
+    kind, iterable, body = _fold(post)
+    assert kind == "py.setcomp"
+    assert iterable == make_var("xs")
+    outer = _coordinate(body)
+    nested = body.body.args[-1]
+    assert nested.name == "py.listcomp", f"nested was {nested!r}"
+    assert nested.args[0] == outer, f"inner iterable was {nested.args[0]!r}"
+
+
+def test_every_collection_form_accepts_a_nested_comprehension():
+    # The unification itself under test. Four forms, one nested comprehension
+    # in the element position; a form that refused would be reading its own
+    # spelling rather than the shared obligation.
+    for source, kind in (
+        ("def f(xs, g):\n    return [[g(y) for y in x] for x in xs]\n", "py.listcomp"),
+        (
+            "def f(xs, g):\n    return ([g(y) for y in x] for x in xs)\n",
+            "py.generatorexp",
+        ),
+        (
+            "def f(xs, g):\n    return {tuple([g(y) for y in x]) for x in xs}\n",
+            "py.setcomp",
+        ),
+        ("def f(xs, g):\n    return {x: [g(y) for y in x] for x in xs}\n", "py.dictcomp"),
+    ):
+        post = _post_of(source)
+        observed, _iterable, _body = _fold(post)
+        assert observed == kind, f"{source} constructed {observed}"
+        assert "py.listcomp" in _names(post), f"{source} lost its nested fold"
+
+
+def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
+    # The source text holds NO nested comprehension -- substitution puts one
+    # there by threading a local bound to a fold. The obstruction was read off
+    # the node as it stands at construction time, so this refused while its
+    # own source text looked innocent. It must construct like any other.
+    post = _post_of(
+        "def f(xs, g):\n"
+        "    ys = [g(x) for x in xs]\n"
+        "    return {k: ys for k in xs}\n"
+    )
+    kind, iterable, body = _fold(post)
+    assert kind == "py.dictcomp"
+    assert iterable == make_var("xs")
+    outer = _coordinate(body)
+    key, value = body.body.args
+    assert key == outer, f"key was {key!r}"
+    # `ys` does not depend on the outer coordinate, so the substituted fold
+    # ranges over `xs` -- the discrimination against the twin above, where the
+    # inner fold ranged over the coordinate. Same shape, different scope.
+    assert value.name == "py.listcomp", f"value was {value!r}"
+    assert value.args[0] == make_var("xs"), f"inner iterable was {value.args[0]!r}"
+    assert value.args[0] != outer, f"inner iterable was {value.args[0]!r}"
+
+
+def test_a_walrus_in_a_comprehension_element_stays_loud_in_every_form():
+    # The LYING twin's arm: opening the door to a nested comprehension must
+    # not open it to a walrus. A walrus binds into the enclosing scope, which
+    # the scoped guarded fold does not model, so every form stays loud.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    for source in (
+        "def f(xs, g):\n    return [(n := g(x)) for x in xs]\n",
+        "def f(xs, g):\n    return {(n := g(x)) for x in xs}\n",
+        "def f(xs, g):\n    return ((n := g(x)) for x in xs)\n",
+        "def f(xs, g):\n    return {x: (n := g(x)) for x in xs}\n",
+    ):
+        try:
+            _post_of(source)
+        except SugarNotWritten:
+            continue
+        raise AssertionError(f"walrus constructed silently: {source}")
