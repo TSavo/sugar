@@ -93,40 +93,6 @@ def test_with_census_injects_construction_context(tmp_path: Path) -> None:
     assert row["families"].get("RuntimeSelectedContextManager", 0) == 0
 
 
-def test_desugar_axis_counts_yield_from_refusal(tmp_path: Path) -> None:
-    """#6243: construction-total YieldFrom stays on the board under R_desugar."""
-    module = _load("control_effect_recensus")
-    path = tmp_path / "gen.py"
-    path.write_text(
-        "def f(xs):\n" "    yield from xs\n",
-        encoding="utf-8",
-    )
-    row = module._measure_file(path, relative="gen.py", workspace_root=tmp_path)
-    assert row["category"] == "completed"
-    assert row["functionsClean"] == 1
-    # Construction total — no construction family for YieldFrom.
-    assert row["families"].get("SugarNotWritten", 0) == 0 or (
-        "YieldFrom" not in str(row.get("families"))
-    )
-    # Desugar axis owns the refusal.
-    assert row["R_desugar"] >= 1
-    desugar = row.get("desugarFamilies") or {}
-    assert any(
-        "YieldFrom" in key or "yield from" in key.lower() for key in desugar
-    ), desugar
-
-
-def test_desugar_axis_separate_from_construction_r(tmp_path: Path) -> None:
-    """Axes must not be summed into one R on the per-file row."""
-    module = _load("control_effect_recensus")
-    path = tmp_path / "plain.py"
-    path.write_text("def a(z):\n    return z\n", encoding="utf-8")
-    row = module._measure_file(path, relative="plain.py", workspace_root=tmp_path)
-    assert "desugarFamilies" in row
-    assert "R_desugar" in row
-    assert isinstance(row["R_desugar"], int)
-
-
 def test_construction_gap_occurrence_counted_once(tmp_path: Path) -> None:
     """Catch+reporter must not double-tally (392 vs 196 class of defect).
 

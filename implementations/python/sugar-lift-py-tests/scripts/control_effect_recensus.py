@@ -20,6 +20,13 @@ presentation duplication — e.g. mid-band With CM residual ≈213 sites, not
 ~2×). Demand/resolution ``BackendDefect``s are a separate hygiene axis
 (``R_backend_defects``), never merged into construction R.
 
+Behind the desugar door the membrane (sugar_lift_py_tests.desugar_axis) keeps
+three quantities apart: ``R_desugar`` (typed refusals + typed red effects, keyed
+by authenticated effect occurrence), ``desugarConstructionPanics``
+(construction-law None arms — ``ConstructionPanic`` is a ``BaseException``,
+caught BY NAME) and ``desugarDefects`` (ordinary exceptions and named audit /
+instrument gaps). The last two are red and are never semantic R.
+
 No subprocess. No process pool. Construction context is required: bare
 ``fn.sugar()`` with ``construction_context is None`` paints every With as
 ``RuntimeSelectedContextManager`` regardless of resolvability (instrument
@@ -87,55 +94,6 @@ def _configure_engine_log(path: Path) -> None:
     logger.setLevel(logging.DEBUG)
 
 
-def _desugar_owner_key(gap: Exception | BaseException) -> str:
-    """Stable family key for a desugar-layer refusal."""
-    owner = getattr(gap, "owner", None)
-    if isinstance(owner, str) and owner:
-        return owner
-    return type(gap).__name__
-
-
-def _typed_red_owners(outcome: object) -> list[str]:
-    """Effect class names surfaced at desugar (Incomplete / Halted exits)."""
-    from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import (
-        Complete,
-        Completed,
-        ExitSet,
-        Halted,
-        Incomplete,
-    )
-
-    owners: list[str] = []
-
-    def visit(obj: object, depth: int = 0) -> None:
-        if depth > 24 or obj is None:
-            return
-        if isinstance(obj, Incomplete):
-            owners.append(type(obj.effect).__name__)
-            return
-        if isinstance(obj, Complete):
-            visit(obj.value, depth + 1)
-            return
-        if isinstance(obj, ExitSet):
-            for exit_ in getattr(obj, "exits", ()):
-                if isinstance(exit_, Halted):
-                    owners.append(type(exit_.effect).__name__)
-                elif isinstance(exit_, Completed):
-                    visit(exit_.value, depth + 1)
-            return
-        if isinstance(obj, UniverseValue):
-            visit(obj.record, depth + 1)
-            return
-        if isinstance(obj, BlockValue):
-            for entry in getattr(obj, "statements", ()):
-                visit(entry, depth + 1)
-
-    visit(outcome)
-    return owners
-
-
 def _occurrence_key(
     kind: str,
     relative: str,
@@ -181,58 +139,21 @@ def _backend_defect_key(exc: object) -> str:
     ):
         return "BackendDefect:call-demand-missing-from-resolution"
     if "BackendDefect" in name or "backend defect" in lowered:
-        return f"BackendDefect:{name}" if name != "BackendDefect" else "BackendDefect"
+        # Always keyed `BackendDefect:<what>` — a bare "BackendDefect" would
+        # collide with the axis label itself and made this key unreadable as a
+        # row (its own twin asserted the prefix and was red).
+        return f"BackendDefect:{name}" if name != "BackendDefect" else (
+            "BackendDefect:unclassified"
+        )
     return f"BackendDefect:{name}"
 
 
-def _measure_desugar_axis(
-    sugar: object,
-    *,
-    relative: str,
-    line: object,
-    desugar_families: Counter[str],
-    desugar_seen: set[tuple[str, str, object, object]],
-) -> None:
-    """Tally desugar-layer SNW and typed red; one occurrence once.
-
-    Occurrence key is (owner, file, line, col). Prefer sugar.site / gap
-    fragment coordinates over the function line so two refusals in one
-    function do not collapse, and catch+reporter never double.
-    """
-    from sugar_source_tree.panic import SugarNotWritten
-
-    def site_from_sugar() -> tuple[object, object]:
-        site = getattr(sugar, "site", None)
-        if site is None:
-            return line, -1
-        return getattr(site, "line", line), getattr(site, "col", -1)
-
-    def tally(owner: str, *, node: object | None = None, ln=None, col=-1) -> None:
-        if ln is None:
-            ln, col = site_from_sugar()
-        key = _occurrence_key(owner, relative, node=node, line=ln, col=col)
-        if key in desugar_seen:
-            return
-        desugar_seen.add(key)
-        desugar_families[owner] += 1
-
-    try:
-        outcome = sugar.desugar(None)  # type: ignore[attr-defined]
-    except SugarNotWritten as gap:
-        # Prefer blame fragment on the gap when present.
-        blame = getattr(gap, "info", None)
-        blame_str = getattr(blame, "blame", None) if blame is not None else None
-        ln, col = site_from_sugar()
-        tally(_desugar_owner_key(gap), ln=ln, col=col)
-        del blame_str
-        return
-    except Exception as exc:  # noqa: BLE001 -- desugar crash is a defect row
-        ln, col = site_from_sugar()
-        tally(f"desugar-crash:{type(exc).__name__}", ln=ln, col=col)
-        return
-    for owner in _typed_red_owners(outcome):
-        ln, col = site_from_sugar()
-        tally(owner, ln=ln, col=col)
+# The desugar membrane lives in ONE place — sugar_lift_py_tests.desugar_axis —
+# so this script and `python -m sugar_lift_py_tests.census` cannot drift into
+# two different definitions of R_desugar. It also owns the three separations:
+# ConstructionPanic (BaseException, caught BY NAME) and ordinary defects are
+# kept out of semantic R, and rows are keyed by the authenticated effect
+# occurrence rather than the enclosing function's line.
 
 
 def _measure_file(
@@ -244,6 +165,7 @@ def _measure_file(
     on_function: "Callable[[int, int, str, float | None], None] | None" = None,
 ) -> dict[str, Any]:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
+    from sugar_lift_py_tests.desugar_axis import DesugarAxis
     from sugar_lift_py_tests.lift_rpc import (
         open_source_file_for_construction,
         tree_construction_context_for_workspace,
@@ -254,10 +176,9 @@ def _measure_file(
     functions_total = 0
     functions_clean = 0
     families: Counter[str] = Counter()
-    desugar_families: Counter[str] = Counter()
     construction_seen: set[tuple[str, str, object, object]] = set()
-    desugar_seen: set[tuple[str, str, object, object]] = set()
     backend_defects: Counter[str] = Counter()
+    desugar_axis = DesugarAxis()
     root = workspace_root if workspace_root is not None else path.parent
 
     def tally_construction(kind: str, node: object | None = None, line: object = "?") -> None:
@@ -290,9 +211,12 @@ def _measure_file(
         for function in source_file.functions():
             functions_total += 1
             try:
-                line = function.line_col_span().start_line
+                span = function.line_col_span()
+                line: object = span.start_line
+                where = f"{relative}:{span.start_line}:{span.start_col}"
             except Exception:  # noqa: BLE001 -- name is best-effort display
                 line = "?"
+                where = f"{relative}:?"
             fn_name = f"{getattr(function, 'name', '?')}:{line}"
             # Announce the function BEFORE constructing it (elapsed=None), so a
             # hang shows the exact function it is stuck on -- not the one before.
@@ -308,13 +232,7 @@ def _measure_file(
                 # what turned 196 With gaps into a false 392.
                 sugar = None
             if sugar is not None:
-                _measure_desugar_axis(
-                    sugar,
-                    relative=relative,
-                    line=line,
-                    desugar_families=desugar_families,
-                    desugar_seen=desugar_seen,
-                )
+                desugar_axis.measure(sugar, where=where)
             fn_s = time.perf_counter() - t_fn
             # Report completion WITH this function's own construction time, so
             # `last=` is per-function and a slow/blowup function is obvious.
@@ -343,20 +261,18 @@ def _measure_file(
             "functionsTotal": functions_total,
             "functionsClean": functions_clean,
             "families": dict(families),
-            "desugarFamilies": dict(desugar_families),
-            "R_desugar": sum(desugar_families.values()),
             "backendDefects": dict(backend_defects),
             "R_backend_defects": sum(backend_defects.values()),
+            **desugar_axis.row(),
         }
     return {
         "category": "completed",
         "functionsTotal": functions_total,
         "functionsClean": functions_clean,
         "families": dict(families),
-        "desugarFamilies": dict(desugar_families),
-        "R_desugar": sum(desugar_families.values()),
         "backendDefects": dict(backend_defects),
         "R_backend_defects": sum(backend_defects.values()),
+        **desugar_axis.row(),
     }
 
 
@@ -457,6 +373,10 @@ def main() -> int:
     families: Counter[str] = Counter()
     desugar_families: Counter[str] = Counter()
     backend_defects: Counter[str] = Counter()
+    # Three disjoint desugar-layer quantities; the two below are NEVER folded
+    # into R_desugar and both make the run red.
+    desugar_construction_panics: list[dict[str, Any]] = []
+    desugar_defects: list[dict[str, Any]] = []
     files_completed = 0
     functions_total = 0
     functions_clean = 0
@@ -485,10 +405,14 @@ def main() -> int:
             cat = str(raw.get("category") or "")
             live_fns += int(raw.get("functionsTotal") or 0)
             live_clean += int(raw.get("functionsClean") or 0)
-            families = raw.get("families") or {}
-            live_snw += int(families.get("SugarNotWritten") or 0)
+            # NOT `families`: that name is main's accumulating Counter, and
+            # rebinding it to this plain dict made the later
+            # `families["ConstructionPanic"] += 1` a KeyError crash — the whole
+            # run lost, at the exact moment a panic row appeared.
+            row_families = raw.get("families") or {}
+            live_snw += int(row_families.get("SugarNotWritten") or 0)
             live_other_gaps += sum(
-                int(v) for k, v in families.items() if k != "SugarNotWritten"
+                int(v) for k, v in row_families.items() if k != "SugarNotWritten"
             )
             if cat == "construction-panic":
                 live_panic += 1
@@ -692,6 +616,8 @@ def main() -> int:
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
         backend_defects.update(row.get("backendDefects") or {})
+        desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
+        desugar_defects.extend(row.get("desugarDefects") or [])
         if category == "completed":
             files_completed += 1
         elif category == "construction-panic":
@@ -764,6 +690,13 @@ def main() -> int:
         "backendDefects": dict(
             sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
         ),
+        # Neither of these is semantic R. A construction-law None arm during
+        # desugar is a construction gap; an ordinary exception is an
+        # implementation defect. Both are red, separately.
+        "desugarConstructionPanics": desugar_construction_panics,
+        "R_desugar_construction_panics": len(desugar_construction_panics),
+        "desugarDefects": desugar_defects,
+        "R_desugar_defects": len(desugar_defects),
         "elapsedSeconds": time.time() - started,
         "python": sys.version,
         "floorSummary": floor_summary(
@@ -774,6 +707,8 @@ def main() -> int:
                 "R_control_effect": r_construction + len(defects),
                 "R_desugar": r_desugar,
                 "R_backend_defects": r_backend,
+                "desugarConstructionPanics": len(desugar_construction_panics),
+                "desugarDefects": len(desugar_defects),
                 "constructionPanics": len(construction_panics),
                 "backendDefectsOrProcessTerminals": len(defects),
             },
@@ -791,7 +726,13 @@ def main() -> int:
         flush=True,
     )
     return (
-        1 if defects or construction_panics or files_completed != len(file_names) else 0
+        1
+        if defects
+        or construction_panics
+        or desugar_construction_panics
+        or desugar_defects
+        or files_completed != len(file_names)
+        else 0
     )
 
 

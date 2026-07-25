@@ -2,14 +2,19 @@
 
     python -m sugar_lift_py_tests.census <package-root> [--engine-log PATH]
 
-Two named quantities (never merged into one R):
+Two named axes (never merged into one R):
 
 1. **Construction** — ``fn.sugar()`` gaps, deduped by (node.kind, line, col).
-2. **Desugar** — ``sugar.desugar(None)`` refusals (owner-keyed) and typed red
-   effects at desugar, deduped by (owner, file, line).
+2. **Desugar** — ``sugar.desugar(None)`` refusals and typed red effects,
+   deduped by (owner, authenticated effect-occurrence coordinate).
 
 Yield/YieldFrom construct then refuse at desugar: construction-total, still
 on the board under R_desugar.
+
+Behind the desugar door, ``ConstructionPanic`` (a ``BaseException``) and
+ordinary exceptions are counted SEPARATELY from semantic R and make the run
+red — see :mod:`sugar_lift_py_tests.desugar_axis`, which owns the membrane for
+this module and for ``scripts/control_effect_recensus.py`` alike.
 """
 
 from __future__ import annotations
@@ -21,62 +26,16 @@ from collections import Counter
 from pathlib import Path
 
 
-def _desugar_owner_key(gap: BaseException) -> str:
-    owner = getattr(gap, "owner", None)
-    if isinstance(owner, str) and owner:
-        return owner
-    return type(gap).__name__
-
-
-def _typed_red_owners(outcome: object) -> list[str]:
-    from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import (
-        Complete,
-        Completed,
-        ExitSet,
-        Halted,
-        Incomplete,
-    )
-
-    owners: list[str] = []
-
-    def visit(obj: object, depth: int = 0) -> None:
-        if depth > 24 or obj is None:
-            return
-        if isinstance(obj, Incomplete):
-            owners.append(type(obj.effect).__name__)
-            return
-        if isinstance(obj, Complete):
-            visit(obj.value, depth + 1)
-            return
-        if isinstance(obj, ExitSet):
-            for exit_ in getattr(obj, "exits", ()):
-                if isinstance(exit_, Halted):
-                    owners.append(type(exit_.effect).__name__)
-                elif isinstance(exit_, Completed):
-                    visit(exit_.value, depth + 1)
-            return
-        if isinstance(obj, UniverseValue):
-            visit(obj.record, depth + 1)
-            return
-        if isinstance(obj, BlockValue):
-            for entry in getattr(obj, "statements", ()):
-                visit(entry, depth + 1)
-
-    visit(outcome)
-    return owners
-
-
 def census(root: Path) -> int:
+    from sugar_lift_py_tests.desugar_axis import DesugarAxis
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.tree import SourceFile
 
     files = sorted(root.rglob("*.py"))
     families: Counter = Counter()
-    desugar_families: Counter = Counter()
-    desugar_seen: set[tuple[str, str, object]] = set()
+    desugar = DesugarAxis()
     crashes: Counter = Counter()
     clean_files = 0
     total_fns = 0
@@ -91,32 +50,17 @@ def census(root: Path) -> int:
             for fn in sf.functions():
                 total_fns += 1
                 try:
-                    line = fn.line_col_span().start_line
+                    span = fn.line_col_span()
+                    where = f"{rel}:{span.start_line}:{span.start_col}"
                 except Exception:  # noqa: BLE001
-                    line = "?"
+                    where = f"{rel}:?"
                 try:
                     sugar = fn.sugar()  # ONE construction; nested gaps self-report
                     clean_fns += 1
                 except SugarNotWritten:
                     sugar = None
                 if sugar is not None:
-
-                    def tally(owner: str, line_key: object = line) -> None:
-                        key = (owner, rel, line_key)
-                        if key in desugar_seen:
-                            return
-                        desugar_seen.add(key)
-                        desugar_families[owner] += 1
-
-                    try:
-                        outcome = sugar.desugar(None)
-                    except SugarNotWritten as gap:
-                        tally(_desugar_owner_key(gap))
-                    except Exception as exc:  # noqa: BLE001
-                        tally(f"desugar-crash:{type(exc).__name__}")
-                    else:
-                        for owner in _typed_red_owners(outcome):
-                            tally(owner)
+                    desugar.measure(sugar, where=where)
             seen = set()
             for node, _p in reporter.gaps:
                 lc = node.line_col_span()
@@ -129,7 +73,16 @@ def census(root: Path) -> int:
             print(
                 f"[{i + 1}/{len(files)}] {time.time() - ft:5.1f}s "
                 f"gaps={len(reporter.gaps):5d} "
-                f"desugar={sum(desugar_families.values()):5d} {rel}",
+                f"desugar={sum(desugar.families.values()):5d} {rel}",
+                flush=True,
+            )
+        except ConstructionPanic as panic:
+            # A BaseException: `except Exception` below cannot see it, and an
+            # uncaught one aborts the whole run. Named arm, red row, keep going.
+            crashes[f"ConstructionPanic:{panic.info.owner}"] += 1
+            print(
+                f"[{i + 1}/{len(files)}]  CONSTRUCTION PANIC "
+                f"{panic.info.owner} {rel}",
                 flush=True,
             )
         except Exception as e:  # a crash is a DEFECT row, never silence
@@ -149,9 +102,19 @@ def census(root: Path) -> int:
     print(f"R_construction = {sum(families.values())}")
     for kind, n in families.most_common(40):
         print(f"{n:8d}  {kind}")
-    print("--- desugar-layer families (top 40, deduped by owner+file+line) ---")
-    print(f"R_desugar = {sum(desugar_families.values())}")
-    for kind, n in desugar_families.most_common(40):
+    print("--- desugar families (top 40, deduped by owner+effect occurrence) ---")
+    print(f"R_desugar = {sum(desugar.families.values())}")
+    for kind, n in desugar.families.most_common(40):
+        print(f"{n:8d}  {kind}")
+    print("--- desugar construction panics (construction law, NOT R_desugar) ---")
+    print(f"desugarConstructionPanics = {len(desugar.construction_panics)}")
+    for panic in desugar.construction_panics[:40]:
+        print(f"          {panic['owner']}  @{panic['where']}")
+    print("--- desugar defects (implementation/audit, NOT R_desugar) ---")
+    print(f"desugarDefects = {len(desugar.defects)}")
+    for kind, n in Counter(
+        f"{row['kind']}:{row['detail']}" for row in desugar.defects
+    ).most_common(40):
         print(f"{n:8d}  {kind}")
     print("--- crashes (defects, not gaps) ---")
     for k, n in crashes.most_common():
@@ -160,7 +123,11 @@ def census(root: Path) -> int:
     # the row is testimony, but a successful process status would let callers
     # bank a partial denominator as a complete census.  Keep ordinary
     # SugarNotWritten gaps measurable while making every defect row red.
-    return 1 if crashes else 0
+    # Desugar-layer panics and defects are red for the same reason: a
+    # construction-law gap or an instrument defect must never let a caller bank
+    # a partial denominator as a complete census. R_desugar itself is a
+    # measured frontier, not a failure — it does not colour the exit.
+    return 1 if crashes or desugar.red else 0
 
 
 def main() -> int:
