@@ -37,47 +37,51 @@ def test_empty_concrete_for_states_nothing():
     assert invs == ()
 
 
-def test_symbolic_assert_only_loop_is_a_universal():
-    # for x in xs: assert P(x)  over a symbolic (formal) xs is the degenerate
-    # fold -- forall x. member(x, xs) -> P(x). The loop no longer sinks the
-    # function; it emits its FOL universal.
-    inv = _invs(
+def test_symbolic_assert_only_loop_is_loop_recurrence():
+    """Live law (replaces factory forall-in-invs): symbolic for is LoopRecurrenceSugar.
+
+    The factory-era emit of ``forall x. member(x, xs) -> P(x)`` into invs is
+    retired. Live construction is ``LoopRecurrenceSugar`` (see
+    ``test_live_loop_post_projection`` for step/post face algebra).
+    """
+    sugar = _fn(
         "def A(z, xs):\n    for x in xs:\n        assert x == z\n    return z\n"
-    )[0]
-    assert inv.kind == "forall"
-    body = inv.body  # member(x, xs) -> (x == z)
-    assert body.kind == "implies"
-    assert body.operands[0].name == "py.in"  # member(x, xs)
-    assert body.operands[1].name == "py.eq"  # x == z
+    ).sugar()
+    assert type(sugar.statements[0]).__name__ == "LoopRecurrenceSugar"
 
 
-def test_symbolic_carried_accumulator_is_a_fold_coordinate():
-    # t = 0; for x in xs: t = t + x; return t  over a symbolic xs is the fold:
-    # the carried t rebinds to the coordinate py.fold.Add(0, xs) -- a reference
-    # the dig resolves (the recurrence), the same shape as a recursion's call:f.
-    post = (
+def test_symbolic_carried_accumulator_is_loop_post_binding():
+    """Live law (replaces py.fold.Add on linear .value.post): ExitSet + post_binding.
+
+    Symbolic carried total is recurrence / loop.post_binding, not a factory
+    fold coordinate on an unconditional Complete universe.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Completed
+
+    outcome = (
         _fn(
             "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
         )
         .sugar()
         .desugar()
-        .value.post()
     )
-    fold = post.args[1]
-    assert fold.name == "call:py.fold.Add"
-    assert fold.args[0].value == 0  # init
-    assert fold.args[1].name == "xs"  # iterable
+    assert isinstance(outcome, ExitSet)
+    completed = [e for e in outcome.exits if isinstance(e, Completed)]
+    assert completed
+    post = completed[0].value.post()
+    # out = python:loop.post_binding(loop, total, NormalExhaustion)
+    assert post.name == "="
+    assert post.args[1].name == "python:loop.post_binding"
+    assert post.args[1].args[2].value == "NormalExhaustion"
 
 
-def test_accumulator_referencing_assert_stays_loud():
-    # for x in xs: assert total > 0; total = total + x  -- the assert references
-    # the RUNNING accumulator (point 3, a real loop invariant), still loud.
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(xs):\n    total = 0\n    for x in xs:\n        assert total == 0\n"
-            "        total = total + x\n    return total\n"
-        ).sugar()
-
+def test_accumulator_referencing_assert_constructs_as_loop_recurrence():
+    """Live law (replaces factory SugarNotWritten): assert on carried total is recurrence."""
+    sugar = _fn(
+        "def A(xs):\n    total = 0\n    for x in xs:\n        assert total == 0\n"
+        "        total = total + x\n    return total\n"
+    ).sugar()
+    assert any(type(s).__name__ == "LoopRecurrenceSugar" for s in sugar.statements)
 
 def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
     # t = 0; for x in [1,2,3]: t = t + x; return t  -- the carried accumulator is
