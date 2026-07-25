@@ -123,7 +123,8 @@ _ESCAPE_TABLE: dict[int, str] = {
     0x22: '\\"',
     0x5C: "\\\\",
     **{
-        codepoint: "\\u00" + "0123456789abcdef"[codepoint >> 4]
+        codepoint: "\\u00"
+        + "0123456789abcdef"[codepoint >> 4]
         + "0123456789abcdef"[codepoint & 0xF]
         for codepoint in range(0x20)
     },

@@ -10,6 +10,7 @@ construct the honest EUF coordinate `py.getattr(recv, "attr")` /
 A free-function call `g(x)` is the deterministic opaque receiver (no vendor,
 no numpy): its result has no field testimony, exactly like `np.asarray(...)`.
 """
+
 import os
 import tempfile
 

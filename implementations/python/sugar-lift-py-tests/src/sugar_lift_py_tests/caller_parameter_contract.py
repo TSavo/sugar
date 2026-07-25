@@ -378,8 +378,7 @@ class ParameterOwnedContractV1:
                 for coordinate in self.formal_coordinates
             ],
             "formalSorts": [
-                {"kind": "primitive", "name": sort.name}
-                for sort in self.formal_sorts
+                {"kind": "primitive", "name": sort.name} for sort in self.formal_sorts
             ],
             "declaredDemandCids": list(self.declared_demand_cids),
         }
@@ -409,7 +408,9 @@ class ParameterContractLinkUnitV1:
             "candidates": [candidate.to_value() for candidate in cands],
             "callEdges": [edge.to_value() for edge in edges],
         }
-        return cls(source_memento, parameter_owned_contract, cands, edges, _cid(preimage))
+        return cls(
+            source_memento, parameter_owned_contract, cands, edges, _cid(preimage)
+        )
 
     def to_value(self) -> dict[str, Any]:
         return {
@@ -490,8 +491,14 @@ def _resolution_preimage(resolution: dict) -> dict:
 
 def _validate_resolution(resolution: dict) -> None:
     expected = {
-        "kind", "schemaVersion", "demandCid", "candidateCid", "contractCid",
-        "basis", "callerUniverseCid", "resolutionCid",
+        "kind",
+        "schemaVersion",
+        "demandCid",
+        "candidateCid",
+        "contractCid",
+        "basis",
+        "callerUniverseCid",
+        "resolutionCid",
     }
     if not isinstance(resolution, dict) or set(resolution) != expected:
         raise ResumeStalePanic("resolution requires an exact key set")
@@ -504,7 +511,9 @@ def _validate_resolution(resolution: dict) -> None:
     basis = resolution["basis"]
     if basis == "declared-demand":
         if resolution["callerUniverseCid"] is not None:
-            raise ResumeStalePanic("declared-demand resolution carries a caller universe")
+            raise ResumeStalePanic(
+                "declared-demand resolution carries a caller universe"
+            )
     elif basis == "closed-callers":
         if resolution["callerUniverseCid"] is None:
             raise ResumeStalePanic("closed-callers resolution lacks a caller universe")
@@ -522,12 +531,14 @@ def resume_project(universe, accepted: dict[str, dict]):
     import dataclasses
 
     new_statements = tuple(
-        entry.value
-        if (
-            isinstance(entry, ContractConditionalConstructionV1)
-            and entry.demand.demand_cid in accepted
+        (
+            entry.value
+            if (
+                isinstance(entry, ContractConditionalConstructionV1)
+                and entry.demand.demand_cid in accepted
+            )
+            else entry
         )
-        else entry
         for entry in universe.record.statements
     )
     return dataclasses.replace(
@@ -579,5 +590,7 @@ def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
         accepted[demand_cid] = resolution
     missing = set(pending) - set(accepted)
     if missing:
-        raise ResumeStalePanic(f"resolution set is incomplete: missing {sorted(missing)}")
+        raise ResumeStalePanic(
+            f"resolution set is incomplete: missing {sorted(missing)}"
+        )
     return accepted

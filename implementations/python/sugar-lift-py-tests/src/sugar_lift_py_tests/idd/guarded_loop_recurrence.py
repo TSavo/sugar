@@ -48,9 +48,7 @@ def scan_guarded_loop_recurrence(
     root: Path,
 ) -> tuple[GuardedLoopRecurrenceFinding, ...]:
     findings: list[GuardedLoopRecurrenceFinding] = []
-    python_files = sorted(
-        path for path in root.rglob("*.py") if not _is_vendored(path)
-    )
+    python_files = sorted(path for path in root.rglob("*.py") if not _is_vendored(path))
     for path in python_files:
         text = path.read_text()
         tree = ast.parse(text, filename=str(path))

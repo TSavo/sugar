@@ -1,4 +1,4 @@
-'''Canonicalization is content-addressed WORK: done once per value, never per path.
+"""Canonicalization is content-addressed WORK: done once per value, never per path.
 
 ``_canonical_constructed_value`` is a pure function of an immutable constructed
 value, and the constructed value graph is a DAG the recursion walks as a TREE.
@@ -15,7 +15,7 @@ dead object's canonical JSON.
 These twins pin: the work collapses, the ANSWER does not change by one byte, a
 distinct value never reads another value's row, a recycled address misses, and
 speed never comes from skipping testimony.
-'''
+"""
 
 import gc
 import os

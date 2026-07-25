@@ -406,9 +406,7 @@ def _resolve_source_visible_frame_uncached(
             name = call.func.id
             if name in external_frames:
                 continue
-            if not _named_call_is_source_opaque(
-                name, definition_names, builtin_floor
-            ):
+            if not _named_call_is_source_opaque(name, definition_names, builtin_floor):
                 continue
             if name in external_opaque:
                 opaque.append(name)

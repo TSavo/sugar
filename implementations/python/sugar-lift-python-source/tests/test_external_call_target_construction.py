@@ -106,9 +106,12 @@ def _construct(root: Path, *, factory_source: str, support_source: str):
         literal.fragment, _term_content_cid(value.to_term(owner="test"))
     )
     actual = ConstructedCallActualV1(literal, value, testimony)
-    return construct_manager_behavior(
-        resolved, graph=graph, actuals=(actual,), call_site=call.fragment
-    ), value
+    return (
+        construct_manager_behavior(
+            resolved, graph=graph, actuals=(actual,), call_site=call.fragment
+        ),
+        value,
+    )
 
 
 _CROSS_MODULE_CLASS_FACTORY = (
@@ -119,9 +122,7 @@ _CROSS_MODULE_CLASS_FACTORY = (
 )
 
 _CROSS_MODULE_CLASS_SUPPORT = (
-    "class ScopedSlot:\n"
-    "    def __init__(self, label):\n"
-    "        self.label = 7\n"
+    "class ScopedSlot:\n" "    def __init__(self, label):\n" "        self.label = 7\n"
 )
 
 

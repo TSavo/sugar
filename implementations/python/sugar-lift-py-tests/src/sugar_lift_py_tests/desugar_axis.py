@@ -44,7 +44,6 @@ from collections import Counter
 from enum import Enum
 from typing import Any
 
-
 # --------------------------------------------------------------------------
 # occurrence coordinates
 # --------------------------------------------------------------------------
@@ -275,9 +274,11 @@ class DesugarAxis:
             self.construction_panics.append(
                 {
                     "where": where,
-                    "owner": (panic_row.info or {}).get("owner")
-                    if isinstance(panic_row.info, dict)
-                    else getattr(getattr(panic_row, "info", None), "owner", None),
+                    "owner": (
+                        (panic_row.info or {}).get("owner")
+                        if isinstance(panic_row.info, dict)
+                        else getattr(getattr(panic_row, "info", None), "owner", None)
+                    ),
                     "message": panic_row.message,
                 }
             )
