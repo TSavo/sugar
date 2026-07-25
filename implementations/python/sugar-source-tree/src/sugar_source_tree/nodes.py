@@ -1322,13 +1322,19 @@ class Node(Typed):
         ):
             try:
                 result = self._construct_sugar()
+                # Testimony projection is INSIDE the discharge, not after it.
+                # A constructed value whose testimony cannot be content-
+                # addressed raises ConstructedValueTestimonyNotWritten here, so
+                # the coordinate records the ABSENT answer (memoized panic, gap
+                # already testified through the reporter) instead of a present
+                # answer whose testimony silently failed to exist.
+                self.reporter.present_construction(self, result)
             except (SourceTreePanic, ConstructionPanic) as panic:
                 # The two sanctioned construction gaps. Remember the panic so
                 # this coordinate keeps throwing it -- memoization must never
                 # turn an absent answer into a present one.
                 cache.sugar_panics[key] = panic
                 raise
-            self.reporter.present_construction(self, result)
             self.reporter.present_fact(self)
             cache.sugar_results[key] = result
             return result
