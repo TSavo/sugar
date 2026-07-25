@@ -2771,8 +2771,21 @@ class Assign(Statement):
         """Flat Name|Attribute|Subscript leaves against a display RHS.
 
         Nested unpack patterns stay on the name-only destructure path (or
-        loud). This is the mass residual: ``o.x, o.y = p, q`` and
-        ``a[i], b[j] = p, q`` and mixed ``x, a[i] = p, q``.
+        loud). This is the mass residual: ``o.x, o.y = p, q`` and mixed
+        ``x, o.a = p, q``.
+
+        A leaf is admitted ONLY when the constructed store retains the exact
+        receiver term AND the exact RHS member it is paired with -- positional
+        correspondence is the whole claim of an unpack, so a store that cannot
+        carry its own value is not allowed to stand in for one. Attribute
+        leaves qualify (``AttributeStoreEffectSugar`` carries receiver, attr
+        and value). A Subscript leaf qualifies only over an authenticated
+        object place (``PlaceAssignSugar`` carries receiver, selector, value);
+        over an opaque receiver the only available store sugar is
+        ``SubscriptStoreEffectSugar``, which carries neither receiver nor
+        value -- ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct
+        identically -- so that shape stays loud rather than silently
+        mis-modelling the pairing.
         """
         if len(self.targets) != 1:
             return None
@@ -2786,6 +2799,10 @@ class Assign(Statement):
             return None
         for leaf, _value in pairs:
             if not isinstance(leaf, (Name, Attribute, Subscript)):
+                return None
+            if isinstance(leaf, Subscript) and not isinstance(
+                leaf.value, ObjectPlaceStateV1
+            ):
                 return None
         # Only useful when at least one leaf is a store (Attribute/Subscript);
         # pure-Name flat unpack is MultiAssignSugar via _destructured_binding.
@@ -3126,7 +3143,6 @@ class Assign(Statement):
                 )
                 from sugar_lift_py_tests.sugar.store_effect_sugar import (
                     AttributeStoreEffectSugar,
-                    SubscriptStoreEffectSugar,
                 )
 
                 name_bindings = []
@@ -3161,27 +3177,23 @@ class Assign(Statement):
                             )
                         continue
                     if isinstance(leaf, Subscript):
-                        if isinstance(leaf.value, ObjectPlaceStateV1):
-                            from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                                PlaceAssignSugar,
-                            )
+                        # `_flat_store_unpack_pairs` admits a Subscript leaf
+                        # only over an authenticated object place, because
+                        # PlaceAssignSugar is the only subscript store that
+                        # retains its receiver AND its paired RHS member.
+                        from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                            PlaceAssignSugar,
+                        )
 
-                            stores.append(
-                                PlaceAssignSugar(
-                                    receiver=leaf.value.sugar(),
-                                    selector_kind="subscript",
-                                    selector=leaf.slice_.sugar(),
-                                    value=val.sugar(),
-                                    site=leaf.fragment,
-                                )
+                        stores.append(
+                            PlaceAssignSugar(
+                                receiver=leaf.value.sugar(),
+                                selector_kind="subscript",
+                                selector=leaf.slice_.sugar(),
+                                value=val.sugar(),
+                                site=leaf.fragment,
                             )
-                        else:
-                            stores.append(
-                                SubscriptStoreEffectSugar(
-                                    index_text=leaf.slice_.fragment.text,
-                                    site=leaf.fragment,
-                                )
-                            )
+                        )
                         continue
                     return super()._construct_sugar()
                 return UnpackStoreAssignSugar(
