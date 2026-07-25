@@ -139,16 +139,6 @@ OTHER_STORE = """def target(o, q):
     return q
 """
 
-UNPACK_MIXED = """def target(o, p, q):
-    x, o.y = p, q
-    return x
-"""
-
-UNPACK_BOTH = """def target(o, p, q):
-    o.x, o.y = p, q
-    return p
-"""
-
 
 # --------------------------------------------------------------------------
 # Sequential spelling:  o.x = p ; o.y = q
@@ -342,76 +332,19 @@ def test_no_invented_exception_type_on_a_store_halt_discrimination():
 
 
 # --------------------------------------------------------------------------
-# Unpack spelling:  x, o.y = p, q   and   o.x, o.y = p, q
+# Unpack spelling (``x, o.y = p, q``, ``o.x, o.y = p, q``) is NOT tested here.
 #
-# THE SAME LAWS. These are the same store family; a store target inside a
-# tuple-unpack assignment is not a different kind of store.
+# Ownership boundary (T's ruling):
 #
-# These are RED on this branch, and they are red for a PREREQUISITE reason, not
-# because the composition above is wrong: a tuple/multi-target ``Assign``
-# currently has no sugar written at all (``SugarNotWritten [Assign.sugar]``), so
-# no exit structure exists to compose. That construction is owned by the
-# separate branch that routes authenticated ``ObjectPlaceStateV1`` through
-# ``PlaceAssignSugar``. Once a store target inside an unpack constructs a store
-# effect, the composition below is already implemented and these pass with no
-# further change here.
+#     this branch   owns generic store success/halt composition
+#                   owns sequential assignment spelling
 #
-# They are stated as the real laws rather than pinned to the current behaviour
-# on purpose: a test that must be DELETED when the bug is fixed is a test of the
-# bug.
+#     #6239         owns tuple/multi-target construction
+#                   owns unpack sequencing through that composition
+#
+# A prerequisite must not be held red by syntax it deliberately does not
+# construct. The unpack twins now live on ``fix/assign-family-drain`` in
+# ``tests/test_assign_unpack_store_outcome_composition.py``, where the
+# construction they exercise is owned. They are stated as the real laws there,
+# not muted here.
 # --------------------------------------------------------------------------
-
-
-def test_unpack_mixed_name_and_store_preserves_both_outcomes():
-    """``x, o.y = p, q``
-
-    success arm: ``x == p``, the store on ``o.y`` completed, continuation runs.
-    halt arm:    ``x == p`` STILL -- the name target was already bound -- the
-                 store halted, and there is NO continuation.
-    """
-    halted, completed = _arms(_exits(UNPACK_MIXED, "target"))
-
-    assert len(completed) == 1
-    assert _polarity(completed[0].guard, "y") is True
-    assert "p" in str(completed[0].value.post())
-
-    (arm,) = halted
-    assert _polarity(arm.guard, "y") is False
-    assert "p" in str(arm.state.post() if hasattr(arm.state, "post") else arm.state), (
-        "the name target bound before the store must survive the store's halt"
-    )
-
-
-def test_unpack_mixed_name_and_store_preserves_both_outcomes_discrimination():
-    """The bite: a single unconditional arm would mean the store cannot fail."""
-    halted, completed = _arms(_exits(UNPACK_MIXED, "target"))
-
-    with pytest.raises(AssertionError):
-        assert len(halted) == 0 and len(completed) == 1, "store is infallible"
-
-
-def test_unpack_two_stores_preserve_both_outcomes_per_store():
-    """``o.x, o.y = p, q`` -- the same three arms as the sequential spelling:
-    first success + second success, first success + second halt, and first halt
-    with NO second-store occurrence."""
-    halted, completed = _arms(_exits(UNPACK_BOTH, "target"))
-
-    assert len(completed) == 1
-    assert len(halted) == 2
-
-    first = next(h for h in halted if _polarity(h.guard, "x") is False)
-    assert _polarity(first.guard, "y") is None
-    assert _store_entries(first.state) == []
-
-    second = next(h for h in halted if _polarity(h.guard, "y") is False)
-    assert _polarity(second.guard, "x") is True
-    assert len(_store_entries(second.state)) == 1
-
-
-def test_unpack_two_stores_preserve_both_outcomes_per_store_discrimination():
-    """The bite: the first-halt arm must not carry the second store."""
-    halted, _ = _arms(_exits(UNPACK_BOTH, "target"))
-    first = next(h for h in halted if _polarity(h.guard, "x") is False)
-
-    with pytest.raises(AssertionError):
-        assert len(_store_entries(first.state)) == 1, "second target ran anyway"
