@@ -76,38 +76,25 @@ class ComprehensionValue(FloorValue):
         )
 
     def add(self, other, site):
-        from sugar_lift_py_tests.effect import (
-            SequenceConcatenationRuntimeEffect,
-            is_lift_time_decidable,
-            runtime_effect_evidence,
-        )
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         if type(other) in (ComprehensionValue, ListValue):
+            # Symbolic folds are constructed coordinates. Sequence concat of two
+            # such coordinates is another coordinate (py.sequence_concat as `+`
+            # ctor), not a RuntimeEffect that re-asks for a "genuine runtime
+            # operand" while already holding the fold term.
             other_term = other.to_term(owner=str(site))
-            if is_lift_time_decidable(self.term) and is_lift_time_decidable(other_term):
-                return Complete(
-                    ComprehensionValue(
-                        ctor(
-                            "+",
-                            [
-                                self.term,
-                                other_term,
-                            ],
-                        )
+            return Complete(
+                ComprehensionValue(
+                    ctor(
+                        "+",
+                        [
+                            self.term,
+                            other_term,
+                        ],
                     )
-                )
-            return Incomplete(
-                SequenceConcatenationRuntimeEffect(
-                    "sequence concatenation depends on runtime comprehension "
-                    f"members; owner=ComprehensionValue.add site={site}",
-                    **runtime_effect_evidence(
-                        "py.sequence_concat",
-                        self if not is_lift_time_decidable(self.term) else other,
-                        site,
-                    ),
                 )
             )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
