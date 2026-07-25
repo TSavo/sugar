@@ -1831,11 +1831,8 @@ fn resolve_try_fold_closure<'a>(
     }
     match strip_refs_groups(expr) {
         Expr::Closure(closure) => Some(closure.clone()),
-        Expr::Reference(reference) => {
-            resolve_try_fold_closure(&reference.expr, let_inits, scope, depth + 1)
-        }
-        Expr::Path(_) => {
-            let name = simple_path_name(expr)?;
+        stripped @ Expr::Path(_) => {
+            let name = simple_path_name(stripped)?;
             let init = let_inits
                 .get(&name)
                 .copied()

@@ -7317,7 +7317,7 @@ class Attribute(Expression):
         call result is a symbolic read the witness resolves at runtime, not a
         gap. It reduces to the honest `py.getattr(recv, "attr")` EUF coordinate
         (SymbolicValue.attribute), carrying whatever the call term guarantees and
-        nothing invented. Refusing it here was the withhold, not the construct."""
+        nothing invented. Withholding it here was the gap, not the construct."""
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
@@ -7376,7 +7376,7 @@ class Subscript(Expression):
         call result is a symbolic read the witness resolves at runtime, not a
         gap. It reduces to the honest `py.subscript(recv, key)` EUF coordinate,
         carrying whatever the call term guarantees and nothing invented.
-        Refusing it here was the withhold, not the construct."""
+        Withholding it here was the gap, not the construct."""
         from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
 
         return SubscriptSugar(
