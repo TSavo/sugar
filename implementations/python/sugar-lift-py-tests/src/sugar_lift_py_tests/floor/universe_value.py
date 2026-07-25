@@ -20,6 +20,28 @@ class UniverseValue(FloorValue):
     bridge_source_symbol: str | None = None
     formal_coordinates: tuple = ()
 
+    def guarded(self, formula):
+        """Ride under a branch by guarding every body record entry.
+
+        Nested ``def`` under ``if`` places this universe as a block entry; the
+        if/exit-set router then calls ``entry.guarded(guard)``. Each statement
+        already owns its own guarded arm (InvValue → implication, ReturnValue →
+        GuardedReturn, …); reassemble the same universe shape over the guarded
+        entries. Full-dump: 26 of 32 ``guarded`` panics were UniverseValue.
+        """
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+
+        guarded_entries = tuple(
+            entry.guarded(formula) for entry in self.record.statements
+        )
+        if isinstance(self.record, BlockValue):
+            record = replace(self.record, statements=guarded_entries)
+        else:
+            record = BlockValue(guarded_entries)
+        return replace(self, record=record)
+
     def derived_companions(self) -> tuple[Formula, ...]:
         return tuple(
             formula

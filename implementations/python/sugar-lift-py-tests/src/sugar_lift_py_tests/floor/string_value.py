@@ -132,6 +132,26 @@ class StringValue(FloorValue):
 
         return Complete(TermValue(len(self.value)))
 
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed string (``"{:.2f}".format``,
+        # ``"%.5f".__mod__``, …) stay the py.getattr coordinate — same EUF
+        # vocabulary as SymbolicValue / CallSiteValue. Never invent a method
+        # body; call_method_with still owns static folds when the call site is
+        # known.
+        del site
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "py.getattr",
+                    [self.to_term(owner="StringValue.attribute"), str_const(name)],
+                )
+            )
+        )
+
     def contains(self, item, site):
         # Python ``needle in haystack`` for str: substring when both are strings;
         # TypeError for ground non-string needles; py.in when the needle is
