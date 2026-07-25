@@ -1,0 +1,6 @@
+# Failed node IDs: sugar-source-tree
+# Pin: 22e18c69e9bae2a3d50f183c26e45b0105854cf3
+# Summary: 533 passed, 5 skipped in 64.02s
+# Invocation (from implementations/python/sugar-source-tree):
+# env PYTHONPATH="$PWD/../sugar-source-tree/src:$PWD/../sugar-lift-python-source/src:$PWD/../sugar-lift-py-tests/src" python3 -m pytest tests -q -p no:cacheprovider -rf --junitxml=/Users/tsavo/.buzz/.scratch/chucky-sugar-source-tree-current-main.xml
+# Red nodes: 0

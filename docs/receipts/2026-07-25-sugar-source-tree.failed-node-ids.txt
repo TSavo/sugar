@@ -1,3 +1,5 @@
+SUPERSEDED: captured at ca9a7bc94; use 2026-07-25-sugar-source-tree-22e18c69.failed-node-ids.txt for current-main receipts.
+
 tests/test_computed_call.py::test_assert_consumes_the_coordinate
 tests/test_computed_call.py::test_computed_call_is_the_py_call_coordinate
 tests/test_computed_call.py::test_computed_call_spread_uses_reference_call_shape
