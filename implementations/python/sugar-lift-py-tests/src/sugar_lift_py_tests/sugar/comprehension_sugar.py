@@ -10,8 +10,31 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
+class ComprehensionTargetSugar:
+    """What one generator binds per symbolic element: a coordinate, or an
+    ordered destructuring of coordinates.
+
+    A leaf carries ``source_name`` and binds the whole element. A pattern
+    carries ``coordinates`` and binds each position to a projection of the
+    element -- the same binding problem a statement loop's tuple target
+    solves, expressed against a SYMBOLIC element rather than a display.
+    Exactly one of the two is ever set; a shape that is neither (a starred or
+    attribute target) is never built here, so the source node stays loud.
+    """
+
+    source_name: str | None = None
+    coordinates: "tuple[ComprehensionTargetSugar, ...] | None" = None
+
+    def __post_init__(self):
+        if (self.source_name is None) == (self.coordinates is None):
+            raise ValueError(
+                "comprehension target is exactly one of a name or a destructuring"
+            )
+
+
+@dataclass(frozen=True)
 class ComprehensionGeneratorSugar:
-    source_name: str
+    target: ComprehensionTargetSugar
     binding_coordinate_cid: str
     iterable: Sugar
     filters: tuple[Sugar, ...]
@@ -67,7 +90,7 @@ class ComprehensionSugar(Sugar):
                 (
                     *resolved,
                     (
-                        generator.source_name,
+                        generator.target,
                         generator.binding_coordinate_cid,
                         iterable,
                         filters,
@@ -115,14 +138,12 @@ class ComprehensionSugar(Sugar):
         )
         body = element_term
         recurrence_rows = []
-        for source_name, binding_coordinate_cid, iterable, filters in reversed(
-            resolved
-        ):
+        for target, binding_coordinate_cid, iterable, filters in reversed(resolved):
             coordinate_var = make_var(binding_coordinate_cid)
-            body = subst_var_in_term(body, source_name, coordinate_var)
+            body = _bind_target(target, coordinate_var, body)
             for guard in reversed(filters):
-                guard_term = subst_var_in_term(
-                    guard.to_term(owner=owner), source_name, coordinate_var
+                guard_term = _bind_target(
+                    target, coordinate_var, guard.to_term(owner=owner)
                 )
                 body = ctor(
                     "python:loop.filter_guard",
@@ -133,6 +154,7 @@ class ComprehensionSugar(Sugar):
                     ],
                     symbol_kind="coordinate",
                 )
+            body = _guard_destructure(target, coordinate_var, body)
             recurrence_rows.append((binding_coordinate_cid, iterable, body))
             body = ctor(
                 "python:loop.flat_map",
@@ -162,3 +184,74 @@ class ComprehensionSugar(Sugar):
             symbol_kind="coordinate",
         )
         return Complete(ComprehensionValue(term))
+
+
+def _projection(element, index: int, arity: int):
+    """The coordinate the ``index``th position of an ``arity``-wide
+    destructuring reads out of a symbolic ``element``.
+
+    Python unpacking is iterable unpacking, not subscription, so this is its
+    own coordinate: it carries the arity the source demanded, which is what
+    makes the accompanying obligation checkable.
+    """
+    from sugar_lift_py_tests.ir import ctor, num
+
+    return ctor(
+        "python:unpack.project",
+        [element, num(index), num(arity)],
+        symbol_kind="coordinate",
+    )
+
+
+def _bind_target(target: ComprehensionTargetSugar, element, body):
+    """``body`` with every coordinate this target names replaced by what the
+    symbolic ``element`` binds to it.
+
+    A leaf binds the element whole. A pattern binds each position to its
+    projection, recursively -- so a nested pattern reads a projection of a
+    projection, exactly as the source nests.
+    """
+    from sugar_lift_py_tests.ir import subst_var_in_term
+
+    if target.source_name is not None:
+        return subst_var_in_term(body, target.source_name, element)
+    coordinates = target.coordinates
+    assert coordinates is not None
+    arity = len(coordinates)
+    for index, child in enumerate(coordinates):
+        body = _bind_target(child, _projection(element, index, arity), body)
+    return body
+
+
+def _guard_destructure(target: ComprehensionTargetSugar, element, body):
+    """``body`` under the arity obligation every destructuring in this target
+    carries.
+
+    A leaf destructures nothing and adds no obligation. A pattern demands the
+    element unpack to exactly its arity: when it does, the continuation is
+    ``body``; when it does not, Python raises, so the exit is the halt
+    coordinate -- NEVER a silently skipped element and never an assumed
+    success. Outer obligations wrap inner ones, because the outer element must
+    unpack before any inner position exists to be read.
+    """
+    from sugar_lift_py_tests.ir import ctor, num
+
+    if target.source_name is not None:
+        return body
+    coordinates = target.coordinates
+    assert coordinates is not None
+    arity = len(coordinates)
+    for index in reversed(range(arity)):
+        body = _guard_destructure(
+            coordinates[index], _projection(element, index, arity), body
+        )
+    return ctor(
+        "python:unpack.destructure",
+        [
+            element,
+            num(arity),
+            body,
+            ctor("python:unpack.halt", [], symbol_kind="coordinate"),
+        ],
+        symbol_kind="coordinate",
+    )
