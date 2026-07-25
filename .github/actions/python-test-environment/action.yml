@@ -61,10 +61,26 @@ runs:
         python-version: ${{ inputs.python-version }}
         cache: pip
 
+    # THE STAMP NEEDS CARGO, SO CARGO COMES FIRST.
+    #
+    # `sourceStamp` is the blake3 of the cargo local-dependency FS closure, so
+    # minting identity runs `cargo metadata`. This step used to come AFTER the
+    # mint (or not at all, in the prepare job), and the mint swallowed the
+    # resulting CalledProcessError into `{"unavailable": ...}`. Run
+    # 30175741263 published a green, conserved, identity-unresolved measurement
+    # because of exactly this ordering. The mint now dies on that error, which
+    # would turn the ordering bug into a hard red -- so the ordering is fixed
+    # here, at the cause, rather than papered over at the symptom.
+    - name: Set up Rust toolchain (cargo is a sourceStamp input)
+      uses: ./.github/actions/setup-rust-cache
+
     # Identity is derived from INPUTS (interpreter, platform, sourceStamp,
     # declared test extras, package sources), never from install output, so it
     # is knowable before a single wheel is built and is not perturbed by
     # resolver nondeterminism.
+    #
+    # It resolves or the job dies: `tools/python_test_environment_identity.py`
+    # exits non-zero rather than writing a field that says why it is missing.
     - name: Mint environment identity
       id: identity
       shell: bash
@@ -79,6 +95,10 @@ runs:
         echo "hash=$hash" >> "$GITHUB_OUTPUT"
         echo "SUGAR_PYTHON_ENV_IDENTITY=$identity" >> "$GITHUB_ENV"
         echo "environment identity: $hash"
+        # Check the FILE, not the variable that produced it. A field populated
+        # in memory and lost on the way to disk is the same defect as a field
+        # never resolved, and only the file travels to the next job.
+        python3 tools/python_suite_identity_gate.py --environment-identity "$identity"
 
     - name: Build wheelhouse from the declared dependency authority
       shell: bash

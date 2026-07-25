@@ -15,10 +15,16 @@ name: Python package suite (authoritative)
 # ./.github/actions/python-test-environment, and the zero-tolerance floors
 # consume that same action rather than building their own.
 #
-# IT REPORTS; IT DOES NOT GATE. ~131 known failures exist. Turning that red
-# into a merge gate is a merge-policy change and this wiring is a measurement-
-# ownership change. The `suite` job therefore records pytest's exit status as
-# evidence and exits 0. The SCHEDULED discrimination job DOES fail, because
+# IT DOES NOT GATE ON VERDICTS; IT DOES GATE ON IDENTITY. ~131 known failures
+# exist. Turning that red into a merge gate is a merge-policy change and this
+# wiring is a measurement-ownership change, so the job records pytest's exit
+# status as evidence and does not exit on it.
+#
+# Identity is a different question from verdicts. A measurement that cannot say
+# which authenticated source and which test-input universe produced its
+# verdicts is not a lenient measurement, it is not a measurement -- so the
+# identity gate DOES fail the job, and the authoritative artifact is not
+# published when it does. The SCHEDULED discrimination job also fails, because
 # order-dependence is not a known failure -- it is a claim that our verdicts
 # are not verdicts.
 
@@ -59,6 +65,20 @@ permissions:
 # that drops the thing it was asked to remember.
 
 jobs:
+  # The gate's own discrimination twins. Six teeth, both faces each, no
+  # environment and no lease: pure JSON in, verdict out, seconds. It runs
+  # BEFORE the environment is prepared so a weakened identity gate is red on
+  # its own terms rather than red-by-absence three hours later.
+  identity-gate-twins:
+    name: identity gate teeth (both faces)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Both faces of every identity tooth
+        shell: bash
+        run: python3 tests/test_python_suite_identity_gate_twins.py
+
   prepare-python-test-environment:
     name: prepare-python-test-environment
     runs-on: [self-hosted, Linux, X64]
@@ -109,11 +129,32 @@ jobs:
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
 
-      - name: Resolve the sugar binary
+      # The stamp is READ OFF THE RESOLVED BINARY, not recomputed beside it.
+      # `<binary>.sugarbin.json` is written by the build that produced this
+      # exact file and verified against its sha256 on every shelf hit, so it is
+      # the source identity the measured binary ACTUALLY has. The identity gate
+      # requires it to equal the environment identity's sourceStamp: a suite
+      # that measures one binary while reporting another source universe is the
+      # unresolved-identity defect wearing a populated field.
+      - name: Resolve the sugar binary and read its source identity
+        id: binary
         shell: bash
         run: |
           set -euo pipefail
-          echo "SUGAR_BIN=$(bin/sugarbin --profile release)" >> "$GITHUB_ENV"
+          sugar_bin="$(bin/sugarbin --profile release)"
+          echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
+          manifest="$sugar_bin.sugarbin.json"
+          if [ ! -f "$manifest" ]; then
+            echo "::error::resolved binary $sugar_bin has no $manifest; its source identity is unknown."
+            exit 1
+          fi
+          stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
+          case "$stamp" in
+            blake3-512_*) ;;
+            *) echo "::error::binary manifest sourceStamp is malformed: $stamp"; exit 1 ;;
+          esac
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          echo "measured binary sourceStamp: $stamp"
 
       # ONE cold process. Whole package. Canonical collection order.
       # `-p no:cacheprovider` so no run inherits another's cache; `-p
@@ -139,6 +180,8 @@ jobs:
             -p python_package_suite_report \
             --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
             --suite-identity="$SUITE_IDENTITY_PATH" \
+            --suite-commit="$GITHUB_SHA" \
+            --suite-binary-stamp="$SUITE_BINARY_STAMP" \
             --suite-order=canonical \
             --suite-label=python-package-suite-canonical \
             2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
@@ -146,6 +189,7 @@ jobs:
           SWEEP
           set +e
           SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
+          SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
           python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
             --class python-package-suite \
             --record "$GITHUB_WORKSPACE/lease-record.json" \
@@ -188,10 +232,39 @@ jobs:
             --node-id-dir suite-node-ids \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # EVERY IDENTITY FIELD RESOLVED -- CHECKED ON THE ARTIFACT, BEFORE IT IS
+      # CALLED AUTHORITATIVE.
+      #
+      # Run 30175741263 was complete and conserved (1212 collected, 1212
+      # verdicts) and concluded `success` while its sourceStamp was the object
+      # `{"unavailable": "CalledProcessError: ..."}` and its testExtraInputHash
+      # was null. Conservation is not authority: this step is where the run
+      # proves WHICH source and WHICH test-input universe produced the
+      # verdicts, and it reads suite-report.json as serialized -- a value that
+      # was populated in the sweep but lost on the way to the file is caught
+      # here and nowhere else.
+      #
+      # Deliberately NOT `if: always()` in the sense of being toothless: this
+      # step fails the job, and the authoritative upload below does not run
+      # when it does.
+      - name: Identity gate (R_identity = 0)
+        id: identity-gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/python_suite_identity_gate.py \
+            --report suite-report.json \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Artifacts carry the node-ID lists. The step summary carries counts.
       # Counts are summaries of the lists; the lists are the evidence.
+      #
+      # This name means authoritative. It is published only when the identity
+      # gate passed on the serialized report.
       - name: Upload authoritative suite artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: python-package-suite-canonical
@@ -201,6 +274,21 @@ jobs:
             suite-node-ids/
             lease-record.json
           if-no-files-found: error
+
+      # Evidence is never thrown away -- it is just not allowed to wear the
+      # authoritative name. A consumer that downloads this one is holding a
+      # provisional receipt and the artifact says so in its own name.
+      - name: Upload provisional (identity-unresolved) suite artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-suite-canonical-PROVISIONAL-identity-unresolved
+          path: |
+            suite.log
+            suite-report.json
+            suite-node-ids/
+            lease-record.json
+          if-no-files-found: warn
 
       # Deliberately no `exit $pytest_exit`. See the header: this job reports.
       - name: Report, do not gate
@@ -242,11 +330,20 @@ jobs:
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
 
-      - name: Resolve the sugar binary
+      - name: Resolve the sugar binary and read its source identity
+        id: binary
         shell: bash
         run: |
           set -euo pipefail
-          echo "SUGAR_BIN=$(bin/sugarbin --profile release)" >> "$GITHUB_ENV"
+          sugar_bin="$(bin/sugarbin --profile release)"
+          echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
+          manifest="$sugar_bin.sugarbin.json"
+          if [ ! -f "$manifest" ]; then
+            echo "::error::resolved binary $sugar_bin has no $manifest; its source identity is unknown."
+            exit 1
+          fi
+          stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
 
       # A SEPARATE COLD PROCESS per order. Sharing a process would let the
       # first order warm exactly the caches whose influence we are measuring.
@@ -268,6 +365,8 @@ jobs:
             -p python_package_suite_report \
             --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
             --suite-identity="$SUITE_IDENTITY_PATH" \
+            --suite-commit="$GITHUB_SHA" \
+            --suite-binary-stamp="$SUITE_BINARY_STAMP" \
             --suite-order="$SUITE_ORDER" \
             --suite-shuffle-seed="$GITHUB_RUN_ID" \
             --suite-label="python-package-suite-$SUITE_ORDER" \
@@ -276,6 +375,7 @@ jobs:
           SWEEP
           set +e
           SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
+          SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
           SUITE_ORDER='${{ matrix.order }}' \
           python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
             --class python-package-suite \
@@ -301,8 +401,21 @@ jobs:
             --require-commit "$GITHUB_SHA" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload discrimination artifacts
+      # Same law as the canonical arm: an arm whose identity is unresolved
+      # cannot be compared against anything, so it is not published under the
+      # name the comparison job reads.
+      - name: Identity gate (R_identity = 0)
         if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/python_suite_identity_gate.py \
+            --report suite-report.json \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload discrimination artifacts
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: python-package-suite-${{ matrix.order }}
