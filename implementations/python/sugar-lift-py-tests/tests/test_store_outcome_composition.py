@@ -30,7 +30,8 @@ expectation fails.
 
 from __future__ import annotations
 
-import tempfile
+import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -41,11 +42,18 @@ from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_source_tree.tree import SourceFile
 
 
-def _exits(src, name):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    for fn in SourceFile(path_source(path)).functions():
+def _exits(tmp_path: Path, src, name):
+    """The constructed ExitSet for ``name`` in ``src``.
+
+    ``tmp_path`` is pytest's per-test directory: the case file is written where
+    the fixture will remove it. An earlier spelling used
+    ``NamedTemporaryFile(delete=False, dir="/tmp")``, which leaked one ``.py``
+    per call.
+    """
+    stem = hashlib.blake2b(f"{name}\0{src}".encode(), digest_size=8).hexdigest()
+    path = tmp_path / f"case_{stem}.py"
+    path.write_text(src, encoding="utf-8")
+    for fn in SourceFile(path_source(str(path))).functions():
         if fn.name != name:
             continue
         outcome = fn.sugar().desugar(None)
@@ -145,34 +153,34 @@ OTHER_STORE = """def target(o, q):
 # --------------------------------------------------------------------------
 
 
-def test_sequential_stores_preserve_both_outcomes_per_store():
+def test_sequential_stores_preserve_both_outcomes_per_store(tmp_path: Path) -> None:
     """Two stores => three arms, never one.
 
     A single ``Completed`` arm would state that assignment is transactional and
     infallible. It is neither.
     """
-    halted, completed = _arms(_exits(SEQUENTIAL, "target"))
+    halted, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
 
     assert len(halted) == 2, [str(e.guard) for e in halted]
     assert len(completed) == 1
 
 
-def test_sequential_stores_preserve_both_outcomes_per_store_discrimination():
+def test_sequential_stores_preserve_both_outcomes_per_store_discrimination(tmp_path: Path) -> None:
     """The bite: the pre-repair expectation (one Completed arm, no Halted arm)
     is exactly what this construction no longer produces."""
-    halted, completed = _arms(_exits(SEQUENTIAL, "target"))
+    halted, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
 
     with pytest.raises(AssertionError):
         assert len(halted) == 0 and len(completed) == 1, "stores are infallible"
 
 
-def test_first_store_halt_has_no_second_store_occurrence():
+def test_first_store_halt_has_no_second_store_occurrence(tmp_path: Path) -> None:
     """Law: never execute a later target after an earlier store halt.
 
     The arm guarded by "the FIRST store did not complete" must carry a prefix
     state in which the second store never happened.
     """
-    halted, _ = _arms(_exits(SEQUENTIAL, "target"))
+    halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     first = next(h for h in halted if _polarity(h.guard, "x") is False)
 
     assert _polarity(first.guard, "y") is None, (
@@ -185,23 +193,23 @@ def test_first_store_halt_has_no_second_store_occurrence():
     assert isinstance(first.effect, AttributeStoreRuntimeEffect)
 
 
-def test_first_store_halt_has_no_second_store_occurrence_discrimination():
+def test_first_store_halt_has_no_second_store_occurrence_discrimination(tmp_path: Path) -> None:
     """The bite: asserting the second store DID occur on the first-halt arm
     fails, so the assertion above is load-bearing."""
-    halted, _ = _arms(_exits(SEQUENTIAL, "target"))
+    halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     first = next(h for h in halted if _polarity(h.guard, "x") is False)
 
     with pytest.raises(AssertionError):
         assert len(_store_entries(first.state)) == 1, "second target ran anyway"
 
 
-def test_second_store_halt_preserves_the_first_store():
+def test_second_store_halt_preserves_the_first_store(tmp_path: Path) -> None:
     """Law: never roll back earlier assignment.
 
     The arm guarded by "first completed AND second did not" must still carry the
     first store's testimony: ``o.x`` REMAINS assigned.
     """
-    halted, _ = _arms(_exits(SEQUENTIAL, "target"))
+    halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
 
     assert _polarity(second.guard, "x") is True, (
@@ -214,48 +222,48 @@ def test_second_store_halt_preserves_the_first_store():
     )
 
 
-def test_second_store_halt_preserves_the_first_store_discrimination():
+def test_second_store_halt_preserves_the_first_store_discrimination(tmp_path: Path) -> None:
     """The bite: a rolled-back first store (empty prefix) fails."""
-    halted, _ = _arms(_exits(SEQUENTIAL, "target"))
+    halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
 
     with pytest.raises(AssertionError):
         assert _store_entries(second.state) == [], "assignment rolled back"
 
 
-def test_sequential_completed_arm_requires_every_store_to_complete():
+def test_sequential_completed_arm_requires_every_store_to_complete(tmp_path: Path) -> None:
     """The continuation after the stores is reachable only when BOTH completed,
     and it still states the real post."""
-    _, completed = _arms(_exits(SEQUENTIAL, "target"))
+    _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     (arm,) = completed
 
     assert _polarity(arm.guard, "x") is True
     assert _polarity(arm.guard, "y") is True
     assert str(arm.value.post()) == str(
-        _exits(SEQUENTIAL, "target").exits[-1].value.post()
+        _exits(tmp_path, SEQUENTIAL, "target").exits[-1].value.post()
     )
 
 
-def test_sequential_completed_arm_requires_every_store_to_complete_discrimination():
+def test_sequential_completed_arm_requires_every_store_to_complete_discrimination(tmp_path: Path) -> None:
     """The bite: an unconditional (true) completed guard fails -- the guard is
     a real conjunction of two store coordinates."""
     from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-    _, completed = _arms(_exits(SEQUENTIAL, "target"))
+    _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     (arm,) = completed
 
     with pytest.raises(AssertionError):
         assert arm.guard == true_guard(), "continuation is unconditional"
 
 
-def test_each_store_occurrence_mints_its_own_coordinate():
+def test_each_store_occurrence_mints_its_own_coordinate(tmp_path: Path) -> None:
     """Law: evaluate receiver, selector and value exactly once, and retain all
     three authenticated coordinates.
 
     Two distinct stores must not share one outcome coordinate, and each
     coordinate must name its own receiver, selector and value.
     """
-    _, completed = _arms(_exits(SEQUENTIAL, "target"))
+    _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     coordinates = _store_coordinates(completed[0].guard)
 
     assert len(coordinates) == 2, coordinates
@@ -269,22 +277,22 @@ def test_each_store_occurrence_mints_its_own_coordinate():
     assert values == {"p", "q"}
 
 
-def test_each_store_occurrence_mints_its_own_coordinate_discrimination():
+def test_each_store_occurrence_mints_its_own_coordinate_discrimination(tmp_path: Path) -> None:
     """The bite: collapsing the two stores to one coordinate fails."""
-    _, completed = _arms(_exits(SEQUENTIAL, "target"))
+    _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     coordinates = _store_coordinates(completed[0].guard)
 
     with pytest.raises(AssertionError):
         assert len(coordinates) == 1, "both stores share one outcome"
 
 
-def test_store_outcome_guards_are_exactly_complementary():
+def test_store_outcome_guards_are_exactly_complementary(tmp_path: Path) -> None:
     """The two faces of ONE store are ``g`` and ``not g`` over the SAME
     coordinate -- an exact partition, so ``ExitSet`` normalization can merge or
     kill them the way it does for a branch result."""
     from sugar_lift_py_tests.outcome.exit_set import _and_guards, false_guard
 
-    halted, completed = _arms(_exits(ONE_STORE, "target"))
+    halted, completed = _arms(_exits(tmp_path, ONE_STORE, "target"))
     (halt,) = halted
     (success,) = completed
 
@@ -295,15 +303,15 @@ def test_store_outcome_guards_are_exactly_complementary():
     )
 
 
-def test_store_outcome_guards_are_exactly_complementary_discrimination():
+def test_store_outcome_guards_are_exactly_complementary_discrimination(tmp_path: Path) -> None:
     """The bite: two DIFFERENT stores' guards are not contradictory -- so the
     contradiction above comes from complementarity, not from everything being
     trivially false."""
     from sugar_lift_py_tests.outcome.exit_set import _and_guards, false_guard
 
-    halted, _ = _arms(_exits(ONE_STORE, "target"))
+    halted, _ = _arms(_exits(tmp_path, ONE_STORE, "target"))
     (halt,) = halted
-    other, _unused = _arms(_exits(OTHER_STORE, "target"))
+    other, _unused = _arms(_exits(tmp_path, OTHER_STORE, "target"))
     (other_halt,) = other
 
     with pytest.raises(AssertionError):
@@ -312,20 +320,20 @@ def test_store_outcome_guards_are_exactly_complementary_discrimination():
         ), "unrelated store coordinates are contradictory"
 
 
-def test_no_invented_exception_type_on_a_store_halt():
+def test_no_invented_exception_type_on_a_store_halt(tmp_path: Path) -> None:
     """Success versus halt is runtime-selected. The halt arm must carry the
     store's own runtime effect, never a fabricated named exception."""
-    halted, _ = _arms(_exits(SEQUENTIAL, "target"))
+    halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
 
     for arm in halted:
         assert isinstance(arm.effect, AttributeStoreRuntimeEffect), type(arm.effect)
 
 
-def test_no_invented_exception_type_on_a_store_halt_discrimination():
+def test_no_invented_exception_type_on_a_store_halt_discrimination(tmp_path: Path) -> None:
     """The bite: the halt is NOT a RaiseEffect of some guessed class."""
     from sugar_lift_py_tests.effect import RaiseEffect
 
-    halted, _ = _arms(_exits(SEQUENTIAL, "target"))
+    halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
 
     with pytest.raises(AssertionError):
         assert all(isinstance(a.effect, RaiseEffect) for a in halted), "guessed"

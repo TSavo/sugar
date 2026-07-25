@@ -42,6 +42,28 @@ class _ReducedBlock:
     transforms: tuple = ()
 
 
+def _prefixed(state: _ReducedBlock, inner: object) -> object:
+    """The temporal state of a halt INSIDE a nested statement, read from outside.
+
+    ``inner`` is what the nested reduction reached before halting; ``state`` is
+    everything this block had already established when the statement began.
+    Python never rolls back what already happened, so the halt arm carries both,
+    in order. A nested state with no ``entries`` (a non-block payload) is left
+    alone -- there is nothing to splice onto.
+    """
+    entries = getattr(inner, "entries", None)
+    if entries is None:
+        return inner
+    for transform in reversed(state.transforms):
+        entries = transform(entries)
+    return _ReducedBlock(
+        (*state.entries, *entries),
+        getattr(inner, "can_fall_through", False),
+        (),
+        state.transforms,
+    )
+
+
 def reduce_block_to_exitset(
     statements: tuple, ctx: object = None
 ) -> ExitSet[_ReducedBlock]:
@@ -144,6 +166,30 @@ def reduce_block_to_exitset(
                         )
                     )
 
+                # A statement that reduces to its OWN ExitSet (a nested block:
+                # try/with, or an unpack assignment whose store leaves are
+                # sequenced by this same reducer) hands back halted arms whose
+                # state is the state reached INSIDE that statement. It cannot
+                # know the prefix -- `head.desugar(ctx)` is given no state -- so
+                # the prefix is spliced on here, at the one seam that owns
+                # sequencing. Without this, a halt inside a nested statement
+                # would report an empty temporal state and every earlier store
+                # would read as rolled back, which is exactly the law the store
+                # partition above exists to state.
+                outcome = ExitSet(
+                    tuple(
+                        (
+                            Halted(
+                                exit_.guard,
+                                exit_.effect,
+                                _prefixed(state, exit_.state),
+                            )
+                            if isinstance(exit_, Halted)
+                            else exit_
+                        )
+                        for exit_ in outcome.exits
+                    )
+                )
                 return outcome.and_then(project)
             contribution = outcome.contribution()
             for transform in reversed(state.transforms):
