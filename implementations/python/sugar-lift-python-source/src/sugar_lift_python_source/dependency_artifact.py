@@ -28,8 +28,35 @@ class DependencyArtifactAuthenticationError(Exception):
 
 
 _ARTIFACT_INTAKE_AUTHORITY = object()
-# Process-local: same distribution seat should not re-hash/re-parse.
-_AUTHENTICATE_GRAPH_CACHE: dict[tuple[str, ...], "DependencyArtifactGraph"] = {}
+
+# The authenticated-graph memo is CONTENT-ADDRESSED, and that is the whole
+# reason it may be process-global (#6266's distinction, applied here).
+#
+# The key is the ``distribution_artifact_cid`` -- the CID over every recorded
+# file's content CID.  ``h = h(p)``: the key is a pure function of exactly the
+# bytes the value authenticates, so "the installation changed but the memo did
+# not" is not a bug to detect, it is a sentence that cannot be written.  A miss
+# is the only thing a changed byte can produce.
+#
+# It was keyed by dist-info PATH, and that shipped a CID that did not address
+# its bytes: authenticate -> edit the installed source -> authenticate returned
+# the first graph, reporting an artifact CID for content that no longer existed
+# on disk.  The neighbouring disk cache stat'ed ``RECORD``, which is not touched
+# when an installed ``.py`` file is edited, so it served the same stale graph
+# across processes.  Both are now keyed by the artifact CID.
+#
+# The VALUE is legitimately shareable here, which is why this is a registry and
+# not a session: ``DependencyArtifactGraph`` is a frozen dataclass over a tuple
+# of frozen files and a ``MappingProxyType``, holding bytes and str only.  It
+# owns no live construction context, so no caller can write into a served graph
+# and have that write reach another authentication.  (Contrast
+# ``resolution_session``: those memo VALUES were bound to a mutable
+# ``TreeConstructionContextV1``, which is why they needed an owner.)
+_AUTHENTICATE_GRAPH_CACHE: dict[str, "DependencyArtifactGraph"] = {}
+
+# Memoization switch. Flipping it must change SPEED ONLY: never a CID, never a
+# verdict, never a graph. Paying full price is always a legal answer.
+_AUTHENTICATE_CACHE_ENABLED = True
 
 
 def _require_parseable_module_source(
@@ -50,55 +77,33 @@ def _require_parseable_module_source(
         ) from exc
 
 
-def _distribution_authenticate_cache_key(
-    distribution: importlib.metadata.Distribution,
-) -> tuple[str, ...]:
-    """Stable process-local key for one installed distribution seat."""
-    path = getattr(distribution, "_path", None)
-    if path is not None:
-        return ("path", str(Path(path).resolve()))
-    try:
-        name = distribution.metadata["Name"] or ""
-        version = distribution.metadata["Version"] or ""
-    except Exception:
-        name, version = "", ""
-    return ("meta", str(name), str(version), str(type(distribution)))
+def _artifact_disk_cache_path(artifact_cid: str) -> Path:
+    """On-disk seat for one authenticated graph, addressed by its own CID.
 
-
-def _distribution_disk_cache_path(
-    distribution: importlib.metadata.Distribution,
-) -> Path | None:
-    """Content-stable on-disk seat for one installed distribution graph."""
-    path = getattr(distribution, "_path", None)
-    if path is None:
-        return None
-    seat = Path(path).resolve()
-    record = seat / "RECORD" if seat.is_dir() else seat
-    try:
-        st = record.stat()
-    except OSError:
-        return None
-    digest = blake3_512_of(
-        f"{seat}\0{st.st_mtime_ns}\0{st.st_size}".encode("utf-8")
-    ).removeprefix("blake3-512:")[:32]
+    The seat is a pure function of the artifact CID, so a changed installed byte
+    changes the CID, which changes the seat: a stale hit has no filename to live
+    at. The seat this replaced was a digest over ``RECORD``'s ``(mtime, size)``,
+    which does not move when an installed ``.py`` file is edited.
+    """
+    digest = artifact_cid.removeprefix("blake3-512:")[:32]
     root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     return root / "sugar" / "dependency-artifact-graphs" / f"{digest}.pkl"
 
 
 def _load_authenticate_disk_cache(
-    distribution: importlib.metadata.Distribution,
+    artifact_cid: str,
 ) -> "DependencyArtifactGraph | None":
-    path = _distribution_disk_cache_path(distribution)
-    if path is None or not path.is_file():
+    path = _artifact_disk_cache_path(artifact_cid)
+    if not path.is_file():
         return None
     try:
         import pickle
 
         with path.open("rb") as stream:
             payload = pickle.load(stream)
-        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v1":
+        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v2":
             return None
-        return DependencyArtifactGraph(
+        graph = DependencyArtifactGraph(
             artifact_kind=payload["artifact_kind"],
             distribution_name=payload["distribution_name"],
             distribution_version=payload["distribution_version"],
@@ -109,22 +114,25 @@ def _load_authenticate_disk_cache(
         )
     except Exception:
         return None
+    # ``__post_init__`` already recomputed the CID from the retained bytes; this
+    # pins that the recomputed CID is the one that was ASKED for, so a payload
+    # parked at the wrong seat cannot answer a question it does not address.
+    if graph.distribution_artifact_cid != artifact_cid:
+        return None
+    return graph
 
 
 def _store_authenticate_disk_cache(
-    distribution: importlib.metadata.Distribution,
     graph: "DependencyArtifactGraph",
 ) -> None:
-    path = _distribution_disk_cache_path(distribution)
-    if path is None:
-        return
+    path = _artifact_disk_cache_path(graph.distribution_artifact_cid)
     try:
         import pickle
         import tempfile
 
         # MappingProxyType is not pickleable; store plain dict modules.
         payload = {
-            "schema": "dep-graph-v1",
+            "schema": "dep-graph-v2",
             "artifact_kind": graph.artifact_kind,
             "distribution_name": graph.distribution_name,
             "distribution_version": graph.distribution_version,
@@ -541,26 +549,22 @@ class DependencyArtifactGraph:
                 "artifact module projection is incomplete or contains invented modules"
             )
 
-    @classmethod
-    def authenticate(
-        cls, distribution: importlib.metadata.Distribution
-    ) -> "DependencyArtifactGraph":
-        """Hash every recorded installed file and publish authenticated modules."""
-        cache_key = _distribution_authenticate_cache_key(distribution)
-        cached = _AUTHENTICATE_GRAPH_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
-        disk = _load_authenticate_disk_cache(distribution)
-        if disk is not None:
-            _AUTHENTICATE_GRAPH_CACHE[cache_key] = disk
-            return disk
+    @staticmethod
+    def _read_recorded_installation(
+        distribution: importlib.metadata.Distribution,
+    ) -> tuple[list[tuple[AuthenticatedArtifactFileV1, str]], str, str, str]:
+        """Read and content-address the installation; mint its artifact CID.
+
+        This is the half that CANNOT be memoized: it is what establishes which
+        bytes are on disk right now, and therefore what the answer is allowed to
+        be addressed by. Everything memoized downstream is keyed by its result.
+        """
         files = distribution.files
         if files is None:
             raise DependencyArtifactAuthenticationError(
                 "installed distribution has no recorded file manifest"
             )
-        authenticated_files: list[AuthenticatedArtifactFileV1] = []
-        modules: dict[str, AuthenticatedModuleSourceV1] = {}
+        located: list[tuple[AuthenticatedArtifactFileV1, str]] = []
         for recorded in sorted(files, key=lambda item: str(item)):
             relative = PurePosixPath(str(recorded))
             if relative.is_absolute():
@@ -574,38 +578,19 @@ class DependencyArtifactGraph:
                 raise DependencyArtifactAuthenticationError(
                     f"cannot read recorded distribution file {relative}"
                 ) from exc
-            authenticated_files.append(
-                AuthenticatedArtifactFileV1(
-                    source_seat=relative.as_posix(),
-                    content_cid=content_cid,
-                    content=content,
+            located.append(
+                (
+                    AuthenticatedArtifactFileV1(
+                        source_seat=relative.as_posix(),
+                        content_cid=content_cid,
+                        content=content,
+                    ),
+                    str(path),
                 )
-            )
-            module_name = _module_name(relative)
-            if module_name is None:
-                continue
-            try:
-                source = content.decode("utf-8")
-            except UnicodeError as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"recorded Python module {module_name} is not parseable UTF-8 source"
-                ) from exc
-            _require_parseable_module_source(
-                source, path=str(path), module_name=module_name
-            )
-            if module_name in modules:
-                raise DependencyArtifactAuthenticationError(
-                    f"distribution contains duplicate module seat {module_name}"
-                )
-            modules[module_name] = AuthenticatedModuleSourceV1(
-                module_name=module_name,
-                source_seat=relative.as_posix(),
-                source_cid=content_cid,
-                source=source,
             )
         metadata_files = [
             item
-            for item in authenticated_files
+            for item, _ in located
             if item.source_seat.endswith(".dist-info/METADATA")
         ]
         if len(metadata_files) != 1:
@@ -626,20 +611,63 @@ class DependencyArtifactGraph:
             "distributionVersion": version,
             "files": [
                 {"path": item.source_seat, "contentCid": item.content_cid}
-                for item in authenticated_files
+                for item, _ in located
             ],
         }
+        return located, name, str(version), cid_of_json(preimage)
+
+    @classmethod
+    def authenticate(
+        cls, distribution: importlib.metadata.Distribution
+    ) -> "DependencyArtifactGraph":
+        """Hash every recorded installed file and publish authenticated modules."""
+        located, name, version, artifact_cid = cls._read_recorded_installation(
+            distribution
+        )
+        if _AUTHENTICATE_CACHE_ENABLED:
+            cached = _AUTHENTICATE_GRAPH_CACHE.get(artifact_cid)
+            if cached is not None:
+                return cached
+            disk = _load_authenticate_disk_cache(artifact_cid)
+            if disk is not None:
+                _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = disk
+                return disk
+        authenticated_files = [item for item, _ in located]
+        modules: dict[str, AuthenticatedModuleSourceV1] = {}
+        for item, path in located:
+            relative = PurePosixPath(item.source_seat)
+            module_name = _module_name(relative)
+            if module_name is None:
+                continue
+            try:
+                source = item.content.decode("utf-8")
+            except UnicodeError as exc:
+                raise DependencyArtifactAuthenticationError(
+                    f"recorded Python module {module_name} is not parseable UTF-8 source"
+                ) from exc
+            _require_parseable_module_source(source, path=path, module_name=module_name)
+            if module_name in modules:
+                raise DependencyArtifactAuthenticationError(
+                    f"distribution contains duplicate module seat {module_name}"
+                )
+            modules[module_name] = AuthenticatedModuleSourceV1(
+                module_name=module_name,
+                source_seat=relative.as_posix(),
+                source_cid=item.content_cid,
+                source=source,
+            )
         graph = cls(
             artifact_kind="distribution",
             distribution_name=name,
             distribution_version=version,
-            distribution_artifact_cid=cid_of_json(preimage),
+            distribution_artifact_cid=artifact_cid,
             files=tuple(authenticated_files),
             modules=MappingProxyType(modules),
             _intake_authority=_ARTIFACT_INTAKE_AUTHORITY,
         )
-        _AUTHENTICATE_GRAPH_CACHE[cache_key] = graph
-        _store_authenticate_disk_cache(distribution, graph)
+        if _AUTHENTICATE_CACHE_ENABLED:
+            _AUTHENTICATE_GRAPH_CACHE[artifact_cid] = graph
+            _store_authenticate_disk_cache(graph)
         return graph
 
     @classmethod
