@@ -90,11 +90,12 @@ jobs:
         id: env
         uses: ./.github/actions/python-test-environment
 
-      # The suite exercises the real lift over RPC, so it needs the real
-      # binary. Without SUGAR_BIN the sweep still runs and still reports --
-      # it just reports a degraded corpus, which is a worse lie than no
-      # measurement because it looks like one. Resolved through the one door,
-      # bin/sugarbin, by source stamp: shelf hit unless the Rust inputs moved.
+      # The suite exercises the real lift over RPC. `tests/conftest.py` already
+      # resolves the binary in a session fixture and exits(2) if it cannot, so
+      # this step is not what makes the sweep work -- it is what keeps the
+      # sweep's WALL TIME a measurement of the suite rather than of a cold
+      # Rust build that happened to land inside it. Resolved through the one
+      # door, bin/sugarbin, by source stamp: shelf hit unless Rust inputs moved.
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
 
@@ -184,9 +185,9 @@ jobs:
         id: env
         uses: ./.github/actions/python-test-environment
 
-      # Same binary, resolved the same way, so the only difference between the
-      # canonical run and these is the order. Anything else differing would
-      # make a divergence uninterpretable.
+      # Same binary, resolved the same way and warmed the same way, so the only
+      # difference between the canonical run and these is the order. Anything
+      # else differing would make a divergence uninterpretable.
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
 
