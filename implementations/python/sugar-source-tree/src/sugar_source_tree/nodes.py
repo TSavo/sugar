@@ -7053,9 +7053,13 @@ class Attribute(Expression):
 
     def _construct_sugar(self):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
-        The attr name is a static identifier carried onto the coordinate."""
-        if isinstance(self.value, OpaqueObjectStateV1):
-            return super()._construct_sugar()
+        The attr name is a static identifier carried onto the coordinate.
+
+        An OpaqueObjectStateV1 receiver is NOT withheld: `.attr` on an opaque
+        call result is a symbolic read the witness resolves at runtime, not a
+        gap. It reduces to the honest `py.getattr(recv, "attr")` EUF coordinate
+        (SymbolicValue.attribute), carrying whatever the call term guarantees and
+        nothing invented. Refusing it here was the withhold, not the construct."""
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
@@ -7108,9 +7112,13 @@ class Subscript(Expression):
     def _construct_sugar(self):
         """`<value>[<slice_>]` constructs SubscriptSugar WITH the receiver's and
         index's sugars. A Slice index reduces to its own gap through the
-        recursion (slice_.sugar()), never silently handled here."""
-        if isinstance(self.value, OpaqueObjectStateV1):
-            return super()._construct_sugar()
+        recursion (slice_.sugar()), never silently handled here.
+
+        An OpaqueObjectStateV1 receiver is NOT withheld: `[key]` on an opaque
+        call result is a symbolic read the witness resolves at runtime, not a
+        gap. It reduces to the honest `py.subscript(recv, key)` EUF coordinate,
+        carrying whatever the call term guarantees and nothing invented.
+        Refusing it here was the withhold, not the construct."""
         from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
 
         return SubscriptSugar(

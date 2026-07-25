@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any, ClassVar, TypeAlias
 
 from sugar_lift_python_source.canonical import cid_of_json
 
@@ -142,6 +142,9 @@ class OpaqueObjectCoordinateV1:
     artifact_cid: str
     cid: str
 
+    # The static intern table this category owns: CID -> canonical instance.
+    _interned: ClassVar[dict[str, "OpaqueObjectCoordinateV1"]] = {}
+
     @property
     def preimage(self) -> dict[str, Any]:
         return {
@@ -202,11 +205,25 @@ class OpaqueObjectCoordinateV1:
         generation = _generation(raw["constructionGeneration"])
         source = _cid(raw["sourceCid"], "sourceCid")
         artifact = _cid(raw["artifactCid"], "artifactCid")
+        # This type OWNS the opaque-object-coordinate category: one static
+        # intern table, keyed by the coordinate's own CID. A node carrying an
+        # opaque object is a VIEW on the canonical instance; decoding the same
+        # coordinate wire (in every snapshot it survives -- asof: 310 decodes,
+        # 10 distinct, 31x) does the verifying work once, then returns the
+        # interned object. Skips the dominant cost (cid_of_json) on a hit; the
+        # cheap structural decode above still runs and the content-address law
+        # (same CID => same content) makes the interned instance sound.
+        observed = raw["objectCoordinateCid"]
+        cached = cls._interned.get(observed)
+        if cached is not None:
+            return cached
         preimage = {
             key: value for key, value in raw.items() if key != "objectCoordinateCid"
         }
-        cid = _checked(preimage, raw["objectCoordinateCid"], "object coordinate CID")
-        return cls(occurrence, generation, source, artifact, cid)
+        cid = _checked(preimage, observed, "object coordinate CID")
+        result = cls(occurrence, generation, source, artifact, cid)
+        cls._interned[cid] = result
+        return result
 
 
 ObjectCoordinateV1: TypeAlias = SourceObjectCoordinateV1 | OpaqueObjectCoordinateV1

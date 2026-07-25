@@ -370,8 +370,18 @@ class ConstructionTestimonyReporterV1:
 
     def present_construction(self, node: Node, value: object) -> None:
         try:
-            semantic_value_cid = cid_of_json(_constructed_preimage(value))
             node_shape_cid = node_construction_shape_cid(node)
+        except (TypeError, ValueError):
+            return
+        # Same content, same testimony: a node view is presented in every
+        # snapshot it survives (asof: 2,277 presentations, 187 distinct shapes
+        # -- 12x). The shape CID is the content key; once it is recorded, the
+        # semantic-value CID and the testimony mint are pure recomputation.
+        # Do the work once per shape.
+        if node_shape_cid in self._by_node_shape:
+            return
+        try:
+            semantic_value_cid = cid_of_json(_constructed_preimage(value))
         except (TypeError, ValueError):
             return
         self._by_node_shape[node_shape_cid] = mint_constructed_value_testimony_v1(
@@ -480,14 +490,30 @@ def _initial_sealed_state(state: BindingState) -> SealedBindingStateV1:
 
 
 def node_construction_shape_cid(node: Node) -> str:
-    return cid_of_json(
+    # The shape CID is a CATEGORY of content-addressed work: a pure function of
+    # the backend ref (fragment + subtree preimage), which the ref determines
+    # (verified: no ref maps to two shape CIDs). The tree holds many node views
+    # over one ref -- a binding live across N statements is testified in every
+    # pre/post snapshot it survives -- so canonicalizing the full subtree from
+    # scratch each time is the dominant construction cost (core/generic._where:
+    # 91,516 recomputations, 180s). Memoize it in the STATIC category registry:
+    # new does the work once, every view thereafter sees it done.
+    from .construction_cache import remember_shape_cid, shape_cid_for
+
+    ref = node.ref
+    cached = shape_cid_for(ref)
+    if cached is not None:
+        return cached
+    result = cid_of_json(
         {
             "kind": "constructed-node-shape",
             "schemaVersion": "1",
             "source": node.fragment.seal().to_dict(),
-            "node": _backend_node_preimage(node.ref),
+            "node": _backend_node_preimage(ref),
         }
     )
+    remember_shape_cid(ref, result)
+    return result
 
 
 def _backend_node_preimage(ref: object) -> dict[str, Any]:
@@ -560,6 +586,18 @@ def _canonical_constructed_value(value: object) -> Any:
         return {"sourceFragment": value.seal().to_dict()}
     if isinstance(value, SourceMemento):
         return {"sourceMemento": value.to_dict()}
+    from sugar_source_tree.nodes import Node
+
+    if isinstance(value, Node):
+        # A Node is a tree VIEW, not content. Its content identity is its
+        # construction-shape CID (fragment + subtree preimage); its unit/span
+        # are positional infrastructure that must never enter a content CID.
+        # A constructed value can legitimately carry a Node (e.g. a
+        # SourceVisibleCallFrameV1 holding the Lambda it will construct when
+        # called), but field-walking it drags in unit -> SourceUnit ->
+        # LineTable and fails to serialize (core/groupby/generic.value_counts).
+        # Represent the node by its content key, like every other node view.
+        return {"nodeShape": node_construction_shape_cid(value)}
     if isinstance(value, (tuple, list)):
         return [_canonical_constructed_value(item) for item in value]
     if isinstance(value, (set, frozenset)):

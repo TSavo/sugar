@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from sugar_lift_python_source.canonical import cid_of_json
 
@@ -32,6 +32,9 @@ class BindingCoordinateV1:
     binding_site: dict[str, Any]
     projection_path: tuple[str | int, ...]
     cid: str
+
+    # This type owns the binding-coordinate category: CID -> canonical instance.
+    _interned: ClassVar[dict[str, "BindingCoordinateV1"]] = {}
 
     @property
     def preimage(self) -> dict[str, Any]:
@@ -100,12 +103,17 @@ class BindingCoordinateV1:
         ):
             raise BindingProvenanceGap("malformed projectionPath")
         observed = _cid(raw["bindingCoordinateCid"], "bindingCoordinateCid")
+        cached = cls._interned.get(observed)
+        if cached is not None:
+            return cached
         preimage = {
             key: value for key, value in raw.items() if key != "bindingCoordinateCid"
         }
         if cid_of_json(preimage) != observed:
             raise BindingProvenanceGap("coordinate CID mismatch")
-        return cls(raw["scopeOwnerCid"], site, tuple(path), observed)
+        result = cls(raw["scopeOwnerCid"], site, tuple(path), observed)
+        cls._interned[observed] = result
+        return result
 
 
 @dataclass(frozen=True)
@@ -113,6 +121,9 @@ class ConstructedValueTestimonyV1:
     source_fragment_cid: str
     semantic_value_cid: str
     cid: str
+
+    # This type owns the constructed-value-testimony category.
+    _interned: ClassVar[dict[str, "ConstructedValueTestimonyV1"]] = {}
 
     @property
     def preimage(self) -> dict[str, Any]:
@@ -163,6 +174,9 @@ class ConstructedValueTestimonyV1:
         observed = _cid(
             raw["constructedValueTestimonyCid"], "constructedValueTestimonyCid"
         )
+        cached = cls._interned.get(observed)
+        if cached is not None:
+            return cached
         preimage = {
             key: value
             for key, value in raw.items()
@@ -170,7 +184,9 @@ class ConstructedValueTestimonyV1:
         }
         if cid_of_json(preimage) != observed:
             raise BindingProvenanceGap("constructed testimony CID mismatch")
-        return cls(raw["sourceFragmentCid"], raw["semanticValueCid"], observed)
+        result = cls(raw["sourceFragmentCid"], raw["semanticValueCid"], observed)
+        cls._interned[observed] = result
+        return result
 
 
 @dataclass(frozen=True)
