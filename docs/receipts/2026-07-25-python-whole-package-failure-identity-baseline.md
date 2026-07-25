@@ -1,5 +1,11 @@
 # First honest whole-package baseline for the Python kit (2026-07-25)
 
+> **Superseded:** This baseline was captured at `ca9a7bc94`. Current-main
+> receipts at `22e18c69e9bae2a3d50f183c26e45b0105854cf3` are recorded in
+> [`2026-07-25-sugar-lift-py-tests-22e18c69.failed-node-ids.txt`](2026-07-25-sugar-lift-py-tests-22e18c69.failed-node-ids.txt)
+> and
+> [`2026-07-25-sugar-source-tree-22e18c69.failed-node-ids.txt`](2026-07-25-sugar-source-tree-22e18c69.failed-node-ids.txt).
+
 Pin: `origin/main` @ `ca9a7bc94` ("Stop collecting the hash-pinned lift corpus as
 sugar-lift-py-tests' own tests", #6260).
 

@@ -1,5 +1,10 @@
-SUPERSEDED: captured at ca9a7bc94; use 2026-07-25-sugar-lift-py-tests-22e18c69.failed-node-ids.txt for current-main receipts.
-
+# Failed node IDs: sugar-lift-py-tests
+# Pin: 22e18c69e9bae2a3d50f183c26e45b0105854cf3
+# Summary: 133 failed, 1050 passed, 12 skipped, 5 errors in 2141.07s
+# Invocation (from implementations/python/sugar-lift-py-tests):
+# env SUGAR_BIN=/Users/tsavo/.buzz/REPOS/sugar-wt-chucky-receipts/implementations/rust/target/release/sugar PYTHONPATH="$PWD/../sugar-source-tree/src:$PWD/../sugar-lift-python-source/src:$PWD/../sugar-lift-py-tests/src" python3 -m pytest tests -q -p no:cacheprovider -rf --junitxml=/Users/tsavo/.buzz/.scratch/chucky-sugar-lift-py-tests-current-main.xml
+# Red nodes: 138 (133 failures + 5 errors)
+#
 tests/test_assert_sugar_from_node.py::test_unbuilt_condition_child_preserves_its_own_gap
 tests/test_binary_handoff_policy.py::test_python_wrapper_keeps_non_battleaxe_windows_on_broker
 tests/test_binary_handoff_policy.py::test_python_wrapper_uses_native_windows_sugarbin
@@ -14,6 +19,7 @@ tests/test_bound_var_memoization.py::test_scoped_binding_preserves_source_and_ol
 tests/test_bound_var_memoization.py::test_scoped_binding_reuses_one_identical_outcome_for_every_read[BoundVar]
 tests/test_bound_var_memoization.py::test_scoped_binding_reuses_one_identical_outcome_for_every_read[ModuleBoundVar]
 tests/test_bound_var_memoization.py::test_unscoped_binding_does_not_reuse_context_dependent_outcomes
+tests/test_callsite_term_cycle_key_volume.py::test_callsite_add_on_deep_terms_does_not_rebuild_cid_keys
 tests/test_cid_parser_census.py::test_hand_rolled_cid_parsers_are_zero
 tests/test_construction_law_gate.py::test_construction_law_ratchet
 tests/test_construction_law_instrument.py::test_s6_euf_fact_seat_does_not_infer_call_sort_from_rhs
@@ -24,8 +30,6 @@ tests/test_dig_with_args.py::test_hole_args_serve_the_abstract_contract
 tests/test_effect_witness_sites_01_10.py::test_first_ten_effect_sites_have_explicit_witnesses
 tests/test_engine_logging.py::test_engine_live_log_is_flushed_outside_log_capture
 tests/test_engine_logging.py::test_heartbeat_only_live_log_omits_high_volume_debug_spans
-tests/test_enumerate_rpc_frontier_honest.py::test_census_fingers_exactly_the_unwritten_kinds
-tests/test_enumerate_rpc_frontier_honest.py::test_unwritten_sugar_makes_the_frontier_fail_loudly
 tests/test_enumerate_rpc.py::test_assertions_and_facts_carry_the_fol
 tests/test_enumerate_rpc.py::test_call_sites_scoped_to_enclosing_function
 tests/test_enumerate_rpc.py::test_callable_universe_identity_uses_content_and_qualified_spelling
@@ -49,6 +53,8 @@ tests/test_enumerate_rpc.py::test_term_ref_bridge_recovery_is_shared_by_callsite
 tests/test_enumerate_rpc.py::test_universe_scan_lists_function_contract_rows
 tests/test_enumerate_rpc.py::test_universe_seek_from_callsite_joins_by_bridge
 tests/test_enumerate_rpc.py::test_universe_seek_refuses_ambiguous_leaf_bridge
+tests/test_enumerate_rpc_frontier_honest.py::test_census_fingers_exactly_the_unwritten_kinds
+tests/test_enumerate_rpc_frontier_honest.py::test_unwritten_sugar_makes_the_frontier_fail_loudly
 tests/test_enumeration_chain.py::test_the_dotted_path_end_to_end
 tests/test_factory_value_construction_side_doors.py::test_promoted_module_replay_never_swallows_incomplete
 tests/test_hermetic_sugar_pool.py::test_hermetic_lying_witness_ignores_ambient_component_path_poison
@@ -128,6 +134,7 @@ tests/test_slice_subscript_sat_unsat.py::test_symbolic_slice_lift_rpc_emits_slic
 tests/test_source_provenance.py::test_git_source_provenance_reports_commit_and_dirty
 tests/test_source_provenance.py::test_non_git_source_provenance_is_content_addressed
 tests/test_strict_pyright_ratchet.py::test_strict_pyright_error_counts_match_ratchet
+tests/test_supervised_enum_supervisor.py::test_supervised_timeout_restarts_and_continues
 tests/test_try_sat_unsat.py::test_try_body_lift_rpc_emits_callsite_values
 tests/test_try_sat_unsat.py::test_try_conditional_raise_except_curries_guarded_universe_through_lift_rpc
 tests/test_try_sat_unsat.py::test_try_conditional_raise_except_uses_raise_scope_in_lift_rpc
