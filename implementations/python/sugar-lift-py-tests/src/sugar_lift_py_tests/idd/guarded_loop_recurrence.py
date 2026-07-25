@@ -26,11 +26,31 @@ def _finding(path: Path, root: Path, line: int, code: str, replacement: str):
     return GuardedLoopRecurrenceFinding(rendered, line, code, replacement)
 
 
+_VENDORED_DIRS = frozenset(
+    {".venv", "venv", "site-packages", "node_modules", ".git", ".tox", "build", "dist"}
+)
+
+
+def _is_vendored(path: Path) -> bool:
+    """True for third-party code that is not this tree's to measure.
+
+    The instrument audits OUR construction sources. A virtualenv vendored under
+    the repo carries other projects' files -- and some share our filenames (a
+    `_pytest/nodes.py` is not our `nodes.py`) -- so scanning them reports a
+    finding no one here can discharge. Measuring foreign code is an instrument
+    defect, not a residual: it must be excluded, never suppressed by loosening
+    a rule.
+    """
+    return any(part in _VENDORED_DIRS for part in path.parts)
+
+
 def scan_guarded_loop_recurrence(
     root: Path,
 ) -> tuple[GuardedLoopRecurrenceFinding, ...]:
     findings: list[GuardedLoopRecurrenceFinding] = []
-    python_files = sorted(root.rglob("*.py"))
+    python_files = sorted(
+        path for path in root.rglob("*.py") if not _is_vendored(path)
+    )
     for path in python_files:
         text = path.read_text()
         tree = ast.parse(text, filename=str(path))
