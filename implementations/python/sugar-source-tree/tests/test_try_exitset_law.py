@@ -49,12 +49,13 @@ Laws pinned here, each with a discrimination arm that bites:
   through the same reducer produce identical arm structure, and a matched halt
   is replaced by exactly the handler body's own arms
 
-KNOWN GAP (not pinned here, deliberately -- see the PR body): a binding
-established in the ``try`` body before the raise is not visible in the
-handler; ``handler_scope`` is built from the pre-try scope in
-``sugar_source_tree.nodes.Try.substitute``.  That is a definite-assignment
-question in the source tree, not a hole in this control algebra, and a twin
-asserting the current outcome would be asserting the defect.
+CLOSED (#6283): the gap this file deliberately left unpinned -- a binding
+established in the ``try`` body before the raise not being visible in the
+handler, because ``handler_scope`` was the pre-try scope in
+``sugar_source_tree.nodes.Try.substitute`` -- is repaired.  The handler now
+begins from the temporal state its routed halt edge carries.  The law and its
+nine twins live in ``test_try_handler_temporal_state.py``; the control algebra
+pinned here was never the defect and is unchanged.
 """
 
 from __future__ import annotations
