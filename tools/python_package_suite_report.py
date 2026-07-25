@@ -41,6 +41,22 @@ import time
 # teardown-phase failure is an ERROR.
 _ERROR_PHASES = ("setup", "teardown")
 
+# One owner for "is this field an excuse rather than a value".
+from python_suite_identity_gate import (  # noqa: E402
+    IDENTITY_FIELDS,
+    unavailable_marker as _unavailable_marker,
+)
+
+
+class SuiteIdentityUnresolved(Exception):
+    """Raised during configure, before a single test runs.
+
+    Deliberately at configure time: an unresolved identity makes the whole
+    sweep unpublishable, so paying three hours of measurement first and then
+    discovering it is pure waste -- and a report on disk that a later step
+    might read.
+    """
+
 
 def pytest_addoption(parser):
     group = parser.getgroup("sugar-package-suite")
@@ -74,6 +90,26 @@ def pytest_addoption(parser):
         help="seed for --suite-order=shuffled (recorded in the report)",
     )
     group.addoption(
+        "--suite-commit",
+        action="store",
+        default=None,
+        metavar="SHA",
+        help=(
+            "the commit these verdicts measure. Required: falls back to "
+            "GITHUB_SHA only when that is set, never to a guess."
+        ),
+    )
+    group.addoption(
+        "--suite-binary-stamp",
+        action="store",
+        default=None,
+        metavar="STAMP",
+        help=(
+            "sourceStamp read from the RESOLVED binary's .sugarbin.json "
+            "manifest -- the stamp the measured binary actually has"
+        ),
+    )
+    group.addoption(
         "--suite-label",
         action="store",
         default=None,
@@ -98,6 +134,9 @@ class SuiteReporter:
         self._wall_start = time.perf_counter()
         self._cpu_start = os.times()
         self.shuffle_seed = None
+        # Resolved NOW, so an unresolvable identity costs zero measurement.
+        self.identity = self._identity()
+        self.measured_commit = self._measured_commit()
 
     # -- collection ---------------------------------------------------------
 
@@ -164,7 +203,23 @@ class SuiteReporter:
             "order": self.config.getoption("--suite-order"),
             "shuffleSeed": self.shuffle_seed,
             "pytestExitStatus": int(exitstatus),
-            "environmentIdentity": self._identity(),
+            # THE REPORT ITSELF CARRIES ITS IDENTITY.
+            #
+            # These are not a convenience copy of the embedded blob. The
+            # artifact is what leaves this machine; a consumer holding only
+            # suite-report.json must be able to say WHICH source tree, WHICH
+            # declared test extras and WHICH commit produced these verdicts
+            # without being handed a second file. Every one is re-checked on
+            # the serialized artifact by tools/python_suite_identity_gate.py,
+            # and any disagreement with the embedded identity is red.
+            "measuredCommit": self.measured_commit,
+            "sourceStamp": (self.identity.get("sourceStamp") or {}).get("value"),
+            "testExtraInputHash": (
+                self.identity.get("dependencyAuthority") or {}
+            ).get("testExtraInputHash"),
+            "environmentIdentityHash": self.identity.get("environmentIdentityHash"),
+            "binarySourceStamp": self.config.getoption("--suite-binary-stamp"),
+            "environmentIdentity": self.identity,
             "runnerIdentity": _runner_identity(),
             "resourceTelemetry": _resource_telemetry(),
             "timing": {
@@ -209,21 +264,78 @@ class SuiteReporter:
                     [n for n in self.collected if n not in self._seen_outcome]
                 ),
             },
+            # Collection and verdict conservation, stated in the artifact so a
+            # consumer can check it rather than take our word. Counts alone
+            # said "1212 collected, 1212 verdicts" for run 30175741263 -- true,
+            # and worth nothing without an identity beside it.
+            "conservation": {
+                "collected": len(self.collected),
+                "verdicts": len(self._seen_outcome),
+                "executedOrder": len(self.executed_order),
+                "buckets": {
+                    "passed": len(self.passed),
+                    "failed": len(self.failed),
+                    "error": len(self.errored),
+                    "skipped": len(self.skipped),
+                    "xfailed": len(self.xfailed),
+                    "xpassed": len(self.xpassed),
+                    "notReported": len(
+                        [n for n in self.collected if n not in self._seen_outcome]
+                    ),
+                },
+                "collectionError": len(self.collection_errors),
+            },
         }
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=2, sort_keys=False)
             handle.write("\n")
 
     def _identity(self):
+        """The environment identity, or nothing at all.
+
+        This used to return `{"unavailable": "..."}` when the identity was
+        missing or unreadable. That object is truthy, so every reader
+        downstream treated it as a present field -- which is how run
+        30175741263 published `sourceStamp: {"unavailable": ...}` under a green
+        check. A marker downstream code can mistake for a value is the defect.
+        Now the session dies before a report exists to mistake.
+        """
         path = self.config.getoption("--suite-identity")
         if not path:
-            return {"unavailable": "no --suite-identity supplied"}
+            raise SuiteIdentityUnresolved(
+                "no --suite-identity supplied; a suite report without an "
+                "environment identity is not a measurement"
+            )
         try:
             with open(path, encoding="utf-8") as handle:
-                return json.load(handle)
-        except OSError as exc:
-            # Loud, never silent: an unreadable identity is testimony too.
-            return {"unavailable": f"{type(exc).__name__}: {exc}", "path": path}
+                identity = json.load(handle)
+        except (OSError, ValueError) as exc:
+            raise SuiteIdentityUnresolved(
+                f"--suite-identity {path}: {type(exc).__name__}: {exc}"
+            ) from None
+        marker = _unavailable_marker(identity)
+        if marker is not None:
+            raise SuiteIdentityUnresolved(
+                f"--suite-identity {path} carries an unavailable marker at "
+                f"{marker} -- an excuse is not a field value"
+            )
+        return identity
+
+    def _measured_commit(self):
+        """Which commit these verdicts are about. Stated, never inferred.
+
+        `--suite-commit` wins; `GITHUB_SHA` is accepted because CI sets it from
+        the checked-out ref. Neither present is an unresolved identity -- we do
+        not shell out to `git rev-parse` and call a dirty working tree a
+        commit.
+        """
+        commit = self.config.getoption("--suite-commit") or os.environ.get("GITHUB_SHA")
+        if not commit:
+            raise SuiteIdentityUnresolved(
+                "no --suite-commit and no GITHUB_SHA: the report cannot say "
+                "which commit it measured"
+            )
+        return commit
 
 
 _START_UNIX = time.time()

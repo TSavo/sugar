@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import sysconfig
@@ -54,6 +55,13 @@ AUTHORITY_PACKAGE = "sugar-lift-py-tests"
 
 # Directories that never change what the suite means.
 _SKIP_DIRS = {"__pycache__", ".git", ".venv", ".pytest_cache", "build", "dist"}
+
+# The one shape a sourceStamp may take. Shared with
+# tools/python_suite_identity_gate.py, which re-checks it on the ARTIFACT.
+STAMP_PATTERN = re.compile(r"blake3-512_[0-9a-f]{128}")
+
+# The extra whose contents the suite is allowed to import (#6275).
+TEST_EXTRA = "test"
 
 
 def _hash_tree(root, digest):
@@ -89,9 +97,23 @@ def _test_extra_input_hash(pyproject_path):
     except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
         import tomli as tomllib
 
+    if not os.path.isfile(pyproject_path):
+        raise IdentityUnresolved(
+            f"testExtraInputHash: missing dependency authority {pyproject_path}"
+        )
     with open(pyproject_path, "rb") as handle:
         data = tomllib.load(handle)
     project = data.get("project", {})
+    # A hash of nothing is a hash. It is also a claim that the suite declared
+    # no test dependencies, which has never been true -- so an empty or absent
+    # `[test]` extra is an unresolved identity, not a valid digest of {}.
+    extras = project.get("optional-dependencies", {})
+    if not extras.get(TEST_EXTRA):
+        raise IdentityUnresolved(
+            f"testExtraInputHash: {pyproject_path} declares no non-empty "
+            f"[project.optional-dependencies].{TEST_EXTRA} -- the sole "
+            f"dependency authority (#6275) is empty or missing"
+        )
     authority = {
         "dependencies": project.get("dependencies", []),
         "optional-dependencies": project.get("optional-dependencies", {}),
@@ -102,31 +124,72 @@ def _test_extra_input_hash(pyproject_path):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest(), authority
 
 
-def _source_stamp(repo_root):
-    """The same sourceStamp `bin/sugarbin` resolves binaries by.
+class IdentityUnresolved(Exception):
+    """An identity field could not be resolved. There is no other outcome.
 
-    Failure is recorded, never swallowed: a missing stamp makes the identity
-    say so out loud rather than quietly hashing a hole.
+    THE DEFECT THIS TYPE EXISTS TO KILL. This function used to return
+    `{"unavailable": "<exception text>"}` on failure. That object is TRUTHY.
+    Every downstream reader -- `(identity.get('sourceStamp') or {}).get('value')`
+    in the summary, the artifact consumers, a human reading a green check --
+    treated a non-empty dict as a present field and read `None` out of it. A
+    null would have been caught; a populated excuse was not. Run 30175741263
+    concluded `success` with `sourceStamp: {"unavailable": ...}` and
+    `testExtraInputHash: None` for exactly that reason.
+
+    A marker that downstream code can mistake for a value is the bug. Identity
+    resolves or the process dies here, before anything can call the result a
+    measurement.
+    """
+
+
+def _source_stamp(repo_root):
+    """The sourceStamp `bin/sugarbin` keys the measured binary by.
+
+    Not a hash of our own choosing: the value here is the SAME
+    `blake3-512_<hex>` string `tools/sugar_source_stamp.py` prints and
+    `bin/sugarbin` resolves artifacts by, so a report's sourceStamp can be
+    compared field-for-field with the resolved binary's `.sugarbin.json`
+    manifest. A different algorithm over the same preimage would be a number
+    that looks authoritative and matches nothing.
+
+    Requires `cargo` on PATH: the preimage is the cargo local-dependency
+    closure. That requirement is why run 30175741263 failed here -- identity
+    was minted before the Rust toolchain was on PATH -- and it is a real
+    requirement, so the fix is to put cargo on PATH, never to hash a hole.
     """
     script = os.path.join(repo_root, "tools", "sugar_source_stamp.py")
     if not os.path.isfile(script):
-        return {"unavailable": f"missing {script}"}
-    try:
-        stream = subprocess.run(
-            [sys.executable, script, "--repo-root", repo_root, "--stream"],
-            check=True,
-            capture_output=True,
-        ).stdout
-    except (subprocess.CalledProcessError, OSError) as exc:
-        detail = getattr(exc, "stderr", b"") or b""
-        return {
-            "unavailable": f"{type(exc).__name__}: {exc}",
-            "stderr": detail.decode("utf-8", "replace")[-2000:],
-        }
+        raise IdentityUnresolved(f"sourceStamp: missing {script}")
+
+    def _run(args):
+        try:
+            return subprocess.run(
+                [sys.executable, script, "--repo-root", repo_root, *args],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or b"").decode("utf-8", "replace")[-2000:]
+            raise IdentityUnresolved(
+                f"sourceStamp: {' '.join(args)} exited {exc.returncode}. "
+                f"Is `cargo` on PATH? stderr:\n{stderr}"
+            ) from exc
+        except OSError as exc:
+            raise IdentityUnresolved(f"sourceStamp: {type(exc).__name__}: {exc}") from exc
+
+    stamp = _run([]).stdout.decode("utf-8", "replace").strip()
+    if not STAMP_PATTERN.fullmatch(stamp):
+        raise IdentityUnresolved(
+            f"sourceStamp: {stamp!r} is not a blake3-512_<128 hex> stamp"
+        )
+    stream = _run(["--stream"]).stdout
+    if not stream:
+        raise IdentityUnresolved("sourceStamp: empty stamp preimage")
     return {
-        "algorithm": "sha256-of-sugar_source_stamp-preimage",
-        "value": hashlib.sha256(stream).hexdigest(),
+        "algorithm": "blake3-512-of-sugar_source_stamp-preimage",
+        "value": stamp,
         "preimageBytes": len(stream),
+        "preimageSha256": hashlib.sha256(stream).hexdigest(),
     }
 
 
@@ -200,7 +263,20 @@ def main(argv=None):
     parser.add_argument("--output", default=None, help="write JSON here")
     args = parser.parse_args(argv)
 
-    identity = build_identity(args.repo_root)
+    try:
+        identity = build_identity(args.repo_root)
+    except IdentityUnresolved as exc:
+        # No file is written. A half-minted identity on disk is exactly the
+        # thing a later step would read, find truthy, and publish.
+        print(
+            "crime=identity-unresolved owner=tools/python_test_environment_identity.py "
+            f"illegal shape={exc} "
+            "replacement=resolve the field (put `cargo` on PATH before minting "
+            "identity; declare the [test] extra) -- never record a marker in "
+            "its place",
+            file=sys.stderr,
+        )
+        return 1
     text = json.dumps(identity, indent=2) + "\n"
     if args.output:
         with open(args.output, "w", encoding="utf-8") as handle:

@@ -33,6 +33,19 @@ AXES = (
 )
 
 
+def _field(value):
+    """Render an identity field, or say UNRESOLVED in words.
+
+    `f"`{value}`"` on a missing field prints the backticked word `None`, which
+    reads on a green summary page as a value that happens to be spelled oddly.
+    Run 30175741263's summary said `testExtraInputHash: None` and nobody's eye
+    caught it. Unresolved says unresolved.
+    """
+    if value in (None, "", {}, []):
+        return "**UNRESOLVED**"
+    return f"`{value}`"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", required=True)
@@ -69,9 +82,11 @@ def main(argv=None):
         ),
         f"- pytest exit status: `{args.pytest_exit if args.pytest_exit is not None else report.get('pytestExitStatus')}`"
         " (recorded as evidence; this job reports, it does not gate)",
-        f"- environmentIdentityHash: `{identity.get('environmentIdentityHash')}`",
-        f"- sourceStamp: `{(identity.get('sourceStamp') or {}).get('value')}`",
-        f"- testExtraInputHash: `{(identity.get('dependencyAuthority') or {}).get('testExtraInputHash')}`",
+        f"- measuredCommit: {_field(report.get('measuredCommit'))}",
+        f"- environmentIdentityHash: {_field(report.get('environmentIdentityHash'))}",
+        f"- sourceStamp: {_field(report.get('sourceStamp'))}"
+        f" (binary: {_field(report.get('binarySourceStamp'))})",
+        f"- testExtraInputHash: {_field(report.get('testExtraInputHash'))}",
         f"- packageBuildInputs: `{(identity.get('packageBuildInputs') or {}).get('hash')}`",
         f"- python: `{identity.get('pythonImplementation')} {identity.get('pythonVersion')}`"
         f" abi `{(identity.get('pythonAbi') or {}).get('soabi')}`",
