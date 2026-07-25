@@ -1,9 +1,24 @@
-"""The binding Python construction job must invoke every permanent R axis."""
+"""The binding Python construction job must invoke every permanent R axis.
+
+The axes moved out of the workflow YAML and into tools/run_sole_construction_
+floors.sh, because the whole floor set now runs inside ONE machine-wide heavy
+lease. Twenty leased steps would have let a pandas census interleave between
+two axes, and then "the complete floor set from one pinned run" would have been
+a fiction.
+
+What must not change is the property this file has always pinned: every
+permanent axis is invoked, none is silently dropped, and no axis is skipped
+because an earlier one was honestly red. The `if: always()` guarantee is now
+carried by the script's `axis` helper, which runs EVERY axis, collects the red
+ones, and fails at the end -- so the check below is that each axis goes through
+that helper, rather than that each has its own YAML step.
+"""
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "factory-zero-tolerance.yml"
+FLOOR_SET = ROOT / "tools" / "run_sole_construction_floors.sh"
 
 # Permanent axes with live instruments. factory_zero_tolerance and
 # construction_cache_context_law retired with the factory era (#6028).
@@ -30,20 +45,45 @@ AXIS_COMMANDS = {
 
 def test_binding_job_invokes_every_permanent_axis() -> None:
     workflow = WORKFLOW.read_text()
+    floors = FLOOR_SET.read_text()
 
     assert "python-sole-construction-floors:" in workflow
+    assert "tools/run_sole_construction_floors.sh" in workflow, (
+        "the binding job no longer runs the floor set at all"
+    )
+    # And it runs it under the lease -- an unleased floor set is a floor set
+    # measured beside whatever else the box happened to be doing.
+    assert "tools/heavy_measurement_lease.py" in workflow
+
     for axis, command in AXIS_COMMANDS.items():
-        step_start = workflow.find(f"- name: {axis}")
-        assert step_start >= 0, f"{axis} is not bound to merge CI"
-        step_end = workflow.find("\n      - name:", step_start + 1)
-        step = workflow[step_start : step_end if step_end >= 0 else None]
+        axis_start = floors.find(f'axis "{axis}"')
+        if axis_start < 0:
+            axis_start = floors.find(f"axis '{axis}'")
+        assert axis_start >= 0, f"{axis} is not bound to merge CI"
+        axis_end = floors.find("\naxis ", axis_start + 1)
+        step = floors[axis_start : axis_end if axis_end >= 0 else None]
         assert command in step, f"{axis} does not invoke {command}"
         if axis == "R_factory_walk_unclassified = 0":
             assert "--live-root" in step, (
                 "R_factory_walk_unclassified only runs a fixture/discrimination; "
                 "binding CI must census the checked-in production surface"
             )
-        if axis != "R_ownership = 0":
-            assert (
-                "if: always()" in step
-            ), f"{axis} would be skipped after an earlier honest-red axis"
+
+
+def test_no_axis_is_skipped_after_an_earlier_honest_red() -> None:
+    """What `if: always()` used to buy, now bought by the runner itself.
+
+    Every axis runs, reds are COLLECTED rather than short-circuited, and the
+    verdict comes at the end. A floor set that stopped at the first red would
+    report a smaller R than the truth.
+    """
+    floors = FLOOR_SET.read_text()
+    assert "set -uo pipefail" in floors and "set -e\n" not in floors, (
+        "the floor set must not abort on the first red axis"
+    )
+    assert "red_axes+=" in floors and "exit 1" in floors, (
+        "red axes must be collected and reported, then fail the job"
+    )
+    # Every axis in the ledger goes through the one helper. No side doors.
+    for axis in AXIS_COMMANDS:
+        assert f'axis "{axis}"' in floors or f"axis '{axis}'" in floors
