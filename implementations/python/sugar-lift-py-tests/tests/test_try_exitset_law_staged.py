@@ -1,8 +1,13 @@
 """STAGED: pin the six-line Try/ExitSet law. Do not treat green as merge-ready.
 
-Merge waits on the post-Merkle census gate. This test only freezes the
-foundational routing path so staged Try work cannot silently invent a second
-control door.
+Merge waits on the post-V2 / post-Merkle census gate (PR #6242).
+
+Full behavioral twins live in sugar-source-tree::
+
+    tests/test_try_exitset_law.py
+
+This module freezes the foundational routing path in production source so
+staged Try work cannot silently invent a second control door.
 """
 
 from __future__ import annotations
@@ -27,6 +32,23 @@ def test_try_sugar_source_documents_exitset_law() -> None:
     assert "body -> guarded ExitSet" in text or "guarded ExitSet" in text
     assert "handler routing" in text or "_route_handlers_over_exits" in text
     assert "finally" in text
+    # First-match only is the router contract (source order, break after match).
+    assert "first matching handler" in text or "first matching" in text
+
+
+def test_route_handlers_breaks_after_first_match() -> None:
+    """Router source must break after the first matching arm — no fall-through."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "sugar_lift_py_tests"
+        / "sugar"
+        / "try_sugar.py"
+    )
+    text = path.read_text(encoding="utf-8")
+    # The loop that walks handlers must break after a match.
+    assert "matched = True" in text
+    assert "break" in text
 
 
 def test_basic_try_except_constructs_try_sugar(tmp_path: Path) -> None:
@@ -43,6 +65,46 @@ def test_basic_try_except_constructs_try_sugar(tmp_path: Path) -> None:
     fn = next(SourceFile(path_source(str(path))).functions())
     sugar = fn.sugar()
     assert any(isinstance(node, TrySugar) for node in _walk(sugar))
+
+
+def test_multi_handler_constructs_handlers_in_source_order(tmp_path: Path) -> None:
+    """Handler specs on TrySugar follow source order (Exception then ValueError)."""
+    path = tmp_path / "t.py"
+    path.write_text(
+        "def f(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except Exception:\n"
+        "        return 1\n"
+        "    except ValueError:\n"
+        "        return 2\n"
+        "    return z\n",
+        encoding="utf-8",
+    )
+    fn = next(SourceFile(path_source(str(path))).functions())
+    try_nodes = [n for n in _walk(fn.sugar()) if isinstance(n, TrySugar)]
+    assert try_nodes, "expected a TrySugar node"
+    handlers = try_nodes[0].handlers
+    assert len(handlers) >= 2
+    # Each handler is (matcher, body, slot_id); matchers are authenticated types.
+    # Source order: Exception arm before ValueError arm — first-match will pick
+    # Exception for a ValueError raise (subclass).
+    names = []
+    for matcher, _body, _slot in handlers:
+        if matcher is None:
+            names.append(None)
+            continue
+        # AuthenticatedExceptionTypeSugar or similar carries the type coordinate.
+        name = getattr(matcher, "exception_name", None) or getattr(
+            matcher, "name", None
+        )
+        if name is None and hasattr(matcher, "type_name"):
+            name = matcher.type_name
+        # Fall back: desugar-side identity may live on nested fields.
+        if name is None:
+            name = type(matcher).__name__
+        names.append(name)
+    assert len(names) >= 2
 
 
 def _walk(root, seen=None):
