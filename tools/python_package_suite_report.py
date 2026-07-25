@@ -80,6 +80,16 @@ def pytest_addoption(parser):
         metavar="LABEL",
         help="free-form label recorded in the report (e.g. the CI job name)",
     )
+    group.addoption(
+        "--suite-require-identity",
+        action="store_true",
+        default=False,
+        help=(
+            "fail the session after writing the report if measurement identity "
+            "is unresolved (sourceStamp unavailable, null extras hash, missing "
+            "commit, or conservation break). Authoritative runs must set this."
+        ),
+    )
 
 
 class SuiteReporter:
@@ -158,13 +168,17 @@ class SuiteReporter:
             return
         wall = time.perf_counter() - self._wall_start
         cpu_end = os.times()
+        environment_identity = self._identity()
         report = {
             "schemaVersion": 1,
             "label": self.config.getoption("--suite-label"),
             "order": self.config.getoption("--suite-order"),
             "shuffleSeed": self.shuffle_seed,
             "pytestExitStatus": int(exitstatus),
-            "environmentIdentity": self._identity(),
+            # measuredCommit is the git SHA of the tree under test. Prefer
+            # GITHUB_SHA (CI) then leave absent so the identity gate can red.
+            "measuredCommit": os.environ.get("GITHUB_SHA") or None,
+            "environmentIdentity": environment_identity,
             "runnerIdentity": _runner_identity(),
             "resourceTelemetry": _resource_telemetry(),
             "timing": {
@@ -210,9 +224,46 @@ class SuiteReporter:
                 ),
             },
         }
+        # Promote resolved identity fields to the top level so a reader never
+        # has to dig into environmentIdentity to learn whether the measurement
+        # is authoritative. Unavailable objects are NOT promoted.
+        try:
+            from suite_measurement_identity import promote_identity_fields
+        except ImportError:  # pragma: no cover - tools/ not always on path
+            promote_identity_fields = None
+        if promote_identity_fields is not None:
+            report = promote_identity_fields(report)
+
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=2, sort_keys=False)
             handle.write("\n")
+
+        # Post-serialization: re-read what was written. A populated intermediate
+        # that fails to land on disk must red the authoritative path.
+        if self.config.getoption("--suite-require-identity"):
+            try:
+                from suite_measurement_identity import identity_errors, load_report
+            except ImportError as exc:  # pragma: no cover
+                session.exitstatus = 2
+                print(
+                    f"suite-report: cannot import identity law: {exc}",
+                    file=sys.stderr,
+                )
+                return
+            reread = load_report(path)
+            errors = identity_errors(
+                reread,
+                require_commit=os.environ.get("GITHUB_SHA") or None,
+            )
+            if errors:
+                session.exitstatus = 2
+                print(
+                    "suite-report: identity unresolved after serialization; "
+                    "not authoritative:",
+                    file=sys.stderr,
+                )
+                for err in errors:
+                    print(f"  - {err}", file=sys.stderr)
 
     def _identity(self):
         path = self.config.getoption("--suite-identity")
@@ -220,10 +271,16 @@ class SuiteReporter:
             return {"unavailable": "no --suite-identity supplied"}
         try:
             with open(path, encoding="utf-8") as handle:
-                return json.load(handle)
+                payload = json.load(handle)
         except OSError as exc:
             # Loud, never silent: an unreadable identity is testimony too.
             return {"unavailable": f"{type(exc).__name__}: {exc}", "path": path}
+        if not isinstance(payload, dict):
+            return {
+                "unavailable": f"identity file is {type(payload).__name__}, not object",
+                "path": path,
+            }
+        return payload
 
 
 _START_UNIX = time.time()

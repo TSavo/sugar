@@ -96,23 +96,43 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # sourceStamp is the same preimage bin/sugarbin hashes. Minting identity
+      # before cargo is on PATH embeds {"unavailable": "FileNotFoundError: cargo"}
+      # and still produces a truthy environmentIdentity object — which is how
+      # run 30175741263 became attended-but-identity-unresolved. Rust first.
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+
       - name: Prepare immutable Python test environment
         id: env
         uses: ./.github/actions/python-test-environment
 
-      # The suite exercises the real lift over RPC. `tests/conftest.py` already
-      # resolves the binary in a session fixture and exits(2) if it cannot, so
-      # this step is not what makes the sweep work -- it is what keeps the
-      # sweep's WALL TIME a measurement of the suite rather than of a cold
-      # Rust build that happened to land inside it. Resolved through the one
-      # door, bin/sugarbin, by source stamp: shelf hit unless Rust inputs moved.
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
+      # Re-mint with cargo on PATH and refuse unavailable sourceStamp. The
+      # action's first mint may have run under a PATH without cargo; this step
+      # is the load-bearing identity for the suite measurement.
+      - name: Resolve suite measurement identity (require sourceStamp)
+        id: suite-identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          identity="$RUNNER_TEMP/sugar-python-test-environment/suite-measurement-identity.json"
+          mkdir -p "$(dirname "$identity")"
+          hash="$(python tools/python_test_environment_identity.py \
+            --repo-root . \
+            --output "$identity" \
+            --require-resolved)"
+          echo "path=$identity" >> "$GITHUB_OUTPUT"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+          echo "suite measurement identity: $hash"
 
+      # The suite exercises the real lift over RPC. Resolved through the one
+      # door, bin/sugarbin, by source stamp: shelf hit unless Rust inputs moved.
       - name: Resolve the sugar binary
         shell: bash
         run: |
           set -euo pipefail
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           echo "SUGAR_BIN=$(bin/sugarbin --profile release)" >> "$GITHUB_ENV"
 
       # ONE cold process. Whole package. Canonical collection order.
@@ -130,6 +150,7 @@ jobs:
         working-directory: implementations/python
         env:
           PYTHONPATH: ${{ github.workspace }}/tools
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -uo pipefail
           cat > "$RUNNER_TEMP/sweep.sh" <<'SWEEP'
@@ -141,11 +162,12 @@ jobs:
             --suite-identity="$SUITE_IDENTITY_PATH" \
             --suite-order=canonical \
             --suite-label=python-package-suite-canonical \
+            --suite-require-identity \
             2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
           exit "${PIPESTATUS[0]}"
           SWEEP
           set +e
-          SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
+          SUITE_IDENTITY_PATH='${{ steps.suite-identity.outputs.path }}' \
           python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
             --class python-package-suite \
             --record "$GITHUB_WORKSPACE/lease-record.json" \
@@ -177,6 +199,24 @@ jobs:
             --require-commit "$GITHUB_SHA" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Identity gate AFTER lease embed (post-serialization). A populated
+      # intermediate that was lost when writing suite-report.json reds here.
+      # Fail before the artifact is labeled authoritative.
+      - name: Measurement identity gate (authoritative)
+        id: identity-gate
+        if: always() && steps.sweep.outcome != 'skipped'
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools
+        run: |
+          set -euo pipefail
+          python3 tools/suite_measurement_identity_gate.py \
+            --report suite-report.json \
+            --require-commit "$GITHUB_SHA" \
+            --promote \
+            | tee identity-gate.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Publish the node-ID vector
         if: always()
         shell: bash
@@ -190,8 +230,9 @@ jobs:
 
       # Artifacts carry the node-ID lists. The step summary carries counts.
       # Counts are summaries of the lists; the lists are the evidence.
+      # Upload only after identity gate: "authoritative" means identity-resolved.
       - name: Upload authoritative suite artifacts
-        if: always()
+        if: always() && steps.identity-gate.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: python-package-suite-canonical
@@ -200,15 +241,37 @@ jobs:
             suite-report.json
             suite-node-ids/
             lease-record.json
+            identity-gate.json
           if-no-files-found: error
 
-      # Deliberately no `exit $pytest_exit`. See the header: this job reports.
-      - name: Report, do not gate
+      # Provisional upload when identity failed: complete measurement, not
+      # authoritative. Name makes the distinction unmissable.
+      - name: Upload provisional suite artifacts (identity unresolved)
+        if: always() && steps.identity-gate.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-suite-provisional-identity-unresolved
+          path: |
+            suite.log
+            suite-report.json
+            suite-node-ids/
+            lease-record.json
+            identity-gate.json
+          if-no-files-found: error
+
+      # Deliberately no `exit $pytest_exit` for known suite reds. Identity
+      # failure IS a gate: measurement without an authenticated universe must
+      # not read as an authoritative banked receipt.
+      - name: Report pytest evidence; gate only on identity
         if: always()
         shell: bash
         run: |
           echo "pytest exit status ${{ steps.sweep.outputs.pytest_exit }} recorded as evidence."
-          echo "This job does not gate merges; it owns the measurement."
+          echo "Identity gate outcome: ${{ steps.identity-gate.outcome }}"
+          if [ "${{ steps.identity-gate.outcome }}" = "failure" ]; then
+            echo "::error::suite measurement identity unresolved; not authoritative"
+            exit 1
+          fi
 
   python-package-suite-discrimination:
     name: python-package-suite (${{ matrix.order }})

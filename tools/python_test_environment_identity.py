@@ -150,9 +150,7 @@ def build_identity(repo_root):
         build_digest.update(b"\x00")
         build_digest.update(digest.digest())
 
-    authority_pyproject = os.path.join(
-        python_root, AUTHORITY_PACKAGE, "pyproject.toml"
-    )
+    authority_pyproject = os.path.join(python_root, AUTHORITY_PACKAGE, "pyproject.toml")
     extra_hash, authority = _test_extra_input_hash(authority_pyproject)
 
     identity = {
@@ -198,6 +196,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=".")
     parser.add_argument("--output", default=None, help="write JSON here")
+    parser.add_argument(
+        "--require-resolved",
+        action="store_true",
+        help=(
+            "exit non-zero if sourceStamp is unavailable or testExtraInputHash "
+            "is missing. Authoritative suite preparation must set this: an "
+            'identity that embeds {"unavailable": ...} is not an identity.'
+        ),
+    )
     args = parser.parse_args(argv)
 
     identity = build_identity(args.repo_root)
@@ -205,6 +212,29 @@ def main(argv=None):
     if args.output:
         with open(args.output, "w", encoding="utf-8") as handle:
             handle.write(text)
+
+    if args.require_resolved:
+        errors = []
+        stamp = identity.get("sourceStamp")
+        if not isinstance(stamp, dict) or "unavailable" in stamp:
+            detail = (
+                stamp.get("unavailable")
+                if isinstance(stamp, dict)
+                else "sourceStamp missing"
+            )
+            errors.append(f"sourceStamp unresolved: {detail}")
+        elif not stamp.get("value"):
+            errors.append("sourceStamp has no value")
+        dep = identity.get("dependencyAuthority") or {}
+        if not dep.get("testExtraInputHash"):
+            errors.append("testExtraInputHash is null or missing")
+        if not identity.get("environmentIdentityHash"):
+            errors.append("environmentIdentityHash is null or missing")
+        if errors:
+            for err in errors:
+                print(f"python-test-environment-identity: {err}", file=sys.stderr)
+            return 1
+
     print(identity["environmentIdentityHash"])
     return 0
 
