@@ -241,10 +241,17 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     """Phase-1 enrollment: one closed ParameterContractLinkUnitV1 per function
     that enrolled a parameter-contract demand. Builds each function's universe
     (never calls post()), projects its link unit, and RETAINS the immutable
-    universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it."""
+    universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it.
+
+    Soft-skip is only ``SugarNotWritten`` (typed tree frontier), matching
+    universe enumerate. ``ConstructionPanic`` is *not* caught here — the sole
+    production soft membranes are audit enumeration and
+    ``_production_lift_child``; panics propagate to the process-terminal
+    JSON-RPC error + SystemExit handler. Incomplete / non-Universe outcomes
+    simply enroll no link unit (no owned demand).
+    """
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -260,13 +267,10 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         for fn in sf.functions():
             try:
                 outcome = fn.sugar().desugar(None)
-            except (SugarNotWritten, ConstructionPanic):
-                # The TWO typed frontier signals: an unconstructed function owns no
-                # link unit (there is nothing to enroll), and its gap is still
-                # surfaced by the universe/audit scan (this function is never added
-                # to the resolved-skip set). Every OTHER exception -- an ordinary
-                # Exception, i.e. a real bug -- propagates LOUDLY; nothing vanishes
-                # through a broad except.
+            except SugarNotWritten:
+                # Typed tree frontier: no link unit to enroll. Gap remains
+                # visible on the universe/audit scan; never catch
+                # ConstructionPanic to soft-continue.
                 continue
             if not isinstance(outcome, Complete):
                 continue
