@@ -12,9 +12,36 @@ SUGARBIN_WINDOWS = ROOT / "bin" / "sugarbin.ps1"
 
 subprocess_run = subprocess.run
 
+# How long the suite waits for `bin/sugarbin` to hand back a binary. The wait is
+# real work only on the build rung: every worktree owns its own cargo build
+# directory but the box is shared, so a peer holding that directory's lock
+# ("Blocking waiting for file lock") stalls resolution for the whole budget.
+DEFAULT_RESOLVE_TIMEOUT_SECONDS = 600.0
+
 
 class SugarBinaryResolutionError(RuntimeError):
     pass
+
+
+def resolve_timeout_seconds(env: Mapping[str, str] | None = None) -> float:
+    """The resolution budget, overridable for sweeps that must bound the wait."""
+    source = os.environ if env is None else env
+    raw = source.get("SUGAR_BINARY_RESOLVE_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_RESOLVE_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise SugarBinaryResolutionError(
+            "SUGAR_BINARY_RESOLVE_TIMEOUT_SECONDS must be a positive number of "
+            f"seconds, got {raw!r}"
+        ) from exc
+    if seconds <= 0:
+        raise SugarBinaryResolutionError(
+            "SUGAR_BINARY_RESOLVE_TIMEOUT_SECONDS must be a positive number of "
+            f"seconds, got {raw!r}"
+        )
+    return seconds
 
 
 def sugarbin_route(*, os_name: str, hostname: str) -> str:
@@ -55,15 +82,33 @@ def resolve_sugar_binary(
         ]
     else:
         command = [str(SUGARBIN), "--profile", profile]
-    completed = subprocess_run(
-        command,
-        cwd=ROOT,
-        env=child_env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=600,
-    )
+    timeout = resolve_timeout_seconds(child_env)
+    try:
+        completed = subprocess_run(
+            command,
+            cwd=ROOT,
+            env=child_env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A bare TimeoutExpired escaping here is the worst failure this module
+        # has. `resolve_sugar_binary` is called from a session-scoped autouse
+        # fixture, so an exception type the fixture does not catch errors EVERY
+        # collected test with one identical traceback -- a whole-suite red that
+        # reads like a mass regression and is really one stalled subprocess.
+        # Name it as a resolution failure so the fixture exits once, loudly.
+        raise SugarBinaryResolutionError(
+            f"bin/sugarbin did not resolve a {profile} sugar binary within "
+            f"{timeout:g}s.\n"
+            "The build rung waits on the Rust build-directory lock, which a "
+            "peer process on this box may hold for minutes. Prebuild the "
+            "binary, or set SUGAR_BINARY_ALLOW_BUILD=0 to refuse the build rung "
+            "and fail fast on a missing artifact, or raise "
+            "SUGAR_BINARY_RESOLVE_TIMEOUT_SECONDS if the wait is expected."
+        ) from exc
     if completed.returncode != 0:
         raise SugarBinaryResolutionError(
             "bin/sugarbin platform entrypoint failed to resolve a sugar binary\n"

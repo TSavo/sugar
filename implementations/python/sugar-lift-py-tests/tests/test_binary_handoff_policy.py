@@ -10,6 +10,8 @@ import time
 import tokenize
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.filename import cid_filename_stem
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -706,3 +708,63 @@ def test_witness_harness_resolves_sugar_once_for_parallel_callers(
     assert errors == []
     assert results == [resolved, resolved, resolved, resolved]
     assert calls == 1
+
+
+def test_resolution_timeout_is_a_resolution_error_not_a_bare_timeout(
+    monkeypatch,
+) -> None:
+    """A stalled sugarbin must not error every collected test with one traceback.
+
+    `resolve_sugar_binary` runs inside a session-scoped autouse fixture that
+    only catches `SugarBinaryResolutionError`. Any other exception type escapes
+    the fixture and is attributed to every test in the run.
+    """
+    from sugar_lift_py_tests import sugar_binary
+
+    def fake_run(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(sugar_binary.platform, "node", lambda: "MapLaptop")
+    monkeypatch.setattr(sugar_binary, "subprocess_run", fake_run)
+
+    with pytest.raises(sugar_binary.SugarBinaryResolutionError) as excinfo:
+        sugar_binary.resolve_sugar_binary(env={}, profile="debug")
+
+    message = str(excinfo.value)
+    assert "did not resolve a debug sugar binary within 600s" in message
+    assert "SUGAR_BINARY_ALLOW_BUILD=0" in message
+    assert isinstance(excinfo.value.__cause__, subprocess.TimeoutExpired)
+
+
+def test_resolution_timeout_budget_is_overridable(monkeypatch) -> None:
+    from sugar_lift_py_tests import sugar_binary
+
+    seen: list[float] = []
+
+    def fake_run(command, **kwargs):
+        seen.append(kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, "/tmp/sugar\n", "")
+
+    monkeypatch.setattr(sugar_binary.platform, "node", lambda: "MapLaptop")
+    monkeypatch.setattr(sugar_binary, "subprocess_run", fake_run)
+
+    sugar_binary.resolve_sugar_binary(
+        env={"SUGAR_BINARY_RESOLVE_TIMEOUT_SECONDS": "45"}
+    )
+
+    assert seen == [45.0]
+
+
+def test_resolution_timeout_budget_refuses_nonsense(monkeypatch) -> None:
+    from sugar_lift_py_tests import sugar_binary
+
+    for raw in ("0", "-1", "soon"):
+        with pytest.raises(sugar_binary.SugarBinaryResolutionError):
+            sugar_binary.resolve_timeout_seconds(
+                {"SUGAR_BINARY_RESOLVE_TIMEOUT_SECONDS": raw}
+            )
+
+    assert (
+        sugar_binary.resolve_timeout_seconds({})
+        == sugar_binary.DEFAULT_RESOLVE_TIMEOUT_SECONDS
+    )
