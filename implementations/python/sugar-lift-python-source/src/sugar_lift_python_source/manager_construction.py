@@ -99,6 +99,7 @@ class ManagerConstructionGapV1:
         "opaque-call-target",
         "non-manager-result",
         "call-binding",
+        "force-floor",
     ]
     resolved_object_cid: str
     detail: str
@@ -113,6 +114,8 @@ def construct_manager_behavior(
     call_site: object | None = None,
 ) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
     """Construct one resolved callable through SourceFile -> Node -> Sugar only."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "distribution artifact CID"
@@ -171,9 +174,6 @@ def construct_manager_behavior(
         source_call_frame_cid=frame.frame_cid,
         formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
     )
-    result = call.force_floor(
-        None, owner="construct_manager_behavior", project_callsite=False
-    )
     # Unwrap `block -> return <call>` as many times as the authenticated source
     # actually nests it.  One hop is a factory that returns a constructor call;
     # N hops is a factory that returns a call to a helper that returns a
@@ -182,25 +182,46 @@ def construct_manager_behavior(
     # statements it stepped over.  The chain is finite because the frame graph
     # refused its own cycles at resolution; a repeated call identity is still
     # reported as a typed gap rather than looped on.
+    #
+    # Every force_floor in the chain -- the factory call and each unwrapped hop
+    # -- projects under ONE typed membrane: a ConstructionPanic raised by the
+    # floor is the force-floor STAGE refusing, and becomes the stage-keyed
+    # `force-floor` residual rather than a bare crash or a collapsed
+    # `no-derived-contract`.  Nothing but ConstructionPanic is caught here, and
+    # the typed gaps returned inside (cycle, non-manager) are returns, not
+    # exceptions, so they pass through the membrane untouched.
     factory_prefix: tuple[FloorValue, ...] = ()
     seen_calls: set[int] = set()
-    while (
-        isinstance(result, BlockValue)
-        and result.statements
-        and isinstance(result.statements[-1], ReturnValue)
-    ):
-        factory_prefix = factory_prefix + result.statements[:-1]
-        returned = result.statements[-1].value
-        if not isinstance(returned, CallSiteValue):
-            result = returned
-            break
-        if id(returned) in seen_calls:
-            return ManagerConstructionGapV1(
-                "opaque-call-target", resolved.cid, "recursive source call graph"
+    try:
+        result = call.force_floor(
+            None, owner="construct_manager_behavior", project_callsite=False
+        )
+        while (
+            isinstance(result, BlockValue)
+            and result.statements
+            and isinstance(result.statements[-1], ReturnValue)
+        ):
+            factory_prefix = factory_prefix + result.statements[:-1]
+            returned = result.statements[-1].value
+            if not isinstance(returned, CallSiteValue):
+                result = returned
+                break
+            if id(returned) in seen_calls:
+                return ManagerConstructionGapV1(
+                    "opaque-call-target", resolved.cid, "recursive source call graph"
+                )
+            seen_calls.add(id(returned))
+            result = returned.force_floor(
+                None, owner="construct_manager_behavior returned object"
             )
-        seen_calls.add(id(returned))
-        result = returned.force_floor(
-            None, owner="construct_manager_behavior returned object"
+    except ConstructionPanic as panic:
+        # Typed floor projection failure — not a bare crash, not soft silence.
+        # Surface as a construction gap so derivation can install a stage-keyed
+        # residual (opaque-call vs force-floor) for assertion-membrane census.
+        owner = getattr(getattr(panic, "info", None), "owner", None) or "force-floor"
+        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        return ManagerConstructionGapV1(
+            "force-floor", resolved.cid, f"{owner}:{observed}"
         )
     if not isinstance(result, ObjectValue):
         return ManagerConstructionGapV1(
@@ -367,7 +388,6 @@ def _resolve_source_visible_frame_uncached(
     definitions = tuple(item for item in definitions if item.name in reachable_names)
 
     definition_names = {item.name for item in definitions}
-    from sugar_lift_py_tests.floor import BuiltinSemanticCallable
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 
     builtin_floor = builtin_name_temporal()
@@ -384,10 +404,10 @@ def _resolve_source_visible_frame_uncached(
         opaque: list[str] = []
         for call in _local_named_calls(function):
             name = call.func.id
-            if name in definition_names or name in external_frames:
+            if name in external_frames:
                 continue
-            if isinstance(
-                builtin_floor.value_if_bound(name), BuiltinSemanticCallable
+            if not _named_call_is_source_opaque(
+                name, definition_names, builtin_floor
             ):
                 continue
             if name in external_opaque:
@@ -527,6 +547,31 @@ def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:
         and span.end_line == definition.end_line
         and span.end_col == definition.end_col
     )
+
+
+def _named_call_is_source_opaque(
+    name: str, definition_names: set[str], builtin_floor
+) -> bool:
+    """True when a free name is not a local definition and not a Python builtin.
+
+    Frame resolution used to treat only ``BuiltinSemanticCallable`` (issubclass,
+    set) as non-opaque, so ordinary builtins like ``len`` / ``sorted`` /
+    ``isinstance`` aborted manager construction as ``opaque-call-target`` before
+    force_floor. That over-classified residual for every source-derived manager
+    family — including assertion EffectBoundary factories.
+
+    A name bound in the builtin temporal is not source-opaque. Construction may
+    still refuse at force_floor when the builtin is not yet reducible; that is a
+    later, stage-keyed gap, not a false free-name opaque.
+
+    This is the LOCAL question only.  A name that is source-opaque here is then
+    offered to the one authenticated export door (``_opaque_call_targets`` ->
+    ``_resolve_external_call_frame``); it is reported as ``opaque-call-target``
+    only when that door also declines.
+    """
+    if name in definition_names:
+        return False
+    return builtin_floor.value_if_bound(name) is None
 
 
 def _local_named_calls(function: FunctionDef):

@@ -138,7 +138,17 @@ class CallSiteSugar(Sugar):
                     requested="actuals matching the authenticated source signature",
                     fix="supply a real actual/default/variadic occurrence or keep loud",
                 ) from exc
+            # Declaration body keeps formal BindingCoordinateRefs whose cids
+            # match formal_coordinate_cids. Call._construct_sugar may have
+            # bind_node_actuals-specialized the frame body by inlining outer
+            # formal nodes (e.g. make_guard's BindingCoordinateRef into
+            # Class.__init__). force_floor curries THIS frame's formal cids
+            # with FloorValue actuals; mismatched outer formal refs stay
+            # unspecialized and abort source-derived manager construction.
             source_body = self.source_call_frame.body
+            owner = getattr(self.source_call_frame, "owner", None)
+            if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
+                source_body = owner.source_visible_constructor_frame().body
             source_frame_cid = self.source_call_frame.frame_cid
             # bind_actuals returned the complete formal-ordered tuple,
             # including keyword/default actuals. They must not be appended a

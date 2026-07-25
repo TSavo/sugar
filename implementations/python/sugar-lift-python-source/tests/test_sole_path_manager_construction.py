@@ -151,7 +151,28 @@ def test_renamed_factory_constructs_returned_receiver_state_through_one_door(tmp
     assert result.manager_construction_cid.startswith("blake3-512:")
 
 
-def test_opaque_source_call_stays_typed_loud(tmp_path):
+def test_free_name_call_stays_typed_loud(tmp_path):
+    """A free (non-local, non-builtin) name remains opaque-call-target."""
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, "def make_guard(expected):\n    return missing_helper(expected)\n"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(result, ManagerConstructionGapV1)
+    assert result.kind == "opaque-call-target"
+    assert result.detail == "missing_helper"
+
+
+def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
+    """Python builtin names are not free-name opaques at frame resolution.
+
+    ``len`` is in the builtin temporal. Frame scan must not abort as
+    ``opaque-call-target:len``; construction may still refuse later when the
+    builtin is not yet a reducible force_floor (stage-keyed gap).
+    """
     graph, resolved, actual, call_site = _resolved(
         tmp_path, "def make_guard(expected):\n    return len(expected)\n"
     )
@@ -161,7 +182,8 @@ def test_opaque_source_call_stays_typed_loud(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1)
-    assert result.kind == "opaque-call-target"
+    assert result.kind != "opaque-call-target", result
+    assert result.kind in {"non-manager-result", "force-floor"}, result
 
 
 def test_renamed_manager_protocol_retains_ordinary_method_call_frames(tmp_path):
@@ -921,7 +943,142 @@ def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_pa
 
     resolution = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(resolution, ContextManagerResolutionGapV1)
-    assert resolution.kind == "no-derived-contract"
+    # Stage-keyed residual — not a silent generic no-derived-contract, and not
+    # a resource-membrane admission. pytest.raises stays typed-loud until its
+    # free-name / force-floor chain constructs without vendor arms.
+    assert resolution.kind != "derived-contract"
+    assert resolution.target_symbol and "raises" in resolution.target_symbol
+    assert (
+        resolution.kind.startswith("opaque-call-target")
+        or resolution.kind.startswith("force-floor")
+        or resolution.kind.startswith("non-manager-result")
+        or resolution.kind.startswith("protocol-construction")
+        or resolution.kind.startswith("summary-derivation")
+        or resolution.kind == "no-derived-contract"
+    ), resolution.kind
+
+
+def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):
+    """Assertion membrane must not admit ProtocolResource managers.
+
+    A NeverSuppresses resource constructs as WithSourceResourceSugar. It must
+    never install as EffectBoundary / WithEffectBoundarySugar merely because
+    it appears under ``with``.
+    """
+    implementation = (
+        "class RenamedResource:\n"
+        "    def __enter__(self):\n"
+        "        return 9\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_resource():\n"
+        "    return RenamedResource()\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="make_resource")
+    consumer = (
+        "import arbitrary\n"
+        "def use_resource():\n"
+        "    with arbitrary.make_resource():\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ProtocolResourceSemanticsV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithSourceResourceSugar,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1)
+    assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+    assert not isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    sugar = with_node.sugar()
+    assert isinstance(sugar, WithSourceResourceSugar)
+    assert not isinstance(sugar, WithEffectBoundarySugar)
+
+
+def test_expects_effect_boundary_never_installs_as_protocol_resource(tmp_path):
+    """Expects/Raise boundary is the assertion membrane, not a resource."""
+    implementation = (
+        "class RenamedBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n\n"
+        "def make_boundary(expected):\n"
+        "    return RenamedBoundary(expected)\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="make_boundary")
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        "    with arbitrary.make_boundary(ValueError):\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        ProtocolResourceSemanticsV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithSourceResourceSugar,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1)
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(reference.semantics.mode, ExpectsModeV1)
+    assert not isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    sugar = with_node.sugar()
+    assert isinstance(sugar, WithEffectBoundarySugar)
+    assert not isinstance(sugar, WithSourceResourceSugar)
 
 
 def test_installed_stdlib_suppress_reaches_grouped_unpack_after_graph_authentication(
