@@ -141,7 +141,6 @@ class WithConstructionGapKind(str, Enum):
     NO_DERIVED_CONTRACT = "no-derived-contract"
     STALE_DERIVED_CONTRACT = "stale-derived-contract"
     UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS = "unsupported-context-manager-semantics"
-    MULTIPLE_CONTEXT_MANAGER_ITEMS = "multiple-context-manager-items"
     UNSUPPORTED_WITH_BINDING_TARGET = "unsupported-with-binding-target"
     ASYNC_CONTEXT_MANAGER_UNSUPPORTED = "async-context-manager-unsupported"
 
@@ -191,16 +190,6 @@ class UnsupportedContextManagerSemantics(WithConstructionGap):
     def __init__(self, **kwargs) -> None:
         super().__init__(
             gap_kind=WithConstructionGapKind.UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS,
-            **kwargs,
-        )
-
-
-class MultipleContextManagerItems(WithConstructionGap):
-    _LABEL = "MULTIPLE CONTEXT MANAGER ITEMS"
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(
-            gap_kind=WithConstructionGapKind.MULTIPLE_CONTEXT_MANAGER_ITEMS,
             **kwargs,
         )
 

@@ -4419,6 +4419,29 @@ class With(Statement):
             raise panic
         return resolution
 
+    def _nest_items(self) -> "With":
+        """``with A, B: body`` IS ``with A: with B: body`` — Python's own law.
+
+        Multi-manager composition is NOT a second control model. It is this
+        same node, once per manager, so every routing law is inherited rather
+        than reimplemented:
+
+        - enter order is left-to-right (A is the outer node);
+        - exit order is right-to-left (B is inner, its ``__exit__`` runs first);
+        - **failure entering B still exits A**, because B's entire With — its
+          enter-halt exit included — is the *body* of A, and the per-edge
+          contract application runs over EVERY outgoing body edge.
+
+        The rewrite is idempotent on a single-item With, and recursive: a
+        three-item With nests one manager per level as its children construct.
+        """
+        if len(self.items) <= 1:
+            return self
+        from .shadow import rewrite
+
+        inner = rewrite(self, items=tuple(self.items[1:]), body=tuple(self.body))
+        return rewrite(self, items=(self.items[0],), body=(inner,))
+
     def _construct_sugar(self):
         """Build only from the pre-resolved authenticated CM contract ref.
 
@@ -4427,16 +4450,7 @@ class With(Statement):
         resource arm admits one synchronous manager and an optional simple-name
         binding to its real enter-result projection."""
         if len(self.items) != 1:
-            from .panic import MultipleContextManagerItems
-
-            panic = MultipleContextManagerItems(
-                owner="With._construct_sugar",
-                observed=f"synchronous With contains {len(self.items)} manager items",
-                requested="exactly one pre-resolved synchronous manager item",
-                fix="keep multi-item context-manager composition loud",
-            )
-            self.reporter.report_gap(self, panic)
-            raise panic
+            return self._nest_items()._construct_sugar()
         item = self.items[0]
         as_name = None
         if item.optional_vars is not None:
@@ -4653,6 +4667,12 @@ class With(Statement):
             ENTER_RESULT,
         )
 
+        if len(self.items) > 1:
+            # Nest FIRST, then substitute: an earlier manager's as-name must be
+            # in scope for a later manager's expression, exactly as it is in the
+            # nested spelling this rewrite produces.
+            return self._nest_items().substitute(scope)
+
         changed = {}
         new_items, d = self._substitute_field(self.items, scope)
         if d:
@@ -4694,7 +4714,7 @@ class With(Statement):
         del scope
         if self.unit.construction_context is not None:
             if len(self.items) != 1:
-                return None
+                return self._nest_items().substitution_binding(None)
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
                 return None
