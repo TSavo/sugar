@@ -168,25 +168,35 @@ def test_loop_projection_rejects_lying_target_and_cid_as_runtime_value():
         )
 
 
-def test_canonical_constructed_value_seals_float_and_bytes():
+def test_constructed_value_v2_seals_float_and_bytes():
     # Float and bytes literal testimony must enter the closed canonical wire.
-    from sugar_source_tree.binding_state import _canonical_constructed_value
+    from sugar_source_tree.binding_state import (
+        ConstructedValueCategoryGap,
+        _cv2_leaf,
+    )
 
     # Float -> the ONE canonical fixed-point decimal string the system uses
     # (ir.real_lit), tagged so a float never collides with the str "1.5".
-    assert _canonical_constructed_value(1.5) == {"float": "1.5"}
-    assert _canonical_constructed_value(0.0) == {"float": "0.0"}
-    assert _canonical_constructed_value(-2.25) == {"float": "-2.25"}
-    assert _canonical_constructed_value(1e-05) == {"float": "0.00001"}
+    assert _cv2_leaf(1.5) == {"float": "1.5"}
+    assert _cv2_leaf(0.0) == {"float": "0.0"}
+    assert _cv2_leaf(-2.25) == {"float": "-2.25"}
+    assert _cv2_leaf(1e-05) == {"float": "0.00001"}
     # Bytes -> hex, matching bytes_value / sequence_repetition.
-    assert _canonical_constructed_value(b"\xde\xad\xbe\xef") == {"bytes": "deadbeef"}
+    assert _cv2_leaf(b"\xde\xad\xbe\xef") == {"bytes": "deadbeef"}
+    # A tagged float can never be read as the string that spells it.
+    assert _cv2_leaf(1.5) != _cv2_leaf("1.5")
 
     # Both must be canonical-JSON admissible and deterministic.
     for value in (1.5, 0.0, b"\x00\xff"):
-        encoded = _canonical_constructed_value(value)
+        encoded = _cv2_leaf(value)
         assert cid_of_json({"v": encoded}) == cid_of_json({"v": encoded})
 
     # Bad twin: a value with no canonical spelling stays LOUD, never silently
-    # collapses to a fabricated testimony.
-    with pytest.raises(TypeError, match="unserializable"):
-        _canonical_constructed_value(1 + 2j)
+    # collapses to a fabricated testimony, and never falls back to reflection.
+    from sugar_source_tree.binding_state import constructed_value_cid_v2
+
+    from sugar_source_tree.binding_state import _NOT_A_LEAF
+
+    assert _cv2_leaf(1 + 2j) is _NOT_A_LEAF
+    with pytest.raises(ConstructedValueCategoryGap, match="unclassified"):
+        constructed_value_cid_v2(1 + 2j)

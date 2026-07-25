@@ -62,6 +62,93 @@ def remember_shape_cid_v2(ref: object, cid: str) -> None:
     _SHAPE_CIDS_V2[ref] = cid
 
 
+# The ConstructedValueV2 (Merkle) content CID of one constructed SEMANTIC
+# VALUE: a pure function of the value's own semantic type, its authenticated
+# scalar leaves, and its children's V2 CIDs. This is the registry bottom-up
+# construction reads and fills, so each memoizable value encodes ONE preimage of
+# its own arity, once, ever -- the difference between O(sum of subtree sizes)
+# and O(n) over the shared constructed DAG.
+#
+# A SEPARATE NAMESPACE from ``_SHAPE_CIDS`` and ``_SHAPE_CIDS_V2``. Those hold
+# node-SHAPE identities; this holds constructed-VALUE identities. Three
+# registries, three identity namespaces, never read for each other.
+#
+# ONLY FROZEN DATACLASSES GET A ROW, because only they have a coordinate whose
+# inputs this module can NAME:
+#
+#   * frozen dataclass -> keyed by (type, id(value)). ``frozen=True`` is what
+#     makes the field tuple a function of the object, so the live object IS the
+#     coordinate; type is in the key because the semantic type tag is in the
+#     output. The id-reuse hazard (#6212) is closed by construction: the row
+#     holds a WEAK reference to the object it keyed and a hit is honored only
+#     when that weakref still resolves to the SAME object, so a recycled address
+#     misses instead of reading a dead value's CID. The weakref callback drops
+#     the row, bounding the table by LIVE values.
+#
+#   * tuple / frozenset / mapping -> deliberately NO row. A mapping is MUTABLE,
+#     so identity is not a coordinate at all. A tuple/frozenset is immutable but
+#     its preimage is exactly its children's already-memoized CIDs, so a row
+#     would buy the walk of ONE value's own arity -- which is precisely the work
+#     the linear form is allowed to do.
+#
+#   * every leaf category (primitive, enum, Node, SourceFragment/Memento,
+#     natively-authenticated CID owner) -> no row: they never mint a
+#     ConstructedValueV2 CID at all, they inline.
+#
+# CONTENT IDENTITY WITHOUT OCCURRENCE IDENTITY. Two distinct-but-equal frozen
+# values get two ROWS carrying the SAME CID. They share content identity -- that
+# is what content-addressing means and what makes the form linear -- and stay
+# distinct occurrences: two live objects, two rows, and distinct ordered ``at``
+# coordinates in their parents.
+_CONSTRUCTED_VALUE_CIDS_V2: dict[Any, tuple[Any, str]] = {}
+
+
+def _constructed_value_coordinate(value: object) -> Any:
+    """``value``'s content-CID coordinate, or ``None`` if it has no row."""
+    from dataclasses import is_dataclass
+
+    if not is_dataclass(value) or isinstance(value, type):
+        return None
+    params = getattr(value, "__dataclass_params__", None)
+    if params is None or not params.frozen:
+        return None
+    return ("constructed-value-v2", type(value), id(value))
+
+
+def constructed_value_cid_v2_for(value: object) -> str | None:
+    """The memoized ConstructedValueV2 CID for ``value``, or None if unseen."""
+    coordinate = _constructed_value_coordinate(value)
+    if coordinate is None:
+        return None
+    remembered = _CONSTRUCTED_VALUE_CIDS_V2.get(coordinate)
+    if remembered is None:
+        return None
+    keyed, cid = remembered
+    # The identity-bearing key is honored only while the object it named is
+    # alive and is the SAME object.
+    if keyed() is not value:
+        return None
+    return cid
+
+
+def remember_constructed_value_cid_v2(value: object, cid: str) -> None:
+    """Record ``value``'s ConstructedValueV2 CID in its own static registry."""
+    coordinate = _constructed_value_coordinate(value)
+    if coordinate is None:
+        return
+    try:
+
+        def _forget(_dead: Any, coordinate: Any = coordinate) -> None:
+            _CONSTRUCTED_VALUE_CIDS_V2.pop(coordinate, None)
+
+        reference = weakref.ref(value, _forget)
+    except TypeError:
+        # Cannot hold the live identity its key names -> no row, rather than a
+        # row a recycled address could read.
+        return
+    _CONSTRUCTED_VALUE_CIDS_V2[coordinate] = (reference, cid)
+
+
 class ConstructionCache:
     """Shared field rows keyed by backend site + reporter + control context."""
 

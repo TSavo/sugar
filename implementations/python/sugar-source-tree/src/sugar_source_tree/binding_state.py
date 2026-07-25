@@ -433,7 +433,7 @@ class ConstructionTestimonyReporterV1:
             requested="content-addressable constructed-value testimony",
             fix=(
                 "teach canonicalization the general value category "
-                "(_canonical_constructed_value) or keep the coordinate loud"
+                "(_cv2_leaf / _cv2_entries) or keep the coordinate loud"
             ),
         )
         if shape is not None:
@@ -683,7 +683,7 @@ def _node_shape_v2_preimage(ref: object, child_cid: "dict[int, str]") -> dict[st
         elif isinstance(slot, Children):
             value = {"children": [child_cid[id(h)] for h in slot.handles]}
         elif isinstance(slot, Leaf):
-            value = {"leaf": _canonical_constructed_value(slot.value)}
+            value = {"leaf": constructed_value_slot_v2(slot.value)}
         elif isinstance(slot, OpLeaf):
             value = {"operator": slot.op.kind}
         elif isinstance(slot, OpsLeaf):
@@ -757,146 +757,176 @@ def backend_node_shape_cid_v2(ref: object) -> str:
     return result
 
 
-def _constructed_preimage(value: object) -> dict[str, Any]:
-    return {
-        "kind": "constructed-semantic-value",
-        "schemaVersion": "1",
-        "value": _canonical_constructed_value(value),
-    }
-
-
-# Canonicalization is content-addressed WORK over a shared value DAG that the
-# recursion below walks as a TREE. Measured on pandas
-# ``core/indexes/base.py::_join_level``: 758,852 calls over 1,544 distinct value
-# objects -- 491x recomputation, and the cost the silent testimony skip used to
-# hide by aborting canonicalization early. Same ruling as the static
-# ``_SHAPE_CIDS`` registry: the work is content-addressed, so it is done once at
-# its coordinate and read thereafter. Never skip testimony to buy speed.
+# ---------------------------------------------------------------------------
+# ConstructedValueV2 -- the Merkle preimage of a CONSTRUCTED SEMANTIC VALUE.
 #
-# THE KEY IS THE COORDINATE, NOT THE ADDRESS. The key must cover every input
-# that determines the canonical output, so a row is written only for value
-# categories whose canonicalization this module can NAME the inputs of:
+# THE DEFECT V2 CLOSES. V1 built one JSON document per presented value by
+# recursively INLINING every child value's full canonical form. The constructed
+# graph is a DAG (substitution shares sugar objects), and V1 walked it as a
+# TREE, so the same descendant content was encoded once for every ancestor path
+# above it: total encoded work was the sum of all subtree sizes. Measured
+# consequence after NodeShapeV2 (#6253) had already fixed the node layer:
+# ``cid_of_json`` 2,736s cumulative over only 1,482 calls out of
+# ``present_construction`` -- ~39,100 JSON nodes per call -- on pandas
+# ``core/reshape/pivot.py::__internal_pivot_table``. Same disease as #6253, one
+# layer up.
 #
-#   Node             -> keyed by the AUTHENTICATED construction-shape CID, with
-#                       no identity component at all. The Node arm's output is
-#                       exactly ``{"nodeShape": node_construction_shape_cid(v)}``,
-#                       a pure function of that CID: two different node views of
-#                       the same content are the same coordinate and must share
-#                       the answer.
-#   frozen dataclass -> keyed by (type, live object). The output is the type's
-#                       module/qualname plus the canonicalization of each field,
-#                       and ``frozen=True`` is what makes the field tuple a
-#                       function of the object. Type is IN the key because it is
-#                       IN the output; identity is a component, never the whole.
-#   Enum             -> keyed by (type, member). The output is the enum type's
-#                       module/qualname plus its canonicalized ``.value``; the
-#                       member is the coordinate and members are singletons.
+# T'S CHILD IDENTITY LAW. A child constructed semantic value is referenced by a
+# DOMAIN-SEPARATED CID of that child's immutable semantic content. Its
+# OCCURRENCE identity remains separate and is never inferred from the content
+# CID. Two identities stay explicit and are never collapsed into one:
 #
-# Everything else is deliberately NOT memoized, because its canonical output is
-# NOT a function of the value object alone (or is too cheap to be worth a row):
+#     semantic content CID    answers "what value?"
+#     construction occurrence answers "which construction/site produced it?"
 #
-#   list / dict / set / non-frozen dataclass -- MUTABLE. The same object can
-#       canonicalize two ways over its lifetime, so identity is not a
-#       coordinate. (These are also the arms that cannot be weakref'd.)
-#   objects canonicalized via ``.wire()`` -- ``wire()`` is a method call that
-#       may read state beyond the value; this module cannot enumerate its
-#       inputs, so it does not claim a coordinate for it.
-#   tuple -- immutable, but its answer is exactly its elements' answers, which
-#       ARE memoized individually; a row would buy the walk of one tuple.
-#   None / bool / int / float / str / bytes -- the answer is a constant-time
-#       spelling of the value; a row costs more than it saves.
-#   SourceFragment / SourceMemento -- delegated to ``seal()`` / ``to_dict()``,
-#       which own their own authentication; not this module's coordinate.
+# Equal immutable values MAY share the semantic CID -- that is what makes the
+# form linear. They must NOT merge roll-call seats, effect occurrences,
+# bindings, or source sites, and they do not: occurrence identity is carried by
+# BindingCoordinateV1, by the node shape CID keyed presentation registry, and by
+# the ordered ``at`` coordinate a child occupies inside its parent -- never by
+# this content CID.
 #
-# The id-reuse hazard (#6212) is closed by construction wherever identity IS a
-# key component: the row holds a WEAK reference to the object it keyed and a hit
-# is honored only when that weakref still resolves to the SAME object, so a
-# recycled address misses instead of reading a dead value's JSON. The weakref
-# callback drops the row, bounding the table by LIVE values rather than pinning
-# every constructed value for the life of a corpus census.
-_CANONICAL_VALUES: dict[Any, tuple[Any, Any]] = {}
+# THE FORM.
+#
+#     ConstructedValueV2 {
+#         domain, schema, childCidAlgorithm,   -- total domain separation
+#         semanticType,                        -- stable semantic type tag
+#         arity,                               -- authenticated slot count
+#         localFields: [ {at, leaf}, ... ],    -- authenticated scalar leaves
+#         children:    [ {at, childConstructedValueCid}, ... ],
+#     }
+#
+# Each value encodes a preimage of its OWN arity; the whole DAG is O(n) and each
+# distinct content coordinate is hashed exactly once.
+#
+# CLASSIFICATION IS EXHAUSTIVE AND CLOSED. Every category is NAMED. There is no
+# generic reflective fallback and no generic ``.wire()`` call: a value whose
+# category this schema cannot name is a TYPED TESTIMONY GAP
+# (``ConstructedValueCategoryGap``), reported loudly through the one testimony
+# gap door, never an invented preimage.
+#
+# V1 AND V2 NEVER SHARE AN IDENTITY NAMESPACE. The outer envelope carries
+# ``schemaVersion: "2"`` plus ``valueSchema``/``childCidAlgorithm``, which no V1
+# preimage ever carried, so no V1 CID is reinterpretable as V2 and vice versa.
+#
+# This migration DOES change every constructed-value CID, deliberately and
+# pinned. Constructed-value CIDs are REPRESENTATION identity, never meaning: the
+# formulas, bindings, effects, gaps, ExitSets and terminal fingerprints the
+# census reads are CID-INDEPENDENT and are what the equivalence proof measures.
+# ---------------------------------------------------------------------------
 
-_NO_COORDINATE = object()
-
-
-def _canonicalization_coordinate(value: object) -> Any:
-    """This value's canonical-testimony coordinate, or ``_NO_COORDINATE``."""
-    from sugar_source_tree.nodes import Node
-
-    if isinstance(value, Node):
-        return ("node-shape", node_construction_shape_cid(value))
-    if isinstance(value, Enum):
-        return ("enum", type(value), value)
-    if (
-        is_dataclass(value)
-        and not isinstance(value, type)
-        and getattr(value, "__dataclass_params__", None) is not None
-        and value.__dataclass_params__.frozen
-    ):
-        return ("frozen-dataclass", type(value), id(value))
-    return _NO_COORDINATE
-
-
-def _canonical_constructed_value(value: object) -> Any:
-    """The value's canonical JSON: computed once per coordinate, read after."""
-    coordinate = _canonicalization_coordinate(value)
-    if coordinate is _NO_COORDINATE:
-        return _compute_canonical_constructed_value(value)
-
-    remembered = _CANONICAL_VALUES.get(coordinate)
-    if remembered is not None:
-        keyed, canonical = remembered
-        # An identity-bearing key is honored only while the object it named is
-        # alive and the SAME object; a content coordinate carries no identity to
-        # check (``keyed`` is None) and is honored unconditionally.
-        if keyed is None or keyed() is value:
-            return canonical
-
-    canonical = _compute_canonical_constructed_value(value)
-    _memoize_canonical(coordinate, value, canonical)
-    return canonical
+CONSTRUCTED_VALUE_V2_SCHEMA = "ConstructedValueV2"
+CONSTRUCTED_VALUE_V2_DOMAIN = "sugar/construction/constructed-value/v2"
+# The child slot carries a CID, and THIS names the algorithm that minted it: the
+# same ConstructedValueV2 preimage under the repository canonical JSON CID. A
+# child slot's string can therefore never be read as an opaque leaf, nor as a
+# CID minted by NodeShapeV2 or by any other schema.
+CONSTRUCTED_VALUE_V2_CHILD_CID_ALGORITHM = (
+    "sugar/construction/constructed-value/v2+cid_of_json"
+)
 
 
-def _memoize_canonical(coordinate: Any, value: object, canonical: Any) -> None:
-    if coordinate[0] == "node-shape":
-        # Pure content coordinate: no address, nothing to outlive.
-        _CANONICAL_VALUES[coordinate] = (None, canonical)
-        return
+class ConstructedValueCategoryGap(TypeError):
+    """A value category ConstructedValueV2 will NOT invent a preimage for.
+
+    A ``TypeError`` subclass so it travels the SAME typed door every other
+    canonicalization failure travels (``present_construction`` catches
+    ``(TypeError, ValueError)`` and mints the loud
+    ``ConstructedValueTestimonyNotWritten`` gap). Raising it is the schema
+    saying "I cannot NAME this value's category", which is testimony, not a
+    reason to reach for reflection.
+    """
+
+
+def _cv2_type_tag(value: object) -> str:
+    """The stable semantic type tag of ``value``'s class."""
+    cls = type(value)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+_NOT_A_LEAF = object()
+
+# (type, cid) pairs whose ``cid_of_json(preimage) == cid`` has been checked once.
+# Validation is the whole warrant for the native-CID arm, so it is CHECKED, not
+# trusted -- but it is a pure function of the pair, so it is checked once.
+_VALIDATED_NATIVE_CIDS: set[tuple[type, str]] = set()
+
+
+def _validated_native_cid(value: object) -> str | None:
+    """``value``'s own CID, iff that CID already authenticates its content.
+
+    T's rule: reference an existing wire/CID-owning value's validated native CID
+    *where that CID already authenticates the complete semantic content*. The
+    warrant is checkable and is CHECKED here -- ``cid_of_json(value.preimage)``
+    must reproduce ``value.cid``, exactly the admission test
+    ``seal_binding_state_v1`` applies. A value that merely *has* a ``.cid``
+    attribute earns nothing.
+
+    This is deliberately NOT ``.wire()``: ``wire()`` is an arbitrary method call
+    whose inputs this module cannot enumerate. ``preimage``/``cid`` is a
+    self-authenticating pair, and its failure mode is a miss, never a guess.
+    """
+    cid = getattr(value, "cid", None)
+    if not isinstance(cid, str):
+        return None
+    key = (type(value), cid)
+    if key in _VALIDATED_NATIVE_CIDS:
+        return cid
     try:
+        preimage = value.preimage  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 -- an unreadable preimage authenticates nothing
+        return None
+    if not isinstance(preimage, (dict, list)):
+        return None
+    try:
+        recomputed = cid_of_json(preimage)
+    except (TypeError, ValueError):
+        return None
+    if recomputed != cid:
+        return None
+    _VALIDATED_NATIVE_CIDS.add(key)
+    return cid
 
-        def _forget(_dead: Any, coordinate: Any = coordinate) -> None:
-            _CANONICAL_VALUES.pop(coordinate, None)
 
-        reference = weakref.ref(value, _forget)
-    except TypeError:
-        # Cannot hold the live identity its key names -> no row, rather than a
-        # row a recycled address could read.
-        return
-    _CANONICAL_VALUES[coordinate] = (reference, canonical)
+def _cv2_leaf(value: object) -> Any:
+    """``value``'s INLINE leaf encoding, or ``_NOT_A_LEAF``.
 
+    A leaf is a value whose complete semantic content is already authenticated
+    by a bounded, non-recursive spelling. Every leaf carries its own category
+    key, so a leaf can never be confused with another leaf category and a leaf
+    string can never be read as a child CID (children live under a different
+    key entirely).
 
-def _compute_canonical_constructed_value(value: object) -> Any:
+    ``Enum`` is tested BEFORE ``int``: an ``IntEnum`` member IS an ``int``, and
+    V1's arm order encoded it as a bare integer, losing the member. V2 keeps the
+    enum type and member tags and never recurses into ``.value``.
+    """
     from sugar_source_tree.fragment import SourceFragment, SourceMemento
 
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
+    if value is None:
+        return {"null": None}
+    if isinstance(value, Enum):
+        # Stable enum type + MEMBER tags. Never the member's payload: two
+        # members can carry equal payloads, and the member is the meaning.
+        return {"enum": {"enumType": _cv2_type_tag(value), "member": value.name}}
+    if isinstance(value, bool):
+        return {"bool": value}
+    if isinstance(value, int):
+        return {"int": value}
+    if isinstance(value, str):
+        return {"str": value}
     if isinstance(value, float):
         from decimal import Decimal
 
         # The one canonical float spelling the system already uses (see
         # term_value.to_term / ir.real_lit): a fixed-point decimal string, never
-        # a Python float text form. str(float) is the shortest exact decimal
-        # that reparses to the same double; non-finite becomes Infinity / NaN.
+        # a Python float text form.
         return {"float": format(Decimal(str(value)), "f")}
     if isinstance(value, bytes):
-        # Bytes canonicalize by hex, matching bytes_value / sequence_repetition.
         return {"bytes": value.hex()}
-    if isinstance(value, Enum):
-        return {
-            "enumType": f"{type(value).__module__}.{type(value).__qualname__}",
-            "value": _canonical_constructed_value(value.value),
-        }
     if isinstance(value, SourceFragment):
+        # Reference its EXISTING authenticated identity, unreinterpreted. The
+        # sealed memento is five flat fields -- bounded, never a subtree.
         return {"sourceFragment": value.seal().to_dict()}
     if isinstance(value, SourceMemento):
         return {"sourceMemento": value.to_dict()}
@@ -904,41 +934,212 @@ def _compute_canonical_constructed_value(value: object) -> Any:
 
     if isinstance(value, Node):
         # A Node is a tree VIEW, not content. Its content identity is its
-        # construction-shape CID (fragment + subtree preimage); its unit/span
-        # are positional infrastructure that must never enter a content CID.
-        # A constructed value can legitimately carry a Node (e.g. a
-        # SourceVisibleCallFrameV1 holding the Lambda it will construct when
-        # called), but field-walking it drags in unit -> SourceUnit ->
-        # LineTable and fails to serialize (core/groupby/generic.value_counts).
-        # Represent the node by its content key, like every other node view.
-        return {"nodeShape": node_construction_shape_cid(value)}
-    if isinstance(value, (tuple, list)):
-        return [_canonical_constructed_value(item) for item in value]
-    if isinstance(value, (set, frozenset)):
-        items = [_canonical_constructed_value(item) for item in value]
-        return sorted(items, key=lambda item: cid_of_json(item))
+        # NodeShapeV2 construction-shape CID; its unit/span are the positional
+        # OCCURRENCE coordinate and must never enter a content CID.
+        return {"nodeShapeCid": node_construction_shape_cid(value)}
+    native = _validated_native_cid(value)
+    if native is not None:
+        return {"authenticatedValueCid": {"type": _cv2_type_tag(value), "cid": native}}
+    return _NOT_A_LEAF
+
+
+def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
+    """``value``'s semantic type tag and its ordered ``(at, child)`` slots.
+
+    Called only for values ``_cv2_leaf`` declined. Every arm is NAMED; the final
+    arm is a typed gap, never reflection over ``__dict__`` and never
+    ``.wire()``.
+    """
+    if isinstance(value, tuple):
+        # Length and position are authenticated: ``at`` is the index, and
+        # ``arity`` is encoded, so reordering, duplicating or omitting a child
+        # changes the preimage.
+        return ("tuple", [(index, item) for index, item in enumerate(value)])
+    if isinstance(value, frozenset):
+        # An unordered frozen collection: ``at`` is deliberately absent and the
+        # entries are sorted by their own encoding at emit time, so the CID is a
+        # function of the MEMBERSHIP, never of Python's hash iteration order.
+        return ("frozenset", [(None, item) for item in value])
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
-            raise TypeError("constructed testimony dictionaries require string keys")
-        return {
-            key: _canonical_constructed_value(item)
-            for key, item in sorted(value.items())
-        }
+            raise ConstructedValueCategoryGap(
+                "constructed testimony mappings require string keys; "
+                f"{_cv2_type_tag(value)} carries "
+                f"{sorted({type(k).__name__ for k in value})}"
+            )
+        # Key/value PAIRING is authenticated (``at`` is the key, carried beside
+        # its own value) under a deterministic (sorted) order.
+        return ("mapping", [(key, value[key]) for key in sorted(value)])
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "constructedType": f"{type(value).__module__}.{type(value).__qualname__}",
-            "fields": {
-                field.name: _canonical_constructed_value(getattr(value, field.name))
-                for field in fields(value)
-            },
-        }
-    wire = getattr(value, "wire", None)
-    if callable(wire):
-        return {
-            "wireType": f"{type(value).__module__}.{type(value).__qualname__}",
-            "wire": _canonical_constructed_value(wire()),
-        }
-    raise TypeError(f"unserializable constructed value {type(value).__name__}")
+        params = getattr(value, "__dataclass_params__", None)
+        if params is not None and params.frozen:
+            return (
+                _cv2_type_tag(value),
+                [(field.name, getattr(value, field.name)) for field in fields(value)],
+            )
+        raise ConstructedValueCategoryGap(
+            f"{_cv2_type_tag(value)} is a MUTABLE dataclass: its content can "
+            "change after testimony, so it has no content coordinate. Make the "
+            "semantic value frozen, or keep the coordinate loud."
+        )
+    if isinstance(value, (list, set, bytearray)):
+        raise ConstructedValueCategoryGap(
+            f"{_cv2_type_tag(value)} is a MUTABLE container: snapshotting it "
+            "would authenticate a moment, not a value. Carry a tuple/frozenset "
+            "semantic value, or keep the coordinate loud."
+        )
+    raise ConstructedValueCategoryGap(
+        f"unclassified constructed value category {_cv2_type_tag(value)}: "
+        "ConstructedValueV2 names its categories and will not invent a preimage "
+        "by reflection. Name the category, or keep the coordinate loud."
+    )
+
+
+def _cv2_classify(
+    value: object,
+) -> tuple[str, int, list[dict[str, Any]], list[tuple[Any, object]]]:
+    """``value``'s semantic type, arity, inline leaves and child values.
+
+    Classification happens exactly ONCE per value: ``_cv2_leaf`` is not free
+    (a ``SourceFragment`` leaf seals its segment, which hashes text), so the
+    bottom-up loop caches this and never re-asks a slot's category.
+    """
+    semantic_type, entries = _cv2_entries(value)
+    local_fields: list[dict[str, Any]] = []
+    children: list[tuple[Any, object]] = []
+    for at, child in entries:
+        leaf = _cv2_leaf(child)
+        if leaf is _NOT_A_LEAF:
+            children.append((at, child))
+        else:
+            local_fields.append({"at": at, "leaf": leaf})
+    return semantic_type, len(entries), local_fields, children
+
+
+def _cv2_preimage(
+    semantic_type: str,
+    arity: int,
+    local_fields: list[dict[str, Any]],
+    children: list[tuple[Any, object]],
+    child_cid: dict[int, str],
+) -> dict[str, Any]:
+    """ONE value's V2 preimage: its own arity, never a child's subtree."""
+    child_entries = [
+        {"at": at, "childConstructedValueCid": child_cid[id(child)]}
+        for at, child in children
+    ]
+    if semantic_type == "frozenset":
+        # Membership, not iteration order. Sorting by the entry's own canonical
+        # encoding is total and deterministic.
+        local_fields = sorted(local_fields, key=cid_of_json)
+        child_entries.sort(key=lambda entry: entry["childConstructedValueCid"])
+    return {
+        "domain": CONSTRUCTED_VALUE_V2_DOMAIN,
+        "schema": CONSTRUCTED_VALUE_V2_SCHEMA,
+        "childCidAlgorithm": CONSTRUCTED_VALUE_V2_CHILD_CID_ALGORITHM,
+        "semanticType": semantic_type,
+        "arity": arity,
+        "localFields": local_fields,
+        "children": child_entries,
+    }
+
+
+def constructed_value_cid_v2(value: object) -> str:
+    """The ConstructedValueV2 content CID of ``value``, built BOTTOM-UP.
+
+    Explicit post-order over an iterative stack: no recursion, no recursive
+    embedding of a child's preimage, and no Python recursion limit on deep
+    constructed graphs. Each distinct content coordinate encodes exactly ONE
+    preimage of its own arity, so a shared DAG child is hashed once per content
+    coordinate rather than once per incoming path.
+
+    A value reached while it is still being expanded is a CYCLE: a typed gap,
+    loudly, never a truncation or a placeholder.
+    """
+    from .construction_cache import (
+        constructed_value_cid_v2_for,
+        remember_constructed_value_cid_v2,
+    )
+
+    cached = constructed_value_cid_v2_for(value)
+    if cached is not None:
+        return cached
+
+    child_cid: dict[int, str] = {}
+    classified: dict[int, tuple[str, int, list[dict[str, Any]], list[Any]]] = {}
+    # ``child_cid`` and ``classified`` are keyed by id(); pin every keyed
+    # value for the duration so a dead value's address can never be recycled
+    # onto another's row.
+    pinned: list[object] = []
+    # Values whose expansion has begun and not finished -- the DFS "gray" set,
+    # which is exactly the cycle predicate.
+    expanding: dict[int, object] = {}
+    stack: list[tuple[object, bool]] = [(value, False)]
+    while stack:
+        current, expanded = stack.pop()
+        if id(current) in child_cid:
+            continue
+        known = constructed_value_cid_v2_for(current)
+        if known is not None:
+            child_cid[id(current)] = known
+            pinned.append(current)
+            continue
+        row = classified.get(id(current))
+        if row is None:
+            row = _cv2_classify(current)
+            classified[id(current)] = row
+        semantic_type, arity, local_fields, children = row
+        pinned.append(current)
+        if not expanded:
+            expanding[id(current)] = current
+            stack.append((current, True))
+            for _at, child in children:
+                if id(child) in child_cid:
+                    continue
+                if id(child) in expanding:
+                    raise ConstructedValueCategoryGap(
+                        "constructed value graph is CYCLIC through "
+                        f"{_cv2_type_tag(child)}: a cycle has no content "
+                        "coordinate. Keep the coordinate loud."
+                    )
+                stack.append((child, False))
+            continue
+        expanding.pop(id(current), None)
+        cid = cid_of_json(
+            _cv2_preimage(semantic_type, arity, local_fields, children, child_cid)
+        )
+        child_cid[id(current)] = cid
+        remember_constructed_value_cid_v2(current, cid)
+    result = child_cid[id(value)]
+    del pinned
+    return result
+
+
+def constructed_value_slot_v2(value: object) -> dict[str, Any]:
+    """One value as it appears in a slot: an inline leaf, or a child CID.
+
+    The two forms live under DIFFERENT keys, so a leaf string can never be read
+    as a child CID and a child CID can never be read as a leaf.
+    """
+    leaf = _cv2_leaf(value)
+    if leaf is not _NOT_A_LEAF:
+        return {"leaf": leaf}
+    return {"constructedValueCid": constructed_value_cid_v2(value)}
+
+
+def _constructed_preimage(value: object) -> dict[str, Any]:
+    """The envelope a presented construction's semantic-value CID is taken of.
+
+    ``schemaVersion: "2"`` plus the named value schema and child-CID algorithm
+    put V2 in an identity namespace disjoint from V1's.
+    """
+    return {
+        "kind": "constructed-semantic-value",
+        "schemaVersion": "2",
+        "valueSchema": CONSTRUCTED_VALUE_V2_SCHEMA,
+        "childCidAlgorithm": CONSTRUCTED_VALUE_V2_CHILD_CID_ALGORITHM,
+        "value": constructed_value_slot_v2(value),
+    }
 
 
 def _snapshot(scope: BindingMap) -> tuple[tuple[str, BindingEntryV1], ...]:
