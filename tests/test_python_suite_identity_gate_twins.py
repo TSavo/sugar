@@ -20,6 +20,8 @@ Runs with pytest, or standalone with no dependency at all:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import stat
@@ -73,6 +75,12 @@ def _report(**overrides):
         "testExtraInputHash": EXTRAS_HASH,
         "environmentIdentityHash": ENV_HASH,
         "binarySourceStamp": STAMP,
+        "requestedBinaryProfile": "release",
+        "resolvedBinaryProfile": "release",
+        "authority": {
+            "status": "provisional",
+            "profileIdentity": "unverified",
+        },
         "environmentIdentity": _identity_blob(),
         "runnerIdentity": {"githubSha": COMMIT},
         "collectedNodeIds": collected,
@@ -292,7 +300,7 @@ def test_tooth5_fully_populated_is_green():
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(report, handle)
         assert gate.main(["--report", path, "--require-commit", COMMIT]) == 0
-        assert gate.main(["--report", path, "--require-commit", "0" * 40]) == 1
+        assert gate.main(["--report", path, "--require-commit", COMMIT]) == 1
 
 
 # --- tooth 6: the {"unavailable": ...} object is UNRESOLVED, not truthy -----
@@ -407,6 +415,141 @@ def test_conservation_is_checked_on_the_artifact():
     bare = _report()
     del bare["conservation"]
     assert "crime=conservation-absent" in _crime_kinds(_crimes(bare))
+
+
+# --- resolved profile is authenticated testimony ---------------------------
+
+
+def test_profile_identity_presence_enumeration_and_equality():
+    assert _crimes(_report()) == []
+
+    missing_requested = _report()
+    del missing_requested["requestedBinaryProfile"]
+    crimes = _crimes(missing_requested)
+    assert "crime=profile-identity-absent" in _crime_kinds(crimes), crimes
+
+    missing_resolved = _report()
+    del missing_resolved["resolvedBinaryProfile"]
+    crimes = _crimes(missing_resolved)
+    assert "crime=profile-manifest-predates-boundary" in _crime_kinds(crimes), crimes
+    assert any("predates the profile identity boundary" in crime for crime in crimes)
+    assert not any(
+        crime.startswith("crime=profile-identity-mismatch") for crime in crimes
+    )
+
+    for field in ("requestedBinaryProfile", "resolvedBinaryProfile"):
+        malformed = _report()
+        malformed[field] = "fast"
+        crimes = _crimes(malformed)
+        assert "crime=profile-identity-malformed" in _crime_kinds(crimes), crimes
+
+    mismatch = _report(resolvedBinaryProfile="debug")
+    crimes = _crimes(mismatch)
+    assert "crime=profile-identity-mismatch" in _crime_kinds(crimes), crimes
+
+
+# --- authority is a one-way, single-shot artifact transition ---------------
+
+
+def test_authority_prestate_is_single_shot_and_not_synthesized():
+    assert _crimes(_report()) == []
+
+    already = _report(
+        authority={"status": "authoritative", "profileIdentity": "resolved"}
+    )
+    crimes = _crimes(already)
+    assert "crime=authority-already-decided" in _crime_kinds(crimes), crimes
+
+    absent = _report()
+    del absent["authority"]
+    crimes = _crimes(absent)
+    assert "crime=authority-object-absent" in _crime_kinds(crimes), crimes
+
+    stale = _report(
+        authority={
+            "status": "provisional",
+            "profileIdentity": "unverified",
+            "crimes": ["crime=old"],
+        }
+    )
+    crimes = _crimes(stale)
+    assert "crime=authority-stale-crimes" in _crime_kinds(crimes), crimes
+
+
+def _write_json(path, value):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(value, handle)
+
+
+def _read_json(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def test_gate_atomically_writes_exact_authority_verdict():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "suite-report.json")
+        _write_json(path, _report())
+
+        first_returncode = gate.main(
+            ["--report", path, "--require-commit", COMMIT]
+        )
+        decided = _read_json(path)
+        assert decided["authority"] == {
+            "status": "authoritative",
+            "profileIdentity": "resolved",
+        }
+        assert "crimes" not in decided["authority"]
+        assert not [
+            name for name in os.listdir(tmp) if name.startswith(".suite-report-")
+        ]
+        assert first_returncode == 0
+
+        with contextlib.redirect_stderr(io.StringIO()) as captured:
+            second_returncode = gate.main(
+                ["--report", path, "--require-commit", COMMIT]
+            )
+        unchanged = _read_json(path)
+        assert unchanged == decided
+        assert "crime=authority-already-decided" in captured.getvalue()
+        assert second_returncode == 1
+
+
+def test_gate_replaces_provisional_crimes_with_full_current_list():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "suite-report.json")
+        report = _report(resolvedBinaryProfile="debug")
+        _write_json(path, report)
+
+        returncode = gate.main(["--report", path, "--require-commit", COMMIT])
+        decided = _read_json(path)
+        authority = decided["authority"]
+        assert authority["status"] == "provisional"
+        assert authority["profileIdentity"] == "unresolved"
+        assert authority["crimes"] == [
+            crime.split(" ", 1)[0] for crime in gate.gate(report, COMMIT)
+        ]
+        assert returncode == 1
+
+
+def test_gate_refuses_absent_authority_without_rewriting():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "suite-report.json")
+        report = _report()
+        del report["authority"]
+        _write_json(path, report)
+        before = open(path, "rb").read()
+
+        with contextlib.redirect_stderr(io.StringIO()) as captured:
+            returncode = gate.main(
+                ["--report", path, "--require-commit", COMMIT]
+            )
+        assert open(path, "rb").read() == before
+        assert "crime=authority-object-absent" in captured.getvalue()
+        assert not [
+            name for name in os.listdir(tmp) if name.startswith(".suite-report-")
+        ]
+        assert returncode == 1
 
 
 def main():
