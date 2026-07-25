@@ -90,6 +90,20 @@ jobs:
         id: env
         uses: ./.github/actions/python-test-environment
 
+      # The suite exercises the real lift over RPC, so it needs the real
+      # binary. Without SUGAR_BIN the sweep still runs and still reports --
+      # it just reports a degraded corpus, which is a worse lie than no
+      # measurement because it looks like one. Resolved through the one door,
+      # bin/sugarbin, by source stamp: shelf hit unless the Rust inputs moved.
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+
+      - name: Resolve the sugar binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SUGAR_BIN=$(bin/sugarbin --profile release)" >> "$GITHUB_ENV"
+
       # ONE cold process. Whole package. Canonical collection order.
       # `-p no:cacheprovider` so no run inherits another's cache; `-p
       # no:randomly` so canonical means canonical.
@@ -169,6 +183,18 @@ jobs:
       - name: Prepare immutable Python test environment
         id: env
         uses: ./.github/actions/python-test-environment
+
+      # Same binary, resolved the same way, so the only difference between the
+      # canonical run and these is the order. Anything else differing would
+      # make a divergence uninterpretable.
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+
+      - name: Resolve the sugar binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SUGAR_BIN=$(bin/sugarbin --profile release)" >> "$GITHUB_ENV"
 
       # A SEPARATE COLD PROCESS per order. Sharing a process would let the
       # first order warm exactly the caches whose influence we are measuring.
