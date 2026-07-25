@@ -49,4 +49,20 @@ echo "$gate" | rg -q 'SUGAR_BUILD_STAMP' || { echo "gate still not on SUGAR_BUIL
 ! rg -n 'refuse_split_pipeline\(identity, env!\("SUGAR_BUILD_GIT_HEAD"\)\)' implementations/rust/sugar-cli/src/lift_plugin.rs \
   || { echo "gate still compares to SUGAR_BUILD_GIT_HEAD" >&2; exit 1; }
 
-echo "PASS: sourceStamp twins (docs stable, rust/python protocol matter, gate uses SUGAR_BUILD_STAMP)"
+# Twin: EVERY Python kit that can be registered as the `python` surface must
+# testify the sourceStamp. #6224 migrated only the sugar-lift-py-tests module
+# and left sugar-lift-python-source answering Git HEAD, so every mint through
+# `verify_rpc.run_rpc` refused with "kit @<git sha> != binary @blake3-512_...".
+# Source-level ratchet: these modules import blake3, which the bare system
+# python3 running this script does not have.
+for provenance in implementations/python/*/src/*/source_provenance.py; do
+  rg -q 'def kit_source_provenance' "$provenance" || continue
+  rg -q '"kind": "sourceStamp"' "$provenance" \
+    || { echo "$provenance does not testify kind sourceStamp (#6224)" >&2; exit 1; }
+  ! rg -q '"kind": "git"' "$provenance" \
+    || { echo "$provenance still testifies Git HEAD as kit identity (#6224)" >&2; exit 1; }
+  rg -q 'source_stamp_for_sugar_cli' "$provenance" \
+    || { echo "$provenance does not compute the sugar-cli sourceStamp (#6224)" >&2; exit 1; }
+done
+
+echo "PASS: sourceStamp twins (docs stable, rust/python protocol matter, gate uses SUGAR_BUILD_STAMP, every python kit testifies sourceStamp)"
