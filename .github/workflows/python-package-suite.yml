@@ -61,11 +61,46 @@ jobs:
       identity-hash: ${{ steps.env.outputs.identity-hash }}
     steps:
       - uses: actions/checkout@v6
+      # BEFORE the environment action, on purpose. `tools/sugar_source_stamp.py`
+      # shells out to cargo to enumerate the local dependency FS, so without a
+      # toolchain on PATH the identity mints with `sourceStamp: unavailable` —
+      # loudly, but still a hole where the build-input testimony should be.
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
       - name: Prepare immutable Python test environment
         id: env
         uses: ./.github/actions/python-test-environment
         with:
           identity-artifact: "true"
+      # The identity is allowed to record a missing field loudly rather than
+      # hash a hole, but it is NOT allowed to ship that way from the job whose
+      # whole purpose is to mint it. This is the tooth that keeps the step
+      # ordering above from silently regressing into a stampless identity.
+      - name: Every identity field resolved
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "${{ steps.env.outputs.identity-path }}" <<'PY'
+          import json, sys
+
+          identity = json.load(open(sys.argv[1]))
+          missing = []
+          if "value" not in identity.get("sourceStamp", {}):
+              missing.append(f"sourceStamp: {identity.get('sourceStamp')}")
+          for field in ("testExtraInputHash",):
+              if not identity.get("dependencyAuthority", {}).get(field):
+                  missing.append(field)
+          if not identity.get("packageBuildInputs", {}).get("hash"):
+              missing.append("packageBuildInputs.hash")
+          if missing:
+              raise SystemExit(
+                  "environment identity is incomplete; every run measured "
+                  "against it is uncomparable by construction:\n  "
+                  + "\n  ".join(missing)
+              )
+          print("environment identity complete:", identity["environmentIdentityHash"])
+          PY
+
       - name: Publish environment identity to the run summary
         shell: bash
         run: |
@@ -86,6 +121,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Rust toolchain FIRST: `tools/sugar_source_stamp.py` shells out to cargo,
+      # so minting the identity without it yields `sourceStamp: unavailable` —
+      # loud, but a hole where the build-input testimony belongs.
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+
       - name: Prepare immutable Python test environment
         id: env
         uses: ./.github/actions/python-test-environment
@@ -96,9 +137,6 @@ jobs:
       # sweep's WALL TIME a measurement of the suite rather than of a cold
       # Rust build that happened to land inside it. Resolved through the one
       # door, bin/sugarbin, by source stamp: shelf hit unless Rust inputs moved.
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
-
       - name: Resolve the sugar binary
         shell: bash
         run: |
@@ -181,15 +219,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Same toolchain, same identity, same binary, resolved and warmed in the
+      # same order as the canonical job, so the ONLY difference between those
+      # runs is test execution order. Anything else differing would make a
+      # divergence uninterpretable.
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+
       - name: Prepare immutable Python test environment
         id: env
         uses: ./.github/actions/python-test-environment
-
-      # Same binary, resolved the same way and warmed the same way, so the only
-      # difference between the canonical run and these is the order. Anything
-      # else differing would make a divergence uninterpretable.
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
 
       - name: Resolve the sugar binary
         shell: bash

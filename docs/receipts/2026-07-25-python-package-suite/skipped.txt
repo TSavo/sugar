@@ -1,0 +1,12 @@
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[numpy-_core/tests/test_deprecations.py-ImportAliasValue]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/indexes/timedeltas/test_indexing.py-ImportAliasValue]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/internals/test_api.py-ImportAliasValue]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/scalar/test_nat.py-ImportAliasValue]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/scalar/timestamp/test_constructors.py-ImportAliasValue]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/series/test_arithmetic.py-ImportAliasValue]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/computation/test_compat.py-ImportAliasValue.truth]
+sugar-lift-py-tests/tests/test_import_alias_fatal_corpus.py::test_import_alias_named_representative_advances_loudly_or_completes[pandas-tests/extension/test_arrow.py-ImportAliasValue.truth]
+sugar-lift-py-tests/tests/test_lift_coverage_harness.py::test_heavy_vendor_live_isolation_opt_in_pandas
+sugar-lift-py-tests/tests/test_lift_pydantic.py::TestPydanticLift::test_pydantic_v2_field_constraints
+sugar-lift-py-tests/tests/test_lift_pydantic.py::TestPydanticLift::test_pydantic_v2_numeric_range
+sugar-lift-py-tests/tests/test_lift_pydantic.py::TestPydanticLift::test_pydantic_v2_annotated_types

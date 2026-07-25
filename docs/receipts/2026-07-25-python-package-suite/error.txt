@@ -1,0 +1,5 @@
+sugar-lift-py-tests/tests/test_lift_coverage_harness.py::test_statistics_report_emits_dual_axis_lift_coverage
+sugar-lift-py-tests/tests/test_lift_coverage_harness.py::test_statistics_headline_delta_matches_probe
+sugar-lift-py-tests/tests/test_lift_coverage_harness.py::test_statistics_silent_unaccounted_gate_is_zero
+sugar-lift-py-tests/tests/test_lift_coverage_harness.py::test_statistics_minority_bodies_are_visible_scope
+sugar-lift-py-tests/tests/test_lift_coverage_harness.py::test_statistics_report_emits_conservation_triple
