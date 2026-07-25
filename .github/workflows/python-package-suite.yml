@@ -256,6 +256,7 @@ jobs:
           python3 tools/python_suite_identity_gate.py \
             --report suite-report.json \
             --require-commit "$GITHUB_SHA" \
+            | tee identity-gate.md \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Artifacts carry the node-ID lists. The step summary carries counts.
@@ -273,6 +274,7 @@ jobs:
             suite-report.json
             suite-node-ids/
             lease-record.json
+            identity-gate.md
           if-no-files-found: error
 
       # Evidence is never thrown away -- it is just not allowed to wear the
@@ -288,6 +290,7 @@ jobs:
             suite-report.json
             suite-node-ids/
             lease-record.json
+            identity-gate.md
           if-no-files-found: warn
 
       # Deliberately no `exit $pytest_exit`. See the header: this job reports.
@@ -412,6 +415,7 @@ jobs:
           python3 tools/python_suite_identity_gate.py \
             --report suite-report.json \
             --require-commit "$GITHUB_SHA" \
+            | tee identity-gate.md \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload discrimination artifacts
@@ -423,6 +427,7 @@ jobs:
             suite.log
             suite-report.json
             lease-record.json
+            identity-gate.md
           if-no-files-found: error
 
   discrimination-verdict:
