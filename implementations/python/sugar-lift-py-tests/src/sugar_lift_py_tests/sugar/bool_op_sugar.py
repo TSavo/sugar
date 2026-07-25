@@ -39,9 +39,11 @@ class BoolOpSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from functools import reduce
+
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import and_, or_
         from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import _and_guards, _or_guards
         from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
         formulas = []
@@ -57,5 +59,9 @@ class BoolOpSugar(Sugar):
             # NotImplementedError on a constructible ground boolean.
             formulas.append(predicate_formula(out.value, self.site))
 
-        combine = and_ if self.op_kind == "And" else or_
-        return Complete(PredicateValue(combine(formulas), self.site))
+        # Fold with the shared guard algebra so ground identities absorb:
+        #   false ∧ φ → false,  true ∧ φ → φ,  true ∨ φ → true,  false ∨ φ → φ.
+        # Raw and_/or_ would leave and_([false, true]) as a connective and hide
+        # that None and True is false in boolean context.
+        combine = _and_guards if self.op_kind == "And" else _or_guards
+        return Complete(PredicateValue(reduce(combine, formulas), self.site))
