@@ -103,6 +103,28 @@ Downstream consumers therefore refuse provisional evidence by reading fields,
 not by parsing logs. The existing authoritative/provisional artifact naming
 remains an additional publication boundary, not the only testimony.
 
+### Rewrite law
+
+The rewrite is one-way and single-shot:
+
+- the only accepted pre-state is exactly
+  `status=provisional/profileIdentity=unverified`, with no `crimes` key;
+- the only successful transition is to
+  `status=authoritative/profileIdentity=resolved`, still with no `crimes` key;
+- the only failed transition is to
+  `status=provisional/profileIdentity=unresolved`, with `crimes` replaced by
+  the full current crime list;
+- a report already carrying `status=authoritative` is refused with
+  `crime=authority-already-decided`; the gate never re-decides it;
+- a missing `authority` object is refused with
+  `crime=authority-object-absent`; the gate never manufactures the field it
+  was asked to authenticate;
+- stale `crimes` in the unverified pre-state are refused rather than cleared.
+
+The update uses a temporary file in the report's directory followed by
+`os.replace`. A killed gate therefore leaves either the original parseable
+provisional report or the complete replacement, never a truncated artifact.
+
 ## Files
 
 - `.github/workflows/python-package-suite.yml`
@@ -115,16 +137,22 @@ remains an additional publication boundary, not the only testimony.
   - serialize the two fields and initial provisional authority object.
 - `tools/python_suite_identity_gate.py`
   - validate profile presence, enumeration, and equality;
-  - write the machine-readable authority verdict back to the report.
+  - enforce the single-shot authority pre-state;
+  - atomically write the machine-readable authority verdict back to the report.
 - `tools/python_package_suite_summary.py`
   - display requested/resolved profile and authority status without turning
     prose into the gate.
 - `tests/test_python_suite_identity_gate_twins.py`
   - green equal-profile face;
   - distinct missing-manifest-profile face and message;
-  - malformed requested/resolved faces;
-  - release/debug mismatch face;
-  - serialized provisional and authoritative verdict faces.
+   - malformed requested/resolved faces;
+   - release/debug mismatch face;
+   - serialized provisional and authoritative verdict faces;
+   - already-authoritative refusal;
+   - missing-authority-object refusal;
+   - stale-crimes refusal;
+   - atomic replacement preserving parseability and clearing-or-replacing
+     `crimes` exactly.
 
 ## Testing
 
@@ -134,10 +162,11 @@ remains an additional publication boundary, not the only testimony.
    python3 tests/test_python_suite_identity_gate_twins.py
    ```
 
-2. Run the full repository package for the touched top-level identity tooling:
+2. Run the full owning top-level test package before and after the change,
+   retaining exact sorted node-ID sets for the A/B comparison:
 
    ```bash
-   python3 -m pytest tests/test_python_suite_identity_gate_twins.py -q
+   python3 -m pytest tests -q -p no:cacheprovider -rf
    ```
 
 3. Validate workflow syntax and source contracts through the existing tests,
