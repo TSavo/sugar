@@ -141,10 +141,23 @@ def _script_roll_call(monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
     def scripted_discharge(source_file):
         list(source_file.nodes())
         reporter = source_file.reporter
-        by_cid = {}
+        # Key the twin the way MinorityReport._by_coordinate keys the real
+        # roll: the authenticated source coordinate alongside the CID. Equal
+        # source text shares a CID at distinct loci -- a load-site Name can
+        # carry its Param's CID -- and deduping on the CID alone silently
+        # drops the second locus the reporter is obliged to keep.
+        by_coordinate = {}
         for node in reporter.registered:
-            by_cid.setdefault(node.fragment.seal().cid, node)
-        nodes = list(by_cid.values())
+            entry = roll_call.roster_entry_for(node)
+            key = (
+                entry.file,
+                entry.start_line,
+                entry.start_col,
+                entry.kind,
+                entry.cid,
+            )
+            by_coordinate.setdefault(key, node)
+        nodes = list(by_coordinate.values())
         assert nodes
         absent = nodes[-1]
         present = nodes if answer in {"truthful", "lying"} else nodes[:-1]
