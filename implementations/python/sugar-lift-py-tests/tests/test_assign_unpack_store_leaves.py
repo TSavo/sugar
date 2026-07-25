@@ -9,8 +9,15 @@ paired with a discrimination arm that fails when the law is violated:
 3. Multiple store effects retain left-to-right order.
 4. Attribute receiver and attribute name retain their exact coordinates.
 5. A Name leaf's binding is discharged alongside the store effect.
-6/7. Partial assignment (halt between stores) is NOT yet representable --
-   pinned as a ratchet, see ``test_store_effects_have_no_halted_exit_arm``.
+6/7. Partial assignment (halt between stores) is NOT asserted here, and is
+   deliberately NOT pinned here either: a test asserting "there is no halted
+   arm" would be a test OF the defect, blessing it as expected behaviour.
+   The real laws -- a Halted arm carrying the temporal state reached before
+   the failure, and a Completed arm from which the later store is absent --
+   live on the foundational store-ExitSet composition branch and start red
+   there. #6239 is held until that lands. See the strengthening list in the
+   comment at the end of this module for the twins that must gain a second
+   exit arm on the rebase.
 8. Pure-name ``MultiAssign`` construction is unchanged vs ``origin/main``.
 9. Starred opaque unpack stays typed-loud.
 10. Opaque-receiver Subscript leaves stay typed-loud (they cannot carry
@@ -28,12 +35,11 @@ import hashlib
 import re
 from pathlib import Path
 
-from sugar_lift_py_tests.outcome import Complete, Completed, Incomplete
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.assign_sugar import (
     MultiAssignSugar,
     UnpackStoreAssignSugar,
 )
-from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -276,57 +282,6 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 
 
 # ---------------------------------------------------------------------------
-# Laws 6 and 7 -- partial assignment. NOT yet representable: pinned as a ratchet.
-# ---------------------------------------------------------------------------
-
-
-def test_store_effects_have_no_halted_exit_arm(tmp_path: Path) -> None:
-    """RATCHET, not a rubber stamp: partial assignment is NOT yet modelled.
-
-    Python assignment is not transactional -- if `o.y = q` raises, `o.x = p`
-    stays done and `o.y` never happens. Laws 6 and 7 need an outgoing ExitSet
-    with a Halted arm carrying the state reached before the failure, and a
-    Completed arm without the later store.
-
-    Measured today: the outgoing ExitSet has exactly ONE arm, Completed, for
-    both the unpack shape AND for the already-shipped sequential form
-    `o.x = p; o.y = q` -- ``Incomplete.follow`` routes every store effect
-    through ``_effect_continues_control_flow``. So this is a tree-wide
-    property of the store family, NOT something #6239 introduced; narrowing
-    the unpack shape would not reduce it while the two-statement spelling
-    stays admitted.
-
-    This twin pins that measurement. When sequential ExitSet composition
-    lands, this twin goes RED and must be replaced by real laws 6 and 7 twins
-    asserting the halted exit's carried binding state and the absence of the
-    later store from the outgoing exit set.
-    """
-    unpack_exits = reduce_block_to_exitset(
-        _function_sugar(tmp_path, TWO_ATTRIBUTE).statements, None
-    ).exits
-    sequential_exits = reduce_block_to_exitset(
-        _function_sugar(
-            tmp_path,
-            "def f(o, p, q):\n    o.x = p\n    o.y = q\n    return o\n",
-            stem="sequential",
-        ).statements,
-        None,
-    ).exits
-
-    for label, exits in (("unpack", unpack_exits), ("sequential", sequential_exits)):
-        assert len(exits) == 1, (label, [type(a).__name__ for a in exits])
-        assert isinstance(exits[0], Completed), (label, type(exits[0]).__name__)
-
-    # The store effects themselves are the thing that continues -- named, so a
-    # change to the follow routing lands here rather than silently elsewhere.
-    unpack = _unpack(tmp_path, TWO_ATTRIBUTE, stem="follow")
-    for store in unpack.stores:
-        outcome = store.desugar(None)
-        assert isinstance(outcome, Incomplete)
-        assert outcome.follow().continues is True
-
-
-# ---------------------------------------------------------------------------
 # Law 8 -- pure-name MultiAssign is unchanged vs origin/main.
 # ---------------------------------------------------------------------------
 
@@ -447,3 +402,65 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
     out = _function_sugar(tmp_path, TWO_ATTRIBUTE).desugar(None)
     assert isinstance(out, Complete)
     assert len(_unpack(tmp_path, TWO_ATTRIBUTE, stem="dual").stores) == 2
+
+
+# ---------------------------------------------------------------------------
+# HANDOFF -- strengthening required when store ExitSet composition lands.
+#
+# Every twin below currently reads ONE linear exit. Once a store contributes
+# a Halted arm (failure, prefix temporal state) beside its Completed arm, the
+# single-exit reading is no longer the whole artifact and each of these must
+# be restated per arm. This list is the rebase checklist for #6239; it is not
+# a licence to edit an expectation to match new behaviour -- re-measure.
+#
+# SINGLE-ARM HELPERS -- fix these first, the twins follow:
+#   _record / _projection / _post  read `.desugar(None).value` as one Complete.
+#     They must take an exit arm (or return one projection per arm).
+#
+#   Twin                                            what it must become
+#   ----------------------------------------------  -----------------------
+#   test_dual_attribute_display_unpack_constructs   asserts isinstance(out,
+#     Complete) for the whole universe -- the bare single-arm assumption.
+#     Must assert BOTH arms: Completed with both stores, Halted after the
+#     first. Highest-priority rewrite.
+#
+#   test_name_leaf_binding_is_discharged_beside_    PRIMARY site for law 6.
+#     the_store_effect                              Today asserts one post
+#     `out == p`. Must assert the HALTED exit still carries x == p -- the
+#     earlier binding is not retroactively erased by the later store's
+#     failure. This twin is where "assignment is not transactional" gets
+#     proven, and its discrimination arm is a halted exit that lost x.
+#
+#   test_store_effects_retain_left_to_right_order   law 3 gains real teeth and
+#     becomes law 7 as well: the arm halting at store k must contain exactly
+#     stores 0..k-1 and NOT store k+1. Today order is only observable inside
+#     one record; then it is observable as the arm structure itself.
+#
+#   test_positional_correspondence_...              per-arm projection: the
+#   test_attribute_receiver_and_name_retain_        pairing and the receiver/
+#     exact_coordinates                             attr coordinates must hold
+#     on the halted prefix too, not only on the fully-completed arm.
+#
+#   test_lying_variants_are_distinguished_on_all_   a lie that shows up only
+#     three_axes                                    in a partial-execution
+#     prefix must bite. Extend the three axes across arms.
+#
+#   test_rhs_member_is_one_retained_occurrence      RHS-once must hold on BOTH
+#     arms: the halted arm carries the SAME constructed occurrence, never a
+#     re-construction.
+#
+#   test_pure_name_multi_assign_construction_is_    the three pinned
+#     unchanged                                     fingerprints hash
+#     repr(record). If the foundational work changes _ReducedBlock or the
+#     record repr, RE-MEASURE against origin/main at that time and replace
+#     the constants with the measured values. Never edit them to match.
+#
+#   test_opaque_receiver_subscript_leaves_stay_     the loud set shrinks on
+#     loud                                          rebase: subscript leaves
+#     are re-enabled wherever receiver, selector AND value are all
+#     authenticated. Move those sources out of the loud list and under the
+#     coordinate twins; keep loud only what still cannot authenticate all
+#     three.
+#
+#   test_star_against_opaque_iterable_stays_loud    unaffected.
+# ---------------------------------------------------------------------------
