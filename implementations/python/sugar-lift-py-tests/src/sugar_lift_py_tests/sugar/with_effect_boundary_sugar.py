@@ -37,9 +37,18 @@ class WithEffectBoundarySugar(Sugar):
             SuppressesModeV1,
             project_formal_selector_v1,
         )
-        from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
+        from sugar_lift_py_tests.effect import ExpectationNotMetEffect
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import (
+            ExitSet,
+            HaltsCompletion,
+            Halted,
+            KeepsCompletion,
+        )
+        from sugar_lift_py_tests.outcome.resource_exit_disposition import (
+            AuthenticatedRaiseDisposition,
+            disposition_verdict,
+        )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
             promote_raise_halts,
             sugar_outcome_to_exitset,
@@ -99,33 +108,31 @@ class WithEffectBoundarySugar(Sugar):
             body_es = promote_raise_halts(reduce_block_to_exitset(self.body)).guarded(
                 manager_exit.guard
             )
-            exits = []
+            disposition = AuthenticatedRaiseDisposition(expected, pattern)
             for body_exit in body_es.exits:
-                if isinstance(body_exit, Completed):
-                    if isinstance(semantics.mode, ExpectsModeV1):
-                        exits.append(
-                            Halted(
-                                body_exit.guard,
-                                ExpectationNotMetEffect("raise", self.site),
-                                body_exit.value,
-                            )
-                        )
-                    else:
-                        exits.append(body_exit)
-                elif isinstance(body_exit.effect, RaiseEffect) and _matches_raise(
-                    body_exit.effect, expected, pattern
+                if (
+                    isinstance(body_exit, Halted)
+                    and disposition_verdict(disposition, body_exit.effect) == "suppress"
+                    and body_exit.state is None
                 ):
-                    if body_exit.state is None:
-                        raise SugarNotWritten(
-                            owner="WithEffectBoundarySugar.desugar",
-                            observed="matching raise face omitted its pre-effect state",
-                            requested="ExitSet Halted face carrying the real pre-halt state",
-                            fix="repair the block reducer; never fabricate a continuation state",
-                        )
-                    exits.append(Completed(body_exit.guard, body_exit.state))
-                else:
-                    exits.append(body_exit)
-            routed.append(ExitSet(tuple(exits)).normalize())
+                    raise SugarNotWritten(
+                        owner="WithEffectBoundarySugar.desugar",
+                        observed="raise face omitted its pre-effect state",
+                        requested="ExitSet Halted face carrying the real pre-halt state",
+                        fix="repair the block reducer; never fabricate a continuation state",
+                    )
+            completion = (
+                HaltsCompletion(ExpectationNotMetEffect("raise", self.site))
+                if isinstance(semantics.mode, ExpectsModeV1)
+                else KeepsCompletion()
+            )
+            routed.append(
+                body_es.and_exit(
+                    ExitSet.completed(None),
+                    completion=completion,
+                    disposition=disposition,
+                )
+            )
 
         if not routed:
             raise SugarNotWritten(
@@ -194,25 +201,3 @@ def _bind_real_actuals(signature, manager_value):
             "call actual does not fit authenticated signature"
         )
     return fixed
-
-
-def _matches_raise(effect, expected, pattern) -> bool:
-    import re
-
-    from sugar_lift_py_tests.authenticated_exception_matching import (
-        matches_raise_effect,
-    )
-
-    raised = effect.raised_value
-    if not matches_raise_effect(effect, expected):
-        return False
-    if pattern is None:
-        return True
-    pattern_value = getattr(pattern, "value", None)
-    args = getattr(raised, "arg_values", ())
-    message_value = getattr(args[0], "value", None) if args else None
-    return (
-        isinstance(pattern_value, str)
-        and isinstance(message_value, str)
-        and re.search(pattern_value, message_value) is not None
-    )

@@ -66,7 +66,11 @@ class WithResourceSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import (
+            ExitSet,
+            Halted,
+            KeepsCompletion,
+        )
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -126,7 +130,11 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
-                    after = face.and_exit(exit_es, disposition=self.disposition)
+                    after = face.and_exit(
+                        exit_es,
+                        completion=KeepsCompletion(),
+                        disposition=self.disposition,
+                    )
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )

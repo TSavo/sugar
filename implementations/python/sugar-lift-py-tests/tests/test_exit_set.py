@@ -11,7 +11,9 @@ from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
+    HaltsCompletion,
     Halted,
+    KeepsCompletion,
     false_guard,
 )
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
@@ -150,14 +152,54 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
 
 def test_and_exit_completion_keeps_body_completed():
     incoming = ExitSet.completed("body")
-    after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
+    after = incoming.and_exit(
+        ExitSet.completed(False),
+        completion=KeepsCompletion(),
+        disposition=NeverSuppresses(),
+    )
     assert after.collapse() == Complete("body")
+
+
+def test_and_exit_completion_contract_can_halt_body_completed():
+    expected = RaiseEffect(exception_name="ExpectationNotMetEffect")
+    incoming = ExitSet.completed("body")
+
+    after = incoming.and_exit(
+        ExitSet.completed(False),
+        completion=HaltsCompletion(expected),
+        disposition=NeverSuppresses(),
+    )
+
+    assert after.exits == (Halted(after.exits[0].guard, expected, "body"),)
+
+
+def test_and_exit_disposition_cannot_change_completed_edge_contract():
+    incoming = ExitSet.completed("body")
+
+    kept = {
+        incoming.and_exit(
+            ExitSet.completed(False),
+            completion=KeepsCompletion(),
+            disposition=disposition,
+        ).collapse()
+        for disposition in (
+            NeverSuppresses(),
+            RuntimeSelected(),
+            Suppresses(EffectMatcher(kind="raise", name="ValueError")),
+        )
+    }
+
+    assert kept == {Complete("body")}
 
 
 def test_and_exit_halt_supersedes_body_completed():
     exit_halt = RaiseEffect(exception_name="RuntimeError")
     incoming = ExitSet.completed("body")
-    after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
+    after = incoming.and_exit(
+        ExitSet.halted(exit_halt),
+        completion=KeepsCompletion(),
+        disposition=NeverSuppresses(),
+    )
     assert after.collapse() == Incomplete(exit_halt)
 
 
@@ -165,14 +207,22 @@ def test_and_exit_halt_supersedes_body_halted():
     body = RaiseEffect(exception_name="ValueError")
     exit_halt = RaiseEffect(exception_name="RuntimeError")
     incoming = ExitSet.halted(body)
-    after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
+    after = incoming.and_exit(
+        ExitSet.halted(exit_halt),
+        completion=KeepsCompletion(),
+        disposition=NeverSuppresses(),
+    )
     assert after.collapse() == Incomplete(exit_halt)
 
 
 def test_and_exit_never_suppresses_restores_body_halt():
     body = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.halted(body)
-    after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
+    after = incoming.and_exit(
+        ExitSet.completed(False),
+        completion=KeepsCompletion(),
+        disposition=NeverSuppresses(),
+    )
     assert after.collapse() == Incomplete(body)
 
 
@@ -181,6 +231,7 @@ def test_and_exit_proven_contract_consumes_named_halt():
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
+        completion=KeepsCompletion(),
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
     assert after.collapse() == Complete(None)
@@ -191,6 +242,7 @@ def test_and_exit_runtime_selected_leaves_open_residual_not_guessed():
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
+        completion=KeepsCompletion(),
         disposition=RuntimeSelected(),
     )
     assert after.collapse() == Incomplete(body)
@@ -201,7 +253,11 @@ def test_and_exit_fans_exitset_across_conditional_faces():
     effect = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     exit_es = ExitSet.completed(False)
-    after = incoming.and_exit(exit_es, disposition=NeverSuppresses())
+    after = incoming.and_exit(
+        exit_es,
+        completion=KeepsCompletion(),
+        disposition=NeverSuppresses(),
+    )
     assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
     assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
 
@@ -212,6 +268,7 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     after = incoming.and_exit(
         ExitSet.completed(True),
+        completion=KeepsCompletion(),
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
     assert after.collapse() == Complete("state")
@@ -222,6 +279,7 @@ def test_and_exit_membrane_suppresses_matcher_authority():
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
+        completion=KeepsCompletion(),
         disposition=Suppresses(EffectMatcher(kind="raise", name="KeyError")),
     )
     assert after.collapse() == Complete(None)

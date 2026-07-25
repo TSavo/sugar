@@ -6,6 +6,7 @@ Authority lives only in:
 - ``ExitSuppressionContract`` — source-proven named suppress set (or empty)
 - ``RuntimeSelected`` — undecidable; leave open residual under the guard
 - ``Suppresses(matcher)`` — membrane matcher (exact kind+name)
+- ``AuthenticatedRaiseDisposition`` — source-authenticated expected type/pattern
 
 No free-floating exception-name helpers. Production must not select semantics
 by ad-hoc name checks outside these types.
@@ -13,9 +14,18 @@ by ad-hoc name checks outside these types.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 Verdict = Literal["suppress", "restore", "open"]
+
+
+@dataclass(frozen=True)
+class AuthenticatedRaiseDisposition:
+    """Consume only the raise selected by authenticated contract operands."""
+
+    expected_type: object
+    message_pattern: object | None = None
 
 
 def disposition_verdict(disposition: object, effect: object) -> Verdict:
@@ -30,6 +40,13 @@ def disposition_verdict(disposition: object, effect: object) -> Verdict:
         Suppresses,
     )
     from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
+
+    if isinstance(disposition, AuthenticatedRaiseDisposition):
+        return (
+            "suppress"
+            if _matches_authenticated_raise(disposition, effect)
+            else "restore"
+        )
 
     if disposition is None or isinstance(disposition, RuntimeSelected):
         return "open"
@@ -53,7 +70,33 @@ def disposition_verdict(disposition: object, effect: object) -> Verdict:
         return "restore"
 
     raise TypeError(
-        "resource exit disposition must be NeverSuppresses, "
+        "exit disposition must be AuthenticatedRaiseDisposition, NeverSuppresses, "
         "ExitSuppressionContract, RuntimeSelected, or Suppresses; "
         f"got {type(disposition).__name__}"
+    )
+
+
+def _matches_authenticated_raise(
+    disposition: AuthenticatedRaiseDisposition, effect: object
+) -> bool:
+    import re
+
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.effect import RaiseEffect
+
+    if not isinstance(effect, RaiseEffect):
+        return False
+    if not matches_raise_effect(effect, disposition.expected_type):
+        return False
+    if disposition.message_pattern is None:
+        return True
+    pattern_value = getattr(disposition.message_pattern, "value", None)
+    args = getattr(effect.raised_value, "arg_values", ())
+    message_value = getattr(args[0], "value", None) if args else None
+    return (
+        isinstance(pattern_value, str)
+        and isinstance(message_value, str)
+        and re.search(pattern_value, message_value) is not None
     )

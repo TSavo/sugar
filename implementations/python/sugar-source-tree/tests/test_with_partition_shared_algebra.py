@@ -67,6 +67,7 @@ from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
+    KeepsCompletion,
     Halted,
     complement_guard,
 )
@@ -252,7 +253,11 @@ def _resource_route(body_es, resource, disposition):
     reimplemented.
     """
     exit_es = sugar_outcome_to_exitset(resource.exit.desugar())
-    return body_es.and_exit(exit_es, disposition=disposition)
+    return body_es.and_exit(
+        exit_es,
+        completion=KeepsCompletion(),
+        disposition=disposition,
+    )
 
 
 def _assertion_route(boundary):
@@ -394,6 +399,16 @@ def test_both_contracts_route_through_generic_exitset_machinery(tmp_path):
         assert len([e for e in routed.exits if isinstance(e, Halted)]) == 1
 
 
+def test_effect_boundary_production_routes_through_and_exit():
+    text = _router_text()[
+        "sugar_lift_py_tests/sugar/with_effect_boundary_sugar.py"
+    ]
+
+    assert ".and_exit(" in text
+    assert "HaltsCompletion(" in text
+    assert "AuthenticatedRaiseDisposition(" in text
+
+
 def test_discrimination_the_reconstructed_resource_route_matches_production(tmp_path):
     """The ``and_exit`` call above is not a test-local shortcut.
 
@@ -513,14 +528,12 @@ ALL_DISPOSITIONS = (
 )
 
 
-def test_assertion_contract_cannot_be_spelled_as_a_generic_exit(tmp_path):
-    """The completed edge is where the two contracts stop being interchangeable.
+def test_resource_dispositions_cannot_select_completed_edge_behavior(tmp_path):
+    """The two typed contracts stay independent on the completed edge.
 
     Under ``Expects``, a body that *completed* is a failed expectation and must
-    halt. ``and_exit`` decides ``Completed`` incoming before it ever consults
-    the disposition, so no resource contract -- for any of the four typed
-    disposition families -- can produce that halt. This is the honest boundary
-    of the shared algebra and it is asserted exhaustively, not asserted away.
+    halt. The resource route deliberately selects ``KeepsCompletion``. Sweeping
+    every halted-edge disposition cannot change that completed-edge contract.
     """
     resource, boundary = _both_arms(tmp_path)
     body_es = _body_exitset(resource.body)
@@ -539,7 +552,7 @@ def test_assertion_contract_cannot_be_spelled_as_a_generic_exit(tmp_path):
         for exit_ in surviving:
             assert isinstance(exit_, Completed), (
                 f"{disposition!r} turned the completed edge into a halt; "
-                "and_exit is not supposed to be able to express Expects"
+                "halted-edge disposition leaked into the completed-edge contract"
             )
 
 
@@ -595,7 +608,9 @@ def test_exit_halt_supersedes_every_incoming_edge(tmp_path):
     cleanup_failure = RaiseEffect(exception_name="OSError", occurrence="exit:1:0")
 
     routed = body_es.and_exit(
-        ExitSet.halted(cleanup_failure), disposition=resource.disposition
+        ExitSet.halted(cleanup_failure),
+        completion=KeepsCompletion(),
+        disposition=resource.disposition,
     )
 
     assert all(isinstance(exit_, Halted) for exit_ in routed.exits)

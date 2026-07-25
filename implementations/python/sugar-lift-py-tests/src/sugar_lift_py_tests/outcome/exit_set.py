@@ -99,6 +99,24 @@ Exit = Completed[T] | Halted
 
 
 @dataclass(frozen=True)
+class KeepsCompletion:
+    """A completed incoming edge remains completed after exit completes."""
+
+
+@dataclass(frozen=True)
+class HaltsCompletion:
+    """A completed incoming edge becomes a halt carrying this real effect."""
+
+    effect: Effect
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "effect", require_effect(self.effect))
+
+
+CompletionContract = KeepsCompletion | HaltsCompletion
+
+
+@dataclass(frozen=True)
 class ExitSet(Generic[T]):
     """A partition of reachable execution into completed and halted exits."""
 
@@ -228,12 +246,14 @@ class ExitSet(Generic[T]):
         self,
         exit_es: "ExitSet[object]",
         *,
+        completion: CompletionContract,
         disposition: object,
     ) -> "ExitSet[object]":
         """Run constructed ``__exit__`` over every body exit (resource ``with``).
 
         ``exit_es`` is the already-reduced exit ExitSet (built once from tree
-        sugar, not a callback). ``disposition`` is a **typed** exit contract:
+        sugar, not a callback). ``completion`` and ``disposition`` are
+        independent typed contracts for completed and halted incoming edges.
 
         - ``NeverSuppresses`` — restore body halt (exit still ran; may supersede)
         - ``ExitSuppressionContract`` — proven named suppress / restore
@@ -243,7 +263,7 @@ class ExitSet(Generic[T]):
         Laws:
 
         - Exit **halt** supersedes the incoming exit.
-        - Exit **completion** on a **Completed** incoming keeps the body value.
+        - Exit **completion** on a **Completed** incoming applies ``completion``.
         - Exit **completion** on a **Halted** incoming applies ``disposition``:
           suppress → consume; restore → rethrow; open → residual halt.
         """
@@ -260,7 +280,15 @@ class ExitSet(Generic[T]):
                     exits.append(Halted(guard, ex.effect, ex.state))
                     continue
                 if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value))
+                    if isinstance(completion, KeepsCompletion):
+                        exits.append(Completed(guard, incoming.value))
+                    elif isinstance(completion, HaltsCompletion):
+                        exits.append(Halted(guard, completion.effect, incoming.value))
+                    else:
+                        raise TypeError(
+                            "completed exit contract must be KeepsCompletion or "
+                            f"HaltsCompletion; got {type(completion).__name__}"
+                        )
                     continue
                 # Incoming Halted + exit completed → typed disposition.
                 verdict = disposition_verdict(disposition, incoming.effect)
