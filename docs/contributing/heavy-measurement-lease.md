@@ -133,8 +133,30 @@ runners with an extra label — a change to runner registration, not to this
 repo — after which each heavy workflow's `runs-on:` gains that label. It is
 deliberately not approximated here.
 
-The related open question is whether `/var/tmp` is shared across runner
-containers on battleaxe. If it is not, the lease is per-container and
-serializes nothing — which is exactly why every receipt records
-`bootId`/`device`/`inode` and why `--scope-check` exists. That check is the
-measurement; do not assume the answer.
+## The lease path, and how the first live run caught it
+
+The first live run of this mechanism proved its own instrument. Two heavy jobs
+took a `/var/tmp` lease on the same kernel, each waited **0.0007 s**, and their
+intervals **overlapped**:
+
+```
+suite  host cad95bf8f5de  bootId d257d14e-…  dev/ino 1048601/1740385
+floors host 7d0e695e838d  bootId d257d14e-…  dev/ino 1048637/2882278
+```
+
+Same machine, different inode. battleaxe's runners are **containers**, and
+`/var/tmp` is per-container — so that lease serialized nothing at all. The
+receipts made it visible on day one, which is the entire reason they record
+`bootId` and `device`/`inode`.
+
+The lease now lives at
+`/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease`, on a
+directory bind-mounted from the **same host path** into every runner container
+(verified across all twelve live containers).
+
+And the failure mode cannot come back quietly. Inside a container the wrapper
+**refuses to run at all** if the lease file sits on the same device as `/`,
+because that means the container's own root filesystem and no peer can see it.
+A lock nobody else can take reports `acquired` while a second census runs
+beside it — worse than no lock. Outside a container the rule is not applied:
+there, one filesystem really is one machine.

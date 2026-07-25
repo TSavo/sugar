@@ -108,8 +108,24 @@ STATUS_INTERRUPTED_DURING = "interrupted-during-measurement"
 # The one status a zero claim may rest on.
 ZERO_CLAIM_STATUS = STATUS_COMPLETED_ZERO_FINDINGS
 
+# THE LEASE MUST LIVE ON A HOST-SHARED PATH, AND THIS ONE DOES.
+#
+# The first live run of this mechanism proved the point the hard way. Two heavy
+# jobs took the lease on /var/tmp with a wait of 0.0007s each and OVERLAPPED,
+# because battleaxe's runners are containers and /var/tmp is per-container:
+#
+#   suite  host cad95bf8f5de  bootId d257d14e...  dev/ino 1048601/1740385
+#   floors host 7d0e695e838d  bootId d257d14e...  dev/ino 1048637/2882278
+#
+# Same kernel, different inode: a lease that serialized nothing. The receipts
+# caught it on day one, which is exactly why they record bootId and dev/ino.
+#
+# `/home/runner/.cache/sugar/binaries` is bind-mounted from the SAME host
+# directory into every runner container (verified across all twelve live
+# containers), so a lock file there is one lock for the whole machine.
 DEFAULT_LEASE_PATH = os.environ.get(
-    "SUGAR_HEAVY_LEASE_PATH", "/var/tmp/sugar-heavy-measurement.lease"
+    "SUGAR_HEAVY_LEASE_PATH",
+    "/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease",
 )
 DEFAULT_TIMEOUT_SECONDS = float(
     os.environ.get("SUGAR_HEAVY_LEASE_TIMEOUT_SECONDS", "14400")
@@ -135,6 +151,16 @@ def _boot_id():
 
 def _log(message):
     print(f"heavy-measurement-lease: {message}", file=sys.stderr, flush=True)
+
+
+class LeaseNotMachineWide(Exception):
+    """The lease file is private to this container. It serializes nothing.
+
+    A lock nobody else can see is worse than no lock: it produces a receipt
+    saying `acquired` while two censuses run side by side. That is the exact
+    shape of dishonesty this mechanism exists to remove, so it is a REFUSAL,
+    not a warning.
+    """
 
 
 class LeaseTimeout(Exception):
@@ -214,6 +240,8 @@ class HeavyMeasurementLease:
         # it. This is the difference between a lease and a suggestion.
         os.set_inheritable(self.fd, True)
 
+        self._require_machine_wide()
+
         deadline = self.requested_at + self.timeout_seconds
         announced = False
         while True:
@@ -257,6 +285,36 @@ class HeavyMeasurementLease:
             f"commit={os.environ.get('GITHUB_SHA', 'unknown')} "
             f"waited={round(self.acquired_at - self.requested_at, 3)}s"
         )
+
+    def _require_machine_wide(self):
+        """Inside a container, the lease MUST be on a bind mount from the host.
+
+        The discriminator is cheap and local: if the lease file sits on the same
+        device as ``/``, it is on the container's own root filesystem and no
+        other container can see it. A bind mount from the host always has a
+        different device.
+
+        Only enforced when we can tell we are containerized, because on a plain
+        host ``/var/tmp`` sharing a device with ``/`` is normal and correct --
+        there, one filesystem really is one machine.
+        """
+        if not os.path.exists("/.dockerenv"):
+            return
+        try:
+            lease_dev = os.stat(self.lease_path).st_dev
+            root_dev = os.stat("/").st_dev
+        except OSError as exc:
+            _log(f"WARNING could not compare lease device with root device: {exc}")
+            return
+        if lease_dev == root_dev:
+            raise LeaseNotMachineWide(
+                f"{self.lease_path} is on this container's own root filesystem "
+                f"(device {lease_dev}), so no other runner container can see it. "
+                f"A lease nobody else can take is not a lease -- it would report "
+                f"`acquired` while a second census ran beside this one. Point "
+                f"SUGAR_HEAVY_LEASE_PATH at a directory bind-mounted from the "
+                f"host (on battleaxe: /home/runner/.cache/sugar/binaries)."
+            )
 
     def release(self):
         """Drop the lock and the sidecar. Idempotent; safe from a handler."""
@@ -450,8 +508,13 @@ def main(argv=None):
     # the wait.
     try:
         lease.acquire(interrupted=lambda: state["pending"] is not None)
-    except (LeaseTimeout, LeaseCancelled) as exc:
+    except (LeaseTimeout, LeaseCancelled, LeaseNotMachineWide) as exc:
         _log(str(exc))
+        if isinstance(exc, LeaseNotMachineWide):
+            _log("REFUSING to measure behind a lease that serializes nothing.")
+            lease.set_status(STATUS_CANCELLED_BEFORE)
+            lease.released_at = time.time()
+            lease.stale_owner = str(exc)
         if isinstance(exc, LeaseTimeout):
             _log("current owner testimony:\n" + (lease.stale_owner or "(none)"))
             _log(f"REFUSING to run {command!r} concurrently.")

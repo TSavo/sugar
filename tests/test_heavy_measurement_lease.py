@@ -221,6 +221,67 @@ def test_receipt_embeds_into_the_measurement_artifact(lease, record, tmp_path):
     assert payload["leaseRecord"]["measuredCommit"].startswith("421ef4157")
 
 
+# -- a lease nobody else can see is not a lease -------------------------------
+
+
+def _lease_module():
+    from importlib import util
+    spec = util.spec_from_file_location("heavy_measurement_lease", WRAPPER)
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_container_private_lease_is_refused(monkeypatch, tmp_path):
+    """The defect the first live run exposed.
+
+    Two heavy jobs took /var/tmp leases on the same kernel, waited 0.0007s
+    each, and OVERLAPPED -- because battleaxe runners are containers and
+    /var/tmp is per-container. A lock nobody else can see reports `acquired`
+    while a second census runs beside it, which is worse than no lock at all.
+    """
+    module = _lease_module()
+    lease_path = tmp_path / "private.lease"
+    lease_path.touch()
+    lease = module.HeavyMeasurementLease("t", str(lease_path), 1)
+
+    monkeypatch.setattr(module.os.path, "exists", lambda p: p == "/.dockerenv")
+    same = os.stat(str(lease_path))
+    monkeypatch.setattr(module.os, "stat", lambda p: same)
+    with pytest.raises(module.LeaseNotMachineWide):
+        lease._require_machine_wide()
+
+
+def test_bind_mounted_lease_is_accepted(monkeypatch, tmp_path):
+    """The other face: a lease on a host bind mount has a different device
+    from `/`, and must pass -- or the check is a wall nobody can get through."""
+    module = _lease_module()
+    lease_path = tmp_path / "shared.lease"
+    lease_path.touch()
+    lease = module.HeavyMeasurementLease("t", str(lease_path), 1)
+
+    monkeypatch.setattr(module.os.path, "exists", lambda p: p == "/.dockerenv")
+
+    class _Stat:
+        def __init__(self, dev):
+            self.st_dev = dev
+
+    monkeypatch.setattr(module.os, "stat",
+                        lambda p: _Stat(1 if p == "/" else 2))
+    lease._require_machine_wide()  # must not raise
+
+
+def test_outside_a_container_one_filesystem_really_is_one_machine(monkeypatch, tmp_path):
+    """On a plain host, /var/tmp sharing a device with / is normal. Enforcing
+    the container rule there would refuse every honest local measurement."""
+    module = _lease_module()
+    lease_path = tmp_path / "host.lease"
+    lease_path.touch()
+    lease = module.HeavyMeasurementLease("t", str(lease_path), 1)
+    monkeypatch.setattr(module.os.path, "exists", lambda p: False)
+    lease._require_machine_wide()  # must not raise
+
+
 # -- the status vocabulary: silence is never a clean floor ------------------
 #
 #   queued -> lease-waiting -> measuring -> completed/{findings,zero-findings}
