@@ -303,6 +303,49 @@ def test_store_outcome_guards_are_exactly_complementary(tmp_path: Path) -> None:
     )
 
 
+def test_store_pairing_enforcement_one_occurrence_complementary_total(
+    tmp_path: Path,
+) -> None:
+    """Pairing law for one store occurrence (post-#6246 foundation).
+
+    Success and halt arms of ONE attribute store must:
+      1. cite the same store-occurrence coordinate;
+      2. carry complementary guards (``g`` and ``not g``);
+      3. cover the runtime outcome without overlap (conjunction is false)
+         and without omission (exactly two faces for one store in a
+         single-store body: one Halted + one Completed).
+
+    This is the invariant With and Try will reuse. Keep it named and loud.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import _and_guards, false_guard
+
+    exits = _exits(tmp_path, ONE_STORE, "target")
+    halted, completed = _arms(exits)
+    assert len(halted) == 1 and len(completed) == 1, (
+        "one store body must emit exactly one halt face and one success face, "
+        f"got halted={len(halted)} completed={len(completed)}"
+    )
+    (halt,) = halted
+    (success,) = completed
+
+    # 1 + 2: same occurrence, complementary polarities
+    halt_coords = _store_coordinates(halt.guard)
+    success_coords = _store_coordinates(success.guard)
+    assert len(halt_coords) == 1 and len(success_coords) == 1
+    assert halt_coords[0] == success_coords[0], (
+        "halt and success must share one store-occurrence coordinate"
+    )
+    assert _polarity(halt.guard, "x") is False
+    assert _polarity(success.guard, "x") is True
+
+    # 3: no overlap
+    assert _and_guards(halt.guard, success.guard) == false_guard()
+
+    # 3: no omission — every ExitSet face of this body is one of those two arms
+    assert len(exits.exits) == 2
+    assert {type(e).__name__ for e in exits.exits} == {"Halted", "Completed"}
+
+
 def test_store_outcome_guards_are_exactly_complementary_discrimination(tmp_path: Path) -> None:
     """The bite: two DIFFERENT stores' guards are not contradictory -- so the
     contradiction above comes from complementarity, not from everything being
