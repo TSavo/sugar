@@ -24,7 +24,14 @@ def _out(source: str):
 
 
 def _entries(source: str):
-    out = _out(source)
+    # A delete mutates a place through runtime dispatch that can halt, so it
+    # partitions the block exactly as an attribute/subscript store does and the
+    # body reduces to an ExitSet. These assertions are about the delete the
+    # COMPLETED arm records; the halt face and the composition laws live in
+    # sugar-lift-py-tests/tests/test_store_outcome_composition.py.
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_outcome
+
+    out = sole_completed_outcome(_out(source))
     assert isinstance(out, Complete)
     return out.value.record.statements
 

@@ -74,7 +74,15 @@ def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
 
 
 def _red_effects(source):
-    entries = _fn(source).sugar().desugar().value.record.statements
+    # A store partitions the block into a completed and a halted arm (stores are
+    # not infallible), so a body containing one reduces to an ExitSet. These
+    # assertions are about the store the COMPLETED arm records; the halt face
+    # and the composition laws live in
+    # sugar-lift-py-tests/tests/test_store_outcome_composition.py.
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_outcome
+
+    outcome = sole_completed_outcome(_fn(source).sugar().desugar())
+    entries = outcome.value.record.statements
     return [entry.effect for entry in entries if isinstance(entry, Incomplete)]
 
 

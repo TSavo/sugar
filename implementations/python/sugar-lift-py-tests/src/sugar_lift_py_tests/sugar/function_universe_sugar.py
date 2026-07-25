@@ -75,6 +75,15 @@ def reduce_block_to_exitset(
                 exits = []
                 for entry in faces.contribution():
                     if isinstance(entry, Incomplete):
+                        # A store inside a guarded face is NOT re-split here.
+                        # The branch body was already reduced by
+                        # reduce_block_to_exitset, so the store's success/halt
+                        # partition has already happened; IfSugar then absorbs
+                        # each halted arm as guarded red testimony (if_sugar.py,
+                        # `Incomplete(exit_.effect).guarded(exit_.guard)`), the
+                        # same seam every halt inside an `if` goes through.
+                        # Splitting again here would emit the same occurrence
+                        # twice.
                         if entry.follow().continues:
                             entries.append(entry)
                             continue
@@ -142,6 +151,36 @@ def reduce_block_to_exitset(
             entries = (*state.entries, *contribution)
 
             follow = outcome.follow()
+            if follow.continues and follow.halt_guard is not None:
+                # A store: runtime-selected success/halt over ONE authenticated
+                # occurrence coordinate.
+                #
+                # Halted arm carries `state` -- the PREFIX. Every earlier
+                # binding and every earlier store survives on it (Python never
+                # rolls back an assignment that already happened), and this
+                # store's own completion testimony is absent from it, because
+                # this store did not complete.
+                #
+                # Completed arm carries `entries` -- the prefix PLUS this
+                # store's red testimony. Only this arm is fed to the tail by
+                # `ExitSet.sequence`, so no later target can execute after an
+                # earlier store halt.
+                from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+                return ExitSet(
+                    (
+                        Halted(follow.halt_guard, outcome.effect, state),
+                        Completed(
+                            complement_guard(follow.halt_guard),
+                            _ReducedBlock(
+                                entries,
+                                True,
+                                state.fall_through,
+                                state.transforms,
+                            ),
+                        ),
+                    )
+                ).normalize()
             if not follow.continues:
                 if isinstance(outcome, Incomplete):
                     if outcome.branch_conditions:

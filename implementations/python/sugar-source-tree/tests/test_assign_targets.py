@@ -32,6 +32,21 @@ def _post(src):
     return _fn(src).sugar().desugar().value.post()
 
 
+def _completed_entries(src):
+    """Entries recorded on the arm where every store completed.
+
+    A store is not infallible, so a body containing one partitions into a
+    completed and a halted arm and reduces to an ExitSet. What each store
+    witnesses, and the source order of several stores, are facts about the
+    completed arm; the halt faces and the composition laws are asserted in
+    sugar-lift-py-tests/tests/test_store_outcome_composition.py.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_outcome
+
+    outcome = sole_completed_outcome(_fn(src).sugar().desugar())
+    return outcome.value.record.statements
+
+
 def test_tuple_destructure_assign_lifts_through():
     post = _post("def A():\n    a, b = (1, 2)\n    return a + b\n")
     assert post.args[1].value == 3
@@ -87,11 +102,8 @@ def test_chained_names_receive_distinct_runtime_binding_coordinates():
 
 
 def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
-    entries = (
-        _fn("def arbitrary(o):\n    renamed = o.field = 5\n    return renamed\n")
-        .sugar()
-        .desugar()
-        .value.record.statements
+    entries = _completed_entries(
+        "def arbitrary(o):\n    renamed = o.field = 5\n    return renamed\n"
     )
     red = [entry for entry in entries if isinstance(entry, Incomplete)]
     assert len(red) == 1
@@ -99,15 +111,10 @@ def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
 
 
 def test_mixed_chain_preserves_each_store_face_in_source_order():
-    entries = (
-        _fn(
-            "def arbitrary(o, xs):\n"
-            "    renamed = o.field = xs[0] = 7\n"
-            "    return renamed\n"
-        )
-        .sugar()
-        .desugar()
-        .value.record.statements
+    entries = _completed_entries(
+        "def arbitrary(o, xs):\n"
+        "    renamed = o.field = xs[0] = 7\n"
+        "    return renamed\n"
     )
     red = [entry for entry in entries if isinstance(entry, Incomplete)]
     assert [type(entry.effect) for entry in red] == [
@@ -182,24 +189,14 @@ def test_mixed_chained_targets_stay_loud():
 
 
 def test_attribute_store_target_lifts_a_typed_red_effect():
-    entries = (
-        _fn("def A(o):\n    o.a = 1\n    return o\n")
-        .sugar()
-        .desugar()
-        .value.record.statements
-    )
+    entries = _completed_entries("def A(o):\n    o.a = 1\n    return o\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
 def test_subscript_store_target_lifts_a_typed_red_effect():
-    entries = (
-        _fn("def A(xs):\n    xs[0] = 1\n    return xs\n")
-        .sugar()
-        .desugar()
-        .value.record.statements
-    )
+    entries = _completed_entries("def A(xs):\n    xs[0] = 1\n    return xs\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, SubscriptStoreRuntimeEffect)
