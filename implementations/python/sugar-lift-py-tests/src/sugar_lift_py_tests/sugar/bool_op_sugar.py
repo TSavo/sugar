@@ -42,6 +42,7 @@ class BoolOpSugar(Sugar):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, or_
         from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
         formulas = []
         for operand in self.values:
@@ -50,16 +51,11 @@ class BoolOpSugar(Sugar):
                 # An operand that is itself an effect propagates -- the boolean is
                 # not decidable once a conjunct halts.
                 return out
-            truth = out.value.truth(self.site)
-            formula = getattr(getattr(truth, "value", None), "formula", None)
-            if formula is None:
-                # A ground-bool operand (no formula) is not lifted yet -- LOUD,
-                # never drop a conjunct silently.
-                raise NotImplementedError(
-                    "boolean operand that folds to a ground boolean is not lifted "
-                    f"yet (got {type(getattr(out, 'value', out)).__name__})"
-                )
-            formulas.append(formula)
+            # Same truth→formula projection as if/if-exp: symbolic formulas stand
+            # as themselves; ground True/False (including None.truth → False)
+            # fold through true_guard/false_guard. Never raise bare
+            # NotImplementedError on a constructible ground boolean.
+            formulas.append(predicate_formula(out.value, self.site))
 
         combine = and_ if self.op_kind == "And" else or_
         return Complete(PredicateValue(combine(formulas), self.site))
