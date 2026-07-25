@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Pandas control/effect construction recensus.
+"""Pandas control/effect construction + desugar-layer recensus.
 
-One process. Enumeration only:
+One process. Two named axes (never merged into one R):
 
     SourceTree(corpus).paths()
       → provisional_contract_refs_from_demands(corpus)  (once)
       → open_source_file_for_construction (context + source-derived CM refs)
       → functions()
-      → fn.sugar()
+      → fn.sugar()                    # axis 1: construction families
+      → sugar.desugar(None)           # axis 2: desugar refusals + typed red
+
+Construction R answers "is the tree total?". Desugar R answers "is meaning
+reducible?". Yield/YieldFrom construct then refuse at desugar — correct; they
+must stay on the board under axis 2 (see #6243).
 
 No subprocess. No process pool. Construction context is required: bare
 ``fn.sugar()`` with ``construction_context is None`` paints every With as
@@ -76,6 +81,85 @@ def _configure_engine_log(path: Path) -> None:
     logger.setLevel(logging.DEBUG)
 
 
+def _desugar_owner_key(gap: Exception | BaseException) -> str:
+    """Stable family key for a desugar-layer refusal."""
+    owner = getattr(gap, "owner", None)
+    if isinstance(owner, str) and owner:
+        return owner
+    return type(gap).__name__
+
+
+def _typed_red_owners(outcome: object) -> list[str]:
+    """Effect class names surfaced at desugar (Incomplete / Halted exits)."""
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.outcome import (
+        Complete,
+        Completed,
+        ExitSet,
+        Halted,
+        Incomplete,
+    )
+
+    owners: list[str] = []
+
+    def visit(obj: object, depth: int = 0) -> None:
+        if depth > 24 or obj is None:
+            return
+        if isinstance(obj, Incomplete):
+            owners.append(type(obj.effect).__name__)
+            return
+        if isinstance(obj, Complete):
+            visit(obj.value, depth + 1)
+            return
+        if isinstance(obj, ExitSet):
+            for exit_ in getattr(obj, "exits", ()):
+                if isinstance(exit_, Halted):
+                    owners.append(type(exit_.effect).__name__)
+                elif isinstance(exit_, Completed):
+                    visit(exit_.value, depth + 1)
+            return
+        if isinstance(obj, UniverseValue):
+            visit(obj.record, depth + 1)
+            return
+        if isinstance(obj, BlockValue):
+            for entry in getattr(obj, "statements", ()):
+                visit(entry, depth + 1)
+
+    visit(outcome)
+    return owners
+
+
+def _measure_desugar_axis(
+    sugar: object,
+    *,
+    relative: str,
+    line: object,
+    desugar_families: Counter[str],
+    desugar_seen: set[tuple[str, str, object]],
+) -> None:
+    """Tally desugar-layer SNW and typed red; dedup by (owner, file, line)."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    def tally(owner: str) -> None:
+        key = (owner, relative, line)
+        if key in desugar_seen:
+            return
+        desugar_seen.add(key)
+        desugar_families[owner] += 1
+
+    try:
+        outcome = sugar.desugar(None)  # type: ignore[attr-defined]
+    except SugarNotWritten as gap:
+        tally(_desugar_owner_key(gap))
+        return
+    except Exception as exc:  # noqa: BLE001 -- desugar crash is a defect row
+        tally(f"desugar-crash:{type(exc).__name__}")
+        return
+    for owner in _typed_red_owners(outcome):
+        tally(owner)
+
+
 def _measure_file(
     path: Path,
     *,
@@ -95,6 +179,8 @@ def _measure_file(
     functions_total = 0
     functions_clean = 0
     families: Counter[str] = Counter()
+    desugar_families: Counter[str] = Counter()
+    desugar_seen: set[tuple[str, str, object]] = set()
     root = workspace_root if workspace_root is not None else path.parent
 
     def construct():
@@ -131,10 +217,19 @@ def _measure_file(
                 on_function(functions_total - 1, functions_clean, fn_name, None)
             t_fn = time.perf_counter()
             try:
-                function.sugar()
+                sugar = function.sugar()
                 functions_clean += 1
             except SugarNotWritten as gap:
                 families[type(gap).__name__] += 1
+                sugar = None
+            if sugar is not None:
+                _measure_desugar_axis(
+                    sugar,
+                    relative=relative,
+                    line=line,
+                    desugar_families=desugar_families,
+                    desugar_seen=desugar_seen,
+                )
             fn_s = time.perf_counter() - t_fn
             # Report completion WITH this function's own construction time, so
             # `last=` is per-function and a slow/blowup function is obvious.
@@ -157,12 +252,16 @@ def _measure_file(
             "functionsTotal": functions_total,
             "functionsClean": functions_clean,
             "families": dict(families),
+            "desugarFamilies": dict(desugar_families),
+            "R_desugar": sum(desugar_families.values()),
         }
     return {
         "category": "completed",
         "functionsTotal": functions_total,
         "functionsClean": functions_clean,
         "families": dict(families),
+        "desugarFamilies": dict(desugar_families),
+        "R_desugar": sum(desugar_families.values()),
     }
 
 
@@ -261,6 +360,7 @@ def main() -> int:
     construction_panics: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
     families: Counter[str] = Counter()
+    desugar_families: Counter[str] = Counter()
     files_completed = 0
     functions_total = 0
     functions_clean = 0
@@ -494,6 +594,7 @@ def main() -> int:
         functions_total += int(row.get("functionsTotal") or 0)
         functions_clean += int(row.get("functionsClean") or 0)
         families.update(row.get("families") or {})
+        desugar_families.update(row.get("desugarFamilies") or {})
         if category == "completed":
             files_completed += 1
         elif category == "construction-panic":
@@ -511,11 +612,13 @@ def main() -> int:
 
     from pandas_floor_summary import floor_summary
 
+    r_construction = sum(families.values())
+    r_desugar = sum(desugar_families.values())
     result: dict[str, Any] = {
         "kind": "control-effect-construction-recensus",
         "commit": args.commit or _git_commit(args.repo),
         "corpus": str(args.corpus),
-        "door": "enum:path_source→SourceFile→functions→sugar",
+        "door": "enum:path_source→SourceFile→functions→sugar→desugar",
         "isolation": "in-process",
         "paths": {
             "engineLog": str(engine_path.resolve()),
@@ -530,9 +633,16 @@ def main() -> int:
         "R_construction_panics": len(construction_panics),
         "functionsTotal": functions_total,
         "functionsConstructClean": functions_clean,
-        "R": sum(families.values()),
+        # Axis 1 — construction totality (tree owned). Never merge with R_desugar.
+        "R": r_construction,
+        "R_construction": r_construction,
         "families": dict(
             sorted(families.items(), key=lambda item: (-item[1], item[0]))
+        ),
+        # Axis 2 — desugar refusals + typed red (#6243). Separate quantity.
+        "R_desugar": r_desugar,
+        "desugarFamilies": dict(
+            sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
         ),
         "elapsedSeconds": time.time() - started,
         "python": sys.version,
@@ -541,7 +651,8 @@ def main() -> int:
             files=file_names,
             rows=floor_rows,
             totals={
-                "R_control_effect": sum(families.values()) + len(defects),
+                "R_control_effect": r_construction + len(defects),
+                "R_desugar": r_desugar,
                 "constructionPanics": len(construction_panics),
                 "backendDefectsOrProcessTerminals": len(defects),
             },
