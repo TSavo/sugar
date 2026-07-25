@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Any, Iterable
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping
 
 from .canonicalizer import blake3_512_of, encode_jcs
 from .context_manager_contract import _json_value
@@ -183,7 +184,7 @@ class AuthenticatedImportUseV1:
         identity is unchanged — only recompute frequency (see
         docs/audits/pandas-recensus-latency-bisect.md).
         """
-        rows, outcomes = _lexical_revalidation_snapshot(
+        snapshot = _lexical_revalidation_snapshot(
             self.root,
             self.path,
             self.source,
@@ -197,7 +198,9 @@ class AuthenticatedImportUseV1:
             site["endLine"],
             site["endCol"],
         )
-        if outcomes.get(key) != "authenticated-import-use" or self.demand not in rows:
+        if snapshot.outcome_at(key) != "authenticated-import-use" or not (
+            snapshot.contains_row(self.demand)
+        ):
             raise ValueError(
                 "authenticated import use is not byte-identical to lexical revalidation"
             )
@@ -674,12 +677,40 @@ def _final_module_state(
     return prepass.statements(module.body, {}, module)
 
 
+@dataclass(frozen=True, eq=False)
+class _LexicalRevalidationSnapshotV1:
+    """The served revalidation value: content-addressed and unwritable.
+
+    #6273: the cache key was already complete (consumer ``source_cid`` plus a
+    hash of ``module_identities``), so the residual was the value.  A shared
+    ``(list, dict)`` pair handed out by reference lets one consumer's write
+    corrupt every later hit at that key.  Both faces are closed here: rows are
+    served as a ``frozenset`` of row CIDs (membership is the only question the
+    consumer asks) and outcomes as a read-only view over the pass's map.
+    Every write path raises; see
+    ``tests/test_revalidation_snapshot_immutability.py``.
+    """
+
+    row_cids: frozenset[str]
+    outcomes: Mapping[tuple[int, int, int, int], str]
+
+    @staticmethod
+    def row_cid(row: dict[str, Any]) -> str:
+        return _hash(row)
+
+    def contains_row(self, row: dict[str, Any]) -> bool:
+        """Byte identity against the pass's rows, by content address."""
+        return _hash(row) in self.row_cids
+
+    def outcome_at(self, site: tuple[int, int, int, int]) -> str | None:
+        return self.outcomes.get(site)
+
+
 # Shared #6090 snapshot for revalidation only.  Keyed by consumer module
 # content + identities map so many receipts share one full-module pass.
 # See docs/audits/pandas-recensus-latency-bisect.md.
 _REVALIDATION_SNAPSHOTS: dict[
-    tuple[str, str, str, str],
-    tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]],
+    tuple[str, str, str, str], _LexicalRevalidationSnapshotV1
 ] = {}
 
 
@@ -694,7 +725,7 @@ def _lexical_revalidation_snapshot(
     source: str,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]],
-) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
+) -> _LexicalRevalidationSnapshotV1:
     """One full-module #6090 pass per consumer module for revalidation."""
     cache_key = (
         str(root.resolve()),
@@ -712,8 +743,12 @@ def _lexical_revalidation_snapshot(
         source_cid,
         module_identities=module_identities,
     )
-    _REVALIDATION_SNAPSHOTS[cache_key] = (rows, outcomes)
-    return rows, outcomes
+    snapshot = _LexicalRevalidationSnapshotV1(
+        row_cids=frozenset(_hash(row) for row in rows),
+        outcomes=MappingProxyType(dict(outcomes)),
+    )
+    _REVALIDATION_SNAPSHOTS[cache_key] = snapshot
+    return snapshot
 
 
 def authenticated_import_uses(
