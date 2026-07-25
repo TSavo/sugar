@@ -4,7 +4,11 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing, _call_pair
+from sugar_lift_py_tests.sugar.witnesses import (
+    NotVerdictBearing,
+    _call_pair,
+    typed_red_effect_witness,
+)
 
 
 @dataclass(frozen=True)
@@ -137,3 +141,39 @@ class _PreconstructedStoreSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.store.desugar_store(ctx, self.value)
+
+
+@dataclass(frozen=True)
+class UnpackStoreAssignSugar(Sugar):
+    """Flat display unpack with Attribute/Subscript store leaves (and optional Names).
+
+    Display RHS members are already projected one-to-one onto leaves at tree
+    construction. Name leaves are spent by substitute (same as MultiAssign);
+    store leaves desugar left-to-right as typed red store effects. This is one
+    temporal binding model: names thread, stores effect — no second door.
+    """
+
+    bindings: tuple  # (name, value_sugar) — provenance; substitute spent them
+    stores: tuple  # AttributeStoreEffectSugar | SubscriptStoreEffectSugar | PlaceAssign
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return typed_red_effect_witness(
+            name="unpack_attribute_store",
+            owner_sugar="UnpackStoreAssignSugar",
+            source=("def A(o, p, q):\n" "    o.x, o.y = p, q\n" "    return p\n"),
+            effect_class="AttributeStoreRuntimeEffect",
+            reason_needle="attribute store",
+            blame_needle="attr=x",
+            wrong_reason_needle="attribute store target `.z`",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
+
+        # Name bindings are spent by substitute; only store effects remain.
+        if not self.stores:
+            return Complete(BlockValue((), can_fall_through=True))
+        return reduce_body(self.stores, ctx)
