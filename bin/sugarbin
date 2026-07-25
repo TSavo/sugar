@@ -1172,6 +1172,34 @@ pull_from_filesystem_shelf() {
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }
 
+# An override path names the profile it was built under whenever it sits in a
+# cargo target directory or carries a shelf artifact name. Read that evidence
+# back out; print nothing when the path claims neither.
+override_profile_evidence() {
+  local path="$1"
+  case "$path" in
+    */target/debug/*|*/debug/"$bin_name") printf 'debug\n'; return 0 ;;
+    */target/release/*|*/release/"$bin_name") printf 'release\n'; return 0 ;;
+  esac
+  case "$(basename "$path")" in
+    *-debug-*) printf 'debug\n' ;;
+    *-release-*) printf 'release\n' ;;
+  esac
+}
+
+# The override rungs answer "which binary" and the caller asked "which
+# profile". Serving a release binary to a debug request is not a cache
+# decision, it is a different program: debug assertions, overflow checks and
+# debug-only panics are all present or absent by profile. Refuse the pairing
+# the path itself contradicts rather than resolving it silently.
+refuse_profile_contradiction() {
+  local path="$1" source="$2" evidence
+  evidence="$(override_profile_evidence "$path")"
+  [[ -n "$evidence" && "$evidence" != "$profile" ]] || return 0
+  log "crime=profile-blind-override owner=bin/sugarbin source=$source path=$path requested=$profile evidence=$evidence replacement=point $source at a $profile binary, or ask for --profile $evidence"
+  return 1
+}
+
 main() {
   if [[ "$print_source_stamp" == "1" ]]; then
     source_stamp
@@ -1179,10 +1207,12 @@ main() {
   fi
 
   if [[ -n "${SUGAR_BINARY_DIR:-}" && -x "${SUGAR_BINARY_DIR}/$bin_name" ]]; then
+    refuse_profile_contradiction "${SUGAR_BINARY_DIR}/$bin_name" SUGAR_BINARY_DIR || return 1
     printf '%s\n' "${SUGAR_BINARY_DIR}/$bin_name"
     return 0
   fi
   if [[ -n "${SUGAR_BIN:-}" && ( "$bin_name" == sugar || "$(basename "$SUGAR_BIN")" == "$bin_name" ) ]]; then
+    refuse_profile_contradiction "$SUGAR_BIN" SUGAR_BIN || return 1
     printf '%s\n' "$SUGAR_BIN"
     return 0
   fi

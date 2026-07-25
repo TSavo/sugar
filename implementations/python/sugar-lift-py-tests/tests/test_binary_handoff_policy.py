@@ -147,6 +147,7 @@ def _run_sugarbin(env: dict[str, str], *args: str) -> subprocess.CompletedProces
         "SUGAR_BIN",
         "SUGAR_BINARY_ALLOW_BUILD",
         "SUGAR_BINARY_CACHE_DIR",
+        "SUGAR_BINARY_DIR",
         "SUGAR_BINARY_NO_SHELF",
         "SUGAR_BINARY_REPO",
         "SUGAR_BINARY_SOURCE_STAMP",
@@ -245,6 +246,89 @@ def test_sugarbin_prints_explicit_sugar_bin_without_resolving(tmp_path: Path) ->
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == os.fspath(explicit)
+
+
+def _write_profiled_fake_sugar(tmp_path: Path, profile: str) -> Path:
+    binary = tmp_path / "target" / profile / "sugar"
+    binary.parent.mkdir(parents=True)
+    _write_fake_sugar(binary, "not-the-workspace")
+    return binary
+
+
+def test_sugarbin_refuses_sugar_bin_whose_path_contradicts_the_profile(
+    tmp_path: Path,
+) -> None:
+    release_binary = _write_profiled_fake_sugar(tmp_path, "release")
+    completed = _run_sugarbin(
+        {
+            "SUGAR_BIN": os.fspath(release_binary),
+            "SUGAR_BINARY_ALLOW_BUILD": "0",
+            "SUGAR_BINARY_NO_SHELF": "1",
+        },
+        "--profile",
+        "debug",
+    )
+    assert completed.returncode != 0
+    assert completed.stdout.strip() == ""
+    assert "crime=profile-blind-override" in completed.stderr
+    assert "requested=debug" in completed.stderr
+    assert "evidence=release" in completed.stderr
+
+
+def test_sugarbin_serves_sugar_bin_whose_path_agrees_with_the_profile(
+    tmp_path: Path,
+) -> None:
+    debug_binary = _write_profiled_fake_sugar(tmp_path, "debug")
+    completed = _run_sugarbin(
+        {
+            "SUGAR_BIN": os.fspath(debug_binary),
+            "SUGAR_BINARY_ALLOW_BUILD": "0",
+            "SUGAR_BINARY_NO_SHELF": "1",
+        },
+        "--profile",
+        "debug",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == os.fspath(debug_binary)
+
+
+def test_sugarbin_refuses_shelf_named_override_that_contradicts_the_profile(
+    tmp_path: Path,
+) -> None:
+    shelved = tmp_path / "sugar-darwin-x86_64-release-abcdef"
+    _write_fake_sugar(shelved, "not-the-workspace")
+    completed = _run_sugarbin(
+        {
+            "SUGAR_BIN": os.fspath(shelved),
+            "SUGAR_BINARY_ALLOW_BUILD": "0",
+            "SUGAR_BINARY_NO_SHELF": "1",
+        },
+        "--profile",
+        "debug",
+        "--bin",
+        "sugar",
+    )
+    assert completed.returncode != 0
+    assert "crime=profile-blind-override" in completed.stderr
+
+
+def test_sugarbin_refuses_binary_dir_override_that_contradicts_the_profile(
+    tmp_path: Path,
+) -> None:
+    release_binary = _write_profiled_fake_sugar(tmp_path, "release")
+    release_binary.chmod(0o755)
+    completed = _run_sugarbin(
+        {
+            "SUGAR_BINARY_DIR": os.fspath(release_binary.parent),
+            "SUGAR_BINARY_ALLOW_BUILD": "0",
+            "SUGAR_BINARY_NO_SHELF": "1",
+        },
+        "--profile",
+        "debug",
+    )
+    assert completed.returncode != 0
+    assert completed.stdout.strip() == ""
+    assert "source=SUGAR_BINARY_DIR" in completed.stderr
 
 
 def test_sugarbin_skips_stale_local_and_pulls_matching_shelf(
