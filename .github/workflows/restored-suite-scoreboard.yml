@@ -60,7 +60,6 @@ jobs:
           python -m venv "$RUNNER_TEMP/restored-suite-python"
           "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --upgrade pip
           "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --no-cache-dir \
-            pandas \
             -e implementations/python/libsugar-py \
             -e implementations/python/sugar-emit-python-hypothesis \
             -e implementations/python/sugar-emit-python-pytest \
