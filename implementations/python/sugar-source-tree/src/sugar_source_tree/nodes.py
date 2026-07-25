@@ -1153,7 +1153,9 @@ class Node(Typed):
             return candidates[ordinal]
         return self.fragment, ("constructed-projection", ordinal)
 
-    def _substitute_body_tracked(self, statements: tuple, scope: BindingMap):
+    def _substitute_body_tracked(
+        self, statements: tuple, scope: BindingMap, *, edge_states: list | None = None
+    ):
         """Substitute a statement sequence, THREADING each statement's binding:
         an assignment binds its name to its substituted rhs for the rest of the
         block. This is the temporal that used to live in ``ctx.temporal`` -- now
@@ -1161,7 +1163,16 @@ class Node(Typed):
         assignment form (each binding a fresh entry; a rebind shadows the old
         for the tail). A walrus (``NamedExpr``) nested anywhere in the statement
         also leaks its binding to the rest of the block. Returns
-        ``(new_statements, changed)``."""
+        ``(new_statements, changed)``.
+
+        ``edge_states`` is an out-parameter: pass a list and this loop appends
+        ``(statement, state_in_effect_when_that_statement_begins)`` for every
+        statement it threads. That is not a second mechanism and not a
+        snapshot of the block -- it is the SAME threading, reported at each
+        occurrence instead of only at the block's end. An exit that leaves the
+        block *at* a statement (a raise, or an opaque step that may halt)
+        carries exactly the state recorded for that statement, which is what
+        exception routing must begin the selected handler from."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
         initial = dict(scope)
@@ -1170,6 +1181,8 @@ class Node(Typed):
         changed = False
         for stmt in statements:
             pre_statement_scope = dict(scope)
+            if edge_states is not None:
+                edge_states.append((stmt, pre_statement_scope))
             lc = stmt.line_col_span()
             with reduction_span(
                 sugar="SubstituteStatement",
@@ -4982,9 +4995,14 @@ class Try(Statement):
             return self if not changed else rewrite(self, **changed)
 
         changed = {}
-        new_body, d, body_net = self._substitute_body_tracked(self.body, scope)
+        body_edge_states: list = []
+        new_body, d, body_net = self._substitute_body_tracked(
+            self.body, scope, edge_states=body_edge_states
+        )
         if d:
             changed["body"] = new_body
+        halt_edges = self._body_halt_edges(body_edge_states, scope)
+        routed = self._route_halt_edges(halt_edges)
         body_state = {**scope, **body_net}
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, body_state)
         if d:
@@ -4993,12 +5011,18 @@ class Try(Statement):
 
         handler_nets = []
         new_handlers = []
-        for handler in self.handlers:
+        for handler_index, handler in enumerate(self.handlers):
             handler_changed = {}
             new_type, type_changed = handler._substitute_field(handler.type_, scope)
             if type_changed:
                 handler_changed["type_"] = new_type
-            handler_scope = dict(scope)
+            # THE LAW: the handler begins from the state its routed halt edges
+            # carry, never from a snapshot of the pre-try scope and never from
+            # a union of everything the body could have bound.  ``incoming`` is
+            # what every edge that reaches THIS handler agrees on; an edge that
+            # halted before an assignment simply does not carry it.
+            incoming = self._incoming_halt_state(routed.get(handler_index))
+            handler_scope = {**scope, **incoming}
             if handler.name:
                 handler_scope[handler.name] = handler._make_effect_ref(
                     handler._effect_slot_id()
@@ -5019,7 +5043,10 @@ class Try(Statement):
                         name=handler.name, cause=handler.fragment
                     ),
                 }
-            handler_nets.append(handler_net)
+            # The handler edge leaves the try carrying the state it arrived
+            # with, updated by the handler's own threading -- same law, one
+            # layer in.
+            handler_nets.append({**incoming, **handler_net})
         if any(new is not old for new, old in zip(new_handlers, self.handlers)):
             changed["handlers"] = tuple(new_handlers)
 
@@ -5057,6 +5084,118 @@ class Try(Statement):
 
         node = self if not changed else rewrite(self, **changed)
         return _Splice((node,), merged) if merged else node
+
+    #: Node classes whose evaluation cannot itself raise.  A statement built
+    #: only from these leaves the block by completing -- it contributes no
+    #: halt edge.  Everything else (a call, an attribute, a subscript, an
+    #: operator, a comprehension, a nested block) may halt at an occurrence
+    #: this layer cannot name, so it contributes an UNTYPED halt edge that
+    #: every handler must be prepared to receive.
+    _HALT_FREE_NODES = ("Assign", "Name", "Constant", "Tuple_", "List", "Pass")
+
+    def _halt_free_classes(self, *extra):
+        return tuple(extra) + tuple(
+            cls
+            for cls in (globals().get(name) for name in self._HALT_FREE_NODES)
+            if isinstance(cls, type)
+        )
+
+    def _statement_cannot_halt(self, statement) -> bool:
+        allowed = self._halt_free_classes()
+        return all(isinstance(node, allowed) for node in statement.walk())
+
+    def _raise_testimony_of(self, statement):
+        """The (identity, mro) a single ``raise`` occurrence testifies to, or
+        ``None`` when the raised expression is not a resolvable type name."""
+        node = statement.exc
+        if isinstance(node, Call):
+            node = node.func
+        if not isinstance(node, Name):
+            return None
+        return (
+            self.unit.exception_type_identity(node),
+            self.unit.exception_type_mro(node),
+        )
+
+    def _body_halt_edges(self, edge_states, scope):
+        """The body's halted exits, each paired with the temporal state in
+        effect at its own occurrence.
+
+        This does not compute a scope: ``edge_states`` is the threading the
+        block already performed, reported per statement.  Each entry is
+        ``(exception_identity, exception_mro, state)`` where ``state`` is the
+        block-local net at that occurrence -- what an exit leaving *here*
+        carries.  ``exception_identity is None`` means the occurrence is not
+        type-testified (an opaque step), so every handler may receive it."""
+        edges = []
+        for statement, pre_statement_scope in edge_states:
+            net = {
+                name: state
+                for name, state in pre_statement_scope.items()
+                if scope.get(name) is not state
+            }
+            edges.extend(self._statement_halt_edges(statement, net))
+        return edges
+
+    def _statement_halt_edges(self, statement, net):
+        """The halted exits ONE statement contributes, all carrying ``net`` --
+        the state in effect when that statement begins."""
+        if self._statement_cannot_halt(statement):
+            return []
+        if isinstance(statement, Raise) and all(
+            isinstance(node, self._halt_free_classes(Raise))
+            for node in statement.walk()
+        ):
+            testimony = self._raise_testimony_of(statement)
+            if testimony is not None:
+                return [(testimony[0], testimony[1], net)]
+            return [(None, None, net)]
+        if isinstance(statement, If) and self._statement_cannot_halt(statement.test):
+            # A partition halts on whichever branch is taken; both branches
+            # begin from the same incoming state, so each branch's own exits
+            # are edges of this statement.
+            return [
+                edge
+                for branch in (statement.body, statement.orelse)
+                for inner in branch
+                for edge in self._statement_halt_edges(inner, net)
+            ]
+        return [(None, None, net)]
+
+    def _route_halt_edges(self, halt_edges):
+        """Send each halted edge to the handler that receives it: source order,
+        first match only -- the same arm selection the router already applies.
+        An untyped edge could be any exception, so it reaches every arm."""
+        routed: dict[int, list] = {}
+        for identity, mro, state in halt_edges:
+            if identity is None:
+                for index in range(len(self.handlers)):
+                    routed.setdefault(index, []).append(state)
+                continue
+            for index, handler in enumerate(self.handlers):
+                if self._handler_matches(handler, identity, mro):
+                    routed.setdefault(index, []).append(state)
+                    break
+        return routed
+
+    def _incoming_halt_state(self, states):
+        """What the edges reaching one handler AGREE on.
+
+        Not a union: a name survives only if every routed edge carries it, and
+        carries the same entry.  A handler with no routed edge (the body's
+        halts are all typed elsewhere, or the body cannot halt at all) begins
+        from the pre-try state -- there is no occurrence to inherit from."""
+        if not states:
+            return {}
+        first, rest = states[0], states[1:]
+        return {
+            name: entry
+            for name, entry in first.items()
+            if all(
+                name in other and (other[name] is entry or other[name] == entry)
+                for other in rest
+            )
+        }
 
     def _handler_matches(self, handler, exception_identity, exception_mro) -> bool:
         if handler.type_ is None:
