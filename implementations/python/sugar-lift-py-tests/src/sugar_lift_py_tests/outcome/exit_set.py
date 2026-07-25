@@ -230,25 +230,28 @@ class ExitSet(Generic[T]):
         *,
         disposition: object,
     ) -> "ExitSet[object]":
-        """Run constructed ``__exit__`` over every body exit (resource ``with``).
+        """Run a constructed exit over every body exit under ONE contract.
 
         ``exit_es`` is the already-reduced exit ExitSet (built once from tree
-        sugar, not a callback). ``disposition`` is a **typed** exit contract:
-
-        - ``NeverSuppresses`` — restore body halt (exit still ran; may supersede)
-        - ``ExitSuppressionContract`` — proven named suppress / restore
-        - ``RuntimeSelected`` — open residual under the guard (never guessed)
-        - ``Suppresses(matcher)`` — membrane matcher authority only
+        sugar, not a callback). ``disposition`` is a **typed** exit contract,
+        and it decides **both** edges of every incoming body exit — the
+        completed edge is not pre-decided here.
 
         Laws:
 
         - Exit **halt** supersedes the incoming exit.
-        - Exit **completion** on a **Completed** incoming keeps the body value.
-        - Exit **completion** on a **Halted** incoming applies ``disposition``:
-          suppress → consume; restore → rethrow; open → residual halt.
+        - Exit **completion** hands the incoming exit — completed *or* halted —
+          to ``disposition``. The outgoing exit always carries the incoming
+          exit's state; the contract decides only whether it leaves as a
+          completion or as a halt, and with which effect.
+
+        A resource contract answers ``None`` on the completed edge, so a body
+        that completed still completes. An assertion boundary answers with its
+        unmet effect, so a body that completed halts. Both go through this one
+        expression.
         """
-        from sugar_lift_py_tests.outcome.resource_exit_disposition import (
-            disposition_verdict,
+        from sugar_lift_py_tests.outcome.exit_disposition import (
+            exit_disposition_effect,
         )
 
         exit_exits = exit_es.exits
@@ -259,18 +262,16 @@ class ExitSet(Generic[T]):
                 if isinstance(ex, Halted):
                     exits.append(Halted(guard, ex.effect, ex.state))
                     continue
-                if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value))
-                    continue
-                # Incoming Halted + exit completed → typed disposition.
-                verdict = disposition_verdict(disposition, incoming.effect)
-                if verdict == "suppress":
-                    exits.append(Completed(guard, incoming.state))
-                elif verdict == "open":
-                    exits.append(Halted(guard, incoming.effect, incoming.state))
+                carried = (
+                    incoming.value
+                    if isinstance(incoming, Completed)
+                    else incoming.state
+                )
+                effect = exit_disposition_effect(disposition, incoming)
+                if effect is None:
+                    exits.append(Completed(guard, carried))
                 else:
-                    # restore
-                    exits.append(Halted(guard, incoming.effect, incoming.state))
+                    exits.append(Halted(guard, effect, carried))
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):

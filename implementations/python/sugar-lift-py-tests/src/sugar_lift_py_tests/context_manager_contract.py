@@ -54,6 +54,40 @@ class Expects:
 
 
 @dataclass(frozen=True)
+class AuthenticatedRaiseMatcher:
+    """Which raise a boundary consumes, by authenticated identity.
+
+    ``expected`` is the **projected exception-type operand of the real call**,
+    not a name: matching goes through ``matches_raise_effect``, so spelling
+    never participates. ``message_pattern`` is the projected optional pattern
+    operand, or None when the contract states no pattern.
+    """
+
+    expected: object
+    message_pattern: object = None
+
+
+@dataclass(frozen=True)
+class EffectBoundaryDisposition:
+    """Assertion-boundary exit contract. Speaks on **both** edges.
+
+    - halted edge: a body halt the ``matcher`` authenticates is the effect this
+      boundary was written to observe, so it is consumed; anything else is not
+      this boundary's business and is restored unchanged.
+    - completed edge: ``unmet`` is the effect a body that *completed* halts as.
+      ``Expects`` supplies one -- a body that never raised is a failed
+      expectation. ``Suppresses`` supplies None -- completion is an ordinary
+      completion.
+
+    ``unmet`` is the whole difference between an assertion boundary and a
+    resource ``__exit__``: no resource disposition can name an effect here.
+    """
+
+    matcher: AuthenticatedRaiseMatcher
+    unmet: object = None
+
+
+@dataclass(frozen=True)
 class RuntimeSelected:
     pass
 
