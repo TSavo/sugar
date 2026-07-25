@@ -4,13 +4,15 @@
 One process. Enumeration only:
 
     SourceTree(corpus).paths()
-      → path_source(path)
-      → SourceFile(identity)
+      → provisional_contract_refs_from_demands(corpus)  (once)
+      → open_source_file_for_construction (context + source-derived CM refs)
       → functions()
       → fn.sugar()
 
-No subprocess. No process pool. No package preconstruction.
-Caches and mementos live for the whole run.
+No subprocess. No process pool. Construction context is required: bare
+``fn.sugar()`` with ``construction_context is None`` paints every With as
+``RuntimeSelectedContextManager`` regardless of resolvability (instrument
+defect). The real lift pipeline injects the same door via lift_rpc.
 
 I/O split (never mixed):
   --engine-log   sugar engine JSONL (construction telemetry)
@@ -78,22 +80,44 @@ def _measure_file(
     path: Path,
     *,
     relative: str,
+    workspace_root: Path | None = None,
+    contract_refs=None,
     on_function: "Callable[[int, int, str, float | None], None] | None" = None,
 ) -> dict[str, Any]:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
-    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.lift_rpc import (
+        open_source_file_for_construction,
+        tree_construction_context_for_workspace,
+    )
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
 
     functions_total = 0
     functions_clean = 0
     families: Counter[str] = Counter()
+    root = workspace_root if workspace_root is not None else path.parent
 
     def construct():
         nonlocal functions_total, functions_clean
         reporter = CollectingReporter()
-        source_file = SourceFile(path_source(str(path)), reporter=reporter)
+        # Fresh context per file so source_derived refs stay file-local; the
+        # demand/gap table (contract_refs) may be shared across the census.
+        construction_context = tree_construction_context_for_workspace(
+            root, contract_refs=contract_refs
+        )
+        try:
+            source_file = open_source_file_for_construction(
+                path,
+                root=root,
+                reporter=reporter,
+                construction_context=construction_context,
+                populate_derived=True,
+            )
+        except SugarNotWritten as gap:
+            # Derivation can hit a real missing sugar (e.g. ClassDef) before any
+            # function body is walked — count it as a typed family, not a crash.
+            families[type(gap).__name__] += 1
+            return reporter
         for function in source_file.functions():
             functions_total += 1
             try:
@@ -209,11 +233,20 @@ def main() -> int:
             f"{args.corpus.name}/{path.relative_to(args.corpus).as_posix()}": path
             for path in paths
         }
+        workspace_root = args.corpus
     else:
         by_file = {args.corpus.name: args.corpus}
+        workspace_root = args.corpus.parent
 
     file_names = sorted(by_file)
     pending: list[str] = list(file_names)
+
+    # One provisional demand→gap table for the whole corpus. Shared across files;
+    # each file still gets a fresh TreeConstructionContextV1 so source-derived
+    # manager refs do not leak between files.
+    from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
+
+    contract_refs = provisional_contract_refs_from_demands(workspace_root)
 
     from pandas_census_checkpoint import Checkpoint
 
@@ -389,7 +422,11 @@ def main() -> int:
 
             try:
                 row = _measure_file(
-                    path, relative=relative, on_function=_on_function
+                    path,
+                    relative=relative,
+                    workspace_root=workspace_root,
+                    contract_refs=contract_refs,
+                    on_function=_on_function,
                 )
             except Exception as error:  # noqa: BLE001 -- per-file terminal
                 row = {

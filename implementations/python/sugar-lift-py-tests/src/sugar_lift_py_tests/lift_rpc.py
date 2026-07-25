@@ -120,6 +120,117 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     return rows
 
 
+def provisional_contract_refs_from_demands(root: Path):
+    """One typed gap row per enrolled With demand — census / unbinded construct door.
+
+    Production replaces this table via ``bind_contract_refs`` with authenticated
+    resolutions. Until that table is installed (or for instruments that construct
+    without the Rust prebind), every With use-site must still appear so
+    ``With._prebound_manager_resolution`` does not treat missing context as
+    unconditional ``RuntimeSelectedContextManager`` (false red).
+
+    Each demand lands as ``ContextManagerResolutionGapV1`` with the demand's
+    ``gapKind`` (default ``runtime-selected``). Source-derived managers may still
+    win via ``populate_source_derived_resource_refs`` after the context is
+    installed — derived takes precedence over this provisional gap table.
+    """
+    from types import MappingProxyType
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        ResolvedContractRefsV1,
+        SourceFragmentCoordinateV1,
+        _hash_json,
+    )
+
+    resolutions = {}
+    for row in _preconstruction_demand_rows(root):
+        if row.get("kind") != "context-manager-demand":
+            continue
+        site = SourceFragmentCoordinateV1.decode(row["useSite"])
+        preimage = {
+            key: row[key]
+            for key in ("useSite", "targetSymbol", "importSignature", "expectedKind")
+        }
+        resolutions[site] = ContextManagerResolutionGapV1(
+            _hash_json(preimage),
+            site,
+            row.get("targetSymbol"),
+            row.get("gapKind") or "runtime-selected",
+            (),
+        )
+    catalog_cid = "blake3-512:" + ("c" * 128)
+    table_cid = "blake3-512:" + ("t" * 128)
+    return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(resolutions))
+
+
+def tree_construction_context_for_workspace(
+    root: Path,
+    *,
+    contract_refs=None,
+    call_contract_refs=None,
+):
+    """Tree handle for construction: bound refs, or provisional demand gaps.
+
+    Always non-None. Bare ``fn.sugar()`` without this is the instrument defect
+    that paints every With as RuntimeSelected regardless of resolvability.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    refs = (
+        contract_refs
+        if contract_refs is not None
+        else provisional_contract_refs_from_demands(root)
+    )
+    return TreeConstructionContextV1(
+        refs,
+        call_contract_refs=call_contract_refs,
+        workspace_root=str(root),
+    )
+
+
+def open_source_file_for_construction(
+    path: Path,
+    *,
+    root: Path,
+    reporter=None,
+    contract_refs=None,
+    call_contract_refs=None,
+    construction_context=None,
+    populate_derived: bool = True,
+):
+    """Open a SourceFile the way production enumerate does — never bare context.
+
+    Injects ``TreeConstructionContextV1`` (bound or provisional) and, by default,
+    freezes source-derived manager refs at exact use-sites. Callers that already
+    hold a frozen context (shared demand table across a census) may pass it.
+    """
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.reporter import NULL_REPORTER
+    from sugar_source_tree.tree import SourceFile
+
+    if reporter is None:
+        reporter = NULL_REPORTER
+    if construction_context is None:
+        construction_context = tree_construction_context_for_workspace(
+            root,
+            contract_refs=contract_refs,
+            call_contract_refs=call_contract_refs,
+        )
+    source_file = SourceFile(
+        path_source(str(path)),
+        reporter=reporter,
+        construction_context=construction_context,
+    )
+    if populate_derived:
+        from sugar_lift_python_source.manager_summary_derivation import (
+            populate_source_derived_resource_refs,
+        )
+
+        populate_source_derived_resource_refs(source_file, root=root, path=path)
+    return source_file
+
+
 def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll imported plain calls by their source-authenticated use sites."""
     from sugar_lift_py_tests.import_binding import (
@@ -1910,31 +2021,38 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
+                # Always inject construction context. Leaving it None makes every
+                # With unconditionally RuntimeSelectedContextManager (false red);
+                # production bind_contract_refs replaces the provisional gap table.
                 from sugar_lift_py_tests.context_manager_resolution import (
                     TreeConstructionContextV1,
                 )
 
-                construction_context = (
-                    TreeConstructionContextV1(
-                        _BOUND_CONTRACT_REFS,
+                if (
+                    _BOUND_CONTRACT_REFS is not None
+                    or _BOUND_CALL_CONTRACT_REFS is not None
+                ):
+                    construction_context = TreeConstructionContextV1(
+                        (
+                            _BOUND_CONTRACT_REFS
+                            if _BOUND_CONTRACT_REFS is not None
+                            else provisional_contract_refs_from_demands(root)
+                        ),
                         call_contract_refs=_BOUND_CALL_CONTRACT_REFS,
                         workspace_root=str(root),
                     )
-                    if _BOUND_CONTRACT_REFS is not None
-                    or _BOUND_CALL_CONTRACT_REFS is not None
-                    else None
-                )
+                else:
+                    construction_context = tree_construction_context_for_workspace(root)
                 tree_file = _TreeSourceFile(
                     identity, construction_context=construction_context
                 )
-                if construction_context is not None:
-                    from sugar_lift_python_source.manager_summary_derivation import (
-                        populate_source_derived_resource_refs,
-                    )
+                from sugar_lift_python_source.manager_summary_derivation import (
+                    populate_source_derived_resource_refs,
+                )
 
-                    populate_source_derived_resource_refs(
-                        tree_file, root=root, path=full_path
-                    )
+                populate_source_derived_resource_refs(
+                    tree_file, root=root, path=full_path
+                )
                 nodes = []
                 for fn in tree_file.functions():
                     lc = fn.line_col_span()

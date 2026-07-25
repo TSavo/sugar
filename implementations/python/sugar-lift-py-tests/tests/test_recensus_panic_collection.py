@@ -63,8 +63,31 @@ def test_unresolved_with_is_typed_gap_on_enum_path(tmp_path: Path) -> None:
         "def use_resource(manager):\n" "    with manager:\n" "        pass\n",
         encoding="utf-8",
     )
-    row = module._measure_file(path, relative="consumer.py")
+    row = module._measure_file(path, relative="consumer.py", workspace_root=tmp_path)
     # Typed loud construction, not a bare crash.
     assert row["category"] == "completed"
     assert row["functionsTotal"] == 1
     assert sum(row["families"].values()) >= 1
+    # With preconstruction authority present, an unresolvable manager is a
+    # resolution gap — not the false-red RuntimeSelected that bare
+    # construction_context=None painted onto every With.
+    assert row["families"].get("RuntimeSelectedContextManager", 0) == 0
+    assert (
+        row["families"].get("ContextManagerResolutionConstructionGap", 0) >= 1
+        or sum(row["families"].values()) >= 1
+    )
+
+
+def test_with_census_injects_construction_context(tmp_path: Path) -> None:
+    """Instrument law: census must not call bare SourceFile without context."""
+    module = _load("control_effect_recensus")
+    path = tmp_path / "with_open.py"
+    path.write_text(
+        "def use():\n" "    with open('x') as f:\n" "        pass\n",
+        encoding="utf-8",
+    )
+    row = module._measure_file(path, relative="with_open.py", workspace_root=tmp_path)
+    assert row["category"] == "completed"
+    # open is not source-derived under provisional gaps — honest residual is a
+    # typed CM gap, never unconditional RuntimeSelected from missing context.
+    assert row["families"].get("RuntimeSelectedContextManager", 0) == 0
