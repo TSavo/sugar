@@ -40,8 +40,6 @@ jobs:
           python -m pip install --quiet \
             -e implementations/python/sugar-lift-python-source \
             -e 'implementations/python/sugar-lift-py-tests[test]'
-      - name: Install Python wall inputs
-        run: python -m pip install --quiet numpy
 
       - name: Mint recovered NumPy frontier
         id: wall
