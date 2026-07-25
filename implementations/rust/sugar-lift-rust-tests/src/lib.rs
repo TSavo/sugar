@@ -8850,7 +8850,7 @@ fn const_eval_option_closure(
         },
         other => other,
     };
-    const_eval_option_expr(body, &env)
+    const_eval_option_expr(body, &env, None)
 }
 
 /// Evaluate an expression whose VALUE is an `Option` to a concrete `Option<ConstVal>`:
@@ -8874,18 +8874,30 @@ pub(crate) fn const_eval_binary_option_closure(
         },
         other => other,
     };
-    const_eval_option_expr(body, &env)
+    // The accumulator ascription (`acc: i32`) is the only kind witness the
+    // method-call spelling of checked ops has; the UFCS spelling carries the
+    // kind in its path instead.
+    const_eval_option_expr(body, &env, closure_param_int_kind(&closure.inputs[0]))
+}
+
+fn closure_param_int_kind(pat: &Pat) -> Option<PrimitiveIntKind> {
+    let Pat::Type(typed) = pat else { return None };
+    let syn::Type::Path(ty) = &*typed.ty else {
+        return None;
+    };
+    primitive_int_kind(&ty.path.get_ident()?.to_string())
 }
 
 fn const_eval_option_expr(
     expr: &Expr,
     env: &BTreeMap<String, ConstVal>,
+    acc_kind: Option<PrimitiveIntKind>,
 ) -> Option<Option<ConstVal>> {
     match expr {
-        Expr::Paren(p) => const_eval_option_expr(&p.expr, env),
-        Expr::Group(g) => const_eval_option_expr(&g.expr, env),
+        Expr::Paren(p) => const_eval_option_expr(&p.expr, env, acc_kind),
+        Expr::Group(g) => const_eval_option_expr(&g.expr, env, acc_kind),
         Expr::Block(b) => match b.block.stmts.as_slice() {
-            [Stmt::Expr(e, None)] => const_eval_option_expr(e, env),
+            [Stmt::Expr(e, None)] => const_eval_option_expr(e, env, acc_kind),
             _ => None,
         },
         // `None` constructor.
@@ -8908,15 +8920,98 @@ fn const_eval_option_expr(
             // shape pre-filter needed.
             let cond = const_eval(&if_expr.cond, env)?.as_bool()?;
             let then_opt = match if_expr.then_branch.stmts.as_slice() {
-                [Stmt::Expr(e, None)] => const_eval_option_expr(e, env)?,
+                [Stmt::Expr(e, None)] => const_eval_option_expr(e, env, acc_kind)?,
                 _ => return None,
             };
             let else_branch = if_expr.else_branch.as_ref()?;
-            let else_opt = const_eval_option_expr(&else_branch.1, env)?;
+            let else_opt = const_eval_option_expr(&else_branch.1, env, acc_kind)?;
             Some(if cond { then_opt } else { else_opt })
         }
+        // `<recv>.checked_*(<rhs>)`, possibly chained through `?`.
+        Expr::MethodCall(_) => const_eval_checked_method_chain(expr, env, acc_kind),
         _ => None,
     }
+}
+
+/// `<recv>.checked_{add,sub,mul,div}(<rhs>)` — the method-call spelling of the UFCS
+/// checked ops handled by `const_eval_checked_int_call`. The receiver may itself be a
+/// checked call followed by `?`, which short-circuits `None` through the closure body
+/// (`acc.checked_mul(2)?.checked_add(x)`). The int kind is witnessed by the receiver
+/// value's `PrimitiveInt` kind, or by the accumulator's type ascription for a plain
+/// `Int` receiver; with no witness there is no single overflow bound to check, so BAIL.
+/// Signed results surface as plain `Int`, exactly as the UFCS spelling does, so either
+/// spelling folds to the same term.
+fn const_eval_checked_method_chain(
+    expr: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+    acc_kind: Option<PrimitiveIntKind>,
+) -> Option<Option<ConstVal>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.turbofish.is_some() || call.args.len() != 1 {
+        return None;
+    }
+    let op = match call.method.to_string().as_str() {
+        "checked_add" => "add",
+        "checked_sub" => "sub",
+        "checked_mul" => "mul",
+        "checked_div" => "div",
+        _ => return None,
+    };
+    let receiver = match &*call.receiver {
+        Expr::Try(inner) => match const_eval_checked_method_chain(&inner.expr, env, acc_kind)? {
+            None => return Some(None),
+            Some(value) => value,
+        },
+        other => const_eval(other, env)?,
+    };
+    let kind = match &receiver {
+        ConstVal::PrimitiveInt { kind, .. } => *kind,
+        ConstVal::UInt128(_) => primitive_int_kind("u128")?,
+        ConstVal::Int(_) => acc_kind?,
+        _ => return None,
+    };
+    let rhs = const_eval(call.args.first()?, env)?;
+    if kind.signed {
+        let lhs = signed_value_for_kind(&receiver, kind)?;
+        let rhs = signed_value_for_kind(&rhs, kind)?;
+        let value = match op {
+            "add" => lhs.checked_add(rhs),
+            "sub" => lhs.checked_sub(rhs),
+            "mul" => lhs.checked_mul(rhs),
+            "div" if rhs != 0 => lhs.checked_div(rhs),
+            _ => None,
+        };
+        return Some(
+            value
+                .filter(|value| signed_fits_kind(*value, kind))
+                .map(ConstVal::Int),
+        );
+    }
+    let lhs = unsigned_value_for_kind(&receiver, kind)?;
+    let rhs = unsigned_value_for_kind(&rhs, kind)?;
+    let value = match op {
+        "add" => lhs.checked_add(rhs),
+        "sub" => lhs.checked_sub(rhs),
+        "mul" => lhs.checked_mul(rhs),
+        "div" if rhs != 0 => Some(lhs / rhs),
+        _ => None,
+    };
+    Some(
+        value
+            .filter(|value| *value <= primitive_int_max_raw(kind))
+            .map(|raw| {
+                if kind.name == "u128" {
+                    ConstVal::UInt128(raw)
+                } else {
+                    ConstVal::PrimitiveInt {
+                        raw: mask_raw(raw, kind.bits),
+                        kind,
+                    }
+                }
+            }),
+    )
 }
 
 fn const_eval_checked_int_call(
