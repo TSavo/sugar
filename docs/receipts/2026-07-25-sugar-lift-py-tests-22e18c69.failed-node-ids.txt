@@ -1,6 +1,9 @@
 # Failed node IDs: sugar-lift-py-tests
 # Pin: 22e18c69e9bae2a3d50f183c26e45b0105854cf3
 # Summary: 133 failed, 1050 passed, 12 skipped, 5 errors in 2141.07s
+# Profile caveat: SUGAR_BIN pinned a release binary while witness_harness requests
+# debug; these 138 reds measure release Sugar under a debug-expecting harness,
+# not the CI debug configuration.
 # Invocation (from implementations/python/sugar-lift-py-tests):
 # env SUGAR_BIN=/Users/tsavo/.buzz/REPOS/sugar-wt-chucky-receipts/implementations/rust/target/release/sugar PYTHONPATH="$PWD/../sugar-source-tree/src:$PWD/../sugar-lift-python-source/src:$PWD/../sugar-lift-py-tests/src" python3 -m pytest tests -q -p no:cacheprovider -rf --junitxml=/Users/tsavo/.buzz/.scratch/chucky-sugar-lift-py-tests-current-main.xml
 # Red nodes: 138 (133 failures + 5 errors)
