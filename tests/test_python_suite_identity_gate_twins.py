@@ -552,6 +552,28 @@ def test_gate_refuses_absent_authority_without_rewriting():
         assert returncode == 1
 
 
+def test_gate_refuses_stale_authority_without_rewriting():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "suite-report.json")
+        report = _report(
+            authority={
+                "status": "provisional",
+                "profileIdentity": "unverified",
+                "crimes": ["crime=old"],
+            }
+        )
+        _write_json(path, report)
+        before = open(path, "rb").read()
+
+        with contextlib.redirect_stderr(io.StringIO()) as captured:
+            returncode = gate.main(
+                ["--report", path, "--require-commit", COMMIT]
+            )
+        assert open(path, "rb").read() == before
+        assert "crime=authority-stale-crimes" in captured.getvalue()
+        assert returncode == 1
+
+
 def test_workflow_carries_manifest_profile_into_suite_report():
     workflow = open(
         os.path.join(REPO_ROOT, ".github/workflows/python-package-suite.yml"),

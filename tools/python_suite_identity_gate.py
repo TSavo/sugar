@@ -486,11 +486,11 @@ def main(argv=None):
     report = document
     crimes = gate(report, args.require_commit)
     authority = report.get("authority")
-    authority_is_absent = not isinstance(authority, dict)
-    authority_is_decided = isinstance(authority, dict) and authority.get(
-        "status"
-    ) == "authoritative"
-    if not authority_is_absent and not authority_is_decided:
+    authority_is_exact_prestate = authority == {
+        "status": "provisional",
+        "profileIdentity": "unverified",
+    }
+    if authority_is_exact_prestate:
         if crimes:
             report["authority"] = {
                 "status": "provisional",
