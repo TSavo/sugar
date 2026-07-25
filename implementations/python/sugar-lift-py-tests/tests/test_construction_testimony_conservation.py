@@ -108,6 +108,27 @@ def test_unsupported_constructed_value_is_a_typed_loud_gap():
     assert collector.gaps[0][0] is node
 
 
+def test_both_outcomes_are_remembered_at_the_same_coordinate():
+    # Present and absent are symmetric at the shape coordinate: a testified
+    # shape is not recomputed, and a FAILED shape re-raises the SAME typed
+    # panic -- without adding roll-call mass, because the gap was testified
+    # once, when it happened.
+    root, reporter, collector = _testimony_tree("x = 1\n")
+    node = _first(root, "Constant")
+    first = second = None
+    try:
+        reporter.present_construction(node, Unserializable())
+    except ConstructedValueTestimonyNotWritten as panic:
+        first = panic
+    try:
+        reporter.present_construction(node, Unserializable())
+    except ConstructedValueTestimonyNotWritten as panic:
+        second = panic
+    assert first is not None and second is not None
+    assert first is second
+    assert len(collector.gaps) == 1, collector.gaps
+
+
 def test_supported_node_valued_construction_still_canonicalizes():
     # Regression guard for the fix that made this loud path reachable: a
     # constructed value legitimately CARRYING a Node canonicalizes by that

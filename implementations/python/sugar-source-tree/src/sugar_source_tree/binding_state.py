@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, NoReturn, TypeAlias
@@ -347,13 +348,17 @@ class ConstructionTestimonyReporterV1:
     the structural identity of the exact source/shadow node that produced it.
     """
 
-    __slots__ = ("_delegate", "_by_node_shape", "_trace_builder")
+    __slots__ = ("_delegate", "_by_node_shape", "_failed_by_node_shape", "_trace_builder")
 
     def __init__(
         self, delegate: object, trace_builder: SubstitutionTraceBuilderV1
     ) -> None:
         self._delegate = delegate
         self._by_node_shape: dict[str, ConstructedValueTestimonyV1] = {}
+        # Both outcomes are remembered at the same coordinate. A shape that
+        # could not be testified re-raises the SAME typed panic, and re-raising
+        # adds no roll-call mass: the gap was testified once, when it happened.
+        self._failed_by_node_shape: dict[str, BaseException] = {}
         self._trace_builder = trace_builder
 
     def register(self, node: Node) -> None:
@@ -373,6 +378,9 @@ class ConstructionTestimonyReporterV1:
             node_shape_cid = node_construction_shape_cid(node)
         except (TypeError, ValueError) as cause:
             self._testimony_gap(node, value, "node construction shape", cause)
+        remembered_failure = self._failed_by_node_shape.get(node_shape_cid)
+        if remembered_failure is not None:
+            raise remembered_failure
         # Same content, same testimony: a node view is presented in every
         # snapshot it survives (asof: 2,277 presentations, 187 distinct shapes
         # -- 12x). The shape CID is the content key; once it is recorded, the
@@ -383,14 +391,21 @@ class ConstructionTestimonyReporterV1:
         try:
             semantic_value_cid = cid_of_json(_constructed_preimage(value))
         except (TypeError, ValueError) as cause:
-            self._testimony_gap(node, value, "constructed value", cause)
+            self._testimony_gap(
+                node, value, "constructed value", cause, shape=node_shape_cid
+            )
         self._by_node_shape[node_shape_cid] = mint_constructed_value_testimony_v1(
             source_fragment=node.fragment,
             semantic_value_cid=semantic_value_cid,
         )
 
     def _testimony_gap(
-        self, node: Node, value: object, canonicalized: str, cause: Exception
+        self,
+        node: Node,
+        value: object,
+        canonicalized: str,
+        cause: Exception,
+        shape: str | None = None,
     ) -> NoReturn:
         """The ONE typed door for a failed constructed-value testimony.
 
@@ -416,6 +431,8 @@ class ConstructionTestimonyReporterV1:
                 "(_canonical_constructed_value) or keep the coordinate loud"
             ),
         )
+        if shape is not None:
+            self._failed_by_node_shape[shape] = panic
         self.report_gap(node, panic)
         raise panic
 
@@ -609,7 +626,117 @@ def _constructed_preimage(value: object) -> dict[str, Any]:
     }
 
 
+# Canonicalization is content-addressed WORK over a shared value DAG that the
+# recursion below walks as a TREE. Measured on pandas
+# ``core/indexes/base.py::_join_level``: 758,852 calls over 1,544 distinct value
+# objects -- 491x recomputation, and the cost the silent testimony skip used to
+# hide by aborting canonicalization early. Same ruling as the static
+# ``_SHAPE_CIDS`` registry: the work is content-addressed, so it is done once at
+# its coordinate and read thereafter. Never skip testimony to buy speed.
+#
+# THE KEY IS THE COORDINATE, NOT THE ADDRESS. The key must cover every input
+# that determines the canonical output, so a row is written only for value
+# categories whose canonicalization this module can NAME the inputs of:
+#
+#   Node             -> keyed by the AUTHENTICATED construction-shape CID, with
+#                       no identity component at all. The Node arm's output is
+#                       exactly ``{"nodeShape": node_construction_shape_cid(v)}``,
+#                       a pure function of that CID: two different node views of
+#                       the same content are the same coordinate and must share
+#                       the answer.
+#   frozen dataclass -> keyed by (type, live object). The output is the type's
+#                       module/qualname plus the canonicalization of each field,
+#                       and ``frozen=True`` is what makes the field tuple a
+#                       function of the object. Type is IN the key because it is
+#                       IN the output; identity is a component, never the whole.
+#   Enum             -> keyed by (type, member). The output is the enum type's
+#                       module/qualname plus its canonicalized ``.value``; the
+#                       member is the coordinate and members are singletons.
+#
+# Everything else is deliberately NOT memoized, because its canonical output is
+# NOT a function of the value object alone (or is too cheap to be worth a row):
+#
+#   list / dict / set / non-frozen dataclass -- MUTABLE. The same object can
+#       canonicalize two ways over its lifetime, so identity is not a
+#       coordinate. (These are also the arms that cannot be weakref'd.)
+#   objects canonicalized via ``.wire()`` -- ``wire()`` is a method call that
+#       may read state beyond the value; this module cannot enumerate its
+#       inputs, so it does not claim a coordinate for it.
+#   tuple -- immutable, but its answer is exactly its elements' answers, which
+#       ARE memoized individually; a row would buy the walk of one tuple.
+#   None / bool / int / float / str / bytes -- the answer is a constant-time
+#       spelling of the value; a row costs more than it saves.
+#   SourceFragment / SourceMemento -- delegated to ``seal()`` / ``to_dict()``,
+#       which own their own authentication; not this module's coordinate.
+#
+# The id-reuse hazard (#6212) is closed by construction wherever identity IS a
+# key component: the row holds a WEAK reference to the object it keyed and a hit
+# is honored only when that weakref still resolves to the SAME object, so a
+# recycled address misses instead of reading a dead value's JSON. The weakref
+# callback drops the row, bounding the table by LIVE values rather than pinning
+# every constructed value for the life of a corpus census.
+_CANONICAL_VALUES: dict[Any, tuple[Any, Any]] = {}
+
+_NO_COORDINATE = object()
+
+
+def _canonicalization_coordinate(value: object) -> Any:
+    """This value's canonical-testimony coordinate, or ``_NO_COORDINATE``."""
+    from sugar_source_tree.nodes import Node
+
+    if isinstance(value, Node):
+        return ("node-shape", node_construction_shape_cid(value))
+    if isinstance(value, Enum):
+        return ("enum", type(value), value)
+    if (
+        is_dataclass(value)
+        and not isinstance(value, type)
+        and getattr(value, "__dataclass_params__", None) is not None
+        and value.__dataclass_params__.frozen
+    ):
+        return ("frozen-dataclass", type(value), id(value))
+    return _NO_COORDINATE
+
+
 def _canonical_constructed_value(value: object) -> Any:
+    """The value's canonical JSON: computed once per coordinate, read after."""
+    coordinate = _canonicalization_coordinate(value)
+    if coordinate is _NO_COORDINATE:
+        return _compute_canonical_constructed_value(value)
+
+    remembered = _CANONICAL_VALUES.get(coordinate)
+    if remembered is not None:
+        keyed, canonical = remembered
+        # An identity-bearing key is honored only while the object it named is
+        # alive and the SAME object; a content coordinate carries no identity to
+        # check (``keyed`` is None) and is honored unconditionally.
+        if keyed is None or keyed() is value:
+            return canonical
+
+    canonical = _compute_canonical_constructed_value(value)
+    _memoize_canonical(coordinate, value, canonical)
+    return canonical
+
+
+def _memoize_canonical(coordinate: Any, value: object, canonical: Any) -> None:
+    if coordinate[0] == "node-shape":
+        # Pure content coordinate: no address, nothing to outlive.
+        _CANONICAL_VALUES[coordinate] = (None, canonical)
+        return
+    try:
+
+        def _forget(_dead: Any, coordinate: Any = coordinate) -> None:
+            _CANONICAL_VALUES.pop(coordinate, None)
+
+        reference = weakref.ref(value, _forget)
+    except TypeError:
+        # Cannot hold the live identity its key names -> no row, rather than a
+        # row a recycled address could read.
+        return
+    _CANONICAL_VALUES[coordinate] = (reference, canonical)
+
+
+def _compute_canonical_constructed_value(value: object) -> Any:
     from sugar_source_tree.fragment import SourceFragment, SourceMemento
 
     if value is None or isinstance(value, (bool, int, str)):
