@@ -135,3 +135,26 @@ def test_backend_defect_keys_split_cm_and_call_demand() -> None:
     assert cm != call
     assert other.startswith("BackendDefect:")
     assert other not in {cm, call}
+
+
+def test_cm_membrane_bucket_keeps_assertion_separate_from_resource() -> None:
+    """With ΔR must never merge assertion membrane with protocol resource."""
+    module = _load("control_effect_recensus")
+    assert (
+        module._cm_membrane_bucket("python:pytest.raises") == "assertion-membrane"
+    )
+    assert (
+        module._cm_membrane_bucket("python:pandas._testing.assert_produces_warning")
+        == "assertion-membrane"
+    )
+    assert (
+        module._cm_membrane_bucket("python:pandas._testing.ensure_clean")
+        == "protocol-resource-candidate"
+    )
+    assert (
+        module._cm_membrane_bucket("python:pandas.option_context")
+        == "protocol-resource-candidate"
+    )
+    assert module._cm_membrane_bucket("python:pytest.raises") != (
+        module._cm_membrane_bucket("python:pandas._testing.ensure_clean")
+    )

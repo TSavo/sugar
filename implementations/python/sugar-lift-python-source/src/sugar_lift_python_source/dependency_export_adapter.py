@@ -359,11 +359,13 @@ def _export_statement(statement: ast.stmt, name: str, state):
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         if statement.name != name:
             return state
-        return (
-            ("definition", statement)
-            if not statement.decorator_list
-            else ("dynamic", statement)
-        )
+        # Decorators are part of the definition site, not export opacity.
+        # ``@contextmanager def f`` still statically binds ``f`` at this
+        # statement; construction authenticates decorator application and
+        # may stay loud if a decorator is opaque. Treating any decorator
+        # list as ``dynamic-export`` erased real families (e.g. re-exported
+        # ``@contextmanager`` resources) without a general capability gap.
+        return ("definition", statement)
     if isinstance(statement, ast.ImportFrom):
         for alias in statement.names:
             if (alias.asname or alias.name) == name:

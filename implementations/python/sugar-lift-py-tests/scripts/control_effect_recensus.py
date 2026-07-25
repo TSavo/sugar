@@ -112,6 +112,67 @@ def _occurrence_key(
     return (kind, relative, line, col)
 
 
+def _cm_membrane_bucket(target_symbol: object) -> str:
+    """Partition With residual by authenticated target symbol — measurement only.
+
+    Assertion membranes and protocol-resource candidates must never share one
+    ΔR number. This classifier labels residual rows; it is not a construction
+    door and must not grant semantics from spelling.
+    """
+    if not isinstance(target_symbol, str) or not target_symbol:
+        return "unclassified"
+    symbol = target_symbol.removeprefix("python:")
+    leaf = symbol.rsplit(".", 1)[-1]
+    # Community assertion managers (separate membrane from resource CMs).
+    if leaf in {
+        "raises",
+        "assert_produces_warning",
+        "asserts_raises",
+        "assertRaises",
+        "assertRaisesRegex",
+        "external_error_raised",
+        "raises_chained_assignment_error",
+    }:
+        return "assertion-membrane"
+    if leaf in {
+        "ensure_clean",
+        "option_context",
+        "catch_warnings",
+        "nullcontext",
+        "closing",
+        "ExitStack",
+        "chdir",
+        "decompress_file",
+        "set_timezone",
+        "use_numexpr",
+        "with_csv_dialect",
+    }:
+        return "protocol-resource-candidate"
+    if leaf == "open" or symbol in {"builtins.open", "io.open"}:
+        return "io-resource-candidate"
+    return "other-manager"
+
+
+def _tally_cm_membrane(context) -> Counter[str]:
+    """Count derived-table rows by membrane from authenticated target symbols."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        SourceDerivedContextManagerRefV1,
+    )
+
+    buckets: Counter[str] = Counter()
+    refs = getattr(context, "source_derived_contract_refs", None) or {}
+    for resolution in refs.values():
+        if isinstance(resolution, SourceDerivedContextManagerRefV1):
+            buckets["derived-contract"] += 1
+            continue
+        if isinstance(resolution, ContextManagerResolutionGapV1):
+            buckets[_cm_membrane_bucket(resolution.target_symbol)] += 1
+            continue
+        buckets["unclassified"] += 1
+    return buckets
+
+
 def _backend_defect_key(exc: object) -> str:
     """Classify demand/resolution table hygiene — never construction mass.
 
@@ -178,6 +239,7 @@ def _measure_file(
     families: Counter[str] = Counter()
     construction_seen: set[tuple[str, str, object, object]] = set()
     backend_defects: Counter[str] = Counter()
+    cm_membranes: Counter[str] = Counter()
     desugar_axis = DesugarAxis()
     root = workspace_root if workspace_root is not None else path.parent
 
@@ -208,6 +270,9 @@ def _measure_file(
             # Derivation can hit a real missing sugar before any function walk.
             tally_construction(type(gap).__name__, line=0)
             return reporter
+        # Membrane partition from the derived table (manager-expression sites,
+        # not functions-blocked). Assertion mass must not launder as resource.
+        cm_membranes.update(_tally_cm_membrane(construction_context))
         for function in source_file.functions():
             functions_total += 1
             try:
@@ -249,6 +314,14 @@ def _measure_file(
         return reporter
 
     _reporter, panic_row = collect_construction_panic(relative, construct)
+    membrane_row = {
+        "cmMembranes": dict(cm_membranes),
+        "R_cm_assertion_membrane": int(cm_membranes.get("assertion-membrane", 0)),
+        "R_cm_protocol_resource_candidate": int(
+            cm_membranes.get("protocol-resource-candidate", 0)
+        ),
+        "R_cm_derived_contract": int(cm_membranes.get("derived-contract", 0)),
+    }
     if panic_row is not None:
         return {
             "category": "construction-panic",
@@ -263,6 +336,7 @@ def _measure_file(
             "families": dict(families),
             "backendDefects": dict(backend_defects),
             "R_backend_defects": sum(backend_defects.values()),
+            **membrane_row,
             **desugar_axis.row(),
         }
     return {
@@ -272,6 +346,7 @@ def _measure_file(
         "families": dict(families),
         "backendDefects": dict(backend_defects),
         "R_backend_defects": sum(backend_defects.values()),
+        **membrane_row,
         **desugar_axis.row(),
     }
 
@@ -373,6 +448,7 @@ def main() -> int:
     families: Counter[str] = Counter()
     desugar_families: Counter[str] = Counter()
     backend_defects: Counter[str] = Counter()
+    cm_membranes: Counter[str] = Counter()
     # Three disjoint desugar-layer quantities; the two below are NEVER folded
     # into R_desugar and both make the run red.
     desugar_construction_panics: list[dict[str, Any]] = []
@@ -616,6 +692,7 @@ def main() -> int:
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
         backend_defects.update(row.get("backendDefects") or {})
+        cm_membranes.update(row.get("cmMembranes") or {})
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
         desugar_defects.extend(row.get("desugarDefects") or [])
         if category == "completed":
@@ -690,6 +767,16 @@ def main() -> int:
         "backendDefects": dict(
             sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
         ),
+        # With residual partition (manager-expression sites, derived table).
+        # Assertion membrane ≠ protocol resource; never one With ΔR number.
+        "cmMembranes": dict(
+            sorted(cm_membranes.items(), key=lambda item: (-item[1], item[0]))
+        ),
+        "R_cm_assertion_membrane": int(cm_membranes.get("assertion-membrane", 0)),
+        "R_cm_protocol_resource_candidate": int(
+            cm_membranes.get("protocol-resource-candidate", 0)
+        ),
+        "R_cm_derived_contract": int(cm_membranes.get("derived-contract", 0)),
         # Neither of these is semantic R. A construction-law None arm during
         # desugar is a construction gap; an ordinary exception is an
         # implementation defect. Both are red, separately.
@@ -707,6 +794,12 @@ def main() -> int:
                 "R_control_effect": r_construction + len(defects),
                 "R_desugar": r_desugar,
                 "R_backend_defects": r_backend,
+                "R_cm_assertion_membrane": int(
+                    cm_membranes.get("assertion-membrane", 0)
+                ),
+                "R_cm_protocol_resource_candidate": int(
+                    cm_membranes.get("protocol-resource-candidate", 0)
+                ),
                 "desugarConstructionPanics": len(desugar_construction_panics),
                 "desugarDefects": len(desugar_defects),
                 "constructionPanics": len(construction_panics),
