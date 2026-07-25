@@ -35,6 +35,7 @@
 // as `EdgeTarget::Unbound`/`None` stubs; no RPC is made for them, since
 // binding them is a `solve()`-time concern (SEAM 5), out of scope here.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use libsugar::core::{SourceMemento, SrcSpan};
@@ -519,6 +520,110 @@ fn looks_like_ir_contract_row(value: &Value) -> bool {
         || obj.contains_key("pre")
         || obj.contains_key("formals")
         || obj.contains_key("bridgeSourceSymbol")
+}
+
+/// True when a wire row is a harvested call edge. Call edges are NOT IR
+/// contract rows -- they carry the caller side of a bridge (`targetSymbol`,
+/// `targetContract`/`targetContractCid`) that mint joins to a contract. They
+/// pass none of `looks_like_ir_contract_row`'s predicates, so the fold has to
+/// collect them on their own channel or they are dropped silently.
+fn looks_like_call_edge_row(value: &Value) -> bool {
+    value
+        .get("kind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "call-edge")
+}
+
+/// First-writer-wins accumulation of call-edge rows in enumeration order,
+/// with the counters that tell the two zero-states apart.
+///
+/// Duplicates are real: the same edge reaches the fold both inside a
+/// parameter-contract link unit and as a universe-level audit row.
+///
+/// The counters exist because `callEdges: []` has two very different causes
+/// and the array alone cannot distinguish them: no rows arrived at the fold
+/// at all (a transport gap -- the kit is not emitting, or is not emitting
+/// where the fold looks), versus rows arrived but carry no `targetContract`
+/// (the kit's join declined, which for an ambiguous symbol is the correct
+/// answer and not a defect). `sourceLedger.call_edges` collapses both to a
+/// number.
+#[derive(Default)]
+struct CallEdgeHarvest {
+    seen: BTreeSet<String>,
+    edges: Vec<Value>,
+    /// Rows that reached the harvest, before de-duplication.
+    arrived: usize,
+    /// Distinct edges retained that carry no resolved `targetContract`.
+    unresolved_target: usize,
+}
+
+impl CallEdgeHarvest {
+    fn push(&mut self, edge: &Value) {
+        self.arrived += 1;
+        if self.seen.insert(canonical_row_key(edge)) {
+            if !edge_has_resolved_target(edge) {
+                self.unresolved_target += 1;
+            }
+            self.edges.push(edge.clone());
+        }
+    }
+
+    /// The single routing decision for a wire audit row: contract-shaped rows
+    /// go to `ir`, call edges go to the `callEdges` channel, and a call edge
+    /// never goes to both. Mint reads `callEdges` as a top-level field and
+    /// does not scan `ir` for edges, so a `kind: "call-edge"` row left in
+    /// `ir` is both a dropped edge and a non-contract row published into the
+    /// IR document (see issue #6251).
+    fn route_audit(&mut self, ir: &mut Vec<Value>, audit: &Value) {
+        if looks_like_ir_contract_row(audit) {
+            ir.push(audit.clone());
+        } else if looks_like_call_edge_row(audit) {
+            self.push(audit);
+        }
+    }
+
+    fn walk_counters(&self) -> Value {
+        json!({
+            "arrived": self.arrived,
+            "retained": self.edges.len(),
+            "unresolvedTarget": self.unresolved_target,
+        })
+    }
+}
+
+/// True when the kit's join resolved this edge's target. The kit resolves
+/// `targetContract` only when the symbol is unambiguous and deliberately
+/// leaves it absent otherwise (`verify_rpc.py`, `len(candidates) == 1`), so
+/// absent is a legitimate outcome and must be counted, not repaired here.
+fn edge_has_resolved_target(edge: &Value) -> bool {
+    ["targetContract", "targetContractCid"]
+        .iter()
+        .any(|key| edge.get(*key).and_then(Value::as_str).is_some_and(|value| !value.is_empty()))
+}
+
+/// Stable identity for de-duplication. This crate builds `serde_json` with
+/// `preserve_order`, so `Value::to_string` is insertion-order dependent and
+/// two producers emitting the same edge with different key order would not
+/// dedupe. Sort keys recursively first. Deliberately NOT `jcs_cid_of_json`:
+/// that panics on non-integer numbers, and a dedupe key must not be able to
+/// abort the fold over a value it was only asked to compare.
+fn canonical_row_key(value: &Value) -> String {
+    fn sorted(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                let mut out = Map::new();
+                for key in keys {
+                    out.insert(key.clone(), sorted(&map[key]));
+                }
+                Value::Object(out)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+            other => other.clone(),
+        }
+    }
+    sorted(value).to_string()
 }
 
 /// Decode first-class bridge identity from a call_sites/assertions wire audit.
@@ -1326,6 +1431,11 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     let mut ir = Vec::new();
     let mut source_mementos = Vec::new();
     let mut diagnostics = Vec::new();
+    // Call edges travel their own channel: mint reads `callEdges` off this
+    // response (`cmd_mint.rs` `response_has_call_edges` / the bridge merge)
+    // and synthesizes bridges from it. Absent is NOT the same as empty --
+    // absent means mint synthesizes no bridge and the run still completes.
+    let mut call_edges = CallEdgeHarvest::default();
 
     // Phase 2/3: over the COMPLETELY enumerated project, discharge every enrolled
     // parameter-contract link unit (fold), then RESUME each retained universe with
@@ -1334,6 +1444,20 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     let mut resolved_mementos: Vec<Value> = Vec::new();
     let link_unit_rows =
         preconstruction_rows_rpc(&conn, Level::ParameterContractLinkUnits)?;
+    for row in &link_unit_rows {
+        // The caller side of a parameter-contract link unit carries the very
+        // edges mint needs; they are on the raw wire row, not on the typed
+        // unit's discharge result.
+        if let Some(edges) = row
+            .get("callEdges")
+            .or_else(|| row.get("call_edges"))
+            .and_then(Value::as_array)
+        {
+            for edge in edges {
+                call_edges.push(edge);
+            }
+        }
+    }
     if !link_unit_rows.is_empty() {
         let units: Vec<sugar_linker::caller_parameter::ParameterContractLinkUnitV1> =
             link_unit_rows
@@ -1370,9 +1494,7 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
             let nodes = resume_rows_rpc(&conn, &cid_value, &set_value)?;
             for node in nodes {
                 if let Some(audit) = node.get("audit") {
-                    if looks_like_ir_contract_row(audit) {
-                        ir.push(audit.clone());
-                    }
+                    call_edges.route_audit(&mut ir, audit);
                 }
             }
             resolved_mementos
@@ -1405,20 +1527,23 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
         }
         for node in nodes {
             if let Some(audit) = node.audit {
-                if looks_like_ir_contract_row(&audit) {
-                    ir.push(audit);
-                }
+                call_edges.route_audit(&mut ir, &audit);
             }
         }
     }
+    let call_edge_walk = call_edges.walk_counters();
+    let call_edge_count = call_edges.edges.len();
     Ok(json!({
         "kind": "ir-document",
         "ir": ir,
+        "callEdges": call_edges.edges,
         "sourceMementos": source_mementos,
         "diagnostics": diagnostics,
+        "callEdgeWalk": call_edge_walk,
         "sourceLedger": {
             "source_files": source_mementos.len(),
             "contracts": ir.len(),
+            "call_edges": call_edge_count,
         },
     }))
 }
@@ -2615,4 +2740,118 @@ mod tests {
             EnumerateError::RpcError { plugin, .. } if plugin == "fixture-kit"
         ));
     }
+
+    // ---- call-edge channel (PR 1) ----------------------------------------
+    //
+    // These drive `CallEdgeHarvest::route_audit`, the one routing decision
+    // `fold_enumerate_source_tree` makes per wire audit row, over fixture
+    // rows. They are deliberately NOT a live kit run: the enumerate path may
+    // carry no edges until the Python source surface is ported (PR 2), so a
+    // guard written against a real run would be green-because-empty. A
+    // fixture guard fails today if the channel regresses, which is the point.
+
+    fn contract_row(name: &str) -> Value {
+        json!({
+            "kind": "contract",
+            "name": name,
+            "formals": [],
+            "post": [],
+        })
+    }
+
+    fn call_edge_row(source: &str, symbol: &str, line: usize) -> Value {
+        json!({
+            "kind": "call-edge",
+            "sourceContract": source,
+            "targetSymbol": symbol,
+            "targetContract": symbol,
+            "callSiteLocus": {"file": "consumer.py", "line": line, "column": 4},
+        })
+    }
+
+    fn route_all(rows: &[Value]) -> (Vec<Value>, CallEdgeHarvest) {
+        let mut ir = Vec::new();
+        let mut harvest = CallEdgeHarvest::default();
+        for row in rows {
+            harvest.route_audit(&mut ir, row);
+        }
+        (ir, harvest)
+    }
+
+    #[test]
+    fn call_edge_rows_never_land_in_ir() {
+        let (ir, harvest) = route_all(&[
+            contract_row("double"),
+            call_edge_row("main", "double", 7),
+        ]);
+
+        assert!(
+            !ir.iter().any(|row| row.get("kind") == Some(&json!("call-edge"))),
+            "ir must stay contract-shaped: mint copies every ir row into the \
+             published document without a shape filter (issue #6251), and it \
+             reads edges off the top-level callEdges field, never out of ir"
+        );
+        assert_eq!(ir.len(), 1, "the contract row is still collected");
+        assert_eq!(harvest.edges.len(), 1, "the edge went to its own channel");
+    }
+
+    #[test]
+    fn call_edges_channel_is_non_empty_for_an_edge_bearing_fixture() {
+        let (_ir, harvest) = route_all(&[call_edge_row("main", "double", 7)]);
+
+        assert!(
+            !harvest.edges.is_empty(),
+            "the enumerate fold must emit callEdges non-empty when edge rows \
+             reach it; absent or empty means mint synthesizes no bridge and \
+             the run still completes green"
+        );
+        assert_eq!(harvest.edges[0]["targetSymbol"], json!("double"));
+    }
+
+    #[test]
+    fn duplicate_edges_dedupe_across_key_order() {
+        let edge = call_edge_row("main", "double", 7);
+        let reordered = json!({
+            "callSiteLocus": {"line": 7, "column": 4, "file": "consumer.py"},
+            "targetContract": "double",
+            "targetSymbol": "double",
+            "sourceContract": "main",
+            "kind": "call-edge",
+        });
+        let (_ir, harvest) = route_all(&[edge, reordered]);
+
+        assert_eq!(
+            harvest.edges.len(),
+            1,
+            "the same edge arrives both inside a link unit and as a \
+             universe-level audit; serde_json preserve_order makes raw \
+             to_string insertion-order dependent, so the key must sort first"
+        );
+        assert_eq!(harvest.arrived, 2, "both arrivals are still counted");
+    }
+
+    #[test]
+    fn walk_counters_separate_no_rows_from_unresolved_targets() {
+        // Bumble's distinction: `callEdges: []` cannot tell a transport gap
+        // (nothing arrived) from a kit that declined to resolve an ambiguous
+        // symbol. The kit sets targetContract only when len(candidates) == 1,
+        // so an absent target is a correct answer, not a defect.
+        let (_ir, nothing) = route_all(&[contract_row("double")]);
+        assert_eq!(
+            nothing.walk_counters(),
+            json!({"arrived": 0, "retained": 0, "unresolvedTarget": 0}),
+            "no edge rows reached the fold at all"
+        );
+
+        let mut ambiguous = call_edge_row("main", "double", 7);
+        ambiguous.as_object_mut().unwrap().remove("targetContract");
+        let (_ir, declined) = route_all(&[ambiguous]);
+        assert_eq!(
+            declined.walk_counters(),
+            json!({"arrived": 1, "retained": 1, "unresolvedTarget": 1}),
+            "a row arrived carrying no targetContract -- a different state \
+             from nothing arriving, and sourceLedger.call_edges collapses both"
+        );
+    }
+
 }
