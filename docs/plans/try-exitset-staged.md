@@ -1,75 +1,95 @@
 # Try / ExitSet — staged, do not merge
 
-**Status:** STAGED ONLY. Merge waits on the **post-V2 / post-Merkle census**
-gate (bounded residual + reconciled board). Building against the ExitSet law
-now costs nothing while encoder/Merkle finish.
+**Status:** STAGED ONLY. Merge waits on the **post-cache authoritative
+baseline and its ledger**. Building against the ExitSet law now costs nothing.
 
-**Region:** `nodes.py` Try / TryStar + `try_sugar.py` / ExitSet routing.  
-**Coordinate with:** Assign (`#6239` / unpack residuals) — both touch statement
-construction; do not edit Assign.
+**Region:** `try_sugar.py` + `exit_set_routing.py`.
+**Coordinate with:** Assign (`#6239`) — do not edit the Assign region.
 
-## Six-line ExitSet law (foundational path)
+## Try is not a third control model
+
+`Try` inherits the algebra `Store` (#6246) established, `Assign` rode with zero
+new sequencing (#6239), and `With` inherited by nesting (#6256). Every
+combinator on the path is shared:
+
+| Step | Shared owner |
+|------|--------------|
+| body → arms | `reduce_block_to_exitset` |
+| embedded guarded raises → `Halted` | `promote_raise_halts` |
+| tail only over completed arms | `ExitSet.sequence` |
+| arm union | `ExitSet.union` / `ExitSet.guarded` |
+| cleanup over every exit | `ExitSet.and_finally` |
+| membrane back to `Outcome` | `exitset_to_outcome` |
+
+`TrySugar` contributes a **matcher** and an **arm-selection loop**. It
+contributes **no sequencing**. `Try` has no `__exit__` contract, so it does not
+consult `and_exit` / `exit_disposition_effect` — that seam is the `with`
+partition's contract door. `Try`'s completed edge is `else`, and `else` is
+already expressed as `ExitSet.sequence` over completed arms only, which is the
+same completed-edge discipline #6270 gave the boundary.
+
+## The six-line law
 
 ```text
-body
-  → guarded ExitSet
-  → handler routing over Halted
-  → finally over every exit
+body Completed      → else → finally
+body matched Halt   → handler → finally
+body unmatched Halt → finally → re-propagate
+handler Halt        → finally → re-propagate
+finally completes   → preserve incoming exit
+finally terminates  → override incoming exit
 ```
 
-Concrete ownership already in `TrySugar.desugar`:
+## Law twins
 
-1. `body → reduce_block_to_exitset` (+ raise promotion)
-2. `_route_handlers_over_exits` over Halted (except-as = EffectRef slot)
-3. `else` only on Completed fall-through
-4. `finally` = `ExitSet.and_finally` over every exit
-5. cleanup fall-through restores; cleanup halt/return supersedes
-6. `exitset_to_outcome` at the membrane
+All in `sugar-source-tree/tests/test_try_exitset_law.py` (31). Each law carries
+a discrimination arm that bites.
 
-No second control-effect door. No linear adapter as the production path.
+| Twin | Bite |
+|------|------|
+| handlers in source order, first match only | reversed arm tuple selects the other body; both arms proven to match first |
+| `as` uses the routed effect slot | asserts no `effect_slot_identity` reconstruction |
+| `else` over completed edges only | two-sided: no-op on an all-halt body, *does* change arms on a body that completes |
+| `finally` on all seven exits | seven separate exits, each asserted distinctly |
+| `finally` terminates → overrides | force `cleanup_restores` to always-restores; the overridden halt returns |
+| bare re-raise same occurrence | occurrence must not be the bare-`raise` line |
+| no invented fall-through | unmatched / handler halt leaves no fabricated completion |
+| `except*` separately loud | ordinary `except` must not absorb OR rewrite a grouped raise |
+| **routes through the shared fold** | behaviour-identical private fold: every behavioural twin stays green, only this goes red |
+| **same instrument, two spellings** | `try` and its plain equivalent share arm structure; absorbing arms breaks it |
 
-## Law twins (required before any residual claim)
+### Seven exits finally covers
 
-Pinned in `sugar-source-tree/tests/test_try_exitset_law.py` (and the
-source-doc pin in `test_try_exitset_law_staged.py`):
+1. Normal completion · 2. Body return · 3. Uncaught raise · 4. Handler
+completion · 5. Handler raise · 6. Break · 7. Continue
 
-| Twin | Meaning |
-|------|---------|
-| handlers in source order | Arms are tried as written in the source |
-| first match only | First matching arm wins; later arms never run |
-| `as` uses the routed effect slot | EffectRef/slot + origin, not reconstructed `E()` |
-| `else` never after a halt even if handled | Else only on Completed body exit |
-| `finally` on all seven exits | See table below |
-| bare re-raise same effect occurrence | In-flight RaiseEffect; occurrence is the original raise site |
-| no reconstruction | No invented raise at the bare-`raise` line |
-| no invented fall-through | Uncaught / handler halt does not fabricate completion |
-| `except*` separately loud | Ordinary try ≠ except*; group/ordinary mismatch stays loud |
+## `except*`
 
-### Seven exits finally must cover
+Out of this cut. Grouped-effect routing is **not** included. `TryStar` stays
+typed-loud (`SugarNotWritten`), and the ordinary router is pinned to neither
+absorb nor rewrite a `GroupedRaiseEffect`.
 
-1. Normal completion (fall-through)
-2. Body return
-3. Uncaught raise (restore through inert finally)
-4. Caught raise → handler completion
-5. Caught raise → handler raise
-6. Break
-7. Continue
+## Known gap — reported, deliberately not pinned
 
-## Allowed staged work
+A binding established in the `try` body before the raise is **not visible in
+the handler**:
 
-- Widen Try construction partitions that already obey the law (authenticated
-  except types, try/finally-only, except-as EffectRef)
-- Add red/green twins that pin ExitSet routing
-- Keep `except*` / TryStar loud until its own sugar is census-gated
+```python
+def A(z):
+    try:
+        x = z
+        raise ValueError
+    except ValueError:
+        return x     # → NameErrorEffect on `x`
+```
 
-## Forbidden until census gate
-
-- Merge to main
-- Soft Incomplete for unhandled handlers
-- Absorbing Assign residuals into Try
-- Claiming Try residual ΔR before post-V2 census
+Root cause is `sugar_source_tree.nodes.Try.substitute`: `handler_scope =
+dict(scope)` builds the handler scope from the **pre-try** scope, while the
+`orelse` correctly gets `body_state = {**scope, **body_net}`. This is a
+definite-assignment question in the source tree, not a hole in the ExitSet
+algebra, and it is out of this cut's region. No twin here asserts the current
+outcome, because that would be asserting the defect.
 
 ## Gate to merge
 
-Post-V2 / post-Merkle full census reports a bounded Try residual; board
+Post-cache authoritative baseline reports a bounded Try residual; ledger
 reconciled; Assign region not in conflict.
