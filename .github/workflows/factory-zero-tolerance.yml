@@ -9,17 +9,33 @@ on:
 permissions:
   contents: read
 
-# ONE orchestrator for heavy kit floors. Do not put other PR workflows in this
-# concurrency group — GitHub keeps only one pending run per group, so six
-# independent workflows cancel each other even with cancel-in-progress: false.
-concurrency:
-  group: sugar-python-heavy-measurement
-  cancel-in-progress: false
+# NO `concurrency:` BLOCK. THE GROUP WAS THE DEFECT, NOT THE FIX.
+#
+# The header that used to sit here said "GitHub keeps only one pending run per
+# group, so six independent workflows cancel each other even with
+# cancel-in-progress: false" -- and then kept the group anyway, as if being the
+# ONLY workflow in it were protection. It is not. One pending slot is one
+# pending slot even with a single occupant: on a PR with rapid pushes this
+# workflow was cancelled three times inside two minutes (20:26:50, 20:27:52,
+# 20:28:35) while every lighter job completed.
+#
+# That is the worst version of the defect, because these are FLOORS. A floor
+# that never ran looks exactly like a floor that found nothing: R=0 and R
+# unmeasured are the same silence from outside. Five suite runs and these three
+# floor runs vanished that way before anybody noticed.
+#
+# So: GitHub retains every run, and tools/heavy_measurement_lease.py decides
+# who measures. The corpus scanners below are heavy -- they are the reason the
+# box cannot host two censuses -- and they now run inside one machine-wide
+# flock, with a receipt, and with an attendance roll call that can tell silence
+# from a clean bill.
 
 jobs:
   python-sole-construction-floors:
     name: python-sole-construction-floors
     runs-on: [self-hosted, Linux, X64]
+    # The floor set plus its wait for the lease. See python-package-suite.yml.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       # ONE environment definition, shared read-only with the authoritative
@@ -29,135 +45,47 @@ jobs:
       # .github/workflows/python-package-suite.yml.
       - name: Prepare immutable Python test environment
         uses: ./.github/actions/python-test-environment
-      # Permanent floors — baseline-free. R > 0 ⇒ CI red on every axis.
-      # See docs/contributing/python-sole-construction.md
-      # factory_zero_tolerance.py retired with factory/ (#6028): no dual
-      # construction door left to measure. Ownership + construction-panic catch
-      # remain permanent floors.
-      - name: R_ownership = 0
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/factory_ownership_law.py
-      - name: R_construction_panic_catches_outside_membrane = 0
+      - name: The complete floor set, under the machine-wide heavy lease
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          python3 tools/heavy_measurement_lease.py \
+            --class python-sole-construction-floors \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            -- bash tools/run_sole_construction_floors.sh
+          leased_exit=$?
+          set -e
+          # 75 is the lease REFUSING, not a floor being green. These are floors:
+          # "no output" must never be readable as "nothing to report".
+          if [ "$leased_exit" = "75" ]; then
+            echo "::error::heavy-measurement lease not acquired; the floors did NOT run. R is UNMEASURED, not 0."
+            exit 75
+          fi
+          exit "$leased_exit"
+
+      # These floors ARE a zero claim: R = 0 on every axis. So the gate demands
+      # the one status that can carry one. `cancelled-before-measurement` and
+      # `interrupted-during-measurement` are red here, loudly, rather than
+      # quietly reading as a clean floor -- which is exactly what three
+      # evicted runs on one PR looked like from the outside.
+      - name: Lease gate (R_lease = 0)
         if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
-      # Heavy supervised enum floors — sequential under this one job so the
-      # complete floor set is always from one pinned run.
-      - name: R_native_crashes = 0
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/heavy_measurement_lease_gate.py \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --require-commit "$GITHUB_SHA" \
+            --require-zero-claim \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The receipt is the artifact that distinguishes "ran and found nothing"
+      # from "never ran". Uploaded even when a floor is red.
+      - name: Upload the floor-set lease receipt
         if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/native_crash_zero_tolerance.py
-      - name: R_bare_exceptions = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/bare_exception_zero_tolerance.py
-      - name: R_timeouts = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/timeout_zero_tolerance.py
-      - name: All permanent axes are bound
-        if: always()
-        run: python -m pytest tests/test_python_sole_construction_ci.py -q
-      - name: '`sugar-lift-py-tests[test]` is the sole dependency authority'
-        if: always()
-        run: >-
-          python -m pytest
-          tests/test_test_extras_are_the_dependency_authority.py
-          -q
-      - name: R_vendor_special_case discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_vendor_special_case_law.py
-          -q
-      - name: R_vendor_special_case = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/vendor_special_case_law.py
-      - name: R_silent discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_silent_zero_tolerance.py
-          -q
-      - name: R_silent = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/silent_zero_tolerance.py
-      - name: R_factory_walk_unclassified discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_factory_walk_unclassified_law.py
-          -q
-      - name: R_factory_walk_unclassified = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/factory_walk_unclassified_law.py
-          --live-root
-          implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests
-          --live-root
-          implementations/python/sugar-lift-py-tests/scripts
-      - name: R_finite_cap_opaque_completions discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_finite_cap_opaque_completion_law.py
-          -q
-      - name: R_finite_cap_opaque_completions = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/finite_cap_opaque_completion_law.py
-      - name: R_finite_unfold_compact_gaps discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_finite_unfold_compact_projection_law.py
-          -q
-      - name: R_finite_unfold_compact_gaps = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/finite_unfold_compact_projection_law.py
-      - name: R_source_via_execution discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_source_via_execution_law.py
-          -q
-      - name: R_source_via_execution = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/source_via_execution_law.py
-      - name: R_no_sugar_in_desugar discrimination
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/no_sugar_in_desugar_law.py
-          --self-test
-      - name: R_no_sugar_in_desugar = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/no_sugar_in_desugar_law.py
-      - name: R_construction_side_doors discrimination
-        if: always()
-        run: >-
-          python -m pytest --noconftest
-          implementations/python/sugar-lift-py-tests/tests/test_construction_side_door_law.py
-          -q
-      - name: R_construction_side_doors = 0
-        if: always()
-        run: >-
-          python
-          implementations/python/sugar-lift-py-tests/scripts/construction_side_door_law.py
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sole-construction-floors-lease
+          path: lease-record.json
+          if-no-files-found: error

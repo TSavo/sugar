@@ -9,15 +9,18 @@ permissions:
   contents: read
   issues: write
 
-concurrency:
-  group: sugar-python-heavy-measurement
-  cancel-in-progress: false
+# NO `concurrency:` BLOCK. GitHub keeps one pending run per group and evicts
+# the rest -- five package-suite runs and three sole-construction floor runs
+# were lost that way. GitHub now retains every run; the machine-wide lease in
+# tools/heavy_measurement_lease.py decides which one measures. A pandas census
+# owns the box while it runs, which is exactly what the lease is for.
 
 jobs:
   pandas-wall:
     name: build pandas wall
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 180
+    # Census budget plus the wait for the lease.
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -72,9 +75,18 @@ jobs:
           : > "$SUGAR_ENGINE_LOG"
           : > "$SUGAR_KIT_LOG"
           set +e
-          make pandas-wall
+          python3 tools/heavy_measurement_lease.py \
+            --class pandas-wall \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --status-file "$GITHUB_WORKSPACE/.sugar/pandas-wall/measurement-status" \
+            -- make pandas-wall
           wall_exit=$?
           set -e
+          if [ "$wall_exit" = "75" ]; then
+            echo "::error::heavy-measurement lease not acquired; the pandas wall was NOT minted."
+            echo "wall_exit=lease-refused" >> "$GITHUB_OUTPUT"
+            exit 75
+          fi
           echo "wall_exit=$wall_exit" >> "$GITHUB_OUTPUT"
           # Frontier is the success receipt; partial runs are scored below.
           if [ -s .sugar/pandas-wall/frontier.json ]; then
@@ -164,6 +176,17 @@ jobs:
             --body-file .sugar/pandas-wall/ledger-comment.md
 
 
+      # A frontier measured beside another census is a claim about the box.
+      - name: Lease gate (R_lease = 0)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/heavy_measurement_lease_gate.py \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Upload pandas wall artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -173,6 +196,7 @@ jobs:
             .sugar/pandas-wall-logs/engine.jsonl
             .sugar/pandas-wall-logs/transport.jsonl
             .sugar/pandas-wall/
+            lease-record.json
           if-no-files-found: error
 
       - name: Enforce pandas frontier receipt

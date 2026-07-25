@@ -28,15 +28,23 @@ permissions:
   contents: read
   issues: write
 
-concurrency:
-  group: restored-suite-scoreboard
-  cancel-in-progress: false
+# NO `concurrency:` BLOCK. A group with cancel-in-progress: false still keeps
+# only ONE pending run and evicts the rest -- that is how five package-suite
+# runs and three sole-construction floor runs were lost. GitHub now retains
+# every run; tools/heavy_measurement_lease.py decides which one measures.
+#
+# This sweep is SUPERSEDED but still whole-package and still heavy, so it goes
+# behind the same machine-wide lease as the authoritative one. Retiring it is a
+# separate change with its own receipt (see the header above); leaving it
+# outside the lease in the meantime would mean the authoritative suite could be
+# timed against a second full sweep of the same package on the same box.
 
 jobs:
   restored-suite:
     name: mint restored-suite telemetry
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 180
+    # Sweep budget plus the wait for the lease.
+    timeout-minutes: 360
     env:
       # This job already runs inside the battleaxe runner container. It chooses
       # local ambient explicitly instead of trying to SSH back into its host.
@@ -95,15 +103,38 @@ jobs:
         id: suite
         shell: bash
         run: |
-          set +e
+          cat > "$RUNNER_TEMP/restored-sweep.sh" <<'SWEEP'
+          set -uo pipefail
           SUGAR_BIN="$(bin/sugarbin --profile release)" \
             "$RUNNER_TEMP/restored-suite-python/bin/python" -m pytest -q \
             implementations/python/sugar-lift-py-tests/tests \
             2>&1 | tee restored-suite.log
-          pytest_exit=${PIPESTATUS[0]}
+          exit "${PIPESTATUS[0]}"
+          SWEEP
+          set +e
+          python3 tools/heavy_measurement_lease.py \
+            --class restored-suite-scoreboard \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            -- bash "$RUNNER_TEMP/restored-sweep.sh"
+          leased_exit=$?
           set -e
-          echo "pytest_exit=$pytest_exit" >> "$GITHUB_OUTPUT"
+          if [ "$leased_exit" = "75" ]; then
+            echo "::error::heavy-measurement lease not acquired; the restored suite did NOT run."
+            echo "pytest_exit=lease-refused" >> "$GITHUB_OUTPUT"
+            exit 75
+          fi
+          echo "pytest_exit=$leased_exit" >> "$GITHUB_OUTPUT"
           test -s restored-suite.log
+
+      - name: Lease gate (R_lease = 0)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/heavy_measurement_lease_gate.py \
+            --record "$GITHUB_WORKSPACE/lease-record.json" \
+            --require-commit "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Publish restored-suite vector
         env:
@@ -127,4 +158,5 @@ jobs:
           path: |
             restored-suite.log
             restored-suite-telemetry.md
+            lease-record.json
           if-no-files-found: error
