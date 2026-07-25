@@ -36,11 +36,32 @@ def remember_shape_cid(ref: object, cid: str) -> None:
 class ConstructionCache:
     """Shared field rows keyed by backend site + reporter + control context."""
 
-    __slots__ = ("fields", "_pinned")
+    __slots__ = ("fields", "sugar_results", "sugar_panics", "_pinned")
 
     def __init__(self) -> None:
         # key -> {slot_name: resolved value}
         self.fields: dict[tuple, dict[str, Any]] = {}
+        # key -> constructed sugar. Substitution SHARES node objects (a bound
+        # name substitutes to the bound node itself), so the constructed graph
+        # is a DAG while ``walk``/``_construct_sugar`` traverse it as a TREE:
+        # without this row a shared site re-constructs once per incoming PATH
+        # (measured 433x on one pandas function). The coordinate is the same
+        # one the field row already uses -- ``key`` below -- and it is
+        # exhaustive for construction: ``backend.materialize`` picks the node
+        # CLASS by ``ref.resolve_type()``, the field row is a function of the
+        # same key, and a loop's owned target coordinate is a function of the
+        # ref's kind and span. Same coordinate therefore means the same
+        # construction, so each distinct coordinate constructs -- and answers
+        # the roll -- exactly once, never once per DAG path.
+        self.sugar_results: dict[tuple, Any] = {}
+        # key -> the construction panic this coordinate raised. A gap MUST stay
+        # a gap on every subsequent call, so a panic is memoized as loudly as a
+        # value: the SAME panic object is re-raised, never swallowed, never
+        # softened into an absent value. Memoizing it (rather than leaving
+        # failures uncached) is what keeps present and absent SYMMETRIC under
+        # the coordinate rule -- the reporter testifies each coordinate once,
+        # whether it answers present or absent.
+        self.sugar_panics: dict[tuple, BaseException] = {}
         # key -> ref. The cache key embeds ``id(ref)``, and shadow refs minted
         # during substitution are transient: once a rewritten shadow is GC'd its
         # address is reused by the NEXT shadow (e.g. one loop-unroll iteration's

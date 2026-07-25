@@ -778,16 +778,23 @@ class Node(Typed):
         super().__init_subclass__(**kw)
         KIND_REGISTRY[cls.__name__] = cls
 
-    def __getattr__(self, name: str):
-        # Field data is memoized on the unit once per site; this shell exposes it.
-        if name.startswith("_"):
-            raise AttributeError(name)
+    def _construction_cache(self) -> "ConstructionCache":
+        """The unit's one work memo. Node shells are VIEWS -- many shells wrap
+        one ref -- so every memo hangs off the unit, keyed by the construction
+        coordinate, never off the transient shell."""
         from .construction_cache import ConstructionCache
 
         cache = self.unit.construction_cache
         if cache is None:
             cache = ConstructionCache()
             object.__setattr__(self.unit, "construction_cache", cache)
+        return cache
+
+    def __getattr__(self, name: str):
+        # Field data is memoized on the unit once per site; this shell exposes it.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        cache = self._construction_cache()
         key = cache.key(self.ref, self.reporter, self.control_context)
         row = cache.fields.setdefault(key, {})
         if name in row:
@@ -1275,8 +1282,34 @@ class Node(Typed):
         the abstract ``_construct_sugar`` before it throws. So every node either
         answers present here or is reported absent there: no node discharges
         silently.
+
+        The answer is given ONCE PER CONSTRUCTION COORDINATE, not once per DAG
+        path. Substitution shares node objects, so a bound value is one node
+        reached by many paths; the roll asks each coordinate, and a coordinate
+        that answered keeps its answer. Absent is memoized exactly as loudly as
+        present: the panic is remembered and re-raised, so a gap stays a gap on
+        every call and the reporter still fingers the site.
         """
         from sugar_lift_py_tests.engine_log import reduction_span
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+        # THE construction coordinate -- the same (ref, reporter, control
+        # context) the field row uses. Substitution shares node OBJECTS, so the
+        # constructed graph is a DAG traversed as a tree; without this memo a
+        # shared site re-answers the roll once per incoming path. T's ruling:
+        # each distinct construction coordinate appears ONCE. Keyed by the
+        # coordinate, never by the transient shell: shells are views, and a
+        # rewritten shadow carries a DIFFERENT ref, so it can never collide
+        # with the node it replaced. ``cache.key`` pins the ref, which is what
+        # keeps a dead shadow's recycled address from serving stale work.
+        cache = self._construction_cache()
+        key = cache.key(self.ref, self.reporter, self.control_context)
+        remembered_panic = cache.sugar_panics.get(key)
+        if remembered_panic is not None:
+            # A gap stays a gap, every time. Same panic, re-raised loudly.
+            raise remembered_panic
+        if key in cache.sugar_results:
+            return cache.sugar_results[key]
 
         where = f"{self.unit.filename}"
         try:
@@ -1287,9 +1320,17 @@ class Node(Typed):
         with reduction_span(
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
-            result = self._construct_sugar()
+            try:
+                result = self._construct_sugar()
+            except (SourceTreePanic, ConstructionPanic) as panic:
+                # The two sanctioned construction gaps. Remember the panic so
+                # this coordinate keeps throwing it -- memoization must never
+                # turn an absent answer into a present one.
+                cache.sugar_panics[key] = panic
+                raise
             self.reporter.present_construction(self, result)
             self.reporter.present_fact(self)
+            cache.sugar_results[key] = result
             return result
 
     def _construct_sugar(self) -> object:
