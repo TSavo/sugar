@@ -42,9 +42,10 @@ _SCOPE_CID = "blake3-512:" + "0" * 8
 class Unserializable:
     """A constructed value category canonicalization has not been taught.
 
-    Not a dataclass, no ``wire()`` -- exactly the shape that made
-    ``_canonical_constructed_value`` raise ``TypeError`` in production
-    (``unserializable constructed value LineTable``).
+    Not a dataclass, no authenticated native CID -- exactly the shape that
+    made canonicalization raise in production (``unserializable constructed
+    value LineTable``), and that ConstructedValueV2 reports as the typed
+    ``ConstructedValueCategoryGap`` rather than reflecting over.
     """
 
 
