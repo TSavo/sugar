@@ -22,9 +22,13 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      # ONE environment definition, shared read-only with the authoritative
+      # suite job. The floors stay distinct instruments — they measure R on
+      # their own axes and stay red-with-teeth — but they no longer define,
+      # install, or sweep their own idea of the package. See
+      # .github/workflows/python-package-suite.yml.
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
       # Permanent floors — baseline-free. R > 0 ⇒ CI red on every axis.
       # See docs/contributing/python-sole-construction.md
       # factory_zero_tolerance.py retired with factory/ (#6028): no dual
@@ -39,16 +43,6 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
-      # `sugar-lift-py-tests[test]` is the sole dependency authority. Never
-      # hand-list a package here: a hand-list is one module-scope import away
-      # from the #6260 collection abort these floors exist to catch.
-      - name: Install Python lift kit and static-floor test runner
-        if: always()
-        run: >-
-          python -m pip install
-          -e ./implementations/python/sugar-lift-python-source
-          -e ./implementations/python/sugar-source-tree
-          -e './implementations/python/sugar-lift-py-tests[test]'
       # Heavy supervised enum floors — sequential under this one job so the
       # complete floor set is always from one pinned run.
       - name: R_native_crashes = 0

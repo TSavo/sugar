@@ -17,18 +17,13 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      # `sugar-lift-py-tests[test]` is the sole dependency authority. Never
-      # hand-list a package here: a hand-list is one module-scope import away
-      # from the #6260 collection abort this floor exists to catch.
-      - name: Install Python lift kit
-        run: >-
-          python -m pip install
-          -e ./implementations/python/sugar-lift-python-source
-          -e ./implementations/python/sugar-source-tree
-          -e './implementations/python/sugar-lift-py-tests[test]'
+      # ONE environment definition, shared read-only with the authoritative
+      # suite. `sugar-lift-py-tests[test]` remains the sole dependency
+      # authority (#6275) — the action installs from that table and this floor
+      # hand-lists nothing. This floor stays a distinct instrument: one
+      # discrimination file, never a second whole-package sweep.
+      - name: Prepare immutable Python test environment
+        uses: ./.github/actions/python-test-environment
       - name: R_native_crashes discrimination
         run: >-
           python -m pytest --noconftest

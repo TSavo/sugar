@@ -1,0 +1,135 @@
+name: Prepare Python test environment
+description: >-
+  The ONE definition of the sugar Python test environment. Builds an immutable
+  wheel-installed venv from the package's declared dependency authority, mints
+  its environment identity, and puts it on PATH read-only.
+
+# WHY THIS EXISTS
+#
+# Before this action, five workflows each independently decided what "the
+# Python environment" was: which interpreter, which packages, editable or not.
+# Five definitions is zero definitions -- nothing measured under one of them
+# was comparable to anything measured under another, and `sugar-lift-py-tests`
+# ended up with no PR-gate coverage at all while every workflow looked busy.
+#
+# There is now one definition and it lives here. The authoritative suite job
+# consumes it. Every zero-tolerance floor consumes it. No caller installs its
+# own dependency list: `sugar-lift-py-tests[test]` is the sole dependency
+# authority (#6275), and the only names below are FIRST-PARTY PATHS, which are
+# the packages themselves rather than a hand-list of their requirements.
+#
+# The venv is built from wheels and then made read-only. Editable installs let
+# a later job silently change what an earlier job measured; a wheel install
+# plus `chmod a-w` makes that attempt fail loudly instead.
+
+inputs:
+  python-version:
+    description: Interpreter to install. Pinned to a patch version on purpose.
+    required: false
+    default: "3.12.13"
+  identity-artifact:
+    description: >-
+      When "true", upload the environment identity and resolved distribution
+      list as an artifact named by `identity-artifact-name`.
+    required: false
+    default: "false"
+  identity-artifact-name:
+    description: Artifact name used when `identity-artifact` is true.
+    required: false
+    default: python-test-environment-identity
+
+outputs:
+  identity-path:
+    description: Path to environment-identity.json.
+    value: ${{ steps.identity.outputs.path }}
+  identity-hash:
+    description: environmentIdentityHash -- two runs sharing it are comparable.
+    value: ${{ steps.identity.outputs.hash }}
+  python:
+    description: Absolute path to the prepared interpreter.
+    value: ${{ steps.install.outputs.python }}
+  env-dir:
+    description: Root of the prepared environment.
+    value: ${{ steps.install.outputs.env-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+
+    # Identity is derived from INPUTS (interpreter, platform, sourceStamp,
+    # declared test extras, package sources), never from install output, so it
+    # is knowable before a single wheel is built and is not perturbed by
+    # resolver nondeterminism.
+    - name: Mint environment identity
+      id: identity
+      shell: bash
+      run: |
+        set -euo pipefail
+        env_dir="$RUNNER_TEMP/sugar-python-test-environment"
+        mkdir -p "$env_dir"
+        identity="$env_dir/environment-identity.json"
+        hash="$(python tools/python_test_environment_identity.py \
+          --repo-root . --output "$identity")"
+        echo "path=$identity" >> "$GITHUB_OUTPUT"
+        echo "hash=$hash" >> "$GITHUB_OUTPUT"
+        echo "SUGAR_PYTHON_ENV_IDENTITY=$identity" >> "$GITHUB_ENV"
+        echo "environment identity: $hash"
+
+    - name: Build wheelhouse from the declared dependency authority
+      shell: bash
+      run: |
+        set -euo pipefail
+        env_dir="$RUNNER_TEMP/sugar-python-test-environment"
+        rm -rf "$env_dir/wheelhouse"
+        # `[test]` is the sole dependency authority. The three paths are the
+        # first-party packages themselves; every third-party requirement is
+        # resolved transitively FROM that table, never named here.
+        python -m pip wheel --quiet --wheel-dir "$env_dir/wheelhouse" \
+          './implementations/python/sugar-lift-py-tests[test]' \
+          ./implementations/python/sugar-lift-python-source \
+          ./implementations/python/sugar-source-tree
+
+    - name: Install immutable environment
+      id: install
+      shell: bash
+      run: |
+        set -euo pipefail
+        env_dir="$RUNNER_TEMP/sugar-python-test-environment"
+        venv="$env_dir/venv"
+        # A previous job's leftovers are read-only by construction; clear the
+        # write bit before removing so a re-run is not blocked by its own law.
+        if [ -d "$venv" ]; then chmod -R u+w "$venv"; rm -rf "$venv"; fi
+        python -m venv "$venv"
+        "$venv/bin/python" -m pip install --quiet --upgrade pip wheel
+        "$venv/bin/python" -m pip install --quiet \
+          --no-index --find-links "$env_dir/wheelhouse" \
+          'sugar-lift-py-tests[test]' \
+          sugar-lift-python-source \
+          sugar-source-tree
+        "$venv/bin/python" -m pip freeze --all > "$env_dir/resolved-distributions.txt"
+
+        # Consumers share this environment READ-ONLY. No job may mutate it:
+        # adding a package to an already-measured environment is how a floor
+        # quietly stops measuring what the suite measured. Make the attempt
+        # fail loudly rather than succeed silently.
+        chmod -R a-w "$venv/lib"
+        echo "PYTHONDONTWRITEBYTECODE=1" >> "$GITHUB_ENV"
+
+        echo "$venv/bin" >> "$GITHUB_PATH"
+        echo "python=$venv/bin/python" >> "$GITHUB_OUTPUT"
+        echo "env-dir=$env_dir" >> "$GITHUB_OUTPUT"
+
+    - name: Upload environment identity
+      if: inputs.identity-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.identity-artifact-name }}
+        path: |
+          ${{ runner.temp }}/sugar-python-test-environment/environment-identity.json
+          ${{ runner.temp }}/sugar-python-test-environment/resolved-distributions.txt
+        if-no-files-found: error

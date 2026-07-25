@@ -1,5 +1,24 @@
 name: Restored Suite Scoreboard
 
+# SUPERSEDED, NOT YET RETIRED. This workflow still builds its own environment
+# and runs its own whole-package sweep. That is now the SECOND such sweep:
+# .github/workflows/python-package-suite.yml owns the authoritative one, on
+# every PR and push, with an exact node-ID manifest. Two independent sweeps
+# means two sets of numbers that were never guaranteed to be comparable, which
+# is exactly the ownership defect the authoritative job exists to end.
+#
+# It survives this change only because deleting it is not a workflow edit: the
+# file name is pinned by `[tasks.restored-suite-scoreboard]` in
+# sugar-build.toml, by tests/test_sugar_build_contract.py (with a hashed task
+# digest), and by implementations/rust/sugar-cli/tests/sugarbin_execution_contract.rs,
+# which asserts this file's SUGAR_AMBIENT_DEPENDENCY_OWNER line verbatim.
+# Retiring it means moving its #4208 telemetry onto the canonical artifact and
+# re-pinning that contract — a deliberate change with its own receipt, not a
+# side effect of wiring the suite job.
+#
+# Until then: when these two disagree, the authoritative job is the measurement
+# and this one is prior art.
+
 on:
   workflow_dispatch:
   schedule:

@@ -20,6 +20,14 @@ Four teeth, and the fourth is the one that keeps the authority honest:
 4. Adding a dependency only to a workflow CANNOT satisfy tooth 3 — the
    resolver reads pyproject and never the workflows, proven on a synthetic
    pair where the workflow supplies what pyproject omits.
+
+THE AUDIT FOLLOWS THE INSTALL, WHEREVER IT LIVES. The environment is now built
+once by the composite action `.github/actions/python-test-environment`, which
+the authoritative suite job and the zero-tolerance floors all consume. Moving
+an install out of a workflow and into an action must NOT move it out of this
+audit's sight, so the action file is audited with the identical teeth and a
+consumer counts as bound either by installing `[test]` itself or by using that
+action. A floor that does neither is still an offender, by name.
 """
 
 from __future__ import annotations
@@ -34,6 +42,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "implementations/python/sugar-lift-py-tests"
 PYPROJECT = PACKAGE / "pyproject.toml"
 WORKFLOWS = ROOT / ".github/workflows"
+
+# The ONE place the Python test environment is defined. Audited exactly like a
+# workflow: an install that hides in a composite action is still an install.
+ENVIRONMENT_ACTION = ROOT / ".github/actions/python-test-environment/action.yml"
+ENVIRONMENT_ACTION_USE = "./.github/actions/python-test-environment"
 
 AUTHORITY = "sugar-lift-py-tests"
 
@@ -138,17 +151,58 @@ def run_blocks(workflow_text: str) -> list[str]:
 
 
 def pip_install_commands(workflow_text: str) -> list[str]:
-    """Every `pip install ...` invocation, one entry per real command."""
+    """Every dependency-acquiring pip invocation, one entry per real command.
+
+    `pip wheel` is included: building a wheelhouse from a requirement is how
+    the immutable environment acquires its dependencies, so a hand-list smuggled
+    into a `pip wheel` line is the same #6260 offence as one in `pip install`.
+    """
     commands = []
     for block in run_blocks(workflow_text):
         block = re.sub(r"\\\s*\n\s*", " ", block)  # shell backslash-newline
         for line in block.split("\n"):
-            for match in re.finditer(r"pip install[^\n]*", line):
+            for match in re.finditer(r"pip (?:install|wheel)[^\n]*", line):
                 command = match.group(0)
                 if "--upgrade pip" in command:
                     continue  # bootstrapping pip itself is not a dependency
                 commands.append(command)
     return commands
+
+
+def is_wheel_build(command: str) -> bool:
+    """`pip wheel` BUILDS the immutable environment's inputs.
+
+    Editability is meaningless for a wheel build — and an editable install is
+    precisely what the immutable environment exists to avoid — so tooth 1's
+    `-e` requirement does not apply here. The `[test]` requirement still does:
+    a wheelhouse built without the extras is an environment missing every
+    package the suite declares, which is #6260 with extra steps.
+    """
+    return command.startswith("pip wheel")
+
+
+def audit_sites() -> list[Path]:
+    """Every file that may acquire this package's dependencies.
+
+    Workflows plus the composite action. Adding a new install site without
+    adding it here is the drift this list exists to make impossible.
+    """
+    sites = sorted(WORKFLOWS.glob("*.yml"))
+    if ENVIRONMENT_ACTION.exists():
+        sites.append(ENVIRONMENT_ACTION)
+    return sites
+
+
+def binds_to_authority(text: str) -> bool:
+    """Does this file draw its Python environment from the authority?
+
+    Two legal ways, and only two: install `[test]` directly, or delegate to the
+    one composite action that does. Anything else is a floor running against an
+    environment nobody defined.
+    """
+    if ENVIRONMENT_ACTION_USE in text:
+        return True
+    return any(AUTHORITY in command for command in pip_install_commands(text))
 
 
 def bare_requirements(command: str) -> list[str]:
@@ -174,7 +228,7 @@ def bare_requirements(command: str) -> list[str]:
 
 def workflows_installing_authority() -> dict[Path, list[str]]:
     hits: dict[Path, list[str]] = {}
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+    for workflow in audit_sites():
         commands = [
             command
             for command in pip_install_commands(workflow.read_text(encoding="utf-8"))
@@ -204,6 +258,8 @@ def test_every_authority_install_uses_editable_test_extras() -> None:
                     offenders.append(
                         f"{workflow.name}: installs `{token}` without [test] extras"
                     )
+                elif is_wheel_build(command):
+                    continue  # wheel builds are immutable by construction
                 elif f"-e {token}" not in command and f"-e '{token}'" not in command:
                     offenders.append(
                         f"{workflow.name}: installs `{token}` non-editable"
@@ -224,7 +280,7 @@ def test_no_workflow_hand_lists_a_package_the_authority_owns() -> None:
     owned = authority_packages(PYPROJECT.read_text(encoding="utf-8"))
 
     offenders = []
-    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+    for workflow in audit_sites():
         text = workflow.read_text(encoding="utf-8")
         commands = pip_install_commands(text)
         # Scope is the WORKFLOW, not the single command: `pip install numpy` in
@@ -330,11 +386,13 @@ def test_the_four_zero_tolerance_floors_are_bound_to_the_authority() -> None:
     offenders = []
     for name in floors:
         text = (WORKFLOWS / name).read_text(encoding="utf-8")
-        commands = [c for c in pip_install_commands(text) if AUTHORITY in c]
-        if not commands:
-            offenders.append(f"{name}: never installs {AUTHORITY}")
+        if not binds_to_authority(text):
+            offenders.append(
+                f"{name}: neither installs {AUTHORITY}[test] nor uses "
+                f"{ENVIRONMENT_ACTION_USE}"
+            )
             continue
-        for command in commands:
+        for command in [c for c in pip_install_commands(text) if AUTHORITY in c]:
             if f"{AUTHORITY}[test]" not in command:
                 offenders.append(f"{name}: installs {AUTHORITY} without [test]")
             if bare_requirements(command):
@@ -345,4 +403,58 @@ def test_the_four_zero_tolerance_floors_are_bound_to_the_authority() -> None:
     assert not offenders, (
         "the zero-tolerance floors must draw their entire environment from "
         f"`{AUTHORITY}[test]`:\n  " + "\n  ".join(offenders)
+    )
+
+
+# --------------------------------------------------------------------------
+# Tooth 6: the delegation target is real, and is itself bound
+# --------------------------------------------------------------------------
+def test_the_environment_action_is_the_one_bound_definition() -> None:
+    """`uses:` the action is only a legal binding because the action obeys.
+
+    Tooth 5 accepts delegation to `.github/actions/python-test-environment`.
+    That acceptance is worth exactly as much as this test: if the action stops
+    existing, stops installing `[test]`, or starts hand-listing, then every
+    floor that delegates to it is unbound and tooth 5's green is a lie.
+    """
+    assert ENVIRONMENT_ACTION.exists(), (
+        f"{ENVIRONMENT_ACTION_USE} is the single definition of the Python test "
+        "environment and every zero-tolerance floor delegates to it. It is "
+        "missing — restore it, or re-bind each floor to the authority directly."
+    )
+
+    text = ENVIRONMENT_ACTION.read_text(encoding="utf-8")
+    commands = [c for c in pip_install_commands(text) if AUTHORITY in c]
+    assert commands, (
+        f"{ENVIRONMENT_ACTION.name} never acquires {AUTHORITY}[test]; every "
+        "consumer that delegates to it is running against an environment "
+        "nobody declared"
+    )
+
+    offenders = []
+    for command in commands:
+        if f"{AUTHORITY}[test]" not in command:
+            offenders.append(f"acquires {AUTHORITY} without [test]: {command}")
+    for command in pip_install_commands(text):
+        hand_listed = [
+            requirement
+            for requirement in bare_requirements(command)
+            # The three first-party package NAMES are how the wheelhouse is
+            # installed by name rather than by path; they are the packages
+            # themselves, not requirements of them.
+            if requirement
+            not in {
+                normalize(AUTHORITY),
+                "sugar-lift-python-source",
+                "sugar-source-tree",
+                "wheel",
+            }
+        ]
+        if hand_listed:
+            offenders.append(f"hand-lists {sorted(set(hand_listed))}: {command}")
+
+    assert not offenders, (
+        f"{ENVIRONMENT_ACTION.name} is the ONE definition of the Python test "
+        f"environment; it must draw everything from `{AUTHORITY}[test]`:\n  "
+        + "\n  ".join(offenders)
     )
