@@ -572,16 +572,89 @@ def node_construction_shape_cid(node: Node) -> str:
     result = cid_of_json(
         {
             "kind": "constructed-node-shape",
-            "schemaVersion": "1",
+            "schemaVersion": "2",
+            "shapeSchema": NODE_SHAPE_V2_SCHEMA,
             "source": node.fragment.seal().to_dict(),
-            "node": _backend_node_preimage(ref),
+            "nodeShape": backend_node_shape_cid_v2(ref),
         }
     )
     remember_shape_cid(ref, result)
     return result
 
 
-def _backend_node_preimage(ref: object) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# NodeShapeV2 -- the Merkle shape preimage.
+#
+# V1 embedded each child's FULL subtree preimage inside its parent, so the same
+# descendant content was authenticated once for every ancestor path above it:
+# total encoding work was the sum of all subtree sizes, i.e. quadratic in depth.
+# Measured consequence: 624s cumulative in ``canonical_json_bytes`` over only
+# 1,318 CID calls on pandas ``core/reshape/pivot.py::__internal_pivot_table``.
+#
+# V2 is the content-addressed form the graph always wanted: a node authenticates
+# its own IMMEDIATE structure plus the authenticated IDENTITIES (CIDs) of its
+# children. Each node's preimage is O(its own arity); the whole tree is O(n).
+#
+# Domain separation is explicit and total:
+#   * the child-CID algorithm is NAMED in every preimage
+#     (``childCidAlgorithm``), so a child slot's string can never be mistaken
+#     for an opaque leaf or for a CID minted by some other schema;
+#   * the schema tag ``NodeShapeV2`` and the outer ``schemaVersion: "2"`` put
+#     V2 in a different identity namespace from V1 -- no V1 preimage can ever
+#     encode to a V2 preimage, so no V1 CID is ever reinterpretable as V2.
+#
+# This migration DOES change every shape CID. That is sanctioned and pinned
+# deliberately: shape CIDs are REPRESENTATION identity, never meaning. The
+# constructed meaning (formulas, bindings, effects, gaps, ExitSets, corpus
+# classification) is unchanged, and is what the equivalence proof measures --
+# a fingerprint built from shape CIDs would be circular here.
+# ---------------------------------------------------------------------------
+
+NODE_SHAPE_V2_SCHEMA = "NodeShapeV2"
+NODE_SHAPE_V2_DOMAIN = "sugar/construction/node-shape/v2"
+# The child slot carries a CID, and THIS names the algorithm that minted it:
+# the same NodeShapeV2 preimage under the repository canonical JSON CID.
+NODE_SHAPE_V2_CHILD_CID_ALGORITHM = "sugar/construction/node-shape/v2+cid_of_json"
+
+
+def _child_handles(desc: object) -> list[object]:
+    """Every child handle of ``desc``, in slot order then position order."""
+    from sugar_source_tree.backend import Child, Children, MaybeChild
+
+    handles: list[object] = []
+    for _name, slot in desc.slots:  # type: ignore[attr-defined]
+        if isinstance(slot, Child):
+            handles.append(slot.handle)
+        elif isinstance(slot, MaybeChild):
+            if slot.handle is not None:
+                handles.append(slot.handle)
+        elif isinstance(slot, Children):
+            handles.extend(slot.handles)
+    return handles
+
+
+def _node_shape_v2_preimage(ref: object, child_cid: "dict[int, str]") -> dict[str, Any]:
+    """The V2 preimage of ONE node: its kind, its local authenticated fields,
+    and its ordered slots carrying CHILD CIDS -- never child subtrees.
+
+    Every slot kind keeps its own wrapper key, so the six kinds stay mutually
+    distinguishable and none can collide with another:
+
+      Child(x)          -> {"child": cid}
+      MaybeChild(x)     -> {"maybeChild": cid}
+      MaybeChild(None)  -> {"maybeChild": None}   (present-but-empty)
+      Children([x])     -> {"children": [cid]}    (never a bare child)
+      Children([])      -> {"children": []}       (present-but-empty)
+      Leaf(v)           -> {"leaf": <canonical value>}
+      OpLeaf(op)        -> {"operator": kind}
+      OpsLeaf(ops)      -> {"operators": [kind, ...]}
+
+    An ABSENT slot emits no entry at all, and every entry carries its NAME, so
+    ``MaybeChild(None)`` (an entry whose value is ``{"maybeChild": null}``)
+    can never collide with the absence of that slot. Positions are a JSON
+    ARRAY in the backend's declared order: reordering, duplicating or omitting
+    children changes the encoding, hence the CID.
+    """
     from sugar_source_tree.backend import (
         Child,
         Children,
@@ -591,21 +664,19 @@ def _backend_node_preimage(ref: object) -> dict[str, Any]:
         OpsLeaf,
     )
 
-    desc = ref.describe()
+    desc = ref.describe()  # type: ignore[attr-defined]
     slots = []
     for name, slot in desc.slots:
         if isinstance(slot, Child):
-            value = {"child": _backend_node_preimage(slot.handle)}
+            value = {"child": child_cid[id(slot.handle)]}
         elif isinstance(slot, MaybeChild):
             value = {
                 "maybeChild": (
-                    None if slot.handle is None else _backend_node_preimage(slot.handle)
+                    None if slot.handle is None else child_cid[id(slot.handle)]
                 )
             }
         elif isinstance(slot, Children):
-            value = {
-                "children": [_backend_node_preimage(handle) for handle in slot.handles]
-            }
+            value = {"children": [child_cid[id(h)] for h in slot.handles]}
         elif isinstance(slot, Leaf):
             value = {"leaf": _canonical_constructed_value(slot.value)}
         elif isinstance(slot, OpLeaf):
@@ -613,9 +684,72 @@ def _backend_node_preimage(ref: object) -> dict[str, Any]:
         elif isinstance(slot, OpsLeaf):
             value = {"operators": [operator.kind for operator in slot.ops]}
         else:
+            # NEVER a fallback to subtree embedding: an unknown slot kind is a
+            # gap in the schema, reported loudly, not inlined behind our backs.
             raise TypeError(f"unknown backend slot {type(slot).__name__}")
         slots.append({"name": name, "value": value})
-    return {"kind": desc.kind, "slots": slots}
+    return {
+        "domain": NODE_SHAPE_V2_DOMAIN,
+        "schema": NODE_SHAPE_V2_SCHEMA,
+        "childCidAlgorithm": NODE_SHAPE_V2_CHILD_CID_ALGORITHM,
+        "kind": desc.kind,
+        "slots": slots,
+    }
+
+
+def backend_node_shape_cid_v2(ref: object) -> str:
+    """The NodeShapeV2 CID of ``ref``, built STRICTLY BOTTOM-UP.
+
+    Explicit post-order over an iterative stack -- no recursion, no recursive
+    subtree embedding, and no Python recursion limit on deep trees. Each
+    distinct ref encodes exactly ONE preimage of its own arity, memoized in the
+    static category registry, so a shared child (substitution shares node
+    objects; the constructed graph is a DAG) is encoded once, not once per
+    incoming path.
+
+    Two structurally identical subtrees under two DISTINCT refs get the SAME
+    CID -- that is content identity, and it is the point. They remain distinct
+    OCCURRENCES: the memo is keyed by ref (two live refs, two rows, one value),
+    and the parent carries them at distinct ordered slot positions, so anything
+    keyed by occurrence still sees two.
+    """
+    from .construction_cache import (
+        remember_shape_cid_v2,
+        shape_cid_v2_for,
+    )
+
+    cached = shape_cid_v2_for(ref)
+    if cached is not None:
+        return cached
+
+    child_cid: dict[int, str] = {}
+    # ``child_cid`` is keyed by id(); pin every keyed handle for the duration so
+    # a dead handle's address can never be recycled onto another's row.
+    pinned: list[object] = []
+    # (ref, expanded?) -- expanded means its children are already resolved.
+    stack: list[tuple[object, bool]] = [(ref, False)]
+    while stack:
+        current, expanded = stack.pop()
+        if id(current) in child_cid:
+            continue
+        known = shape_cid_v2_for(current)
+        if known is not None:
+            child_cid[id(current)] = known
+            pinned.append(current)
+            continue
+        if not expanded:
+            stack.append((current, True))
+            for handle in _child_handles(current.describe()):  # type: ignore[attr-defined]
+                if id(handle) not in child_cid:
+                    stack.append((handle, False))
+            continue
+        cid = cid_of_json(_node_shape_v2_preimage(current, child_cid))
+        child_cid[id(current)] = cid
+        pinned.append(current)
+        remember_shape_cid_v2(current, cid)
+    result = child_cid[id(ref)]
+    del pinned
+    return result
 
 
 def _constructed_preimage(value: object) -> dict[str, Any]:
