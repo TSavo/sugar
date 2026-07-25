@@ -8,9 +8,9 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: datetime-claim-twins
-  cancel-in-progress: false
+# NO `concurrency:` BLOCK. GitHub keeps only ONE pending run per group and
+# replaces a queued run with a newer one even under cancel-in-progress: false.
+# Every run must survive; tools/heavy_measurement_lease.py serializes the box.
 
 jobs:
   datetime-claim-twins:
