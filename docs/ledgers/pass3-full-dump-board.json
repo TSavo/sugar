@@ -1,0 +1,229 @@
+{
+  "source": "full-dump.json untruncated DesugarAxis",
+  "commit_pin": "d94f67a31 (installed pandas tree measurement)",
+  "R_construction": 5088,
+  "constructionFamilies": [
+    [
+      "With",
+      5021
+    ],
+    [
+      "Try",
+      33
+    ],
+    [
+      "Assign",
+      25
+    ],
+    [
+      "AnnAssign",
+      6
+    ],
+    [
+      "Constant",
+      3
+    ]
+  ],
+  "R_desugar": 8624,
+  "desugarConstructionPanicOwners": [
+    [
+      "contains",
+      705
+    ],
+    [
+      "attribute",
+      229
+    ],
+    [
+      "add",
+      44
+    ],
+    [
+      "guarded",
+      32
+    ],
+    [
+      "ListValue.multiply",
+      19
+    ],
+    [
+      "ground_index_error",
+      14
+    ],
+    [
+      "SetValue.contains",
+      7
+    ],
+    [
+      "RuntimeEffect",
+      6
+    ],
+    [
+      "multiply",
+      5
+    ],
+    [
+      "bitwise_and",
+      2
+    ],
+    [
+      "subtract",
+      2
+    ],
+    [
+      "bitwise_or",
+      2
+    ],
+    [
+      "bitwise_invert",
+      1
+    ],
+    [
+      "truth",
+      1
+    ],
+    [
+      "ground_type_error",
+      1
+    ],
+    [
+      "divide",
+      1
+    ],
+    [
+      "unary_plus",
+      1
+    ],
+    [
+      "dict.subscript",
+      1
+    ],
+    [
+      "<SourceFragment '/usr/local/lib/python3.14/site-packages/pandas/tests/indexes/period/test_period.py' [3823, 3839) node=Call>",
+      1
+    ]
+  ],
+  "desugarDefectKinds": [
+    [
+      "desugar-exception:AttributeError: 'ContractConditionalConstructionV1' object has no attribute 'guarded'",
+      93
+    ],
+    [
+      "desugar-exception:NotImplementedError: a conditional-expression arm that reduces to an effect is not lifted yet: both arms must be values to form the guarded value",
+      78
+    ],
+    [
+      "desugar-exception:AttributeError: 'ExitSet' object has no attribute 'value'",
+      53
+    ],
+    [
+      "desugar-exception:AttributeError: 'SourceFragment' object has no attribute 'compare_left'",
+      32
+    ],
+    [
+      "desugar-exception:AssertionError: ",
+      29
+    ],
+    [
+      "desugar-exception:AttributeError: 'Incomplete' object has no attribute 'value'",
+      4
+    ],
+    [
+      "desugar-exception:TypeError: <class 'sugar_lift_py_tests.caller_parameter_contract.ContractConditionalConstructionV1'>",
+      2
+    ],
+    [
+      "desugar-exception:NotImplementedError: condition folded without a symbolic formula: NamedExpressionValue",
+      2
+    ],
+    [
+      "desugar-exception:BindingStateWireGap: loop outward face did not construct return or raise testimony",
+      1
+    ],
+    [
+      "desugar-exception:TypeError: <class 'sugar_lift_py_tests.sugar.binding_projection.LoopGuardedProjection'>",
+      1
+    ]
+  ],
+  "files": 1421,
+  "cleanFiles": 621,
+  "wallSeconds": 2724.8,
+  "contains_by_observed": [
+    [
+      "CallSiteValue",
+      254
+    ],
+    [
+      "ListValue",
+      183
+    ],
+    [
+      "TupleValue",
+      155
+    ],
+    [
+      "StringValue",
+      94
+    ],
+    [
+      "GuardedValue",
+      9
+    ],
+    [
+      "ComprehensionValue",
+      5
+    ],
+    [
+      "DictValue",
+      5
+    ]
+  ],
+  "attribute_by_observed": [
+    [
+      "GuardedValue",
+      197
+    ],
+    [
+      "StringValue",
+      19
+    ],
+    [
+      "PredicateValue",
+      7
+    ],
+    [
+      "DictValue",
+      5
+    ],
+    [
+      "ListValue",
+      1
+    ]
+  ],
+  "guarded_by_observed": [
+    [
+      "UniverseValue",
+      26
+    ],
+    [
+      "SymbolicValue",
+      2
+    ],
+    [
+      "TrueBoolLiteralSugar",
+      1
+    ],
+    [
+      "StringValue",
+      1
+    ],
+    [
+      "ClassDefinitionValue",
+      1
+    ],
+    [
+      "PredicateValue",
+      1
+    ]
+  ]
+}

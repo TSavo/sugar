@@ -174,6 +174,20 @@ class GuardedValue(FloorValue):
     def subscript(self, index, site):
         return self._map("subscript", index, site)
 
+    def attribute(self, name, site):
+        """Distribute attribute projection over both branch faces.
+
+        Pass-3 / full-dump desugar panics rank ``attribute`` second only to
+        ``contains``; observed receiver is almost always GuardedValue (197 of
+        229). The arms own what ``.name`` means; this face only threads the
+        existing guard.
+        """
+        return self._map("attribute", name, site)
+
+    def contains(self, item, site):
+        """Distribute membership over both branch faces as a joined predicate."""
+        return self._predicate("contains", item, site)
+
     def setitem(self, index, value, site):
         """Rebind both statically known receiver faces after a subscript store."""
         return self._map("setitem", index, value, site)
