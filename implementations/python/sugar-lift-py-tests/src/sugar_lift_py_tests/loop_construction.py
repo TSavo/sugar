@@ -394,6 +394,37 @@ class LoopConstructionV1:
     def wire_graph(self) -> dict[str, Any]:
         return deepcopy(self._graph)
 
+    # ------------------------------------------------------------------
+    # The authenticated native identity of this constructed value.
+    #
+    # ``_graph`` is an ALREADY-SEALED wire document: its root is a Merkle root
+    # whose every field is either a scalar or the CID of a record in the store,
+    # and ``loop_construction_cid`` is ``hash(root minus its own CID field)`` --
+    # exactly what ``_validate_seal`` checks on decode. So this pair
+    # (``preimage``, ``cid``) is self-authenticating and covers the COMPLETE
+    # semantic content: ``target``, ``pre_state``, ``operation`` and
+    # ``completed_faces`` are the decoded forms of the very CIDs the root binds.
+    #
+    # Declaring it is what lets ConstructedValueV2 reference this value by its
+    # VALIDATED native CID instead of walking the raw wire document. Without
+    # the declaration, ``_graph`` is a bare ``dict`` holding bare ``list``s --
+    # mutable containers with no content coordinate, which ConstructedValueV2
+    # correctly refuses to snapshot and reports as a typed gap.
+    # ------------------------------------------------------------------
+    @property
+    def preimage(self) -> dict[str, Any]:
+        """The preimage ``loop_construction_cid`` is the hash of."""
+        return {
+            key: value
+            for key, value in self._graph["root"].items()
+            if key != "loopConstructionCid"
+        }
+
+    @property
+    def cid(self) -> str:
+        """This construction's authenticated native CID."""
+        return self.loop_construction_cid
+
 
 def _decode_record(raw: Any) -> LoopRecordV1:
     if not isinstance(raw, dict):

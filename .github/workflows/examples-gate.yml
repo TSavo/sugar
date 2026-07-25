@@ -32,10 +32,10 @@ jobs:
           cache: 'pip'
 
       - name: Install lift package deps
-        # Sole dep authority: sugar-lift-py-tests (pyproject.toml dependencies).
+        # Sole dep authority: sugar-lift-py-tests[test] (pyproject.toml).
         run: >
           python -m pip install --quiet
-          -e implementations/python/sugar-lift-py-tests
+          -e 'implementations/python/sugar-lift-py-tests[test]'
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:

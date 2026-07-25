@@ -26,3 +26,26 @@ def matches_raise_effect(effect, expected) -> bool:
         return True
     raised_mro = getattr(effect, "exception_type_mro", None)
     return raised_mro is not None and expected_identity in raised_mro
+
+
+def matches_raise_effect_with_message(effect, expected, pattern) -> bool:
+    """Authenticated identity match, then the contract's optional message pattern.
+
+    The identity half is ``matches_raise_effect`` -- the one matcher. The
+    pattern half reads the constructed message of the raised value; a contract
+    that states no pattern (``pattern is None``) asserts nothing about it.
+    """
+    import re
+
+    if not matches_raise_effect(effect, expected):
+        return False
+    if pattern is None:
+        return True
+    pattern_value = getattr(pattern, "value", None)
+    args = getattr(effect.raised_value, "arg_values", ())
+    message_value = getattr(args[0], "value", None) if args else None
+    return (
+        isinstance(pattern_value, str)
+        and isinstance(message_value, str)
+        and re.search(pattern_value, message_value) is not None
+    )

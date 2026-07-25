@@ -1,11 +1,18 @@
 """Integration twin: the ``with`` partition is ONE control algebra, two contracts.
 
-Two slices landed independently. Resource ``with`` routes
-``body -> ExitSet -> and_exit(exit_es, disposition=<typed>)``. Assertion ``with``
-routes ``body -> ExitSet -> EffectBoundary``. Each of their own twins proves
-*which sugar gets selected*. Neither proves the two share a control algebra --
-and that is the whole difference between a semantic partition and two syntactic
-implementations fighting over the ``with`` keyword.
+Two slices landed independently. Both now route
+``body -> ExitSet -> and_exit(exit_es, disposition=<typed>)``. Each of their own
+twins proves *which sugar gets selected*. Neither proves the two share a control
+algebra -- and that is the whole difference between a semantic partition and two
+syntactic implementations fighting over the ``with`` keyword.
+
+As first written (#6264) this file found that they shared the **halted** edge
+and stopped at the **completed** edge: ``and_exit`` decided a ``Completed``
+incoming before consulting the contract, so ``WithEffectBoundarySugar`` hand-rolled
+its own fold. That hole is closed. The contract now decides both edges, the
+assertion ``with`` routes through the shared call, and the partition between the
+two contracts is carried by the contract *type* -- which is where a semantic
+partition belongs, rather than by an edge the algebra could not express.
 
 This file builds **one** body ``ExitSet`` and applies **two authenticated
 contracts** to it. The source text, the ``with`` item, the body statements and
@@ -27,12 +34,14 @@ load-bearing rather than documentation.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
     CallParameterV1,
+    EffectBoundaryDisposition,
     EffectBoundarySemanticsV1,
     EffectMatcher,
     EnterResultContractV1,
@@ -262,6 +271,41 @@ def _assertion_route(boundary):
     return routed
 
 
+def _capture_and_exit(sugar, monkeypatch):
+    """Run production and record every ``ExitSet.and_exit`` call it makes.
+
+    Two jobs. First it is the *structural* proof of shared routing: a sugar
+    that hand-rolls its own fold over ``body_es.exits`` produces an empty
+    record, so ``assert calls`` is a real claim about the control path and not
+    about the answer. Second it hands back the operands production actually
+    passed -- the constructed exit ExitSet and the typed contract -- so the
+    laws below sweep production's own objects instead of a test-local
+    reconstruction that could drift from them.
+    """
+    calls: list[tuple] = []
+    original = ExitSet.and_exit
+
+    def probe(self, exit_es, *, disposition):
+        calls.append((self, exit_es, disposition))
+        return original(self, exit_es, disposition=disposition)
+
+    monkeypatch.setattr(ExitSet, "and_exit", probe)
+    try:
+        routed = sugar.desugar()
+    finally:
+        monkeypatch.undo()
+    return routed, calls
+
+
+def _capture_boundary_routing(boundary, monkeypatch):
+    routed, calls = _capture_and_exit(boundary, monkeypatch)
+    assert calls, (
+        "WithEffectBoundarySugar did not reach ExitSet.and_exit: the assertion "
+        "with is folding its own exits again"
+    )
+    return routed, calls
+
+
 # ---------------------------------------------------------------------------
 # Law 1 -- one body, two contracts
 # ---------------------------------------------------------------------------
@@ -408,9 +452,7 @@ def test_discrimination_the_reconstructed_resource_route_matches_production(tmp_
 
     produced = resource.desugar()
     incompletes = [
-        entry
-        for entry in produced.value.statements
-        if isinstance(entry, Incomplete)
+        entry for entry in produced.value.statements if isinstance(entry, Incomplete)
     ]
     assert len(incompletes) == 1
     assert incompletes[0].effect == expected.effect
@@ -513,14 +555,28 @@ ALL_DISPOSITIONS = (
 )
 
 
-def test_assertion_contract_cannot_be_spelled_as_a_generic_exit(tmp_path):
+def test_no_resource_disposition_can_halt_the_completed_edge(tmp_path):
     """The completed edge is where the two contracts stop being interchangeable.
 
-    Under ``Expects``, a body that *completed* is a failed expectation and must
-    halt. ``and_exit`` decides ``Completed`` incoming before it ever consults
-    the disposition, so no resource contract -- for any of the four typed
-    disposition families -- can produce that halt. This is the honest boundary
-    of the shared algebra and it is asserted exhaustively, not asserted away.
+    **Re-pinned.** As first written (#6264) this law said something stronger
+    and structural: ``and_exit`` decided ``Completed`` incoming *before* it
+    ever consulted the disposition, so **no** contract could produce the
+    ``Expects`` halt. That was the honest boundary of the algebra at the time,
+    and it is no longer where the boundary lies -- ``and_exit`` now hands the
+    completed edge to the contract as well.
+
+    So the claim splits, and both halves are asserted:
+
+    - here, the **refusal**, which survives verbatim: no *resource*
+      disposition, for any of the typed families, turns a completed edge into
+      a halt. The sweep is unchanged and still exhaustive.
+    - below, the **capability**, which is new: the assertion contract reaches
+      that halt through ``and_exit`` itself.
+
+    What moved is where the partition is carried. It used to be carried by a
+    hole in the algebra -- an edge no contract could reach. It is now carried
+    by the contract type, which is the only place it was ever a *semantic*
+    partition rather than an implementation limit.
     """
     resource, boundary = _both_arms(tmp_path)
     body_es = _body_exitset(resource.body)
@@ -539,8 +595,92 @@ def test_assertion_contract_cannot_be_spelled_as_a_generic_exit(tmp_path):
         for exit_ in surviving:
             assert isinstance(exit_, Completed), (
                 f"{disposition!r} turned the completed edge into a halt; "
-                "and_exit is not supposed to be able to express Expects"
+                "a resource __exit__ has no verdict to give there"
             )
+
+
+def test_the_assertion_contract_halts_the_completed_edge_through_and_exit(
+    tmp_path, monkeypatch
+):
+    """The other half of the re-pinned law: the capability, through the shared call.
+
+    Production's own contract object, applied to the one body partition by the
+    *same* ``ExitSet.and_exit`` the resource arm calls, halts the completed
+    edge as ``ExpectationNotMetEffect``. Nothing here reconstructs the
+    contract: it is the object ``WithEffectBoundarySugar.desugar`` built and
+    handed to the algebra.
+    """
+    resource, boundary = _both_arms(tmp_path)
+    body_es = _body_exitset(resource.body)
+    body_completion = _sole(body_es, Completed)
+
+    _, calls = _capture_boundary_routing(boundary, monkeypatch)
+    _incoming, exit_es, disposition = calls[0]
+
+    routed = body_es.and_exit(exit_es, disposition=disposition)
+    halted = _on_guard(routed, body_completion.guard)
+    assert isinstance(halted, Halted)
+    assert isinstance(halted.effect, ExpectationNotMetEffect)
+    # The halt carries the body's real completed value, never a fabrication.
+    assert halted.state == body_completion.value
+
+
+def test_discrimination_the_completed_edge_halt_comes_from_the_contract(
+    tmp_path, monkeypatch
+):
+    """Blank ``unmet`` and the identical call completes instead.
+
+    This is what makes the law above about the *contract* and not about the
+    router having grown a second opinion: one field decides the completed
+    edge, and clearing it leaves the halted edge byte-identical.
+    """
+    resource, boundary = _both_arms(tmp_path)
+    body_es = _body_exitset(resource.body)
+    completed_edge = _sole(body_es, Completed).guard
+    halted_edge = _sole(body_es, Halted).guard
+
+    _, calls = _capture_boundary_routing(boundary, monkeypatch)
+    _incoming, exit_es, disposition = calls[0]
+    assert disposition.unmet is not None
+
+    expecting = body_es.and_exit(exit_es, disposition=disposition)
+    suppressing = body_es.and_exit(
+        exit_es, disposition=replace(disposition, unmet=None)
+    )
+
+    assert isinstance(_on_guard(expecting, completed_edge), Halted)
+    assert isinstance(_on_guard(suppressing, completed_edge), Completed)
+    assert _on_guard(expecting, halted_edge) == _on_guard(suppressing, halted_edge)
+
+
+def test_the_assertion_contract_is_not_a_generic_exit(tmp_path, monkeypatch):
+    """The converse refusal: it still cannot stand in for ``__exit__``.
+
+    Hand the assertion contract to the resource route verbatim -- real
+    constructed ``__exit__`` ExitSet, same body -- and the completed edge still
+    halts. Sharing the algebra did not make the two contracts substitutable.
+    """
+    resource, boundary = _both_arms(tmp_path)
+    body_es = _body_exitset(resource.body)
+    _routed, calls = _capture_boundary_routing(boundary, monkeypatch)
+    _incoming, _exit_es, disposition = calls[0]
+
+    real_exit_es = sugar_outcome_to_exitset(resource.exit.desugar())
+    as_exit = body_es.and_exit(real_exit_es, disposition=disposition)
+
+    assert isinstance(_on_guard(as_exit, _sole(body_es, Completed).guard), Halted)
+    for resource_disposition in ALL_DISPOSITIONS:
+        assert _resource_route(body_es, resource, resource_disposition) != as_exit
+
+
+def test_discrimination_a_resource_contract_reaches_that_exit_normally(tmp_path):
+    """The route above is a live route, so the refusal is a refusal."""
+    resource, _ = _both_arms(tmp_path)
+    body_es = _body_exitset(resource.body)
+    real_exit_es = sugar_outcome_to_exitset(resource.exit.desugar())
+
+    routed = body_es.and_exit(real_exit_es, disposition=resource.disposition)
+    assert isinstance(_on_guard(routed, _sole(body_es, Completed).guard), Completed)
 
 
 def test_discrimination_the_disposition_sweep_is_not_inert(tmp_path):
@@ -620,7 +760,7 @@ def test_discrimination_a_completed_exit_does_not_supersede(tmp_path):
 
 ROUTER_SOURCES = (
     "sugar_lift_py_tests/outcome/exit_set.py",
-    "sugar_lift_py_tests/outcome/resource_exit_disposition.py",
+    "sugar_lift_py_tests/outcome/exit_disposition.py",
     "sugar_lift_py_tests/sugar/with_effect_boundary_sugar.py",
 )
 
@@ -643,9 +783,7 @@ def _router_text():
     import sugar_lift_py_tests
 
     root = pathlib.Path(sugar_lift_py_tests.__file__).parent.parent
-    return {
-        name: (root / name).read_text(encoding="utf-8") for name in ROUTER_SOURCES
-    }
+    return {name: (root / name).read_text(encoding="utf-8") for name in ROUTER_SOURCES}
 
 
 def test_routers_do_not_branch_on_keyword_vendor_or_manager_spelling():
@@ -659,13 +797,60 @@ def test_discrimination_the_router_scan_reads_real_files():
     assert len(text) == len(ROUTER_SOURCES)
     assert "def and_exit(" in text["sugar_lift_py_tests/outcome/exit_set.py"]
     assert (
-        "def disposition_verdict("
-        in text["sugar_lift_py_tests/outcome/resource_exit_disposition.py"]
+        "def exit_disposition_effect("
+        in text["sugar_lift_py_tests/outcome/exit_disposition.py"]
     )
     assert (
         "ExpectationNotMetEffect"
         in text["sugar_lift_py_tests/sugar/with_effect_boundary_sugar.py"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Law 11 -- the assertion router IS the shared algebra, not a second one
+# ---------------------------------------------------------------------------
+
+
+def test_the_assertion_with_routes_through_the_shared_exitset_algebra(
+    tmp_path, monkeypatch
+):
+    """Structural, not behavioural: one call, one contract, one entry point.
+
+    Every law above compares *outcomes*, and two independent folds can agree on
+    outcomes. This one watches the control path. ``WithEffectBoundarySugar``
+    must reach ``ExitSet.and_exit`` -- the same method ``WithResourceSugar``
+    calls -- exactly once per manager face, hand it the one body partition, and
+    return what it got back. If it kept a private fold, ``calls`` is empty.
+    """
+    resource, boundary = _both_arms(tmp_path)
+    routed, calls = _capture_boundary_routing(boundary, monkeypatch)
+
+    assert len(calls) == 1
+    incoming, exit_es, disposition = calls[0]
+
+    # It routed THE body partition -- the same one the resource arm receives.
+    assert incoming == _body_exitset(resource.body)
+    # Under a typed two-edge contract, with an unmet effect on the completed edge.
+    assert isinstance(disposition, EffectBoundaryDisposition)
+    assert isinstance(disposition.unmet, ExpectationNotMetEffect)
+    # And it returned the algebra's answer, not a post-processed one.
+    assert routed == incoming.and_exit(exit_es, disposition=disposition)
+
+
+def test_discrimination_the_routing_probe_observes_a_real_call(tmp_path, monkeypatch):
+    """The probe is armed: it sees the resource router too, under a resource contract.
+
+    Without this, an empty ``calls`` could mean "the probe never worked" rather
+    than "the sugar hand-rolled its fold", and the law above would be vacuous.
+    """
+    resource, _ = _both_arms(tmp_path)
+    _routed, calls = _capture_and_exit(resource, monkeypatch)
+
+    assert calls, "the probe does not observe ExitSet.and_exit at all"
+    for _incoming, _exit_es, disposition in calls:
+        assert not isinstance(
+            disposition, EffectBoundaryDisposition
+        ), "the resource with reached the algebra carrying an assertion contract"
 
 
 # ---------------------------------------------------------------------------

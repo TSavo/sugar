@@ -83,6 +83,7 @@ def test_accumulator_referencing_assert_constructs_as_loop_recurrence():
     ).sugar()
     assert any(type(s).__name__ == "LoopRecurrenceSugar" for s in sugar.statements)
 
+
 def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
     # t = 0; for x in [1,2,3]: t = t + x; return t  -- the carried accumulator is
     # threaded through the unroll (t reads the previous iteration's value), so it

@@ -10,8 +10,6 @@ readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
 requires-python = ">=3.8"
 authors = [{ name = "Sugar" }]
-# Runtime deps: installing this package (with or without extras) is the sole
-# authority for blake3 / pynacl / cbor2 / tqdm. Workflows must not re-list them.
 dependencies = [
     "blake3>=0.3.0",
     "pynacl>=1.5",
@@ -20,15 +18,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Test authority: pytest and suite tooling. Workflows install
-# `sugar-lift-py-tests[test]` — never a bare `pytest` pin.
-test = ["pytest>=7", "black==26.5.1", "pyright==1.1.411", "itsdangerous==2.2.0"]
-# Corpus / wall inputs — named extras, not free-floating workflow pins.
-numpy = ["numpy"]
-pandas = ["pandas"]
-scikit-learn = ["scikit-learn"]
-# Convenience composite for walls + restored suite that need both corpora.
-walls = ["numpy", "pandas"]
+# THIS TABLE IS THE SOLE DEPENDENCY AUTHORITY for every CI job that touches this
+# package. No workflow may hand-list any package named here (or in `dependencies`
+# above); workflows install `-e '...sugar-lift-py-tests[test]'` and nothing else.
+# Enforced by tests/test_test_extras_are_the_dependency_authority.py.
+#
+# `numpy` is imported at MODULE scope by tests/test_numpy_pandas_panic_audit.py;
+# `pandas` is imported inside tests in that same file. Both are required by this
+# package's ordinary suite, so they are declared here rather than hand-listed at
+# each call site — an undeclared module-scope import aborts collection for the
+# WHOLE package (#6260).
+# `itsdangerous` stays declared for the claim-mass tripwire corpus tooling.
+test = [
+    "pytest>=7",
+    "black==26.5.1",
+    "pyright==1.1.411",
+    "itsdangerous==2.2.0",
+    "numpy",
+    "pandas",
+]
 
 [project.scripts]
 sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"
