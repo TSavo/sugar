@@ -2671,6 +2671,122 @@ class Delete(Statement):
         )
 
 
+def _substituted_store_target(statement, target, scope):
+    """Substitute the receiver (and subscript index) of a store target.
+
+    The attribute/subscript NAME is a store selector, never a reference, but
+    the RECEIVER is an ordinary expression: it is what carries an authenticated
+    object place or a constructed receiver into the store. Returns the rewritten
+    target, or ``None`` when nothing changed.
+    """
+    from .shadow import rewrite
+
+    receiver, receiver_changed = statement._substitute_field(target.value, scope)
+    changes = {"value": receiver} if receiver_changed else {}
+    if isinstance(target, Subscript):
+        index, index_changed = statement._substitute_field(target.slice_, scope)
+        if index_changed:
+            changes["slice_"] = index
+        if isinstance(receiver, ObjectPlaceStateV1):
+            projected = receiver.subscript_key_projection(index)
+            if projected is not None:
+                changes["slice_"] = projected
+    return rewrite(target, **changes) if changes else None
+
+
+def _valued_store_target_sugar(target, value_sugar, site):
+    """The ONE ladder for a valued attribute/subscript store target.
+
+    ``o.x = v`` and ``o.x: T = v`` are the SAME runtime store — an annotation
+    is never checked at runtime, so it states nothing and may not move the
+    store to a different arm. Both spellings therefore construct through this
+    one ladder: an authenticated object place is a place assign, a constructed
+    receiver is a receiver field store, and any other receiver is the typed
+    runtime store effect. Returns ``None`` for a target this ladder does not
+    own, so the caller stays loud.
+    """
+    from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
+
+    if isinstance(target, Attribute):
+        if isinstance(target.value, ObjectPlaceStateV1):
+            return PlaceAssignSugar(
+                receiver=target.value.sugar(),
+                selector_kind="attribute",
+                selector=target.attr,
+                value=value_sugar,
+                site=site,
+            )
+        if isinstance(target.value, (BindingCoordinateRef, ConstructedReceiverRef)):
+            from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+                ReceiverFieldStoreSugar,
+            )
+
+            return ReceiverFieldStoreSugar(
+                receiver=target.value.sugar(),
+                value=value_sugar,
+                attr=target.attr,
+                site=site,
+            )
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            AttributeStoreEffectSugar,
+        )
+
+        return AttributeStoreEffectSugar(
+            receiver=target.value.sugar(),
+            value=value_sugar,
+            attr=target.attr,
+            site=site,
+        )
+    if isinstance(target, Subscript):
+        if isinstance(target.value, ObjectPlaceStateV1):
+            return PlaceAssignSugar(
+                receiver=target.value.sugar(),
+                selector_kind="subscript",
+                selector=target.slice_.sugar(),
+                value=value_sugar,
+                site=site,
+            )
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            SubscriptStoreEffectSugar,
+        )
+
+        return SubscriptStoreEffectSugar(
+            index_text=target.slice_.fragment.text,
+            site=site,
+        )
+    return None
+
+
+def _store_target_binding(statement, target, scope):
+    """Thread an authenticated object place forward across a store.
+
+    ``o.x = v`` and ``o.x: T = v`` update the same place, so both report the
+    same binding: every name bound to that exact object identity carries the
+    stored field onward. A receiver that is not an authenticated place threads
+    nothing — the store is an effect, not a lexical binding.
+    """
+    if not isinstance(target.value, ObjectPlaceStateV1):
+        return None
+    if isinstance(target, Attribute):
+        updated = target.value.with_attribute_store(
+            target.attr, statement.value, statement.fragment
+        )
+    else:
+        updated = target.value.with_subscript_store(
+            target.slice_, statement.value, statement.fragment
+        )
+    if updated is None:
+        return None
+    return {
+        name: replace(entry, state=updated)
+        for name, entry in scope.items()
+        if isinstance(name, str)
+        and isinstance(entry, BindingEntryV1)
+        and isinstance(entry.state, ObjectPlaceStateV1)
+        and entry.state.object_identity_cid == target.value.object_identity_cid
+    }
+
+
 class Assign(Statement):
     targets: Tuple[Expression, ...]
     value: Expression
@@ -2688,19 +2804,9 @@ class Assign(Statement):
         if len(self.targets) == 1 and isinstance(
             self.targets[0], (Attribute, Subscript)
         ):
-            target = self.targets[0]
-            receiver, receiver_changed = self._substitute_field(target.value, scope)
-            target_changes = {"value": receiver} if receiver_changed else {}
-            if isinstance(target, Subscript):
-                index, index_changed = self._substitute_field(target.slice_, scope)
-                if index_changed:
-                    target_changes["slice_"] = index
-                if isinstance(receiver, ObjectPlaceStateV1):
-                    projected = receiver.subscript_key_projection(index)
-                    if projected is not None:
-                        target_changes["slice_"] = projected
-            if target_changes:
-                changes["targets"] = (rewrite(target, **target_changes),)
+            new_target = _substituted_store_target(self, self.targets[0], scope)
+            if new_target is not None:
+                changes["targets"] = (new_target,)
         if not changes:
             return self
         return rewrite(self, **changes)
@@ -2876,40 +2982,12 @@ class Assign(Statement):
             target = self.targets[0]
             if isinstance(target, Name):
                 return {target.id: self.value}
-            if isinstance(target, Attribute) and isinstance(
-                target.value, ObjectPlaceStateV1
-            ):
-                updated = target.value.with_attribute_store(
-                    target.attr, self.value, self.fragment
-                )
-                if updated is None:
+            if isinstance(target, (Attribute, Subscript)):
+                threaded = _store_target_binding(self, target, scope)
+                if threaded is not None:
+                    return threaded
+                if isinstance(target.value, ObjectPlaceStateV1):
                     return None
-                return {
-                    name: replace(entry, state=updated)
-                    for name, entry in scope.items()
-                    if isinstance(name, str)
-                    and isinstance(entry, BindingEntryV1)
-                    and isinstance(entry.state, ObjectPlaceStateV1)
-                    and entry.state.object_identity_cid
-                    == target.value.object_identity_cid
-                }
-            if isinstance(target, Subscript) and isinstance(
-                target.value, ObjectPlaceStateV1
-            ):
-                updated = target.value.with_subscript_store(
-                    target.slice_, self.value, self.fragment
-                )
-                if updated is None:
-                    return None
-                return {
-                    name: replace(entry, state=updated)
-                    for name, entry in scope.items()
-                    if isinstance(name, str)
-                    and isinstance(entry, BindingEntryV1)
-                    and isinstance(entry.state, ObjectPlaceStateV1)
-                    and entry.state.object_identity_cid
-                    == target.value.object_identity_cid
-                }
             # Name-only nested/flat display unpack.
             name_only = self._destructured_binding()
             if name_only is not None:
@@ -3272,65 +3350,14 @@ class Assign(Statement):
                 site=self.fragment,
             )
 
-        if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
-            if isinstance(self.targets[0].value, ObjectPlaceStateV1):
-                from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                    PlaceAssignSugar,
-                )
-
-                return PlaceAssignSugar(
-                    receiver=self.targets[0].value.sugar(),
-                    selector_kind="attribute",
-                    selector=self.targets[0].attr,
-                    value=self.value.sugar(),
-                    site=self.fragment,
-                )
-            if isinstance(
-                self.targets[0].value,
-                (BindingCoordinateRef, ConstructedReceiverRef),
-            ):
-                from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
-                    ReceiverFieldStoreSugar,
-                )
-
-                return ReceiverFieldStoreSugar(
-                    receiver=self.targets[0].value.sugar(),
-                    value=self.value.sugar(),
-                    attr=self.targets[0].attr,
-                    site=self.fragment,
-                )
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                AttributeStoreEffectSugar,
+        if len(self.targets) == 1 and isinstance(
+            self.targets[0], (Attribute, Subscript)
+        ):
+            store = _valued_store_target_sugar(
+                self.targets[0], self.value.sugar(), self.fragment
             )
-
-            return AttributeStoreEffectSugar(
-                receiver=self.targets[0].value.sugar(),
-                value=self.value.sugar(),
-                attr=self.targets[0].attr,
-                site=self.fragment,
-            )
-
-        if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
-            if isinstance(self.targets[0].value, ObjectPlaceStateV1):
-                from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                    PlaceAssignSugar,
-                )
-
-                return PlaceAssignSugar(
-                    receiver=self.targets[0].value.sugar(),
-                    selector_kind="subscript",
-                    selector=self.targets[0].slice_.sugar(),
-                    value=self.value.sugar(),
-                    site=self.fragment,
-                )
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                SubscriptStoreEffectSugar,
-            )
-
-            return SubscriptStoreEffectSugar(
-                index_text=self.targets[0].slice_.fragment.text,
-                site=self.fragment,
-            )
+            if store is not None:
+                return store
 
         return super()._construct_sugar()
 
@@ -3439,8 +3466,13 @@ class AnnAssign(Statement):
     _child_fields = ("target", "annotation", "value")
 
     def substitute(self, scope):
-        """`<target>: <ann> = <value>` -- substitute the annotation and value;
-        the target is a binding site, never substituted."""
+        """`<target>: <ann> = <value>` -- substitute the annotation and value.
+
+        A plain Name target is a binding site and is never substituted. An
+        attribute/subscript target is a STORE, exactly as a plain Assign's is:
+        its receiver is an ordinary expression and is substituted, so an
+        authenticated object place or a constructed receiver reaches the store
+        the same way through either spelling."""
         from .shadow import rewrite
 
         changed = {}
@@ -3448,13 +3480,23 @@ class AnnAssign(Statement):
             new, d = self._substitute_field(getattr(self, fld), scope)
             if d:
                 changed[fld] = new
+        if isinstance(self.target, (Attribute, Subscript)):
+            new_target = _substituted_store_target(self, self.target, scope)
+            if new_target is not None:
+                changed["target"] = new_target
         return self if not changed else rewrite(self, **changed)
 
     def substitution_binding(self, scope):
-        # Only an annotated assignment WITH a value and a plain Name target
-        # binds; a bare `x: int` is a declaration and binds nothing.
-        if self.value is not None and isinstance(self.target, Name):
+        # Only an annotated assignment WITH a value binds; a bare `x: int` is a
+        # declaration and binds nothing. A Name target binds lexically; an
+        # attribute/subscript target over an authenticated object place threads
+        # that place forward, the same store Assign reports.
+        if self.value is None:
+            return None
+        if isinstance(self.target, Name):
             return {self.target.id: self.value}
+        if isinstance(self.target, (Attribute, Subscript)):
+            return _store_target_binding(self, self.target, scope)
         return None
 
     def _construct_sugar(self):
@@ -3487,26 +3529,12 @@ class AnnAssign(Statement):
                 value=self.target.value.sugar(),
                 site=self.fragment,
             )
-        if self.value is not None and isinstance(self.target, Attribute):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                AttributeStoreEffectSugar,
+        if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
+            store = _valued_store_target_sugar(
+                self.target, self.value.sugar(), self.fragment
             )
-
-            return AttributeStoreEffectSugar(
-                receiver=self.target.value.sugar(),
-                value=self.value.sugar(),
-                attr=self.target.attr,
-                site=self.fragment,
-            )
-        if self.value is not None and isinstance(self.target, Subscript):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                SubscriptStoreEffectSugar,
-            )
-
-            return SubscriptStoreEffectSugar(
-                index_text=self.target.slice_.fragment.text,
-                site=self.fragment,
-            )
+            if store is not None:
+                return store
         return super()._construct_sugar()
 
 
