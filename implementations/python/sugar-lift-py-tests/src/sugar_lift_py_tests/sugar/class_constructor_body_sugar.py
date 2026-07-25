@@ -31,25 +31,34 @@ class ClassConstructorBodySugar(Sugar):
                         None, self.receiver_coordinate_cid
                     )
                 )
-            from sugar_lift_py_tests.floor import CallSiteValue
-            from sugar_lift_py_tests.ir import ctor, str_const
+            from sugar_lift_py_tests.floor import BlockValue
+            from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-            call = CallSiteValue(
-                target_name="python:source-class-init",
-                arg_values=(),
-                parameters=(),
-                term=ctor(
-                    "python:source-class-init",
-                    [str_const(value.class_definition_cid)],
-                    symbol_kind="coordinate",
-                ),
-                body=self.initializer_body,
-            )
-            block = call.force_floor(
-                ctx,
-                owner="ClassConstructorBodySugar.desugar",
-                project_callsite=False,
-            )
+            # The outer CallSiteValue.force_floor already curried constructor
+            # formals into ``ctx`` (formal_coordinate_cids → actuals). Reduce the
+            # initializer under that ctx directly. A nested empty CallSiteValue
+            # (parameters=(), arg_values=()) was previously used as a force_floor
+            # wrapper; after store ExitSet composition, that path left
+            # BindingCoordinateRef formals unbound and raised bare
+            # SugarNotWritten during source-derived manager construction.
+            outcome = self.initializer_body.desugar(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            if isinstance(outcome, ExitSet):
+                collapsed = outcome.collapse()
+                if not isinstance(collapsed, Complete):
+                    return outcome
+                outcome = collapsed
+            if not isinstance(outcome, Complete):
+                return outcome
+            block = outcome.value
+            if not isinstance(block, BlockValue):
+                # Single-entry reduction (rare): wrap as a block of stores.
+                block = BlockValue(
+                    (block,),
+                    can_fall_through=True,
+                )
             return Complete(
                 value.construct_receiver_state_from_block(
                     block, self.receiver_coordinate_cid

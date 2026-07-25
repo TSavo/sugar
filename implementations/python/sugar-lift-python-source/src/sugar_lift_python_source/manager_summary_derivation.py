@@ -472,7 +472,8 @@ def populate_source_derived_resource_refs(
             graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph)
         if not isinstance(resolved, ResolvedPythonObjectV1):
-            _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
+            kind = getattr(resolved, "kind", None) or "no-derived-contract"
+            _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue
         actuals = []
         for node in call.args:
@@ -518,7 +519,9 @@ def populate_source_derived_resource_refs(
                     )
                 )
         if len(actuals) != len(call.args):
-            _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
+            _install_derivation_gap(
+                context, coordinate, receipt, "incomplete-call-actuals"
+            )
             continue
         behavior = construct_manager_behavior(
             resolved,
@@ -531,15 +534,36 @@ def populate_source_derived_resource_refs(
         from .manager_protocol_construction import ConstructedManagerProtocolV1
 
         if not isinstance(behavior, ConstructedManagerBehaviorV1):
-            _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
+            # Stage-keyed residual: opaque-call-target:sorted, force-floor:… —
+            # never collapse assertion-membrane mass into a single opaque label.
+            _install_derivation_gap(
+                context,
+                coordinate,
+                receipt,
+                _construction_gap_kind(behavior),
+            )
             continue
         protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         if not isinstance(protocol, ConstructedManagerProtocolV1):
-            _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
+            kind = getattr(protocol, "kind", None) or "protocol-construction"
+            detail = getattr(protocol, "detail", None)
+            _install_derivation_gap(
+                context,
+                coordinate,
+                receipt,
+                f"{kind}:{detail}" if detail else str(kind),
+            )
             continue
         summary = derive_manager_summary(protocol, behavior=behavior)
         if not isinstance(summary, DerivedManagerSummaryV1):
-            _install_derivation_gap(context, coordinate, receipt, "no-derived-contract")
+            kind = getattr(summary, "kind", None) or "summary-derivation"
+            detail = getattr(summary, "detail", None)
+            _install_derivation_gap(
+                context,
+                coordinate,
+                receipt,
+                f"{kind}:{detail}" if detail else str(kind),
+            )
             continue
         context.source_derived_contract_refs[coordinate] = (
             SourceDerivedContextManagerRefV1(
@@ -550,6 +574,18 @@ def populate_source_derived_resource_refs(
                 protocol,
             )
         )
+
+
+def _construction_gap_kind(gap) -> str:
+    kind = getattr(gap, "kind", None) or "no-derived-contract"
+    detail = getattr(gap, "detail", None)
+    if detail is None or detail == "":
+        return str(kind)
+    # Keep kind:detail compact for census keys (first free-name / first panic).
+    text = str(detail)
+    if len(text) > 80:
+        text = text[:77] + "..."
+    return f"{kind}:{text}"
 
 
 def _install_derivation_gap(context, coordinate, receipt, kind: str) -> None:
