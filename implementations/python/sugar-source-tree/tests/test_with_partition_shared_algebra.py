@@ -452,9 +452,7 @@ def test_discrimination_the_reconstructed_resource_route_matches_production(tmp_
 
     produced = resource.desugar()
     incompletes = [
-        entry
-        for entry in produced.value.statements
-        if isinstance(entry, Incomplete)
+        entry for entry in produced.value.statements if isinstance(entry, Incomplete)
     ]
     assert len(incompletes) == 1
     assert incompletes[0].effect == expected.effect
@@ -785,9 +783,7 @@ def _router_text():
     import sugar_lift_py_tests
 
     root = pathlib.Path(sugar_lift_py_tests.__file__).parent.parent
-    return {
-        name: (root / name).read_text(encoding="utf-8") for name in ROUTER_SOURCES
-    }
+    return {name: (root / name).read_text(encoding="utf-8") for name in ROUTER_SOURCES}
 
 
 def test_routers_do_not_branch_on_keyword_vendor_or_manager_spelling():
@@ -852,9 +848,9 @@ def test_discrimination_the_routing_probe_observes_a_real_call(tmp_path, monkeyp
 
     assert calls, "the probe does not observe ExitSet.and_exit at all"
     for _incoming, _exit_es, disposition in calls:
-        assert not isinstance(disposition, EffectBoundaryDisposition), (
-            "the resource with reached the algebra carrying an assertion contract"
-        )
+        assert not isinstance(
+            disposition, EffectBoundaryDisposition
+        ), "the resource with reached the algebra carrying an assertion contract"
 
 
 # ---------------------------------------------------------------------------

@@ -129,9 +129,7 @@ def construct_manager_behavior(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
 
-    frame_result = resolve_source_visible_frame(
-        resolved, graph=graph, session=session
-    )
+    frame_result = resolve_source_visible_frame(resolved, graph=graph, session=session)
     if isinstance(frame_result, ManagerConstructionGapV1):
         return frame_result
     frame, _target = frame_result

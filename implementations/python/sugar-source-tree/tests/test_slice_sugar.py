@@ -17,9 +17,7 @@ def _sub(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    universe = (
-        next(SourceFile(path_source(path)).functions()).sugar().desugar().value
-    )
+    universe = next(SourceFile(path_source(path)).functions()).sugar().desugar().value
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term
