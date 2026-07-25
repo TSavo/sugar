@@ -27,8 +27,10 @@ from pathlib import Path
 
 
 def census(root: Path) -> int:
+    from sugar_lift_py_tests.audit_only.collect_construction_gaps import (
+        collect_construction_panic,
+    )
     from sugar_lift_py_tests.desugar_axis import DesugarAxis
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.tree import SourceFile
@@ -44,16 +46,21 @@ def census(root: Path) -> int:
     for i, f in enumerate(files):
         ft = time.time()
         rel = str(f.relative_to(root))
-        try:
+
+        def _measure_file(
+            _f=f,
+            _rel=rel,
+        ):
+            nonlocal total_fns, clean_fns, clean_files
             reporter = CollectingReporter()
-            sf = SourceFile.from_path(str(f), reporter=reporter)
+            sf = SourceFile.from_path(str(_f), reporter=reporter)
             for fn in sf.functions():
                 total_fns += 1
                 try:
                     span = fn.line_col_span()
-                    where = f"{rel}:{span.start_line}:{span.start_col}"
+                    where = f"{_rel}:{span.start_line}:{span.start_col}"
                 except Exception:  # noqa: BLE001
-                    where = f"{rel}:?"
+                    where = f"{_rel}:?"
                 try:
                     sugar = fn.sugar()  # ONE construction; nested gaps self-report
                     clean_fns += 1
@@ -70,27 +77,36 @@ def census(root: Path) -> int:
                     families[node.kind] += 1
             if not reporter.gaps:
                 clean_files += 1
-            print(
-                f"[{i + 1}/{len(files)}] {time.time() - ft:5.1f}s "
-                f"gaps={len(reporter.gaps):5d} "
-                f"desugar={sum(desugar.families.values()):5d} {rel}",
-                flush=True,
-            )
-        except ConstructionPanic as panic:
-            # A BaseException: `except Exception` below cannot see it, and an
-            # uncaught one aborts the whole run. Named arm, red row, keep going.
-            crashes[f"ConstructionPanic:{panic.info.owner}"] += 1
-            print(
-                f"[{i + 1}/{len(files)}]  CONSTRUCTION PANIC "
-                f"{panic.info.owner} {rel}",
-                flush=True,
-            )
+            return len(reporter.gaps)
+
+        # Sole ConstructionPanic membrane: audit_only.collect_construction_panic.
+        # No local ``except ConstructionPanic`` soft continue (panic-catch law).
+        try:
+            _, panic_row = collect_construction_panic(rel, _measure_file)
         except Exception as e:  # a crash is a DEFECT row, never silence
             crashes[type(e).__name__] += 1
             print(
                 f"[{i + 1}/{len(files)}]  CRASH {type(e).__name__} {rel}",
                 flush=True,
             )
+            continue
+        if panic_row is not None:
+            owner = (
+                (panic_row.info or {}).get("owner")
+                if isinstance(panic_row.info, dict)
+                else "ConstructionPanic"
+            )
+            crashes[f"ConstructionPanic:{owner}"] += 1
+            print(
+                f"[{i + 1}/{len(files)}]  CONSTRUCTION PANIC " f"{owner} {rel}",
+                flush=True,
+            )
+            continue
+        print(
+            f"[{i + 1}/{len(files)}] {time.time() - ft:5.1f}s "
+            f"desugar={sum(desugar.families.values()):5d} {rel}",
+            flush=True,
+        )
 
     print(
         f"\n=== census: {len(files)} files ({clean_files} clean), "

@@ -254,31 +254,40 @@ class DesugarAxis:
         the true grain of a refusal (one refusal per reduction), and appears in
         defect rows. It is never used as an effect-occurrence key.
         """
-        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+        from sugar_lift_py_tests.audit_only.collect_construction_gaps import (
+            collect_construction_panic,
+        )
         from sugar_source_tree.panic import SugarNotWritten
 
-        try:
-            outcome = sugar.desugar(None)  # type: ignore[attr-defined]
-        except SugarNotWritten as gap:
-            # A refusal aborts the whole reduction: exactly one per desugar
-            # call, so the call coordinate IS the occurrence. (Instrument gap:
-            # SourceTreePanic carries owner/observed/requested/fix and no
-            # fragment, so a refusal cannot say WHERE inside the function.)
-            owner = _refusal_owner(gap)
-            self._tally(owner, f"desugar-call:{where}")
-            return
-        except ConstructionPanic as panic:
-            # BaseException by design. Caught BY NAME so it neither escapes the
-            # census nor lands in semantic R. Red, separately counted.
+        # ConstructionPanic is a BaseException. Hold it only through the sole
+        # sanctioned audit membrane (collect_construction_panic) — never with a
+        # local ``except ConstructionPanic`` soft continue (panic-catch law).
+        def _desugar():
+            try:
+                return sugar.desugar(None)  # type: ignore[attr-defined]
+            except SugarNotWritten as gap:
+                return ("refusal", gap)
+            except Exception as exc:  # noqa: BLE001 -- ordinary defect, not R
+                return ("defect", exc)
+
+        outcome, panic_row = collect_construction_panic(where, _desugar)
+        if panic_row is not None:
             self.construction_panics.append(
                 {
                     "where": where,
-                    "owner": getattr(panic.info, "owner", None),
-                    "message": panic.info.message,
+                    "owner": (panic_row.info or {}).get("owner")
+                    if isinstance(panic_row.info, dict)
+                    else getattr(getattr(panic_row, "info", None), "owner", None),
+                    "message": panic_row.message,
                 }
             )
             return
-        except Exception as exc:  # noqa: BLE001 -- an ordinary defect, not R
+        if isinstance(outcome, tuple) and len(outcome) == 2 and outcome[0] == "refusal":
+            owner = _refusal_owner(outcome[1])
+            self._tally(owner, f"desugar-call:{where}")
+            return
+        if isinstance(outcome, tuple) and len(outcome) == 2 and outcome[0] == "defect":
+            exc = outcome[1]
             self._defect("desugar-exception", where, f"{type(exc).__name__}: {exc}")
             return
 
