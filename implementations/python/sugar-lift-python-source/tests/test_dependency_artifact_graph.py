@@ -139,6 +139,95 @@ def test_dynamic_export_stays_a_typed_loud_gap(tmp_path: Path) -> None:
     assert result.distribution_artifact_cid == graph.distribution_artifact_cid
 
 
+def test_decorated_definition_resolves_without_decorator_name_authority(
+    tmp_path: Path,
+) -> None:
+    """``@decorator def name`` is still a static export of ``name``.
+
+    Mid-band residual diagnosis: re-export of ``@contextmanager`` resources
+    stopped at dynamic-export solely because any decorator_list was treated
+    as opaque. Export resolution must not require recognizing the decorator
+    spelling; construction may still refuse opaque decorator application.
+    """
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import build\n",
+        implementation_source=(
+            "def wrap(fn):\n"
+            "    return fn\n\n"
+            "@wrap\n"
+            "def build(value):\n"
+            "    return value\n"
+        ),
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.kind == "function"
+    assert result.definition.name == "build"
+    assert result.module_name == "example_pkg.implementation"
+    assert result.reexport_warrants
+    assert "example_pkg" not in sys.modules
+
+
+def test_contextmanager_decorated_reexport_resolves_as_definition(
+    tmp_path: Path,
+) -> None:
+    """Re-exported ``@contextmanager`` factory resolves to its definition.
+
+    εR board note: this unblocks *export* for ensure_clean-class sites.
+    Full contract ΔR still requires constructing the body/disposition; body
+    opaques remain separate residual. Do not claim tens-of-sites With ΔR
+    from export alone.
+    """
+    distribution = _install_distribution(
+        tmp_path,
+        package_source="from example_pkg.implementation import make_resource\n",
+        implementation_source=(
+            "from contextlib import contextmanager\n\n"
+            "@contextmanager\n"
+            "def make_resource():\n"
+            "    yield 9\n"
+        ),
+    )
+    graph = DependencyArtifactGraph.authenticate(distribution)
+    demand = _demand(
+        tmp_path,
+        "import example_pkg\nwith example_pkg.make_resource():\n    pass\n",
+    )
+    result = resolve_import_binding(demand, graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.name == "make_resource"
+    assert result.definition.kind == "function"
+    assert result.module_name == "example_pkg.implementation"
+
+
+def test_real_pandas_ensure_clean_export_resolves_without_name_authority() -> None:
+    """Live residual sample: export no longer stops at decorator dynamic-export."""
+    graph = DependencyArtifactGraph.authenticate(
+        importlib.metadata.distribution("pandas")
+    )
+    # Demand shape matches authenticated import use of the re-export chain.
+    import tempfile
+    from pathlib import Path as P
+
+    root = P(tempfile.mkdtemp())
+    demand = _demand(
+        root,
+        "from pandas._testing import ensure_clean\nensure_clean()\n",
+    )
+    result = resolve_import_binding(demand, graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1), getattr(result, "kind", result)
+    assert result.definition.name == "ensure_clean"
+    assert result.definition.kind == "function"
+    assert "contexts" in result.module_name
+    # No vendor arm: resolution is content/source, not the spelling ensure_clean
+    # special-cased in Sugar.
+
+
 def test_real_pytest_reexport_resolves_without_manager_name_recognition(
     tmp_path: Path,
 ) -> None:
