@@ -75,6 +75,47 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
         and isinstance(entry.effect, AttributeStoreRuntimeEffect)
     ]
 
-    assert len(stores) == 1
-    assert len(stores[0].branch_conditions) == 1
+    # The store is guarded by `predicate` AND it is itself fallible, so the one
+    # occurrence has TWO faces: it completed, or it halted. `IfSugar` reduces the
+    # branch body to exits and absorbs each one as guarded red testimony, so both
+    # faces reach the record -- carrying the same effect under complementary
+    # conditions over the store's own outcome coordinate.
+    assert len(stores) == 2, [s.branch_conditions for s in stores]
+    assert {s.effect for s in stores} == {stores[0].effect}, (
+        "both faces are the SAME store occurrence, not two stores"
+    )
+
+    def cites_store_outcome(term):
+        if getattr(term, "name", None) == "python:store_completed":
+            return True
+        return any(cites_store_outcome(a) for a in getattr(term, "args", ()) or ())
+
+    def mentions_store_outcome(formula, negated):
+        found = []
+
+        def walk(node, under_not):
+            kind = getattr(node, "kind", None)
+            if kind == "not":
+                for operand in node.operands:
+                    walk(operand, not under_not)
+                return
+            if kind is not None:
+                for operand in node.operands:
+                    walk(operand, under_not)
+                return
+            # an atomic formula: check its argument terms
+            if any(cites_store_outcome(a) for a in getattr(node, "args", ()) or ()):
+                found.append(under_not)
+
+        walk(formula, False)
+        return negated in found
+
+    conditions = [s.branch_conditions for s in stores]
+    assert all(len(c) == 1 for c in conditions), conditions
+    assert any(mentions_store_outcome(c[0], False) for c in conditions), (
+        "one face must hold where the store COMPLETED"
+    )
+    assert any(mentions_store_outcome(c[0], True) for c in conditions), (
+        "the complementary face must hold where the store HALTED"
+    )
     assert any(type(entry).__name__ == "ReturnValue" for entry in record)

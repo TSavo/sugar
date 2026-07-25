@@ -42,6 +42,21 @@ def _is_negation(left: Formula, right: Formula) -> bool:
     )
 
 
+def complement_guard(guard: Formula) -> Formula:
+    """The other face of a partition, without stacking a second ``not``.
+
+    ``complement_guard(not_(g)) is g``-shaped, so a guarded pair built from
+    either direction spells the same two formulas. Double negation would still
+    normalize (``_is_negation`` looks one level deep), but it would leak an
+    ``not not g`` into the emitted FOL, and the FOL is the deliverable.
+    """
+    if getattr(guard, "kind", None) == "not":
+        operands = getattr(guard, "operands", ())
+        if len(operands) == 1:
+            return operands[0]
+    return not_(guard)
+
+
 def _and_guards(left: Formula, right: Formula) -> Formula:
     if _is_false(left) or _is_false(right) or _is_negation(left, right):
         return false_guard()
@@ -311,6 +326,33 @@ class ExitSet(Generic[T]):
         return Incomplete(exit_.effect)
 
 
+def sole_completed_outcome(outcome):
+    """Project a body outcome onto its ONE completed arm.
+
+    A store partitions a block into a completed and a halted arm, so a body that
+    contains one reduces to an ``ExitSet`` rather than to a single linear
+    ``Outcome``. A caller that is legitimately reasoning about the success path
+    only -- "what does this store witness, what is the post when everything
+    completed" -- uses this door.
+
+    It REFUSES loudly when there is not exactly one completed arm, so a dropped
+    success face or a silently duplicated one surfaces here instead of being
+    papered over. It is not a way to discard halt arms: the halted arms are the
+    other half of the meaning and are asserted by the composition laws.
+    """
+    if not isinstance(outcome, ExitSet):
+        return outcome
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    if len(completed) != 1:
+        raise ValueError(
+            "sole_completed_outcome requires exactly one completed arm; got "
+            f"{len(completed)} completed of {len(outcome.exits)} exits. "
+            "A body with several completed faces has no single success path to "
+            "project onto — reason over the ExitSet arms directly."
+        )
+    return Complete(completed[0].value)
+
+
 def outcome_to_exitset(outcome) -> ExitSet:
     if isinstance(outcome, ExitSet):
         return outcome
@@ -327,7 +369,9 @@ __all__ = [
     "Completed",
     "ExitSet",
     "Halted",
+    "complement_guard",
     "false_guard",
+    "sole_completed_outcome",
     "true_guard",
     "outcome_to_exitset",
 ]

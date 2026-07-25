@@ -31,15 +31,28 @@ class Incomplete:
 
     def follow(self):
         # Default: an effect halts the run; the rest of the block stays unreduced.
-        # Store side-effects are different: the statement completed (typed red),
-        # and Python continues. Halting would drop later bindings (e.g. `res = …`
-        # after `receiver[index][...] = 0`) and panic NameSugar unbound — a false
-        # construction gap. Continuing store effects contribute red and let the
-        # block reduce subsequent statements.
+        #
+        # A STORE is neither. `o.x = p` may complete (Python goes on to the next
+        # statement, the target stays assigned) or may halt (`__setattr__` /
+        # descriptor / `__setitem__` dispatch belongs to the runtime). Which one
+        # is RUNTIME-SELECTED, so BOTH faces are kept: continues under `not g`,
+        # halts under `g`, over the store's own authenticated occurrence
+        # coordinate. See floor/store_outcome_coordinate.py.
+        #
+        # Modelling a store as unconditionally continuing (what this returned
+        # before) claims assignment is infallible; modelling it as halting would
+        # drop every later binding and fabricate a construction gap. The guarded
+        # pair is the only spelling that states neither.
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import (
+            is_store_family_effect,
+            store_halted_guard,
+        )
 
-        if _effect_continues_control_flow(self.effect):
-            return FollowStep.continue_with()
+        if is_store_family_effect(self.effect):
+            return FollowStep.continue_with(
+                halt_guard=store_halted_guard(self.effect)
+            )
         return FollowStep.halt(keeps_rest=True)
 
     def contribution(self):
@@ -87,27 +100,15 @@ class Incomplete:
 
 
 def _effect_continues_control_flow(effect) -> bool:
-    """True when the effect is red testimony for a completed non-exiting statement.
+    """Retained name for the store family, now with the honest meaning: this
+    effect has a completed face at all (as opposed to halting outright).
 
-    Store mutations do not raise or return: after `xs[i] = v` or `obj.attr = v`
-    the next statement still runs. Incomplete must contribute the red effect and
-    continue so later TemporalContext bindings still construct.
+    It no longer means "this effect always continues" -- that claim was the
+    defect. The store family owns the sole membership list, in
+    floor/store_outcome_coordinate.py.
     """
-    from sugar_lift_py_tests.effect import (
-        AttributeAugAssignRuntimeEffect,
-        AttributeDeleteRuntimeEffect,
-        AttributeStoreRuntimeEffect,
-        SubscriptDeleteRuntimeEffect,
-        SubscriptStoreRuntimeEffect,
+    from sugar_lift_py_tests.floor.store_outcome_coordinate import (
+        is_store_family_effect,
     )
 
-    return isinstance(
-        effect,
-        (
-            SubscriptStoreRuntimeEffect,
-            AttributeStoreRuntimeEffect,
-            AttributeAugAssignRuntimeEffect,
-            AttributeDeleteRuntimeEffect,
-            SubscriptDeleteRuntimeEffect,
-        ),
-    )
+    return is_store_family_effect(effect)

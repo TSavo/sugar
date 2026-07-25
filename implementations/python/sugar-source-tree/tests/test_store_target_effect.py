@@ -1,8 +1,14 @@
 """Store-target assignments (`obj.a = e`, `xs[i] = e`) attach a typed red
 runtime-effect witness at the TREE fragment site (the fragment-type seam,
-#5994-adjacent). The store completed -- Python continues -- so the block
-keeps reducing past it (see outcome/incomplete.py::
-_effect_continues_control_flow); the returned value is unaffected."""
+#5994-adjacent).
+
+A store has TWO outcomes, runtime-selected: it completes (Python continues to
+the next statement) or it halts. So the body reduces to an `ExitSet`, not to one
+linear outcome. Everything asserted below is a fact about the COMPLETED arm --
+the block kept reducing, the returned value is unaffected, the witness names the
+real target -- and the assertions are unchanged; only the navigation to that arm
+is explicit now. The halt arm and the composition laws are asserted in
+sugar-lift-py-tests/tests/test_store_outcome_composition.py."""
 
 import tempfile
 from dataclasses import replace
@@ -27,8 +33,13 @@ def _fn(src):
     return next(SourceFile(path_source(path)).functions())
 
 
+from sugar_lift_py_tests.outcome.exit_set import (
+    sole_completed_outcome as _completed,
+)
+
+
 def _entries(src):
-    outcome = _fn(src).sugar().desugar()
+    outcome = _completed(_fn(src).sugar().desugar())
     return outcome.value.record.statements
 
 
@@ -71,7 +82,9 @@ def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
 
 
 def test_attribute_store_post_out_equals_the_returned_value():
-    v = _fn("def A(o, v):\n    o.a = v\n    return v\n").sugar().desugar().value
+    v = _completed(
+        _fn("def A(o, v):\n    o.a = v\n    return v\n").sugar().desugar()
+    ).value
     post = v.post()
     assert post.name == "="
     assert post.args[0].name == "out"
@@ -87,7 +100,9 @@ def test_subscript_store_lifts_a_red_effect_and_the_block_continues():
 
 
 def test_subscript_store_post_out_equals_the_returned_value():
-    v = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar().value
+    v = _completed(
+        _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+    ).value
     post = v.post()
     assert post.name == "="
     assert post.args[0].name == "out"
