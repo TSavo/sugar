@@ -122,7 +122,13 @@ jobs:
 
       - name: Install lift package deps
         if: matrix.python
-        run: python -m pip install --quiet blake3 pynacl cbor2 pytest
+        # Declared test extras, not a hand-maintained list: the package's
+        # `[project.optional-dependencies].test` is the single source of truth
+        # for what its suite needs to COLLECT.
+        run: |
+          python -m pip install --quiet blake3 pynacl cbor2 pytest
+          python -m pip install --quiet \
+            -e implementations/python/sugar-lift-py-tests[test]
 
       - name: Install source-audit system deps
         if: matrix.z3
@@ -172,7 +178,7 @@ jobs:
           python -m pip install --quiet \
             blake3 pynacl cbor2 pytest \
             -e implementations/python/sugar-build-witness \
-            -e implementations/python/sugar-lift-py-tests \
+            -e implementations/python/sugar-lift-py-tests[test] \
             -e implementations/python/sugar-lift-python-source \
             -e implementations/python/sugar-lift-py-pytest-witness
 

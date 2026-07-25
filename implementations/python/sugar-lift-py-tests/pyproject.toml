@@ -18,7 +18,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "black==26.5.1", "pyright==1.1.411", "itsdangerous==2.2.0"]
+# `numpy` is imported at MODULE scope by tests/test_vendor_special_case_law.py
+# and tests/test_numpy_pandas_panic_audit.py; `pandas` is imported inside tests
+# in the same file. Both are required by this package's ordinary suite, so they
+# are declared here rather than hand-listed at each call site — an undeclared
+# module-scope import aborts collection for the WHOLE package.
+# `itsdangerous` stays declared for the claim-mass tripwire corpus tooling.
+test = [
+    "pytest>=7",
+    "black==26.5.1",
+    "pyright==1.1.411",
+    "itsdangerous==2.2.0",
+    "numpy",
+    "pandas",
+]
 
 [project.scripts]
 sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"

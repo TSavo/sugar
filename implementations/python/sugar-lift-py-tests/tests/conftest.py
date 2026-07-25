@@ -20,6 +20,24 @@ from sugar_lift_py_tests.sugar_binary import (  # noqa: E402
 )
 from claim_mass_corpus import DATETIME_SHA256  # noqa: E402
 
+# `tests/vendor/**` is hash-pinned LIFT CORPUS, not this package's test suite.
+# Those files are third-party sources (cpython datetime.py, itsdangerous /
+# numpy / pandas / requests test modules) that the suite reads as BYTES and
+# parses as AST — see `claim_mass_corpus.ClaimMassPin` and the sha256 pins in
+# `tests/claim_mass_tripwires`/`cpython_311_datetime_path`. They are never
+# imported by us, and their sha256 pins mean we may not edit them to add an
+# `importorskip` guard.
+#
+# Because they are named `test_*.py`, pytest was collecting them as OUR tests
+# and IMPORTING them. `tests/vendor/itsdangerous-2.2.0/test_serializer.py`
+# imports `itsdangerous` at module scope, so collection of the ENTIRE package
+# aborted with `ModuleNotFoundError: itsdangerous` whenever that third-party
+# package was absent — hiding ~1165 real tests behind one corpus file. The
+# same trap is armed for numpy/pandas/requests.
+#
+# Corpus is data. Data does not get collected as tests.
+collect_ignore_glob = ["vendor/*/*.py"]
+
 _SUGAR_PROJECT_SUBCOMMANDS = frozenset({"mint", "prove", "lift", "verify"})
 
 
