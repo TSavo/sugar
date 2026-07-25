@@ -37,10 +37,19 @@ def populate_source_visible_call_frames(
     path: Path,
     distribution_index=None,
     artifact_graph_cache: dict | None = None,
+    session=None,
 ) -> None:
-    """Populate exact-use source frames and one closed classification row."""
+    """Populate exact-use source frames and one closed classification row.
+
+    ``session`` owns every resolution memo for this population.  The default
+    opens one bounded to this source file, so no frame projected for one file
+    (or one project) can ever answer for another.
+    """
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
+    from .resolution_session import session_or_new
+
+    session = session_or_new(session)
     context = source_file.unit.construction_context
     if context is None:
         return
@@ -79,7 +88,7 @@ def populate_source_visible_call_frames(
                 )
                 continue
             graphs[top_level] = graph
-        resolved = resolve_import_binding(receipt, graph=graph)
+        resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if isinstance(resolved, PythonObjectResolutionGapV1):
             context.source_call_resolutions[coordinate] = (
                 SourceCallPreconstructionGapV1(
@@ -97,7 +106,9 @@ def populate_source_visible_call_frames(
         from sugar_source_tree.panic import SugarNotWritten
 
         try:
-            frame_result = resolve_source_visible_frame(resolved, graph=graph)
+            frame_result = resolve_source_visible_frame(
+                resolved, graph=graph, session=session
+            )
         except SugarNotWritten as exc:
             context.source_call_resolutions[coordinate] = (
                 SourceCallPreconstructionGapV1("source-body-gap", coordinate, str(exc))

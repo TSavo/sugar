@@ -24,6 +24,7 @@ from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
 from .canonical import cid_of_json
 from .dependency_artifact import DependencyArtifactGraph, ResolvedPythonObjectV1
+from .resolution_session import SourceResolutionSession, session_or_new
 
 
 @dataclass(frozen=True)
@@ -112,10 +113,12 @@ def construct_manager_behavior(
     actuals: tuple[ConstructedCallActualV1, ...],
     keyword_actuals: tuple[tuple[str, ConstructedCallActualV1], ...] = (),
     call_site: object | None = None,
+    session: SourceResolutionSession | None = None,
 ) -> ConstructedManagerBehaviorV1 | ManagerConstructionGapV1:
     """Construct one resolved callable through SourceFile -> Node -> Sugar only."""
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
+    session = session_or_new(session)
     if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "distribution artifact CID"
@@ -126,7 +129,9 @@ def construct_manager_behavior(
             "artifact-mismatch", resolved.cid, "module source CID"
         )
 
-    frame_result = resolve_source_visible_frame(resolved, graph=graph)
+    frame_result = resolve_source_visible_frame(
+        resolved, graph=graph, session=session
+    )
     if isinstance(frame_result, ManagerConstructionGapV1):
         return frame_result
     frame, _target = frame_result
@@ -254,41 +259,32 @@ def construct_manager_behavior(
     )
 
 
-# Source-visible frames are pure in (artifact, definition coordinate).  The same
-# authenticated definition is projected once per repeated call-site receipt in
-# pandas megamodules; re-materializing SourceFile + class base sugar each time
-# was residual wall after export/revalidation amortization.
-_SOURCE_VISIBLE_FRAME_CACHE: dict[
-    tuple[str, str, str, str, int, int, int, int],
-    tuple[object, Node] | ManagerConstructionGapV1,
-] = {}
-# Keep SourceFile alive for cached (frame, target) node identity.
-_SOURCE_VISIBLE_FRAME_HOLD: dict[
-    tuple[str, str, str, str, int, int, int, int], object
-] = {}
-# In-progress definition coordinates.  A cross-module call graph that re-enters
-# a definition already being projected is a cycle: it stays typed-loud exactly
-# like the local recursive case, and never loops.
-_SOURCE_VISIBLE_FRAME_ACTIVE: set[tuple[str, str, str, str, int, int, int, int]] = set()
-
-
-def clear_source_visible_frame_cache() -> None:
-    """Drop amortized source-visible frames (tests / hermetic process reuse)."""
-    _SOURCE_VISIBLE_FRAME_CACHE.clear()
-    _SOURCE_VISIBLE_FRAME_HOLD.clear()
-    _SOURCE_VISIBLE_FRAME_ACTIVE.clear()
-
-
 def resolve_source_visible_frame(
     resolved: ResolvedPythonObjectV1,
     *,
     graph: DependencyArtifactGraph,
+    session: SourceResolutionSession | None = None,
 ) -> tuple[object, Node] | ManagerConstructionGapV1:
     """Resolve one authenticated definition into the ordinary source frame.
 
     This is orchestration over typed Nodes.  Function/Class bodies still
     construct only through their existing ``source_visible_*_frame`` arms.
+
+    The projection is memoized on ``session``: the same authenticated
+    definition is projected once per repeated call-site receipt in pandas
+    megamodules, and re-materializing SourceFile + class base sugar each time
+    was the residual wall after export/revalidation amortization.
+
+    The memo may NOT be process-global even though its key is a content
+    address.  ``_resolve_source_visible_frame_uncached`` mints a fresh
+    ``TreeConstructionContextV1`` and WRITES into its mutable
+    ``source_class_bases`` / ``source_call_frames`` tables; the returned
+    ``frame``/``target`` Nodes are bound to that context.  Serving them to a
+    later construction hands it another session's live context, so a warm
+    answer from one project would silently become another project's answer.
+    ``session`` is the boundary that makes that unrepresentable.
     """
+    session = session_or_new(session)
     if graph.distribution_artifact_cid != resolved.distribution_artifact_cid:
         return ManagerConstructionGapV1(
             "artifact-mismatch", resolved.cid, "distribution artifact CID"
@@ -309,31 +305,31 @@ def resolve_source_visible_frame(
         definition.end_line,
         definition.end_col,
     )
-    hit = _SOURCE_VISIBLE_FRAME_CACHE.get(cache_key)
+    hit = session.frame_hit(cache_key)
     if hit is not None:
         return hit
-    if cache_key in _SOURCE_VISIBLE_FRAME_ACTIVE:
-        # Re-entered while its own frame is still being projected.  Not cached:
-        # the cycle is a property of the traversal, not of this definition.
+    if cache_key in session.frame_active:
+        # Re-entered while its own frame is still being projected.  Not
+        # memoized: the cycle is a property of this traversal, not of this
+        # definition.
         return ManagerConstructionGapV1(
             "opaque-call-target", resolved.cid, "recursive source call graph"
         )
 
-    _SOURCE_VISIBLE_FRAME_ACTIVE.add(cache_key)
+    session.frame_active.add(cache_key)
     try:
         result = _resolve_source_visible_frame_uncached(
-            resolved, graph=graph, module=module
+            resolved, graph=graph, module=module, session=session
         )
     finally:
-        _SOURCE_VISIBLE_FRAME_ACTIVE.discard(cache_key)
+        session.frame_active.discard(cache_key)
     if isinstance(result, tuple) and len(result) == 3:
         frame, target, source_file = result
         # Hold the SourceFile that owns target/frame node identity.
-        _SOURCE_VISIBLE_FRAME_HOLD[cache_key] = source_file
-        _SOURCE_VISIBLE_FRAME_CACHE[cache_key] = (frame, target)
+        session.remember_frame(cache_key, (frame, target), hold=source_file)
         return frame, target
     assert not isinstance(result, tuple)
-    _SOURCE_VISIBLE_FRAME_CACHE[cache_key] = result
+    session.remember_frame(cache_key, result)
     return result
 
 
@@ -342,6 +338,7 @@ def _resolve_source_visible_frame_uncached(
     *,
     graph: DependencyArtifactGraph,
     module,
+    session: SourceResolutionSession,
 ) -> tuple[object, Node, object] | ManagerConstructionGapV1:
     context = TreeConstructionContextV1.for_source_call_construction()
     source_file = SourceFile(
@@ -411,7 +408,9 @@ def _resolve_source_visible_frame_uncached(
             if name in external_opaque:
                 opaque.append(name)
                 continue
-            frame = _resolve_external_call_frame(name, resolved=resolved, graph=graph)
+            frame = _resolve_external_call_frame(
+                name, resolved=resolved, graph=graph, session=session
+            )
             if frame is None:
                 external_opaque.add(name)
                 opaque.append(name)
@@ -487,6 +486,7 @@ def _resolve_external_call_frame(
     *,
     resolved: ResolvedPythonObjectV1,
     graph: DependencyArtifactGraph,
+    session: SourceResolutionSession,
 ) -> object | None:
     """Project one non-local call target through the authenticated export door.
 
@@ -514,10 +514,11 @@ def _resolve_external_call_frame(
         name,
         (),
         frozenset(),
+        session=session,
     )
     if not isinstance(callee, _Resolved):
         return None
-    projected = resolve_source_visible_frame(callee, graph=graph)
+    projected = resolve_source_visible_frame(callee, graph=graph, session=session)
     if isinstance(projected, ManagerConstructionGapV1):
         return None
     frame, _target = projected

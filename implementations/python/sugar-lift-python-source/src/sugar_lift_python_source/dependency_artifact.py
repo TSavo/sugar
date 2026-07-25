@@ -19,6 +19,7 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 from .canonical import blake3_512_of, cid_of_json
+from .resolution_session import SourceResolutionSession, session_or_new
 from .source_oracle import SourceUnavailable, dependency_artifact_file
 
 
@@ -762,8 +763,13 @@ def resolve_import_binding(
     authenticated_use: Any,
     *,
     graph: DependencyArtifactGraph,
+    session: "SourceResolutionSession | None" = None,
 ) -> PythonObjectResolutionV1:
-    """Resolve a final-checked #6090 import use through one artifact graph."""
+    """Resolve a final-checked #6090 import use through one artifact graph.
+
+    ``session`` owns every resolution memo consulted on the way.  ``None``
+    opens one bounded to this single call; it is never process state.
+    """
     from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
     if not isinstance(authenticated_use, AuthenticatedImportUseV1):
@@ -828,6 +834,7 @@ def resolve_import_binding(
         exported_name,
         (),
         frozenset(),
+        session=session_or_new(session),
     )
 
 

@@ -39,19 +39,17 @@ from sugar_lift_python_source.manager_construction import (
     ConstructedManagerBehaviorV1,
     ManagerConstructionGapV1,
     _resolve_external_call_frame,
-    clear_source_visible_frame_cache,
     construct_manager_behavior,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.nodes import Call, Constant
 from sugar_source_tree.tree import SourceFile
 
-
-@pytest.fixture(autouse=True)
-def _hermetic_frames():
-    clear_source_visible_frame_cache()
-    yield
-    clear_source_visible_frame_cache()
+# No hermetic-frames fixture: there is no process state left to clear.  Every
+# resolution memo is owned by a SourceResolutionSession bounded to its own
+# construction, so each test is isolated by construction rather than by a
+# fixture that scrubs globals after the fact.
 
 
 def _distribution(
@@ -334,7 +332,9 @@ def test_external_call_frame_demand_maps_exactly_onto_availability(
         support_source=_CROSS_MODULE_CLASS_SUPPORT,
     )
 
-    frame = _resolve_external_call_frame(name, resolved=resolved, graph=graph)
+    frame = _resolve_external_call_frame(
+        name, resolved=resolved, graph=graph, session=SourceResolutionSession()
+    )
 
     assert (frame is not None) is available
     if available:
@@ -351,7 +351,12 @@ def test_external_call_frame_is_the_callee_defining_source_not_the_caller(tmp_pa
         support_source=_CROSS_MODULE_CLASS_SUPPORT,
     )
 
-    frame = _resolve_external_call_frame("ScopedSlot", resolved=resolved, graph=graph)
+    frame = _resolve_external_call_frame(
+        "ScopedSlot",
+        resolved=resolved,
+        graph=graph,
+        session=SourceResolutionSession(),
+    )
 
     assert frame is not None
     assert frame.source_identity_cid == graph.modules["arbitrary.support"].source_cid

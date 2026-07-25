@@ -14,19 +14,8 @@ from dataclasses import replace
 from typing import Any, Literal
 
 from .canonical import blake3_512_of
+from .resolution_session import SourceResolutionSession, session_or_new
 from .source_tables import parsed_tree
-
-# Top-level export resolution (empty warrants + empty seen) is pure in
-# (distribution_artifact_cid, module_name, exported_name).  Pandas call-frame
-# preconstruction repeats the same symbol many times per file; re-running the
-# full-module static export walk per receipt was the residual wall after
-# lexical revalidation amortization (see docs/audits/pandas-recensus-latency-bisect.md).
-_EXPORT_RESOLUTION_CACHE: dict[tuple[str, str, str], Any] = {}
-
-
-def clear_export_resolution_cache() -> None:
-    """Drop amortized export resolutions (tests / hermetic process reuse)."""
-    _EXPORT_RESOLUTION_CACHE.clear()
 
 
 def _bind() -> None:
@@ -65,9 +54,23 @@ def resolve_export(
     exported_name: str,
     warrants: tuple[ReexportWarrantV1, ...],
     seen: frozenset[tuple[str, str]],
+    *,
+    session: SourceResolutionSession | None = None,
 ) -> PythonObjectResolutionV1:
+    """Resolve one static export.
+
+    Structural export resolution is pure in (distribution_artifact_cid,
+    module_name, exported_name), and repeating the full-module static export
+    walk per receipt was the residual megamodule wall (see
+    docs/audits/pandas-recensus-latency-bisect.md).  So it is memoized -- but
+    the memo is owned by the caller's ``session``, never by module state: the
+    resolution names live ``ReexportWarrantV1``/definition objects whose
+    validity is bounded by the construction that asked for them.  ``None``
+    opens a session bounded to this single call.
+    """
     _bind()
-    # Only the entry form used by resolve_import_binding is safe to cache:
+    session = session_or_new(session)
+    # Only the entry form used by resolve_import_binding is memoizable:
     # non-empty warrants/seen encode path context that must not be shared.
     cacheable = not warrants and not seen
     cache_key = (
@@ -76,7 +79,7 @@ def resolve_export(
         exported_name,
     )
     if cacheable:
-        hit = _EXPORT_RESOLUTION_CACHE.get(cache_key)
+        hit = session.export_hit(cache_key)
         if hit is not None:
             return _restamp_export_result(hit, binding_cid)
 
@@ -87,9 +90,10 @@ def resolve_export(
         exported_name,
         warrants,
         seen,
+        session=session,
     )
     if cacheable:
-        _EXPORT_RESOLUTION_CACHE[cache_key] = result
+        session.remember_export(cache_key, result)
     return result
 
 
@@ -100,6 +104,8 @@ def _resolve_export_uncached(
     exported_name: str,
     warrants: tuple[ReexportWarrantV1, ...],
     seen: frozenset[tuple[str, str]],
+    *,
+    session: SourceResolutionSession,
 ) -> PythonObjectResolutionV1:
     key = (module_name, exported_name)
     if key in seen:
@@ -156,6 +162,7 @@ def _resolve_export_uncached(
             alias.name,
             (*warrants, warrant),
             seen | {key},
+            session=session,
         )
     if binding is not None and binding[0] == "alias":
         return resolve_export(
@@ -165,6 +172,7 @@ def _resolve_export_uncached(
             binding[1].id,
             warrants,
             seen | {key},
+            session=session,
         )
     if binding is not None and binding[0] == "unsupported":
         return _gap(

@@ -580,6 +580,7 @@ def test_resolve_export_amortizes_repeated_static_scans(tmp_path: Path) -> None:
     """
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
     from sugar_lift_python_source import dependency_export_adapter as de
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
     distribution = _install_distribution(
         tmp_path,
@@ -587,7 +588,9 @@ def test_resolve_export_amortizes_repeated_static_scans(tmp_path: Path) -> None:
         implementation_source="def build(value):\n    return value\n",
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
-    de.clear_export_resolution_cache()
+    # One session, as a real population has: amortization is a property of the
+    # session, not of the process.
+    session = SourceResolutionSession()
 
     n_sites = 8
     lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
@@ -609,10 +612,12 @@ def test_resolve_export_amortizes_repeated_static_scans(tmp_path: Path) -> None:
 
     de._export_block = counting_export_block
     try:
-        results = [resolve_import_binding(receipt, graph=graph) for receipt in receipts]
+        results = [
+            resolve_import_binding(receipt, graph=graph, session=session)
+            for receipt in receipts
+        ]
     finally:
         de._export_block = original_block
-        de.clear_export_resolution_cache()
 
     assert all(isinstance(item, ResolvedPythonObjectV1) for item in results)
     # First receipt: package reexport walk + implementation definition (2).
@@ -640,6 +645,7 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
     from sugar_lift_python_source.manager_construction import (
         resolve_source_visible_frame,
     )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
     from sugar_source_tree.tree import SourceFile
 
     distribution = _install_distribution(
@@ -648,7 +654,7 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
         implementation_source="def build(value):\n    return value\n",
     )
     graph = DependencyArtifactGraph.authenticate(distribution)
-    mc.clear_source_visible_frame_cache()
+    session = SourceResolutionSession()
 
     n_sites = 6
     lines = ["import example_pkg"] + [f"example_pkg.build({i})" for i in range(n_sites)]
@@ -672,10 +678,12 @@ def test_resolve_source_visible_frame_amortizes_repeated_materialize(
 
     mc.SourceFile = CountingSourceFile  # type: ignore[misc, assignment]
     try:
-        frames = [resolve_source_visible_frame(item, graph=graph) for item in resolved]
+        frames = [
+            resolve_source_visible_frame(item, graph=graph, session=session)
+            for item in resolved
+        ]
     finally:
         mc.SourceFile = original_sf  # type: ignore[misc, assignment]
-        mc.clear_source_visible_frame_cache()
 
     assert all(isinstance(item, tuple) for item in frames)
     assert materializations["count"] <= 1, (
