@@ -512,6 +512,16 @@ fn looks_like_ir_contract_row(value: &Value) -> bool {
     if kind == "contract" || kind == "function-contract" {
         return true;
     }
+    // A WITNESS kit (pytest-witness, cargo-test-witness) folds its signed
+    // WitnessMemento through the same audit channel as the contract that
+    // memento pins -- there is no second wire for it. Mint dispatches
+    // `witness-memento` rows straight out of `response["ir"]`
+    // (`cmd_mint::mint_witness_memento`), so dropping the row here would
+    // strip the proof's ONLY pointer to the witness body and leave the
+    // custom-evidence contract permanently undischargeable.
+    if kind == "witness-memento" {
+        return true;
+    }
     // IR rows always carry at least one body slot or formals even if kind is
     // missing under a future kit dialect.
     obj.contains_key("inv")
@@ -2200,6 +2210,33 @@ impl Assertion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A witness kit has no second wire for its signed memento: it rides the
+    /// same `audit` channel as the contract it pins, and mint dispatches
+    /// `witness-memento` straight out of `response["ir"]`. If the fold's row
+    /// filter drops it, the proof loses its only pointer to the witness body
+    /// and the custom-evidence contract can never discharge.
+    #[test]
+    fn ir_row_filter_admits_witness_mementos() {
+        assert!(looks_like_ir_contract_row(&json!({
+            "kind": "witness-memento",
+            "witness_cid": "blake3-512:abc",
+            "witness_kind": "pytest-witness-package",
+            "signer": "ed25519:k",
+            "signature": "ed25519:s",
+        })));
+    }
+
+    #[test]
+    fn ir_row_filter_still_admits_contracts_and_rejects_non_rows() {
+        assert!(looks_like_ir_contract_row(&json!({"kind": "contract"})));
+        assert!(looks_like_ir_contract_row(&json!({"kind": "function-contract"})));
+        assert!(looks_like_ir_contract_row(&json!({"inv": {}})));
+        // Not an IR row: no recognized kind and no body slot.
+        assert!(!looks_like_ir_contract_row(&json!({"kind": "source-memento"})));
+        assert!(!looks_like_ir_contract_row(&json!({"kind": "term-ref"})));
+        assert!(!looks_like_ir_contract_row(&json!("not an object")));
+    }
 
     fn recovered_owner(file: &str, function: &str, line: usize) -> SourceMemento {
         SourceMemento {
