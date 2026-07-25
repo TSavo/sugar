@@ -48,6 +48,26 @@ def _out(src: str):
     return _fn(src).sugar().desugar()
 
 
+def _val_with_cleanup_probe(src: str, monkeypatch):
+    """Desugar while recording that ExitSet actually invokes finalbody cleanup."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    cleanup_calls = []
+    original = ExitSet.and_finally
+
+    def probed(self, cleanup, **kwargs):
+        def recording_cleanup():
+            cleanup_calls.append(True)
+            return cleanup()
+
+        return original(self, recording_cleanup, **kwargs)
+
+    monkeypatch.setattr(ExitSet, "and_finally", probed)
+    value = _val(src)
+    assert cleanup_calls == [True], "finally cleanup must execute exactly once"
+    return value
+
+
 def _incompletes(v):
     from sugar_lift_py_tests.outcome import Incomplete
 
@@ -212,38 +232,40 @@ def test_else_runs_only_on_completed_body_exit():
 # ---------------------------------------------------------------------------
 
 
-def test_finally_on_exit_1_normal_completion():
-    """(1) Body completes; inert finally restores the completion."""
-    v = _val(
+def test_finally_on_exit_1_normal_completion(monkeypatch):
+    """(1) Body completes; inert finally executes and restores completion."""
+    v = _val_with_cleanup_probe(
         "def A(z):\n"
         "    try:\n"
         "        x = z\n"
         "    finally:\n"
         "        y = 1\n"
-        "    return z\n"
+        "    return z\n",
+        monkeypatch,
     )
     assert _incompletes(v) == []
     assert v.post().args[1].name == "z"
 
 
-def test_finally_on_exit_2_body_return():
-    """(2) Body return rides through inert finally as the function exit."""
-    v = _val(
+def test_finally_on_exit_2_body_return(monkeypatch):
+    """(2) Body return rides through executed inert finally."""
+    v = _val_with_cleanup_probe(
         "def A(z):\n"
         "    try:\n"
         "        return z\n"
         "    finally:\n"
-        "        y = 1\n"
+        "        y = 1\n",
+        monkeypatch,
     )
     assert _incompletes(v) == []
     assert v.post().args[1].name == "z"
 
 
-def test_finally_on_exit_3_uncaught_raise_restored():
-    """(3) Unmatched halt survives inert finally (restore, not invent complete)."""
+def test_finally_on_exit_3_uncaught_raise_restored(monkeypatch):
+    """(3) Unmatched halt survives executed inert finally."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _val_with_cleanup_probe(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -251,7 +273,8 @@ def test_finally_on_exit_3_uncaught_raise_restored():
         "        pass\n"
         "    finally:\n"
         "        y = 1\n"
-        "    return z\n"
+        "    return z\n",
+        monkeypatch,
     )
     reds = _incompletes(v)
     assert len(reds) == 1
@@ -259,9 +282,9 @@ def test_finally_on_exit_3_uncaught_raise_restored():
     assert reds[0].effect.exception_name == "ValueError"
 
 
-def test_finally_on_exit_4_caught_handler_completion():
-    """(4) Matching handler completes; inert finally keeps that completion."""
-    v = _val(
+def test_finally_on_exit_4_caught_handler_completion(monkeypatch):
+    """(4) Matching handler completes through executed inert finally."""
+    v = _val_with_cleanup_probe(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -269,17 +292,18 @@ def test_finally_on_exit_4_caught_handler_completion():
         "        pass\n"
         "    finally:\n"
         "        y = 1\n"
-        "    return z\n"
+        "    return z\n",
+        monkeypatch,
     )
     assert _incompletes(v) == []
     assert v.post().args[1].name == "z"
 
 
-def test_finally_on_exit_5_handler_raise_through_finally():
-    """(5) Handler's own raise is the outgoing halt after inert finally."""
+def test_finally_on_exit_5_handler_raise_through_finally(monkeypatch):
+    """(5) Handler raise survives executed inert finally."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _val_with_cleanup_probe(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -287,7 +311,8 @@ def test_finally_on_exit_5_handler_raise_through_finally():
         "        raise KeyError\n"
         "    finally:\n"
         "        y = 1\n"
-        "    return z\n"
+        "    return z\n",
+        monkeypatch,
     )
     reds = _incompletes(v)
     assert len(reds) == 1
@@ -332,23 +357,31 @@ def test_finally_on_exit_7_continue():
 
 def test_bare_reraise_preserves_the_same_effect_occurrence():
     """Bare ``raise`` re-emits the in-flight RaiseEffect — same occurrence."""
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_lift_py_tests.sugar.try_sugar import _route_handlers_over_exits
 
-    out = _out(
+    try_sugar = _fn(
         "def A():\n"
         "    try:\n"
         "        raise ValueError\n"
         "    except ValueError:\n"
         "        raise\n"
+    ).body[0].sugar()
+    body_exits = promote_raise_halts(reduce_block_to_exitset(try_sugar.body))
+    incoming = next(exit_ for exit_ in body_exits.exits if isinstance(exit_, Halted))
+    routed = _route_handlers_over_exits(
+        body_exits,
+        try_sugar.handlers,
+        try_sugar.orelse,
+        site=try_sugar.site,
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "ValueError"
-    # Occurrence is the original raise site (line of ``raise ValueError``),
-    # not a reconstructed site at the bare re-raise.
-    assert out.effect.occurrence.endswith(":6:8")
-    assert out.effect.exception_type_coordinate is not None
+    outgoing = next(exit_ for exit_ in routed.exits if isinstance(exit_, Halted))
+    assert outgoing.effect is incoming.effect
+    assert outgoing.effect.occurrence_id == incoming.effect.occurrence_id
 
 
 def test_bare_reraise_is_not_a_reconstructed_raise_at_handler_site():

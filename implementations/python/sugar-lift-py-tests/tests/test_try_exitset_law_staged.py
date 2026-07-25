@@ -36,19 +36,27 @@ def test_try_sugar_source_documents_exitset_law() -> None:
     assert "first matching handler" in text or "first matching" in text
 
 
-def test_route_handlers_breaks_after_first_match() -> None:
-    """Router source must break after the first matching arm — no fall-through."""
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "sugar_lift_py_tests"
-        / "sugar"
-        / "try_sugar.py"
+def test_route_handlers_first_match_is_runtime_behavior(tmp_path: Path) -> None:
+    """A broad first arm wins at runtime; later matching arms do not run."""
+    path = tmp_path / "t.py"
+    path.write_text(
+        "class RootFault(Exception):\n"
+        "    pass\n"
+        "class LeafFault(RootFault):\n"
+        "    pass\n"
+        "def f(z):\n"
+        "    try:\n"
+        "        raise LeafFault\n"
+        "    except RootFault:\n"
+        "        return 1\n"
+        "    except LeafFault:\n"
+        "        return 2\n"
+        "    return z\n",
+        encoding="utf-8",
     )
-    text = path.read_text(encoding="utf-8")
-    # The loop that walks handlers must break after a match.
-    assert "matched = True" in text
-    assert "break" in text
+    fn = next(SourceFile(path_source(str(path))).functions())
+    value = fn.sugar().desugar().value
+    assert value.post().args[1].value == 1
 
 
 def test_basic_try_except_constructs_try_sugar(tmp_path: Path) -> None:
@@ -86,25 +94,11 @@ def test_multi_handler_constructs_handlers_in_source_order(tmp_path: Path) -> No
     assert try_nodes, "expected a TrySugar node"
     handlers = try_nodes[0].handlers
     assert len(handlers) >= 2
-    # Each handler is (matcher, body, slot_id); matchers are authenticated types.
-    # Source order: Exception arm before ValueError arm — first-match will pick
-    # Exception for a ValueError raise (subclass).
-    names = []
-    for matcher, _body, _slot in handlers:
-        if matcher is None:
-            names.append(None)
-            continue
-        # AuthenticatedExceptionTypeSugar or similar carries the type coordinate.
-        name = getattr(matcher, "exception_name", None) or getattr(
-            matcher, "name", None
-        )
-        if name is None and hasattr(matcher, "type_name"):
-            name = matcher.type_name
-        # Fall back: desugar-side identity may live on nested fields.
-        if name is None:
-            name = type(matcher).__name__
-        names.append(name)
-    assert len(names) >= 2
+    # The constructed handler sequence is source order, not merely cardinality.
+    assert [matcher.value.name for matcher, _body, _slot in handlers[:2]] == [
+        "Exception",
+        "ValueError",
+    ]
 
 
 def _walk(root, seen=None):
