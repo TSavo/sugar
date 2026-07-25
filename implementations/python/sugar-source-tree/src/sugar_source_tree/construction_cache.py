@@ -33,6 +33,35 @@ def remember_shape_cid(ref: object, cid: str) -> None:
     _SHAPE_CIDS[ref] = cid
 
 
+# The NodeShapeV2 (Merkle) shape CID of a ref, WITHOUT the node's source
+# fragment: it is a pure function of the ref's own kind, local fields, and its
+# children's V2 CIDs. This is the registry bottom-up construction reads and
+# fills, so each ref encodes ONE preimage of its own arity, once, ever --
+# the difference between O(sum of subtree sizes) and O(n).
+#
+# SEPARATE from ``_SHAPE_CIDS`` on purpose. That one holds the node-level
+# construction-shape CID, which additionally binds the node's fragment
+# coordinate; the two live in different identity namespaces and must never be
+# read for each other.
+#
+# Content identity WITHOUT occurrence identity: two structurally identical
+# subtrees under two distinct refs get two ROWS carrying the SAME value. They
+# share content identity (that is what content-addressing means) and stay
+# distinct occurrences (two live refs, and distinct ordered slot positions in
+# their parents).
+_SHAPE_CIDS_V2: "weakref.WeakKeyDictionary[object, str]" = weakref.WeakKeyDictionary()
+
+
+def shape_cid_v2_for(ref: object) -> str | None:
+    """The memoized NodeShapeV2 CID for ``ref``, or None if unseen."""
+    return _SHAPE_CIDS_V2.get(ref)
+
+
+def remember_shape_cid_v2(ref: object, cid: str) -> None:
+    """Record ``ref``'s NodeShapeV2 CID in the static category registry."""
+    _SHAPE_CIDS_V2[ref] = cid
+
+
 class ConstructionCache:
     """Shared field rows keyed by backend site + reporter + control context."""
 
