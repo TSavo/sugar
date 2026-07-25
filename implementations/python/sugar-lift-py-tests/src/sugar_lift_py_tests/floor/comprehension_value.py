@@ -32,6 +32,69 @@ class ComprehensionValue(FloorValue):
         del owner
         return self.term
 
+    def contains(self, item, site):
+        # Finite comprehension testimony folds like a list; otherwise membership
+        # stays the py.in coordinate over the comprehension term.
+        if self.finite_elements is not None:
+            from sugar_lift_py_tests.floor.set_value import (
+                _bool_result,
+                _closed_member_equal,
+            )
+
+            decisions = tuple(
+                _closed_member_equal(item, element) for element in self.finite_elements
+            )
+            if any(decision is True for decision in decisions):
+                return _bool_result(True, site)
+            if all(decision is False for decision in decisions):
+                return _bool_result(False, site)
+            if any(decision is None for decision in decisions):
+                from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+                from sugar_lift_py_tests.ir import atomic
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(
+                    PredicateValue(
+                        atomic(
+                            "py.in",
+                            [
+                                item.to_term(
+                                    owner="ComprehensionValue.contains member"
+                                ),
+                                self.term,
+                            ],
+                        ),
+                        site,
+                        operand_callsites=(*item.callsites(),),
+                    )
+                )
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="ComprehensionValue.contains",
+                blame=str(site),
+                observed=type(item).__name__,
+                requested="constructed finite member or typed symbolic membership",
+                fix="construct comprehension membership on the Python floor or keep it loud",
+            )
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "py.in",
+                    [
+                        item.to_term(owner="ComprehensionValue.contains member"),
+                        self.term,
+                    ],
+                ),
+                site,
+                operand_callsites=(*item.callsites(),),
+            )
+        )
+
     def truth(self, site):
         """Opaque comprehensions stand as conditions via ``py.truthy``.
 
