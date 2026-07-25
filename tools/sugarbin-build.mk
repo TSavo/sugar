@@ -42,9 +42,22 @@ else
 $(error SUGARBIN_PROFILE must be debug or release)
 endif
 
+# sccache refuses to run at all under incremental compilation ("incremental
+# compilation is prohibited: Unset CARGO_INCREMENTAL to continue"), and the
+# repo's own advice in ~/.cargo/config.toml is that it cannot cache incremental
+# builds anyway. A wrapper configured there therefore makes every debug build
+# fail outright rather than merely go uncached. Drop the wrapper for the
+# incremental profile: nothing is lost, because there was no caching to lose.
+ifeq ($(SUGARBIN_INCREMENTAL),1)
+SUGARBIN_RUSTC_WRAPPER_ARG := CARGO_BUILD_RUSTC_WRAPPER=""
+else
+SUGARBIN_RUSTC_WRAPPER_ARG :=
+endif
+
 .PHONY: sugarbin-build
 sugarbin-build:
 	mkdir -p "$(SUGARBIN_TARGET_DIR)"
+	$(SUGARBIN_RUSTC_WRAPPER_ARG) \
 	CARGO_TARGET_DIR="$(SUGARBIN_TARGET_DIR)" \
 	CARGO_INCREMENTAL="$(SUGARBIN_INCREMENTAL)" \
 	SUGAR_BUILD_STAMP="$(SUGARBIN_BUILD_STAMP)" \
