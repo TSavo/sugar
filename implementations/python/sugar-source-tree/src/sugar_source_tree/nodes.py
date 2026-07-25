@@ -5829,6 +5829,33 @@ class ListComp(Expression):
             site=self.fragment,
         )
 
+    def _comprehension_target(self, target: "Node"):
+        """The binding pattern a generator target denotes, or None when its
+        shape has no sugar written.
+
+        A `Name` binds the element whole; a tuple/list target destructures it
+        position by position, nesting as the source nests. A starred or
+        attribute/subscript target builds nothing -- the comprehension then
+        stays loud rather than binding a shape this does not model.
+        """
+        from sugar_lift_py_tests.sugar.comprehension_sugar import (
+            ComprehensionTargetSugar,
+        )
+
+        if target.kind == "Name":
+            return ComprehensionTargetSugar(source_name=target.id)
+        if target.kind not in ("Tuple", "List"):
+            return None
+        coordinates = []
+        for position in target.elts:
+            child = ListComp._comprehension_target(self, position)
+            if child is None:
+                return None
+            coordinates.append(child)
+        if not coordinates:
+            return None
+        return ComprehensionTargetSugar(coordinates=tuple(coordinates))
+
     def _recurrence_generators(self):
         from sugar_lift_python_source.canonical import cid_of_json
         from sugar_lift_py_tests.sugar.comprehension_sugar import (
@@ -5845,15 +5872,16 @@ class ListComp(Expression):
             }
         )
         for generator_index, gen in enumerate(self.generators):
-            if (
-                gen.is_async
-                or gen.target.kind != "Name"
-                or ListComp._contains_named_expression(self, (gen.iter, *gen.ifs))
+            if gen.is_async or ListComp._contains_named_expression(
+                self, (gen.iter, *gen.ifs)
             ):
+                return None
+            target = ListComp._comprehension_target(self, gen.target)
+            if target is None:
                 return None
             specs.append(
                 ComprehensionGeneratorSugar(
-                    source_name=gen.target.id,
+                    target=target,
                     binding_coordinate_cid=mint_binding_coordinate_v1(
                         scope_owner_cid=scope_owner_cid,
                         binding_site=gen.target.fragment,
