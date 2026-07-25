@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re as _re
 from dataclasses import dataclass
 from typing import Any
 
@@ -112,21 +113,30 @@ def _encode(value: Value, out: list[str]) -> None:
         raise TypeError(f"unknown Value variant: {type(value)!r}")
 
 
+# The JCS string escape set for this canonicalizer: only `"`, `\`, and the C0
+# controls (as lowercase `\u00XX`) are escaped. `/` is NOT escaped, non-ASCII is
+# emitted raw (including astral characters and lone surrogates, whose encoding
+# error surfaces later at `.encode("utf-8")`).
+_ESCAPE_SEARCH = _re.compile(r'["\\\x00-\x1f]').search
+
+_ESCAPE_TABLE: dict[int, str] = {
+    0x22: '\\"',
+    0x5C: "\\\\",
+    **{
+        codepoint: "\\u00" + "0123456789abcdef"[codepoint >> 4]
+        + "0123456789abcdef"[codepoint & 0xF]
+        for codepoint in range(0x20)
+    },
+}
+
+
 def _encode_string(value: str, out: list[str]) -> None:
-    out.append('"')
-    for char in value:
-        codepoint = ord(char)
-        if char == '"':
-            out.append('\\"')
-        elif char == "\\":
-            out.append("\\\\")
-        elif codepoint < 0x20:
-            out.append("\\u00")
-            out.append("0123456789abcdef"[(codepoint >> 4) & 0xF])
-            out.append("0123456789abcdef"[codepoint & 0xF])
-        else:
-            out.append(char)
-    out.append('"')
+    # Fast path: nothing to escape (the overwhelming majority of corpus strings
+    # are identifiers and CIDs). Byte-identical to the per-character loop.
+    if _ESCAPE_SEARCH(value) is None:
+        out.append('"' + value + '"')
+        return
+    out.append('"' + value.translate(_ESCAPE_TABLE) + '"')
 
 
 def blake3_512_of(data: bytes) -> str:
