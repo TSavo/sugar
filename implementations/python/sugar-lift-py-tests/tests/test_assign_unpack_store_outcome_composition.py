@@ -22,6 +22,27 @@ store branch supplies the exit algebra. Red here is the law failing, not a
 missing construction -- the unpack currently reduces to ONE unconditional
 ``Complete``, i.e. it states that an attribute/subscript store is infallible.
 
+GATE CONDITIONS FOR WHOEVER TURNS THESE GREEN -- all four are red at the SAME
+line today (``_exits`` raises before any body runs), so none of the per-twin
+structure below has ever executed. Green is not enough; check each:
+
+  1. Both ``_discrimination`` twins currently die inside ``_exits`` and never
+     reach their ``pytest.raises`` block, so right now they are duplicates of
+     the two law twins, not independent evidence. When ``_exits`` returns an
+     ``ExitSet``, confirm each one actually ENTERS its ``pytest.raises`` body
+     and that the body's assertion genuinely fails. A
+     ``pytest.raises(AssertionError)`` wrapper is the classic shape that goes
+     green while asking nothing.
+
+  2. ``test_unpack_two_stores_..._discrimination`` only requires
+     ``_store_entries(first.state) != 1``, which 0 AND 2 both satisfy. The law
+     twin's ``== []`` carries the real claim. Do not count that discrimination
+     as independent evidence for the empty-prefix law.
+
+  3. The law twins have never run past their first assertion either. Re-measure
+     every line, do not assume the arm counts and polarities are right merely
+     because the file stops failing.
+
 # TODO(post-store-merge): the helper block below (``_exits``, ``_walk``,
 # ``_terms``, ``_subterms``, ``_store_coordinates``, ``_selectors``,
 # ``_polarity``, ``_arms``, ``_store_entries``) is copied verbatim from
@@ -29,7 +50,9 @@ missing construction -- the unpack currently reduces to ONE unconditional
 # this file was written because ``feat/store-exitset-composition`` was not yet
 # on main. Once the store foundation merges, DELETE this block and import the
 # helpers from ``test_store_outcome_composition`` instead -- one definition,
-# one owner.
+# one owner. While doing that, switch ``_exits`` off
+# ``NamedTemporaryFile(delete=False, dir="/tmp")``: it leaks a .py per call and
+# bypasses pytest's ``tmp_path``, which every other twin in this package uses.
 """
 
 from __future__ import annotations
