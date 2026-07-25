@@ -132,6 +132,101 @@ class StringValue(FloorValue):
 
         return Complete(TermValue(len(self.value)))
 
+    def contains(self, item, site):
+        # Python ``needle in haystack`` for str: substring when both are strings;
+        # TypeError for ground non-string needles; py.in when the needle is
+        # symbolic/opaque. Never invent membership for unconstructed shapes.
+        if type(item) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if item.value in self.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(item) in (SymbolicValue, CallSiteValue):
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+            from sugar_lift_py_tests.ir import atomic
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                PredicateValue(
+                    atomic(
+                        "py.in",
+                        [
+                            item.to_term(owner="StringValue.contains needle"),
+                            self.to_term(owner="StringValue.contains haystack"),
+                        ],
+                    ),
+                    site,
+                    operand_callsites=(*item.callsites(), *self.callsites()),
+                )
+            )
+        from sugar_lift_py_tests.floor.bytes_value import BytesValue
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        ground_non_str = (
+            TermValue,
+            NoneValue,
+            ListValue,
+            TupleValue,
+            SetValue,
+            BytesValue,
+            TrueBoolLiteralSugar,
+            FalseBoolLiteralSugar,
+        )
+        if type(item) in ground_non_str:
+            # Python raises TypeError for non-str needles in a str. Both sides
+            # are lift-time decidable, so construct the exact exceptional exit —
+            # never mint RuntimeEffect authority over ground operands.
+            import hashlib
+
+            from sugar_lift_py_tests.effect import RaiseEffect
+            from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            source = getattr(site, "source", None)
+            source_sha256 = (
+                hashlib.sha256(source.encode()).hexdigest()
+                if source is not None
+                else None
+            )
+            exception = ExceptionValue("TypeError", (), site)
+            return Complete(
+                RaiseValue(
+                    RaiseEffect("TypeError", str(site), source_sha256),
+                    exception=exception,
+                )
+            )
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="StringValue.contains",
+            blame=str(site),
+            observed=type(item).__name__,
+            requested="string needle, symbolic membership operand, or typed TypeError",
+            fix="construct string membership on the Python floor or keep it loud",
+        )
+
     def subscript(self, index, site):
         # Concrete string + in-range TermValue int folds to the one-char string;
         # out of range is IndexError. Non-concrete index stays py.subscript.

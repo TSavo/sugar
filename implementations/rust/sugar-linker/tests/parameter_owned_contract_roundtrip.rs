@@ -12,12 +12,15 @@ use sugar_linker::caller_parameter::ParameterOwnedContractV1;
 #[test]
 fn python_emitted_owned_contract_validates_cross_language() {
     let raw = include_str!("fixtures/owned_contract_encodebase64.json");
-    let owned: ParameterOwnedContractV1 =
-        serde_json::from_str(raw).expect("Python fixture must deserialize under deny_unknown_fields");
-    owned
-        .validate()
-        .expect("Python-emitted ParameterOwnedContractV1 must pass Rust validate() byte-identically");
+    let owned: ParameterOwnedContractV1 = serde_json::from_str(raw)
+        .expect("Python fixture must deserialize under deny_unknown_fields");
+    owned.validate().expect(
+        "Python-emitted ParameterOwnedContractV1 must pass Rust validate() byte-identically",
+    );
     assert_eq!(owned.formal_declarations.len(), 1);
-    assert_eq!(owned.formal_declarations[0].coordinate.declared_name, "value");
+    assert_eq!(
+        owned.formal_declarations[0].coordinate.declared_name,
+        "value"
+    );
     assert_eq!(owned.declared_demand_cids.len(), 1);
 }

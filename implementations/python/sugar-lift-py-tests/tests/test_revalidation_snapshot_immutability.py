@@ -125,9 +125,7 @@ def test_receipts_from_one_module_share_a_snapshot_and_all_revalidate(
 
 def test_change_to_source_invalidates(tmp_path: Path) -> None:
     original = _snapshot(tmp_path / "a")
-    changed = _snapshot(
-        tmp_path / "b", source=_SOURCE + "example_pkg.build(3)\n"
-    )
+    changed = _snapshot(tmp_path / "b", source=_SOURCE + "example_pkg.build(3)\n")
     assert original is not changed
     assert set(original.row_cids) != set(changed.row_cids)
     assert len(_REVALIDATION_SNAPSHOTS) == 2
