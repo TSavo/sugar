@@ -176,6 +176,18 @@ class CallSiteValue(FloorValue):
         del owner
         return self.term
 
+    def guarded(self, formula):
+        """A callsite coordinate rides under a guard unchanged.
+
+        Like ImportAliasValue / FunctionCallable: the authenticated call term is
+        the value. It is not a return or inv that becomes an implication; the
+        branch guard already owns control. Absence of this arm was
+        ``write more Floor: implement CallSiteValue.guarded`` (to_dict /
+        base_parser residual).
+        """
+        del formula
+        return self
+
     def truth(self, site):
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
         # Ground (lift-time-decidable) coordinates must construct, never mint
