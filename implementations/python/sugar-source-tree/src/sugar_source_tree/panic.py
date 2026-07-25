@@ -143,6 +143,23 @@ class WithConstructionGapKind(str, Enum):
     UNSUPPORTED_CONTEXT_MANAGER_SEMANTICS = "unsupported-context-manager-semantics"
     UNSUPPORTED_WITH_BINDING_TARGET = "unsupported-with-binding-target"
     ASYNC_CONTEXT_MANAGER_UNSUPPORTED = "async-context-manager-unsupported"
+    # Export-resolution kinds that ride the same preconstruction table into With.
+    # A missing member here crashed the pandas control-effect census for 780/1415
+    # files with ``ValueError: 'dynamic-export' is not a valid WithConstructionGapKind``
+    # — instrument defect, not residual silence.
+    DYNAMIC_EXPORT = "dynamic-export"
+    STATIC_EXPORT_ABSENT = "static-export-absent"
+    UNSUPPORTED_STATEMENT = "unsupported-statement"
+    # Catch-all: never crash the census on a newly minted resolution kind.
+    # The original string is preserved on ``ContextManagerResolutionConstructionGap.resolution_kind``.
+    UNRECOGNIZED_RESOLUTION_KIND = "unrecognized-resolution-kind"
+
+    @classmethod
+    def parse(cls, kind: str) -> "WithConstructionGapKind":
+        try:
+            return cls(kind)
+        except ValueError:
+            return cls.UNRECOGNIZED_RESOLUTION_KIND
 
 
 class WithConstructionGap(SugarNotWritten):
@@ -176,12 +193,21 @@ class ContextManagerResolutionConstructionGap(WithConstructionGap):
         candidate_member_cids: tuple[str, ...],
         **kwargs,
     ) -> None:
+        gap_kind = WithConstructionGapKind.parse(kind)
+        # Preserve the wire kind even when it falls into UNRECOGNIZED_*.
+        self.resolution_kind = kind
         super().__init__(
-            gap_kind=WithConstructionGapKind(kind),
+            gap_kind=gap_kind,
             demand_cid=demand_cid,
             candidate_member_cids=candidate_member_cids,
             **kwargs,
         )
+        # ``self.kind`` is what census buckets on. Prefer the original resolution
+        # kind so ``dynamic-export`` stays ``dynamic-export``, not collapsed.
+        if gap_kind is WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND:
+            self.kind = kind
+        else:
+            self.kind = gap_kind.value
 
 
 class UnsupportedContextManagerSemantics(WithConstructionGap):
