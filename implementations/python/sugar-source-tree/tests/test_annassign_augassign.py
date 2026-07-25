@@ -20,11 +20,14 @@ from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSug
 from sugar_source_tree.tree import SourceFile
 
 
-def _fn(src):
+def _write(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path)).functions())
+        return f.name
+
+
+def _fn(src):
+    return next(SourceFile(path_source(_write(src))).functions())
 
 
 def test_annotated_assign_with_value_is_inert_and_threads():
@@ -112,6 +115,50 @@ def test_annotated_subscript_with_value_builds_store_effect():
 
     assert len(effects) == 1
     assert isinstance(effects[0], SubscriptStoreRuntimeEffect)
+
+
+_CONSTRUCTED_RECEIVER_SOURCE = (
+    "class C:\n"
+    "    def __init__(self, a):\n"
+    "        self.a = a\n"
+    "        self.rows{annotation} = []\n"
+    "\n"
+    "\n"
+    "def make(a):\n"
+    "    c = C(a)\n"
+    "    return c\n"
+)
+
+
+def _constructed_object(annotation):
+    source = _CONSTRUCTED_RECEIVER_SOURCE.format(annotation=annotation)
+    function = next(
+        item
+        for item in SourceFile(path_source(_write(source))).functions()
+        if item.name == "make"
+    )
+    return function.sugar().desugar().value.record.statements[-1].value
+
+
+def test_annotated_store_on_constructed_receiver_matches_plain_store():
+    """`self.rows: list = []` is the SAME store as `self.rows = []`.
+
+    The annotation states nothing at runtime, so it may not demote a
+    constructed-receiver field store to an opaque runtime store effect. Before
+    this parity the annotated arm partitioned the constructor body into a
+    halted store arm, and ClassConstructorBodySugar could not project one
+    completed floor value out of the resulting ExitSet.
+    """
+    plain = _constructed_object("")
+    annotated = _constructed_object(": list")
+
+    # Field coordinates carry each fixture's own source cid, so the parity
+    # claim is the constructed SHAPE: same fields, same constructed value kinds.
+    assert [field.name for field in plain.fields] == ["a", "rows"]
+    assert [field.name for field in annotated.fields] == ["a", "rows"]
+    assert [type(field.value).__name__ for field in annotated.fields] == [
+        type(field.value).__name__ for field in plain.fields
+    ]
 
 
 def test_bare_attribute_annotation_evaluates_only_renamed_receiver():
