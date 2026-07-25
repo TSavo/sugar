@@ -384,8 +384,13 @@ def populate_source_derived_resource_refs(
     path,
     distribution_index=None,
     artifact_graph_cache: dict | None = None,
+    session=None,
 ) -> None:
-    """Preconstruct imported resource managers and freeze exact use-site rows."""
+    """Preconstruct imported resource managers and freeze exact use-site rows.
+
+    ``session`` owns every resolution memo for this population; the default
+    opens one bounded to this source file.
+    """
     from pathlib import Path
 
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -407,7 +412,9 @@ def populate_source_derived_resource_refs(
         construct_manager_behavior,
     )
     from .manager_protocol_construction import construct_manager_protocol
+    from .resolution_session import session_or_new
 
+    session = session_or_new(session)
     context = source_file.root.unit.construction_context
     if context is None:
         return
@@ -470,7 +477,7 @@ def populate_source_derived_resource_refs(
                 )
                 continue
             graphs[top_level] = graph
-        resolved = resolve_import_binding(receipt, graph=graph)
+        resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if not isinstance(resolved, ResolvedPythonObjectV1):
             kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
@@ -529,6 +536,7 @@ def populate_source_derived_resource_refs(
             actuals=tuple(actuals),
             keyword_actuals=tuple(keyword_actuals),
             call_site=call.fragment,
+            session=session,
         )
         from .manager_construction import ConstructedManagerBehaviorV1
         from .manager_protocol_construction import ConstructedManagerProtocolV1
