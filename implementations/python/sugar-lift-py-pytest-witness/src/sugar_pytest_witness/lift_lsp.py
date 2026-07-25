@@ -22,6 +22,7 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.canonicalizer import encode_jcs, blake3_512_of
 from sugar_lift_py_tests.filename import cid_filename
+from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 
 import base64
 
@@ -40,6 +41,10 @@ from .witness import (
 KIT_ID = "python-pytest-witness"
 KIT_VERSION = "0.1.0"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
+# There is no `lift` kit method. Full-tree construction is `sugar.enumerate`
+# over the SourceTree; sending method `lift` is the retired factory door
+# (sugar-cli `lift_plugin::dispatch_lift_path`).
+ENUMERATE_RPC_METHOD = "sugar.enumerate"
 RESOLVE_WITNESS_RPC_METHOD = "sugar.plugin.resolve_witness"
 COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
@@ -226,92 +231,227 @@ def component_plan_result(params: dict) -> dict:
     }
 
 
-def handle_lift(msg_id: Any, params: dict) -> None:
+_SPLIT_CACHE: dict[tuple[str, tuple[str, ...]], tuple[List[str], List[str]]] = {}
+
+
+def _split_python_files(ws: str, source_paths: List[str]) -> tuple[List[str], List[str]]:
+    """Project-relative (code_files, test_files), both sorted.
+
+    Memoized: the fold asks `universe` once per censused file, and each of those
+    calls needs the same split to find the anchor. Without the cache a project
+    with N Python files walks the tree N+1 times.
+    """
+    key = (ws, tuple(source_paths))
+    cached = _SPLIT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pyfiles = _iter_python_files(ws, source_paths)
+    rels = sorted(os.path.relpath(p, ws) for p in pyfiles)
+    code_rels = [r for r in rels if not os.path.basename(r).startswith("test_")]
+    test_rels = [r for r in rels if os.path.basename(r).startswith("test_")]
+    _SPLIT_CACHE[key] = (code_rels, test_rels)
+    return code_rels, test_rels
+
+
+def build_witness_ir(
+    ws: str, code_rels: List[str], test_rels: List[str]
+) -> tuple[List[dict], List[dict]]:
+    """Run the suite and return (ir_rows, memento_rows).
+
+    The suite is ONE witness package, so this runs ONCE per enumeration --
+    never per source file. The rows stay byte-identical to what mint used to
+    receive from the retired `lift` method.
+    """
+    decls: List[ContractDecl] = []
+    mementos: List[dict] = []
+    bundle_cid = None
+    if test_rels:
+        # PER-TEST run, but ONE proof member. The whole suite is a WITNESS
+        # PACKAGE: a content-addressed `.witness` bundle of per-test bodies,
+        # cid = blake3(bundle). The proof carries ONE WitnessPackageMemento
+        # (64 bytes) + ONE contract whose evidence pins the package cid -- not
+        # N mementos. The verifier asks the oracle to discharge by re-running
+        # the suite and reproducing the package cid (`discharge_bundle`).
+        bundle_bytes, bundle_cid, witnesses = build_suite_bundle(
+            ws, test_rels, code_rels
+        )
+        passed = sum(1 for w in witnesses if w.outcome == "passed")
+        try:
+            bundle_dir = os.path.join(ws, ".sugar", "witnesses")
+            os.makedirs(bundle_dir, exist_ok=True)
+            with open(
+                os.path.join(bundle_dir, cid_filename(bundle_cid, ".witness")),
+                "wb",
+            ) as f:
+                f.write(bundle_bytes)
+        except OSError:
+            pass  # the package is audit material; never fail the lift on a write error
+        proof_data = json.dumps(
+            {
+                "kind": "witness-package",
+                "packageCid": bundle_cid,
+                "testFiles": sorted(test_rels),
+                "codeFiles": sorted(code_rels),
+                "count": len(witnesses),
+                "passed": passed,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        cert = EvidenceCertificate(
+            tool="pytest",
+            version=runtime_cid(),
+            formula_hash=bundle_cid,
+            proof_data=proof_data,
+        )
+        ev = EvidenceTerm(proof_type="custom", certificate=cert)
+        decls.append(
+            ContractDecl(
+                name=f"witness-package:{bundle_cid}",
+                inv=atomic("witnessed", []),
+                evidence=ev,
+            )
+        )
+        mementos.append(
+            witness_package_memento(
+                bundle_cid, test_rels, code_rels, len(witnesses), passed
+            )
+        )
+    ir = json.loads(encode_jcs(declarations_to_value(decls))) if decls else []
+    for member in ir:
+        if member.get("kind") == "contract" and member.get("name", "").startswith(
+            "witness-package:"
+        ):
+            member["proofirProvenance"] = witness_package_proofir_provenance(
+                bundle_cid, runtime_cid()
+            )
+    return ir, mementos
+
+
+def _degenerate_file_memento(rel_path: str, source_cid: Optional[str] = None) -> dict:
+    """The file-level locator: a `source-memento` with only `file` and the
+    file's content CID populated. A whole file has no single body span or AST
+    template, so those stay absent. Same shape the python source kit seals
+    (`lift_rpc._degenerate_file_memento`)."""
+    return {
+        "kind": "source-memento",
+        "file": rel_path,
+        "function_name": "",
+        "span": None,
+        "param_names": [],
+        "source_cid": source_cid,
+        "template_cid": None,
+    }
+
+
+def _file_memento(ws: str, rel_path: str) -> dict:
+    """Seal one file's locator through the SOURCE ORACLE.
+
+    `source_cid` is minted by `path_source`, the same door the python source
+    kit uses -- never hashed here. mint requires it non-empty (it becomes the
+    `sourceCid` header on the minted source-memento), and a kit that invented
+    its own identity would address the same file differently than every other
+    kit.
+    """
+    full = os.path.join(ws, rel_path)
+    _source, _filename, cid = path_source(full)
+    return _degenerate_file_memento(rel_path, cid)
+
+
+# Levels a SOURCE kit censuses that a witness PRODUCER has nothing to say about.
+# Answering an empty census (rather than an error) keeps `prove`/report walks
+# that sweep every registered surface from failing on this kit.
+_EMPTY_CENSUS_LEVELS = frozenset(
+    {
+        "functions",
+        "call_sites",
+        "assertions",
+        "facts",
+        "implications",
+        "exports",
+        "contract-declarations",
+        "provider-contract-members",
+        "contract-demands",
+        "context-manager-edges",
+        "parameter-contract-resume",
+    }
+)
+
+
+def _send_enumerate_result(msg_id: Any, nodes: List[dict], gaps: List[dict]) -> None:
+    _send(
+        {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {"nodes": nodes, "gaps": gaps},
+        }
+    )
+
+
+def handle_enumerate(msg_id: Any, params: dict) -> None:
+    """`sugar.enumerate`: the ONE construction door (the `lift` method is retired).
+
+    The Rust fold (`sugar_compiler::tree::fold_enumerate_source_tree`) walks
+    `source_files` and then asks `universe` per file, collecting each node's
+    `audit` as an IR row. A witness package is a WHOLE-SUITE artifact, not a
+    per-file one, so the suite runs exactly once: the census reports every
+    Python file (so the fold's `sourceMementos`/`sourceLedger` testify the real
+    source closure), and the package's two IR rows -- the custom-evidence
+    contract and its signed WitnessPackageMemento -- are emitted at the ANCHOR
+    file only (the first test file in sorted order). Every other file answers an
+    empty universe, which is the truth: it contributes no contract of its own.
+    """
+    level = str(params.get("level", ""))
     ws = str(params.get("workspace_root", "."))
-    sps = params.get("source_paths", ["."])
     try:
-        pyfiles = _iter_python_files(ws, sps)
-        rels = [os.path.relpath(p, ws) for p in pyfiles]
-        code_rels = [r for r in rels if not os.path.basename(r).startswith("test_")]
-        test_rels = [r for r in rels if os.path.basename(r).startswith("test_")]
-        decls: List[ContractDecl] = []
-        mementos: List[dict] = []
-        if test_rels:
-            # PER-TEST run, but ONE proof member. The whole suite is a WITNESS
-            # PACKAGE: a content-addressed `.witness` bundle of per-test bodies,
-            # cid = blake3(bundle). The proof carries ONE WitnessPackageMemento
-            # (64 bytes) + ONE contract whose evidence pins the package cid -- not
-            # N mementos. The verifier asks the oracle to discharge by re-running
-            # the suite and reproducing the package cid (`discharge_bundle`).
-            bundle_bytes, bundle_cid, witnesses = build_suite_bundle(
-                ws, test_rels, code_rels
-            )
-            passed = sum(1 for w in witnesses if w.outcome == "passed")
-            try:
-                bundle_dir = os.path.join(ws, ".sugar", "witnesses")
-                os.makedirs(bundle_dir, exist_ok=True)
-                with open(
-                    os.path.join(bundle_dir, cid_filename(bundle_cid, ".witness")),
-                    "wb",
-                ) as f:
-                    f.write(bundle_bytes)
-            except OSError:
-                pass  # the package is audit material; never fail the lift on a write error
-            proof_data = json.dumps(
-                {
-                    "kind": "witness-package",
-                    "packageCid": bundle_cid,
-                    "testFiles": sorted(test_rels),
-                    "codeFiles": sorted(code_rels),
-                    "count": len(witnesses),
-                    "passed": passed,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            cert = EvidenceCertificate(
-                tool="pytest",
-                version=runtime_cid(),
-                formula_hash=bundle_cid,
-                proof_data=proof_data,
-            )
-            ev = EvidenceTerm(proof_type="custom", certificate=cert)
-            decls.append(
-                ContractDecl(
-                    name=f"witness-package:{bundle_cid}",
-                    inv=atomic("witnessed", []),
-                    evidence=ev,
-                )
-            )
-            mementos.append(
-                witness_package_memento(
-                    bundle_cid, test_rels, code_rels, len(witnesses), passed
-                )
-            )
-        ir = json.loads(encode_jcs(declarations_to_value(decls))) if decls else []
-        for member in ir:
-            if member.get("kind") == "contract" and member.get("name", "").startswith(
-                "witness-package:"
-            ):
-                member["proofirProvenance"] = witness_package_proofir_provenance(
-                    bundle_cid, runtime_cid()
-                )
-        # The signed WitnessMementos flow as `ir` members (kind "witness-memento"):
-        # mint envelopes each into the .proof via its per-kind dispatch, so the
-        # .proof carries the signed pointer the rust verifier enumerates. (Also
-        # surfaced as `witness_mementos` for non-mint consumers.)
-        ir = ir + mementos
+        if level == "parameter-contract-link-units":
+            # A witness producer enrolls no parameter-contract link units.
+            _send({"jsonrpc": "2.0", "id": msg_id, "result": {"rows": []}})
+            return
+        if level in _EMPTY_CENSUS_LEVELS:
+            _send_enumerate_result(msg_id, [], [])
+            return
+        if level == "source_files":
+            code_rels, test_rels = _split_python_files(ws, ["."])
+            nodes = []
+            gaps = []
+            for rel in sorted(code_rels + test_rels):
+                try:
+                    memento = _file_memento(ws, rel)
+                except SourceUnavailable as unavailable:
+                    # An unreadable/undecodable file is a loud protocol gap,
+                    # never a node with a made-up identity.
+                    gaps.append(
+                        {
+                            "memento": _degenerate_file_memento(rel),
+                            "reason": str(unavailable),
+                        }
+                    )
+                    continue
+                nodes.append({"memento": memento, "audit": None, "payload": None})
+            _send_enumerate_result(msg_id, nodes, gaps)
+            return
+        if level == "universe":
+            at = params.get("at") or {}
+            file_rel = at.get("file") if isinstance(at, dict) else None
+            code_rels, test_rels = _split_python_files(ws, ["."])
+            if not test_rels or file_rel != test_rels[0]:
+                # Not the anchor: no contract of its own. (No tests at all also
+                # means no package -- an empty universe, not a gap.)
+                _send_enumerate_result(msg_id, [], [])
+                return
+            ir, mementos = build_witness_ir(ws, code_rels, test_rels)
+            anchor = _file_memento(ws, test_rels[0])
+            nodes = [{"memento": anchor, "audit": row} for row in ir + mementos]
+            _send_enumerate_result(msg_id, nodes, [])
+            return
         _send(
             {
                 "jsonrpc": "2.0",
                 "id": msg_id,
-                "result": {
-                    "kind": "ir-document",
-                    "ir": ir,
-                    "witness_mementos": mementos,
-                    "implications": [],
-                    "diagnostics": [],
-                    "warnings": [],
+                "error": {
+                    "code": -32602,
+                    "message": f"sugar.enumerate: unknown level {level!r}",
                 },
             }
         )
@@ -490,7 +630,9 @@ def main() -> None:
                                 {"name": "initialize", "required": True},
                                 {"name": KIT_DECLARATION_RPC_METHOD, "required": True},
                                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
-                                {"name": "lift", "required": True},
+                                # `lift` is NOT a kit method: full-tree
+                                # construction is sugar.enumerate only.
+                                {"name": ENUMERATE_RPC_METHOD, "required": True},
                                 {"name": RESOLVE_WITNESS_RPC_METHOD, "required": False},
                                 {"name": "shutdown", "required": False},
                             ]
@@ -512,8 +654,8 @@ def main() -> None:
                     "result": component_plan_result(msg.get("params", {})),
                 }
             )
-        elif method == "lift":
-            handle_lift(mid, msg.get("params", {}))
+        elif method == ENUMERATE_RPC_METHOD:
+            handle_enumerate(mid, msg.get("params", {}))
         elif method == RESOLVE_WITNESS_RPC_METHOD:
             handle_resolve_witness(mid, msg.get("params", {}))
         elif method == "shutdown":
