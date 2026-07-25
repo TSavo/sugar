@@ -2322,13 +2322,16 @@ class ClassDef(Statement):
                 and isinstance(first.value.value, str)
             ):
                 docstring_cid = first.fragment.seal().cid
+        # Simple Name = <expr> fields (constants and constructed values). The
+        # residual ClassDef mass is non-constant body assigns; Constant-only
+        # was an over-narrow partition that left honest source-visible fields
+        # as unsupported-member gaps.
         class_assignments = tuple(
             (item.targets[0].id, item.value, item.fragment)
             for item in self.body
             if isinstance(item, Assign)
             and len(item.targets) == 1
             and isinstance(item.targets[0], Name)
-            and isinstance(item.value, Constant)
         )
         annotated_assignments = tuple(
             item
@@ -2349,7 +2352,6 @@ class ClassDef(Statement):
                 isinstance(item, Assign)
                 and len(item.targets) == 1
                 and isinstance(item.targets[0], Name)
-                and isinstance(item.value, Constant)
             )
             and not (isinstance(item, AnnAssign) and isinstance(item.target, Name))
         )
@@ -5443,6 +5445,21 @@ class NamedExpr(Expression):
             return {self.target.id: self.value}
         return None
 
+    def _construct_sugar(self):
+        """`(name := value)` constructs NamedExprSugar for a plain Name target.
+
+        Other targets stay loud — no silent destructuring walrus.
+        """
+        if not isinstance(self.target, Name):
+            return super()._construct_sugar()
+        from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
+
+        return NamedExprSugar(
+            name=self.target.id,
+            value=self.value.sugar(),
+            site=self.fragment,
+        )
+
 
 class BinOp(Expression):
     left: Expression
@@ -6240,6 +6257,15 @@ class YieldFrom(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def _construct_sugar(self):
+        """`yield from <iterable>` — delegated suspension for generators."""
+        from sugar_lift_py_tests.sugar.yield_from_sugar import YieldFromSugar
+
+        return YieldFromSugar(
+            value=self.value.sugar(),
+            site=self.fragment,
+        )
 
 
 class Compare(Expression):
@@ -7221,6 +7247,20 @@ class Starred(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def _construct_sugar(self):
+        """`*expr` constructs StarredSugar so the node is never an unowned gap.
+
+        Call/list/tuple/set parents already project ``python:starred``; this
+        arm keeps sole-construction total when the node is walked alone.
+        Unpack store targets remain Assign's residual (#6078).
+        """
+        from sugar_lift_py_tests.sugar.starred_sugar import StarredSugar
+
+        return StarredSugar(
+            value=self.value.sugar(),
+            site=self.fragment,
+        )
 
 
 class Name(Expression):
