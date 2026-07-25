@@ -1,0 +1,153 @@
+{
+  "receiptSchema": "sugar.census.four-axis.receipt.v1",
+  "evidenceStatus": "completed, commit-pinned evidence - NOT authoritative",
+  "evidenceNote": "Predates #6290 identity authority. Becomes bankable authoritative evidence only through exact reconstruction or an authenticated rerun. Valid steering evidence now.",
+  "measuredCommit": "d94f67a3149ea2aceee4f9a8cff0397b6f6d374a",
+  "measuredCommitStatedBy": "this manifest, NOT the tooling: lease-record.json emitted \"measuredCommit\": \"unknown\" at this commit",
+  "knownInstrumentIdentityGaps": {
+    "environment-identity.sourceStamp": "unavailable",
+    "environment-identity.testExtraInputHash": null,
+    "suite-report.json.commit": "absent",
+    "lease-record.measuredCommit": "unknown (observed directly)"
+  },
+  "boundedReplayCommit": "c11767c5e48f2e6799d0d4a0d58823ea84486ac6",
+  "corpus": {
+    "package": "pandas",
+    "version": "3.0.3",
+    "root": "/usr/local/lib/python3.14/site-packages/pandas",
+    "pyFiles": 1421,
+    "aggregateSha256": "04b67544e3628d25d1b20653558fb2c702a870ae3f97bc8492a9f70f854a9c31"
+  },
+  "environment": {
+    "python": "3.14.4 (main, Apr  7 2026, 13:13:20) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "pythonExecutable": "/usr/local/opt/python@3.14/bin/python3.14",
+    "platform": "macOS-26.3.1-x86_64-i386-64bit-Mach-O",
+    "machine": "x86_64",
+    "hostname": "MacBookPro.lan",
+    "cpuCount": 16,
+    "dependencies": {
+      "pandas": "3.0.3",
+      "numpy": "2.5.0",
+      "blake3": "1.0.8",
+      "cbor2": "unknown",
+      "nacl": "1.6.2",
+      "tqdm": "4.69.0",
+      "pyarrow": "absent"
+    }
+  },
+  "contention": {
+    "note": "The BX lease excludes other sugar heavy measurements on this host only. It does NOT exclude concurrent rustc/agent load, which was present throughout. Absolute timings are upper bounds; see rank-stability.json (Spearman rho 0.6552).",
+    "leasePath": "/var/tmp/sugar-heavy-measurement.lease",
+    "leasePathIsOverride": true,
+    "leasePathOverrideReason": "DEFAULT_LEASE_PATH /home/runner/... does not exist on this macOS host. /var/tmp is a single real inode here (not per-container as on battleaxe runners), so flock(2) on it genuinely serializes local takers. Scope: machine-local."
+  },
+  "voidedRuns": {
+    "run1": {
+      "startedUtc": "2026-07-25T21:50:03Z",
+      "verdict": "VOID - not a slow census, not a census",
+      "cause": "The agent worktree supplying the instrument (agent-a9758440c99edca00) was deleted by the harness mid-sweep. Lazily-imported sugar modules (sugar_lift_py_tests.sugar.named_expr_sugar, yield_from_sugar) began raising ModuleNotFoundError at file ~125/1421, producing 9 CRASH rows that would have been misreported as product red.",
+      "discriminator": "run 2 on a durable tree at the same commit produced 0 CRASH rows over all 1421 files",
+      "secondaryDefect": "my wrapper's unconditional `exit 0` wrote completed/zero-findings for a killed run - the one status permitted to support a zero claim. Fixed in run 2."
+    }
+  },
+  "artifacts": {
+    "bounded_replay.py": {
+      "sha256": "86363da6ad308eabe77971b529f3038e4a1e1154087459f53e758e6412b3e34e",
+      "bytes": 6550
+    },
+    "census-raw.log": {
+      "sha256": "13265c5651ba5f041c5ef2101efabd0eb7f57878c60f5c47bdbf79b1a4be189c",
+      "bytes": 4037636
+    },
+    "fn-timing.json": {
+      "sha256": "c4f867d195996a214f41fa8752585e5fbebbe51a2f1567ac77897cee3349b7c7",
+      "bytes": 5048105
+    },
+    "fn_timing.py": {
+      "sha256": "eff8a00e0247a31574d0ec445d1668659bd5e9a5fa180f0f291ab26b2a77c3b6",
+      "bytes": 3531
+    },
+    "full-dump.json": {
+      "sha256": "028a47a072b5f53a622621150ebe1b1bcd9d9cc9a9b803493fd9fa0f460265a0",
+      "bytes": 1870769
+    },
+    "full_dump.py": {
+      "sha256": "c75b7ce623f2007e72ebe0f609c3daf8f8a38bc2d7ad8d7aba9441fb1faa79e2",
+      "bytes": 5409
+    },
+    "lease-record-pass3.json": {
+      "sha256": "d191125ca209b2e1b4c6e852d63af838e0ccc452f674b11f941caff4ba4046dc",
+      "bytes": 1040
+    },
+    "lease-record.json": {
+      "sha256": "f5076c2ded9d027018d26147294bf117b809bf60dac29de31a6becbb25ef6764",
+      "bytes": 1023
+    },
+    "load-samples.txt": {
+      "sha256": "37c3bab7fbcc8ad78c283c2e0db06a66b054944e267c4a21106a18b8a13099ed",
+      "bytes": 6557
+    },
+    "make_manifest.py": {
+      "sha256": "9ffab0b1d59344bd6d91ddf0181eb569b87bf060b12026a0aca0f3147009c301",
+      "bytes": 6448
+    },
+    "measured.sh": {
+      "sha256": "635b0a959735c0b6fbdad9ec50605b8f5bc6fc3a7086250a5668f99f83947ddf",
+      "bytes": 2012
+    },
+    "measured3.sh": {
+      "sha256": "d45da47048f06eb32eb94cd20a5fc8c377f7e2c72289c03aaa348ca850fd9c62",
+      "bytes": 742
+    },
+    "panic-mechanisms.json": {
+      "sha256": "eade939ba49e5065d770f03dc10edd353cad4db2924cae742fd0a57f53dc8405",
+      "bytes": 13752
+    },
+    "panic_mechanisms.py": {
+      "sha256": "281ce22fe23e1662f701b8ca285cee1b5ea7bae75279ee5fd3778e818d4ed930",
+      "bytes": 3988
+    },
+    "rank-stability.json": {
+      "sha256": "123b22da569ac3da17c9a1c1c3f8a3afb202a20478f9e0a588a39834f1b14b9d",
+      "bytes": 6868
+    },
+    "rank_stability.py": {
+      "sha256": "86b02cac383d2f163f4fd453fcb1b3989eb4aac50a06497bdf08683ca296a745",
+      "bytes": 4570
+    },
+    "run-meta.txt": {
+      "sha256": "d66e89d01bd8f5042016ce63f694722b5a0be5f8be07af5ef7c281dc2c6e0733",
+      "bytes": 1292
+    },
+    "run1-VOID-meta.txt": {
+      "sha256": "8927ab0a575fb993360d0b2dff6b76a80e5a6f5c42c8205cd8e5634066945a43",
+      "bytes": 574
+    },
+    "run_census.sh": {
+      "sha256": "0e0e167e1a44e34bbd61eb5034c7e268abd8bae266d26db5c9776290b02a62ba",
+      "bytes": 1491
+    },
+    "run_pass3.sh": {
+      "sha256": "f3434996a6dbaa5b473ff887856bcc9a998119d9729156c77f818d14953cde06",
+      "bytes": 1235
+    },
+    "run_replay.sh": {
+      "sha256": "ed30f78610fa1f87b6d9015a6cd17b20f9259fdc1156cb61e291860a5636cc2b",
+      "bytes": 1090
+    },
+    "with-partition.json": {
+      "sha256": "5330b4680c74b24c04a8cd62f5bf435a4f87e6ecea42b7e0242a228ac0771b81",
+      "bytes": 980104
+    },
+    "with_partition.py": {
+      "sha256": "dc7e3beb8e4ea8d52653304b12cd131cee6680691ea15f761c0275019eda7d22",
+      "bytes": 6881
+    }
+  },
+  "reconstruction": {
+    "tree": "git worktree add <path> d94f67a3149ea2aceee4f9a8cff0397b6f6d374a",
+    "pythonpath": "implementations/python/*/src",
+    "command": "python3 -m sugar_lift_py_tests.census $(python3 -c 'import pandas,os;print(os.path.dirname(pandas.__file__))')",
+    "underLease": "tools/heavy_measurement_lease.py --class pandas-four-axis-census"
+  }
+}

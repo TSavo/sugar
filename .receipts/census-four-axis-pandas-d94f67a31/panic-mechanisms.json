@@ -1,0 +1,332 @@
+{
+  "totalPanicOccurrences": 1074,
+  "distinctOwnerMechanisms": 19,
+  "distinctOwnerMessageShapePairs": 47,
+  "mechanisms": [
+    {
+      "owner": "contains",
+      "occurrences": 705,
+      "distinctMessageShapes": 7,
+      "filesAffected": 270,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=CallSiteValue requested=stand on the membership floor fix=write more Floor: implem",
+          254
+        ],
+        [
+          "write more Floor for this Construction: owner=contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=ListValue requested=stand on the membership floor fix=write more Floor: implement ",
+          183
+        ],
+        [
+          "write more Floor for this Construction: owner=contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=TupleValue requested=stand on the membership floor fix=write more Floor: implement",
+          155
+        ],
+        [
+          "write more Floor for this Construction: owner=contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=StringValue requested=stand on the membership floor fix=write more Floor: implemen",
+          94
+        ],
+        [
+          "write more Floor for this Construction: owner=contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=GuardedValue requested=stand on the membership floor fix=write more Floor: impleme",
+          9
+        ]
+      ]
+    },
+    {
+      "owner": "attribute",
+      "occurrences": 229,
+      "distinctMessageShapes": 5,
+      "filesAffected": 134,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=attribute blame=<SourceFragment '<id>' [<n>, <n>) node=Attribute> observed=GuardedValue requested=stand on the attribute floor fix=write more Floor: imple",
+          197
+        ],
+        [
+          "write more Floor for this Construction: owner=attribute blame=<SourceFragment '<id>' [<n>, <n>) node=Attribute> observed=StringValue requested=stand on the attribute floor fix=write more Floor: implem",
+          19
+        ],
+        [
+          "write more Floor for this Construction: owner=attribute blame=<SourceFragment '<id>' [<n>, <n>) node=Attribute> observed=PredicateValue requested=stand on the attribute floor fix=write more Floor: imp",
+          7
+        ],
+        [
+          "write more Floor for this Construction: owner=attribute blame=<SourceFragment '<id>' [<n>, <n>) node=Attribute> observed=DictValue requested=stand on the attribute floor fix=write more Floor: implemen",
+          5
+        ],
+        [
+          "write more Floor for this Construction: owner=attribute blame=<SourceFragment '<id>' [<n>, <n>) node=Attribute> observed=ListValue requested=stand on the attribute floor fix=write more Floor: implemen",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "add",
+      "occurrences": 44,
+      "distinctMessageShapes": 6,
+      "filesAffected": 32,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=add blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=TermValue requested=stand on the addition floor fix=write more Floor: implement TermValue",
+          34
+        ],
+        [
+          "write more Floor for this Construction: owner=add blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=ComprehensionValue requested=stand on the addition floor fix=write more Floor: implement ",
+          4
+        ],
+        [
+          "write more Floor for this Construction: owner=add blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=PredicateValue requested=stand on the addition floor fix=write more Floor: implement Pred",
+          3
+        ],
+        [
+          "write more Floor for this Construction: owner=add blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=NoneValue requested=stand on the addition floor fix=write more Floor: implement NoneValue",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=add blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=BytesValue requested=stand on the addition floor fix=write more Floor: implement BytesVal",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "guarded",
+      "occurrences": 32,
+      "distinctMessageShapes": 6,
+      "filesAffected": 24,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=guarded blame=UniverseValue observed=UniverseValue requested=ride under a guard fix=write more Floor: implement UniverseValue.guarded",
+          26
+        ],
+        [
+          "write more Floor for this Construction: owner=guarded blame=SymbolicValue observed=SymbolicValue requested=ride under a guard fix=write more Floor: implement SymbolicValue.guarded",
+          2
+        ],
+        [
+          "write more Floor for this Construction: owner=guarded blame=TrueBoolLiteralSugar observed=TrueBoolLiteralSugar requested=ride under a guard fix=write more Floor: implement TrueBoolLiteralSugar.guarded",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=guarded blame=StringValue observed=StringValue requested=ride under a guard fix=write more Floor: implement StringValue.guarded",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=guarded blame=ClassDefinitionValue observed=ClassDefinitionValue requested=ride under a guard fix=write more Floor: implement ClassDefinitionValue.guarded",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "ListValue.multiply",
+      "occurrences": 19,
+      "distinctMessageShapes": 1,
+      "filesAffected": 14,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=ListValue.multiply blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=list repetition cardinality=<n> requested=finite repetition at or below <n",
+          19
+        ]
+      ]
+    },
+    {
+      "owner": "ground_index_error",
+      "occurrences": 14,
+      "distinctMessageShapes": 1,
+      "filesAffected": 13,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=ground_index_error blame=<site> observed=absolute source locus requested=workspace-relative source locus fix=route the source through the workspace-relati",
+          14
+        ]
+      ]
+    },
+    {
+      "owner": "SetValue.contains",
+      "occurrences": 7,
+      "distinctMessageShapes": 2,
+      "filesAffected": 5,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=SetValue.contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=CallSiteValue requested=constructed finite member or typed symbolic membe",
+          5
+        ],
+        [
+          "write more Floor for this Construction: owner=SetValue.contains blame=<SourceFragment '<id>' [<n>, <n>) node=Compare> observed=GuardedValue requested=constructed finite member or typed symbolic member",
+          2
+        ]
+      ]
+    },
+    {
+      "owner": "RuntimeEffect",
+      "occurrences": 6,
+      "distinctMessageShapes": 3,
+      "filesAffected": 5,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=RuntimeEffect blame=<site> observed=py.delitem operand=_Ctor(name='<id>', args=(_Ctor(name='<id>', args=()), _Ctor(name='<id>', args=(_Ctor(name='<id>', a",
+          4
+        ],
+        [
+          "write more Floor for this Construction: owner=RuntimeEffect blame=<site> observed=py.lt operand=NoneValue() requested=genuine runtime-dependent operand fix=RuntimeEffect requires a genuine runtime-dep",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=RuntimeEffect blame=<site> observed=py.delitem operand=_Ctor(name='<id>', args=(_Ctor(name='<id>', args=()), _ConstStr(value='<id>', sort=PrimitiveSort(na",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "multiply",
+      "occurrences": 5,
+      "distinctMessageShapes": 3,
+      "filesAffected": 3,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=multiply blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=BytesValue requested=stand on the multiplication floor fix=write more Floor: impleme",
+          3
+        ],
+        [
+          "write more Floor for this Construction: owner=multiply blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=StringValue requested=stand on the multiplication floor fix=write more Floor: implem",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=multiply blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=BlockValue requested=stand on the multiplication floor fix=write more Floor: impleme",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "bitwise_and",
+      "occurrences": 2,
+      "distinctMessageShapes": 2,
+      "filesAffected": 2,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=bitwise_and blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=GuardedValue requested=stand on the runtime bitwise and floor fix=write more Floo",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=bitwise_and blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=PredicateValue requested=stand on the runtime bitwise and floor fix=write more Fl",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "subtract",
+      "occurrences": 2,
+      "distinctMessageShapes": 2,
+      "filesAffected": 2,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=subtract blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=ComprehensionValue requested=stand on the subtraction floor fix=write more Floor: im",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=subtract blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=SetValue requested=stand on the subtraction floor fix=write more Floor: implement Se",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "bitwise_or",
+      "occurrences": 2,
+      "distinctMessageShapes": 2,
+      "filesAffected": 2,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=bitwise_or blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=FalseBoolLiteralSugar requested=stand on the runtime bitwise or floor fix=write mo",
+          1
+        ],
+        [
+          "write more Floor for this Construction: owner=bitwise_or blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=PredicateValue requested=stand on the runtime bitwise or floor fix=write more Floo",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "bitwise_invert",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=bitwise_invert blame=<SourceFragment '<id>' [<n>, <n>) node=UnaryOp> observed=NoneValue requested=stand on the bitwise-invert floor fix=write more Floor: ",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "truth",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=truth blame=<SourceFragment '<id>' [<n>, <n>) node=BoolOp> observed=LambdaCallable requested=stand as a condition fix=write more Floor: implement LambdaCa",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "ground_type_error",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=ground_type_error blame=<site> observed=absolute source locus requested=workspace-relative source locus fix=route the source through the workspace-relativ",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "divide",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=divide blame=<SourceFragment '<id>' [<n>, <n>) node=BinOp> observed=BlockValue requested=stand on the division floor fix=write more Floor: implement Block",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "unary_plus",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=unary_plus blame=<SourceFragment '<id>' [<n>, <n>) node=UnaryOp> observed=TrueBoolLiteralSugar requested=stand on the unary-plus floor fix=write more Floo",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "dict.subscript",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Construction: owner=dict.subscript blame=<site> observed=missing concrete key StringValue(value='<id>') requested=exact dictionary post-state or exceptional exit fix=carry ex",
+          1
+        ]
+      ]
+    },
+    {
+      "owner": "<SourceFragment '/usr/local/lib/python3.14/site-packages/pandas/tests/indexes/period/test_period.py' [3823, 3839) node=Call>",
+      "occurrences": 1,
+      "distinctMessageShapes": 1,
+      "filesAffected": 1,
+      "shapes": [
+        [
+          "write more Floor for this Projection: owner=<SourceFragment '<id>' [<n>, <n>) node=Call> blame=BlockValue observed=BlockValue requested=project this floor value to a term fix=write more Floor: impleme",
+          1
+        ]
+      ]
+    }
+  ],
+  "verdict": "many-distinct-mechanisms"
+}

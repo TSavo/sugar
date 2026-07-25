@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "leaseClass": "pandas-four-axis-census",
+  "measurementStatus": "completed/findings",
+  "supportsZeroClaim": false,
+  "zeroClaimStatus": "completed/zero-findings",
+  "leaseIdentity": {
+    "path": "/var/tmp/sugar-heavy-measurement.lease",
+    "bootId": "unavailable",
+    "hostname": "MacBookPro.lan",
+    "device": 16777223,
+    "inode": 403349699
+  },
+  "acquired": true,
+  "timedOut": false,
+  "timeoutSeconds": 14400,
+  "requestedAtUnix": 1785017142.888,
+  "acquiredAtUnix": 1785017142.889121,
+  "releasedAtUnix": 1785019593.257142,
+  "waitSeconds": 0.001121,
+  "heldSeconds": 2450.368021,
+  "measuredCommit": "unknown",
+  "owner": {
+    "githubRunId": null,
+    "githubRunAttempt": null,
+    "githubWorkflow": null,
+    "githubJob": null,
+    "githubRef": null,
+    "runnerName": null,
+    "holderPid": 50092
+  },
+  "command": "bash /private/tmp/claude-501/-Users-tsavo/d335638d-e107-473a-809c-b2e3e6d6f14e/scratchpad/measured.sh",
+  "commandExitStatus": 1,
+  "staleOwnerDiagnostics": null
+}

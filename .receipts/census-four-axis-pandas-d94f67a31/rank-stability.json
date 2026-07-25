@@ -1,0 +1,291 @@
+{
+  "topN": 40,
+  "paired": 40,
+  "spearmanRho": 0.6552,
+  "wallSeconds": 235.5,
+  "loadMin": 18.37,
+  "loadMax": 64.19,
+  "loadMean": 31.68,
+  "rows": [
+    {
+      "name": "value_counts",
+      "where": "core/groupby/generic.py:1090:4",
+      "run1_s": 26.4563,
+      "replay_s": 27.2991,
+      "ratio": 1.032
+    },
+    {
+      "name": "__internal_pivot_table",
+      "where": "core/reshape/pivot.py:284:0",
+      "run1_s": 21.277,
+      "replay_s": 31.242,
+      "ratio": 1.468
+    },
+    {
+      "name": "ndarray_to_mgr",
+      "where": "core/internals/construction.py:193:0",
+      "run1_s": 12.3439,
+      "replay_s": 5.2391,
+      "ratio": 0.424
+    },
+    {
+      "name": "test_cython_agg_EA_known_dtypes",
+      "where": "tests/groupby/aggregate/test_cython.py:377:0",
+      "run1_s": 6.3522,
+      "replay_s": 7.5519,
+      "ratio": 1.189
+    },
+    {
+      "name": "_call_cython_op",
+      "where": "core/groupby/ops.py:359:4",
+      "run1_s": 5.9742,
+      "replay_s": 6.284,
+      "ratio": 1.052
+    },
+    {
+      "name": "_mode",
+      "where": "core/arrays/arrow/array.py:2423:4",
+      "run1_s": 4.5626,
+      "replay_s": 11.5742,
+      "ratio": 2.537
+    },
+    {
+      "name": "test_constructor",
+      "where": "tests/scalar/timestamp/test_constructors.py:548:4",
+      "run1_s": 4.0103,
+      "replay_s": 11.7866,
+      "ratio": 2.939
+    },
+    {
+      "name": "_next_line",
+      "where": "io/parsers/python_parser.py:892:4",
+      "run1_s": 3.7538,
+      "replay_s": 5.8128,
+      "ratio": 1.549
+    },
+    {
+      "name": "replace",
+      "where": "core/generic.py:7388:4",
+      "run1_s": 3.6844,
+      "replay_s": 1.4562,
+      "ratio": 0.395
+    },
+    {
+      "name": "_where",
+      "where": "core/generic.py:9982:4",
+      "run1_s": 3.104,
+      "replay_s": 2.9881,
+      "ratio": 0.963
+    },
+    {
+      "name": "__init__",
+      "where": "core/series.py:369:4",
+      "run1_s": 2.9812,
+      "replay_s": 5.5723,
+      "ratio": 1.869
+    },
+    {
+      "name": "_generate_range",
+      "where": "core/arrays/datetimes.py:414:4",
+      "run1_s": 2.9312,
+      "replay_s": 8.9619,
+      "ratio": 3.057
+    },
+    {
+      "name": "_get_lines",
+      "where": "io/parsers/python_parser.py:1266:4",
+      "run1_s": 2.6022,
+      "replay_s": 4.929,
+      "ratio": 1.894
+    },
+    {
+      "name": "_wrap_result",
+      "where": "core/strings/accessor.py:260:4",
+      "run1_s": 2.5726,
+      "replay_s": 3.5666,
+      "ratio": 1.386
+    },
+    {
+      "name": "to_latex",
+      "where": "core/generic.py:3379:4",
+      "run1_s": 2.4716,
+      "replay_s": 2.6775,
+      "ratio": 1.083
+    },
+    {
+      "name": "test_rule_code",
+      "where": "tests/tseries/offsets/test_offsets.py:824:4",
+      "run1_s": 2.2248,
+      "replay_s": 13.1268,
+      "ratio": 5.9
+    },
+    {
+      "name": "get_grouper",
+      "where": "core/groupby/grouper.py:721:0",
+      "run1_s": 1.9864,
+      "replay_s": 1.776,
+      "ratio": 0.894
+    },
+    {
+      "name": "bootstrap_plot",
+      "where": "plotting/_matplotlib/misc.py:290:0",
+      "run1_s": 1.9216,
+      "replay_s": 1.4152,
+      "ratio": 0.736
+    },
+    {
+      "name": "_maybe_add_join_keys",
+      "where": "core/reshape/merge.py:1273:4",
+      "run1_s": 1.8649,
+      "replay_s": 2.485,
+      "ratio": 1.333
+    },
+    {
+      "name": "get_handle",
+      "where": "io/common.py:701:0",
+      "run1_s": 1.8447,
+      "replay_s": 2.1916,
+      "ratio": 1.188
+    },
+    {
+      "name": "_join_level",
+      "where": "core/indexes/base.py:4703:4",
+      "run1_s": 1.8092,
+      "replay_s": 1.7897,
+      "ratio": 0.989
+    },
+    {
+      "name": "test_timegrouper_with_reg_groups",
+      "where": "tests/groupby/test_timegrouper.py:169:4",
+      "run1_s": 1.8049,
+      "replay_s": 2.7431,
+      "ratio": 1.52
+    },
+    {
+      "name": "read",
+      "where": "io/stata.py:1601:4",
+      "run1_s": 1.6493,
+      "replay_s": 2.2266,
+      "ratio": 1.35
+    },
+    {
+      "name": "format_object_summary",
+      "where": "io/formats/printing.py:300:0",
+      "run1_s": 1.6321,
+      "replay_s": 1.9137,
+      "ratio": 1.172
+    },
+    {
+      "name": "waitForNewPaste",
+      "where": "io/clipboard/__init__.py:714:0",
+      "run1_s": 1.5825,
+      "replay_s": 1.7194,
+      "ratio": 1.086
+    },
+    {
+      "name": "_value_counts",
+      "where": "core/groupby/groupby.py:2625:4",
+      "run1_s": 1.5493,
+      "replay_s": 1.3363,
+      "ratio": 0.862
+    },
+    {
+      "name": "_getitem_lowerdim",
+      "where": "core/indexing.py:1059:4",
+      "run1_s": 1.5243,
+      "replay_s": 0.218,
+      "ratio": 0.143
+    },
+    {
+      "name": "test_many_strl",
+      "where": "tests/io/test_stata.py:2595:0",
+      "run1_s": 1.4497,
+      "replay_s": 3.3754,
+      "ratio": 2.328
+    },
+    {
+      "name": "waitForPaste",
+      "where": "io/clipboard/__init__.py:694:0",
+      "run1_s": 1.4476,
+      "replay_s": 1.8315,
+      "ratio": 1.265
+    },
+    {
+      "name": "_align_series",
+      "where": "core/indexing.py:2339:4",
+      "run1_s": 1.3992,
+      "replay_s": 0.8173,
+      "ratio": 0.584
+    },
+    {
+      "name": "test_category_order_transformer",
+      "where": "tests/groupby/test_categorical.py:1968:0",
+      "run1_s": 1.3723,
+      "replay_s": 2.2894,
+      "ratio": 1.668
+    },
+    {
+      "name": "test_operators_timedelta64",
+      "where": "tests/frame/test_reductions.py:687:4",
+      "run1_s": 1.3493,
+      "replay_s": 1.0449,
+      "ratio": 0.774
+    },
+    {
+      "name": "test_drop_duplicates",
+      "where": "tests/frame/methods/test_drop_duplicates.py:25:0",
+      "run1_s": 1.2804,
+      "replay_s": 1.371,
+      "ratio": 1.071
+    },
+    {
+      "name": "test_datetime_likes",
+      "where": "tests/test_algos.py:1566:4",
+      "run1_s": 1.2578,
+      "replay_s": 4.1257,
+      "ratio": 3.28
+    },
+    {
+      "name": "dict_to_mgr",
+      "where": "core/internals/construction.py:375:0",
+      "run1_s": 1.2453,
+      "replay_s": 0.6146,
+      "ratio": 0.494
+    },
+    {
+      "name": "_stack_multi_columns",
+      "where": "core/reshape/reshape.py:803:0",
+      "run1_s": 1.233,
+      "replay_s": 1.9444,
+      "ratio": 1.577
+    },
+    {
+      "name": "json_normalize",
+      "where": "io/json/_normalize.py:304:0",
+      "run1_s": 1.2252,
+      "replay_s": 3.5179,
+      "ratio": 2.871
+    },
+    {
+      "name": "test_constructor_with_stringoffset",
+      "where": "tests/scalar/timestamp/test_constructors.py:617:4",
+      "run1_s": 1.2207,
+      "replay_s": 3.4182,
+      "ratio": 2.8
+    },
+    {
+      "name": "test_is_monotonic_with_nat",
+      "where": "tests/indexes/datetimelike_/test_is_monotonic.py:8:0",
+      "run1_s": 1.2142,
+      "replay_s": 1.8058,
+      "ratio": 1.487
+    },
+    {
+      "name": "iset",
+      "where": "core/internals/managers.py:1267:4",
+      "run1_s": 1.1964,
+      "replay_s": 1.0591,
+      "ratio": 0.885
+    }
+  ]
+}
