@@ -41,13 +41,13 @@ jobs:
           implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
       - name: Install Python lift kit and static-floor test runner
         if: always()
+        # Sole dep authority: sugar-lift-py-tests[test] (pyproject.toml).
+        # tqdm is a package dependency — not a free-floating pin here.
         run: >-
           python -m pip install
-          pytest
-          tqdm
-          ./implementations/python/sugar-lift-python-source
-          ./implementations/python/sugar-source-tree
-          ./implementations/python/sugar-lift-py-tests
+          -e implementations/python/sugar-lift-python-source
+          -e implementations/python/sugar-source-tree
+          -e 'implementations/python/sugar-lift-py-tests[test]'
       # Heavy supervised enum floors — sequential under this one job so the
       # complete floor set is always from one pinned run.
       - name: R_native_crashes = 0

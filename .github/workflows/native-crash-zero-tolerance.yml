@@ -21,12 +21,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python lift kit
+        # Sole dep authority: sugar-lift-py-tests[test] (pyproject.toml).
         run: >-
           python -m pip install
-          pytest
-          ./implementations/python/sugar-lift-python-source
-          ./implementations/python/sugar-source-tree
-          ./implementations/python/sugar-lift-py-tests
+          -e implementations/python/sugar-lift-python-source
+          -e implementations/python/sugar-source-tree
+          -e 'implementations/python/sugar-lift-py-tests[test]'
       - name: R_native_crashes discrimination
         run: >-
           python -m pytest --noconftest

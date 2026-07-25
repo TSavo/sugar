@@ -59,15 +59,16 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/restored-suite-python"
           "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --upgrade pip
+          # Sole dep authority: sugar-lift-py-tests extras (pyproject.toml).
+          # pandas is the named [pandas] extra — not a free-floating pin.
           "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --no-cache-dir \
-            pandas \
             -e implementations/python/libsugar-py \
             -e implementations/python/sugar-emit-python-hypothesis \
             -e implementations/python/sugar-emit-python-pytest \
             -e implementations/python/sugar-emit-python-unittest \
             -e implementations/python/sugar-build-witness \
             -e implementations/python/sugar-lift-py-pytest-witness \
-            -e 'implementations/python/sugar-lift-py-tests[test]' \
+            -e 'implementations/python/sugar-lift-py-tests[test,pandas]' \
             -e implementations/python/sugar-lift-python-source
           bin/sugarbin --profile release >/dev/null
 
