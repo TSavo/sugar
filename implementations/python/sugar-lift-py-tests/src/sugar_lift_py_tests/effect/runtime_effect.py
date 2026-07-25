@@ -129,6 +129,7 @@ def is_lift_time_decidable(term: Term) -> bool:
         _ConstReal,
         _ConstStr,
         _Ctor,
+        _Lambda,
         _Var,
     )
 
@@ -145,6 +146,16 @@ def is_lift_time_decidable(term: Term) -> bool:
         if isinstance(current, _Var):
             decisions[identity] = False
             continue
+        # Symbolic fold / comprehension element maps are open bodies: the
+        # param binds over iteration; the body is not a ground constant even
+        # when every free name is known. py.listcomp carries _Lambda children —
+        # treating them as unknown TypeError made sequence_concat reject a
+        # correctly-constructed symbolic fold as a RuntimeEffect operand.
+        if isinstance(current, _Lambda):
+            decisions[identity] = False
+            if id(current.body) not in decisions:
+                work.append((current.body, False))
+            continue
         if not isinstance(current, _Ctor):
             raise TypeError(
                 f"unknown RuntimeEffect operand term: {type(current).__name__}"
@@ -158,6 +169,16 @@ def is_lift_time_decidable(term: Term) -> bool:
         # executing the guarded operation. The exception class coordinate may
         # be ground, but the occurrence testimony is runtime-by-nature.
         if current.name == "py.except":
+            decisions[identity] = False
+            continue
+        # Comprehension / generator folds are iteration products; members are
+        # not decidable at lift time even when the iterable coordinate is a var.
+        if current.name in (
+            "py.listcomp",
+            "py.setcomp",
+            "py.dictcomp",
+            "py.genexp",
+        ):
             decisions[identity] = False
             continue
         if not finishing:

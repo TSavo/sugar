@@ -68,32 +68,24 @@ class ListValue(FloorValue):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 
         if type(other) is ComprehensionValue:
-            from sugar_lift_py_tests.effect import (
-                SequenceConcatenationRuntimeEffect,
-                is_lift_time_decidable,
-                runtime_effect_evidence,
-            )
+            # A constructed comprehension is already a sequence coordinate
+            # (symbolic fold). Concatenate as another coordinate — never mint
+            # RuntimeEffect over ComprehensionValue (that path required a
+            # genuine runtime operand and rejected/faulted on py.listcomp
+            # bodies carrying _Lambda before effect/runtime_effect admitted them).
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.outcome import Complete
 
             self_term = self.to_term(owner=str(site))
-            if is_lift_time_decidable(self_term) and is_lift_time_decidable(other.term):
-                return Complete(
-                    ComprehensionValue(
-                        ctor(
-                            "+",
-                            [
-                                self_term,
-                                other.term,
-                            ],
-                        )
+            return Complete(
+                ComprehensionValue(
+                    ctor(
+                        "+",
+                        [
+                            self_term,
+                            other.term,
+                        ],
                     )
-                )
-            return Incomplete(
-                SequenceConcatenationRuntimeEffect(
-                    "list concatenation depends on runtime comprehension members; "
-                    f"owner=ListValue.add site={site}",
-                    **runtime_effect_evidence("py.sequence_concat", other, site),
                 )
             )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
