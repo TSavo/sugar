@@ -14,6 +14,12 @@ Construction R answers "is the tree total?". Desugar R answers "is meaning
 reducible?". Yield/YieldFrom construct then refuse at desugar — correct; they
 must stay on the board under axis 2 (see #6243).
 
+Occurrence identity: one gap = (kind, file, line, col). Construction families
+are tallied only from ``reporter.gaps`` (catch+reporter type double-count is
+presentation duplication — e.g. mid-band With CM residual ≈213 sites, not
+~2×). Demand/resolution ``BackendDefect``s are a separate hygiene axis
+(``R_backend_defects``), never merged into construction R.
+
 No subprocess. No process pool. Construction context is required: bare
 ``fn.sugar()`` with ``construction_context is None`` paints every With as
 ``RuntimeSelectedContextManager`` regardless of resolvability (instrument
@@ -130,19 +136,81 @@ def _typed_red_owners(outcome: object) -> list[str]:
     return owners
 
 
+def _occurrence_key(
+    kind: str,
+    relative: str,
+    *,
+    node: object | None = None,
+    line: object = "?",
+    col: object = -1,
+) -> tuple[str, str, object, object]:
+    """One gap/effect occurrence = (kind, file, line, col). Never double-tally."""
+    if node is not None:
+        try:
+            lc = node.line_col_span()  # type: ignore[attr-defined]
+            return (kind, relative, lc.start_line, lc.start_col)
+        except Exception:  # noqa: BLE001 -- fall back to hints
+            pass
+    return (kind, relative, line, col)
+
+
+def _backend_defect_key(exc: object) -> str:
+    """Classify demand/resolution table hygiene — never construction mass.
+
+    The mid-band With probe surfaces two distinct BackendDefects that are
+    table bijection failures, not residual construction mass:
+
+    1. enrolled context-manager demand missing from resolution table
+    2. enrolled call demand missing from resolution table
+
+    Preserve them as separate keys so the board can track each to zero
+    without conflating either with ContextManagerResolutionConstructionGap.
+    """
+    text = str(exc)
+    name = type(exc).__name__ if not isinstance(exc, str) else "BackendDefect"
+    observed = getattr(exc, "observed", None)
+    if isinstance(observed, str) and observed:
+        text = f"{text} {observed}"
+    lowered = text.lower()
+    if "context-manager demand missing" in lowered or (
+        "context-manager" in lowered and "missing from resolution" in lowered
+    ):
+        return "BackendDefect:cm-demand-missing-from-resolution"
+    if "call demand missing" in lowered or (
+        "call demand" in lowered and "missing from resolution" in lowered
+    ):
+        return "BackendDefect:call-demand-missing-from-resolution"
+    if "BackendDefect" in name or "backend defect" in lowered:
+        return f"BackendDefect:{name}" if name != "BackendDefect" else "BackendDefect"
+    return f"BackendDefect:{name}"
+
+
 def _measure_desugar_axis(
     sugar: object,
     *,
     relative: str,
     line: object,
     desugar_families: Counter[str],
-    desugar_seen: set[tuple[str, str, object]],
+    desugar_seen: set[tuple[str, str, object, object]],
 ) -> None:
-    """Tally desugar-layer SNW and typed red; dedup by (owner, file, line)."""
+    """Tally desugar-layer SNW and typed red; one occurrence once.
+
+    Occurrence key is (owner, file, line, col). Prefer sugar.site / gap
+    fragment coordinates over the function line so two refusals in one
+    function do not collapse, and catch+reporter never double.
+    """
     from sugar_source_tree.panic import SugarNotWritten
 
-    def tally(owner: str) -> None:
-        key = (owner, relative, line)
+    def site_from_sugar() -> tuple[object, object]:
+        site = getattr(sugar, "site", None)
+        if site is None:
+            return line, -1
+        return getattr(site, "line", line), getattr(site, "col", -1)
+
+    def tally(owner: str, *, node: object | None = None, ln=None, col=-1) -> None:
+        if ln is None:
+            ln, col = site_from_sugar()
+        key = _occurrence_key(owner, relative, node=node, line=ln, col=col)
         if key in desugar_seen:
             return
         desugar_seen.add(key)
@@ -151,13 +219,20 @@ def _measure_desugar_axis(
     try:
         outcome = sugar.desugar(None)  # type: ignore[attr-defined]
     except SugarNotWritten as gap:
-        tally(_desugar_owner_key(gap))
+        # Prefer blame fragment on the gap when present.
+        blame = getattr(gap, "info", None)
+        blame_str = getattr(blame, "blame", None) if blame is not None else None
+        ln, col = site_from_sugar()
+        tally(_desugar_owner_key(gap), ln=ln, col=col)
+        del blame_str
         return
     except Exception as exc:  # noqa: BLE001 -- desugar crash is a defect row
-        tally(f"desugar-crash:{type(exc).__name__}")
+        ln, col = site_from_sugar()
+        tally(f"desugar-crash:{type(exc).__name__}", ln=ln, col=col)
         return
     for owner in _typed_red_owners(outcome):
-        tally(owner)
+        ln, col = site_from_sugar()
+        tally(owner, ln=ln, col=col)
 
 
 def _measure_file(
@@ -180,8 +255,17 @@ def _measure_file(
     functions_clean = 0
     families: Counter[str] = Counter()
     desugar_families: Counter[str] = Counter()
-    desugar_seen: set[tuple[str, str, object]] = set()
+    construction_seen: set[tuple[str, str, object, object]] = set()
+    desugar_seen: set[tuple[str, str, object, object]] = set()
+    backend_defects: Counter[str] = Counter()
     root = workspace_root if workspace_root is not None else path.parent
+
+    def tally_construction(kind: str, node: object | None = None, line: object = "?") -> None:
+        key = _occurrence_key(kind, relative, node=node, line=line)
+        if key in construction_seen:
+            return
+        construction_seen.add(key)
+        families[kind] += 1
 
     def construct():
         nonlocal functions_total, functions_clean
@@ -200,9 +284,8 @@ def _measure_file(
                 populate_derived=True,
             )
         except SugarNotWritten as gap:
-            # Derivation can hit a real missing sugar (e.g. ClassDef) before any
-            # function body is walked — count it as a typed family, not a crash.
-            families[type(gap).__name__] += 1
+            # Derivation can hit a real missing sugar before any function walk.
+            tally_construction(type(gap).__name__, line=0)
             return reporter
         for function in source_file.functions():
             functions_total += 1
@@ -219,8 +302,10 @@ def _measure_file(
             try:
                 sugar = function.sugar()
                 functions_clean += 1
-            except SugarNotWritten as gap:
-                families[type(gap).__name__] += 1
+            except SugarNotWritten:
+                # Do NOT tally type here — report_gap already recorded the
+                # occurrence on the reporter. Catch+reporter double-tally is
+                # what turned 196 With gaps into a false 392.
                 sugar = None
             if sugar is not None:
                 _measure_desugar_axis(
@@ -235,8 +320,14 @@ def _measure_file(
             # `last=` is per-function and a slow/blowup function is obvious.
             if on_function is not None:
                 on_function(functions_total, functions_clean, fn_name, fn_s)
-        for _node, panic in reporter.gaps:
-            families[type(panic).__name__] += 1
+        # Sole construction-gap source: reporter occurrences, site-deduped.
+        # BackendDefect is table hygiene — own counter, never construction R.
+        for node, panic in reporter.gaps:
+            kind = type(panic).__name__
+            if kind == "BackendDefect" or "BackendDefect" in kind:
+                backend_defects[_backend_defect_key(panic)] += 1
+                continue
+            tally_construction(kind, node=node)
         return reporter
 
     _reporter, panic_row = collect_construction_panic(relative, construct)
@@ -254,6 +345,8 @@ def _measure_file(
             "families": dict(families),
             "desugarFamilies": dict(desugar_families),
             "R_desugar": sum(desugar_families.values()),
+            "backendDefects": dict(backend_defects),
+            "R_backend_defects": sum(backend_defects.values()),
         }
     return {
         "category": "completed",
@@ -262,6 +355,8 @@ def _measure_file(
         "families": dict(families),
         "desugarFamilies": dict(desugar_families),
         "R_desugar": sum(desugar_families.values()),
+        "backendDefects": dict(backend_defects),
+        "R_backend_defects": sum(backend_defects.values()),
     }
 
 
@@ -361,6 +456,7 @@ def main() -> int:
     floor_rows: list[dict[str, Any]] = []
     families: Counter[str] = Counter()
     desugar_families: Counter[str] = Counter()
+    backend_defects: Counter[str] = Counter()
     files_completed = 0
     functions_total = 0
     functions_clean = 0
@@ -595,13 +691,17 @@ def main() -> int:
         functions_clean += int(row.get("functionsClean") or 0)
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
+        backend_defects.update(row.get("backendDefects") or {})
         if category == "completed":
             files_completed += 1
         elif category == "construction-panic":
             panic = row.get("panic")
             if isinstance(panic, dict):
                 construction_panics.append(panic)
-            families["ConstructionPanic"] += 1
+            # Occurrence-keyed already if present in families; avoid a bare +1
+            # that has no site identity.
+            if "ConstructionPanic" not in (row.get("families") or {}):
+                families["ConstructionPanic"] += 1
         else:
             defect = row.get("defect")
             defects.append(
@@ -609,11 +709,25 @@ def main() -> int:
                 if isinstance(defect, dict)
                 else {"file": file, "type": category, "message": category}
             )
+            # Demand/resolution table hygiene — own counter, not mass residual.
+            # Keep CM-demand vs call-demand bijection failures separate.
+            if isinstance(defect, dict):
+                msg = f"{defect.get('type', '')}: {defect.get('message', '')}"
+            else:
+                msg = str(category)
+            if "BackendDefect" in msg or "backend defect" in msg.lower() or (
+                isinstance(defect, dict)
+                and "BackendDefect" in str(defect.get("type", ""))
+            ):
+                backend_defects[_backend_defect_key(msg)] += 1
+            elif category == "backend-defect":
+                backend_defects[_backend_defect_key(msg)] += 1
 
     from pandas_floor_summary import floor_summary
 
     r_construction = sum(families.values())
     r_desugar = sum(desugar_families.values())
+    r_backend = sum(backend_defects.values())
     result: dict[str, Any] = {
         "kind": "control-effect-construction-recensus",
         "commit": args.commit or _git_commit(args.repo),
@@ -633,7 +747,8 @@ def main() -> int:
         "R_construction_panics": len(construction_panics),
         "functionsTotal": functions_total,
         "functionsConstructClean": functions_clean,
-        # Axis 1 — construction totality (tree owned). Never merge with R_desugar.
+        # Axis 1 — construction totality (tree owned). Occurrence-deduped.
+        # Never merge with R_desugar. Never double-count catch+reporter.
         "R": r_construction,
         "R_construction": r_construction,
         "families": dict(
@@ -644,6 +759,11 @@ def main() -> int:
         "desugarFamilies": dict(
             sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
         ),
+        # Table hygiene — not residual mass (probe: 2 BackendDefect files).
+        "R_backend_defects": r_backend,
+        "backendDefects": dict(
+            sorted(backend_defects.items(), key=lambda item: (-item[1], item[0]))
+        ),
         "elapsedSeconds": time.time() - started,
         "python": sys.version,
         "floorSummary": floor_summary(
@@ -653,6 +773,7 @@ def main() -> int:
             totals={
                 "R_control_effect": r_construction + len(defects),
                 "R_desugar": r_desugar,
+                "R_backend_defects": r_backend,
                 "constructionPanics": len(construction_panics),
                 "backendDefectsOrProcessTerminals": len(defects),
             },

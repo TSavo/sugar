@@ -125,3 +125,47 @@ def test_desugar_axis_separate_from_construction_r(tmp_path: Path) -> None:
     assert "desugarFamilies" in row
     assert "R_desugar" in row
     assert isinstance(row["R_desugar"], int)
+
+
+def test_construction_gap_occurrence_counted_once(tmp_path: Path) -> None:
+    """Catch+reporter must not double-tally (392 vs 196 class of defect).
+
+    A With that report_gap then raises is ONE occurrence. Family type total
+    equals distinct with-node gaps, not 2×.
+    """
+    module = _load("control_effect_recensus")
+    path = tmp_path / "with_param.py"
+    path.write_text(
+        "def use(manager):\n" "    with manager:\n" "        pass\n",
+        encoding="utf-8",
+    )
+    row = module._measure_file(
+        path, relative="with_param.py", workspace_root=tmp_path
+    )
+    assert row["category"] == "completed"
+    families = row.get("families") or {}
+    # One With site → one CM gap occurrence (not catch+reporter = 2).
+    cm = families.get("ContextManagerResolutionConstructionGap", 0)
+    rs = families.get("RuntimeSelectedContextManager", 0)
+    assert rs == 0
+    assert cm == 1, families
+    # No presentation-duplicate keys.
+    assert not any(k.startswith("owner:") for k in families)
+    assert not any(k.startswith("with-node:") for k in families)
+
+
+def test_backend_defect_keys_split_cm_and_call_demand() -> None:
+    """Demand/resolution BackendDefects are hygiene axes, not construction R."""
+    module = _load("control_effect_recensus")
+    cm = module._backend_defect_key(
+        "BackendDefect: enrolled context-manager demand missing from resolution table"
+    )
+    call = module._backend_defect_key(
+        "BackendDefect: enrolled call demand missing from resolution table"
+    )
+    other = module._backend_defect_key("BackendDefect: something else")
+    assert cm == "BackendDefect:cm-demand-missing-from-resolution"
+    assert call == "BackendDefect:call-demand-missing-from-resolution"
+    assert cm != call
+    assert other.startswith("BackendDefect:")
+    assert other not in {cm, call}
