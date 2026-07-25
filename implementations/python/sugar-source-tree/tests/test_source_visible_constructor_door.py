@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -22,7 +20,6 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
 )
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -204,9 +201,17 @@ def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
     )
 
 
-def test_unknown_class_member_stays_typed_loud() -> None:
+def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
+    """Live law (replaces unsupported-Assign SugarNotWritten): class field Assign constructs.
+
+    ``state = make_state()`` is a class field whose value is ``call:make_state``
+    with ``body=None`` — an opaque dig cue, not a missing class-member sugar.
+    """
     source = _source_file("class RenamedGuard:\n    state = make_state()\n")
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
-
-    with pytest.raises(SugarNotWritten, match="unsupported class member Assign"):
-        class_node.sugar()
+    sugar = class_node.sugar()
+    assert type(sugar).__name__ == "ClassDefinitionSugar"
+    value = sugar.desugar().value
+    field = next(f for f in value.class_fields if f.name == "state")
+    assert field.value.term.name == "call:make_state"
+    assert field.value.body is None

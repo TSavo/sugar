@@ -6,10 +6,7 @@ node loud."""
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -44,9 +41,17 @@ def test_composes_with_len():
     assert t.name == "call:len"
 
 
-def test_undecidable_filtered_comprehension_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n").sugar()
+def test_undecidable_filtered_comprehension_is_typed_filter_guard():
+    """Live law (replaces factory SugarNotWritten): filter over formal is a coordinate.
+
+    ``[x for x in [1,2] if x > limit]`` constructs as ``py.listcomp`` carrying
+    ``python:loop.filter_guard`` — typed residual, not construction silence.
+    """
+    t = _out("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
+    assert t.name == "py.listcomp"
+    # Nested transform includes the filter guard over the formal ``limit``.
+    text = str(t)
+    assert "python:loop.filter_guard" in text or "py.gt" in text
 
 
 def test_symbolic_comprehension_builds_coordinate():

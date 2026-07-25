@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import tempfile
 
-import pytest
-
 from sugar_lift_py_tests.floor import NoneValue, ReturnValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -66,9 +63,16 @@ def test_raise_constructor_carries_its_built_call_coordinate() -> None:
     assert raised.body is None
 
 
-def test_unwritten_raised_child_stays_loud() -> None:
-    with pytest.raises(SugarNotWritten):
-        _statement("def A():\n    raise (lambda: 1)\n", "Raise").sugar()
+def test_raise_of_constructed_lambda_is_typed_incomplete() -> None:
+    """Live law (replaces factory SugarNotWritten): raise lambda constructs.
+
+    The raised value is a constructed LambdaCallable under Incomplete RaiseEffect
+    — typed halt, not a missing-sugar refuse at the Raise node.
+    """
+    outcome = _statement("def A():\n    raise (lambda: 1)\n", "Raise").sugar().desugar()
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "RaiseEffect"
+    assert type(outcome.effect.raised_value).__name__ == "LambdaCallable"
 
 
 def test_raise_from_carries_the_built_cause() -> None:

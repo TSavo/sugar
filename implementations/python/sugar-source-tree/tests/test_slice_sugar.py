@@ -1,4 +1,11 @@
-"""A slice `lower:upper:step` is the py.slice coordinate; omitted bounds are None."""
+"""A slice `lower:upper:step` is the py.slice coordinate; omitted bounds are None.
+
+Projection note: formal-parameter subscript operations leave pending
+parameter-contract candidates. Read the slice term from the conditional
+construction value — never via ``UniverseValue.post`` while demands pend.
+"""
+
+from __future__ import annotations
 
 import tempfile
 
@@ -10,12 +17,19 @@ def _sub(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    return (
-        next(SourceFile(path_source(path)).functions())
-        .sugar()
-        .desugar()
-        .value.post()
-        .args[1]
+    universe = (
+        next(SourceFile(path_source(path)).functions()).sugar().desugar().value
+    )
+    for entry in universe.record.statements:
+        if type(entry).__name__ == "ReturnValue":
+            return entry.value.term
+        if type(entry).__name__ == "ContractConditionalConstructionV1":
+            ret = entry.value
+            if type(ret).__name__ == "ReturnValue":
+                return ret.value.term
+            return getattr(ret, "term", ret)
+    raise AssertionError(
+        f"no subscript term: {[type(s).__name__ for s in universe.record.statements]}"
     )
 
 
@@ -32,9 +46,3 @@ def test_omitted_bounds_are_none():
     assert sl.name == "py.slice"
     assert sl.args[0].name == "None" and sl.args[1].name == "None"
     assert sl.args[2].value == 2  # step
-
-
-if __name__ == "__main__":
-    test_full_slice()
-    test_omitted_bounds_are_none()
-    print("ok: slice -> py.slice coordinate")

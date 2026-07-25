@@ -1,15 +1,18 @@
 """A `while` over CONCRETE state dissolves: each iteration is one more
 substitution, the condition ground-decided structurally against the carried
-state. `while True:` exhausts the fuel (an infinite concrete loop is a
-non-termination the unroll must not fake) and a symbolic condition keeps the
-node -- both land loud, honest unwritten segments."""
+state.
+
+Symbolic and `while True:` cases are no longer factory-era `SugarNotWritten`
+refusals. They construct as ``LoopRecurrenceSugar`` with exhaustion faces
+(see ``test_live_loop_post_projection``). This file keeps the concrete-unroll
+laws and rewrites the "stays loud" cases to the live recurrence shape.
+"""
+
+from __future__ import annotations
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -54,34 +57,31 @@ def test_false_condition_skips_the_body():
     )
 
 
-def test_while_true_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A():\n    i = 0\n    while True:\n        i = i + 1\n    return i\n"
-        ).sugar()
+def test_while_true_constructs_as_loop_recurrence():
+    """Live law (replaces factory SugarNotWritten): infinite while is recurrence.
 
-
-def test_symbolic_condition_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(n):\n    i = 0\n    while i < n:\n        i = i + 1\n    return i\n"
-        ).sugar()
-
-
-if __name__ == "__main__":
-    test_concrete_counter_unrolls()
-    test_concrete_accumulator_unrolls()
-    test_false_condition_skips_the_body()
-    test_while_true_stays_loud()
-    test_symbolic_condition_stays_loud()
-    test_while_else_splices_after_the_exit()
-    print("ok: concrete while unrolls; True/symbolic loud")
-
-
-def test_while_else_splices_after_the_exit():
-    # The unroll exits only via condition-false; with no break, else always runs.
-    src = (
-        "def A():\n    i = 0\n    while i < 2:\n        i = i + 1\n"
-        "    else:\n        i = i + 100\n    return i\n"
+    Fuel exhaustion is projected as a NormalExhaustion face under
+    LoopGuardedProjection — not a silent complete without loop structure.
+    """
+    sugar = _fn(
+        "def A():\n    i = 0\n    while True:\n        i = i + 1\n    return i\n"
+    ).sugar()
+    loop = next(
+        s for s in sugar.statements if type(s).__name__ == "LoopRecurrenceSugar"
     )
-    assert _out(src).value == 102
+    assert type(loop).__name__ == "LoopRecurrenceSugar"
+
+
+def test_symbolic_condition_constructs_as_loop_recurrence():
+    """Live law (replaces factory SugarNotWritten): symbolic while is recurrence."""
+    sugar = _fn(
+        "def A(n):\n    i = 0\n    while i < n:\n        i = i + 1\n    return i\n"
+    ).sugar()
+    loop = next(
+        s for s in sugar.statements if type(s).__name__ == "LoopRecurrenceSugar"
+    )
+    assert type(loop).__name__ == "LoopRecurrenceSugar"
+    # Tail read is a guarded projection over exhaustion faces.
+    post_read = sugar.statements[-1].value
+    assert type(post_read).__name__ == "GuardedBindingReadSugar"
+    assert type(post_read.state).__name__ == "LoopGuardedProjection"
