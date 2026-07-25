@@ -141,7 +141,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sugar_bin="$(bin/sugarbin --profile release)"
+          requested_profile="release"
+          sugar_bin="$(bin/sugarbin --profile "$requested_profile")"
           echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
           manifest="$sugar_bin.sugarbin.json"
           if [ ! -f "$manifest" ]; then
@@ -149,11 +150,30 @@ jobs:
             exit 1
           fi
           stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
+          resolved_profile="$(
+            python3 - "$manifest" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              manifest = json.load(handle)
+          profile = manifest.get("profile")
+          if profile is None:
+              print(
+                  "resolved binary manifest predates the profile identity boundary; rebuild it",
+                  file=sys.stderr,
+              )
+              raise SystemExit(3)
+          print(profile)
+          PY
+          )"
           case "$stamp" in
             blake3-512_*) ;;
             *) echo "::error::binary manifest sourceStamp is malformed: $stamp"; exit 1 ;;
           esac
           echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          echo "requested-profile=$requested_profile" >> "$GITHUB_OUTPUT"
+          echo "resolved-profile=$resolved_profile" >> "$GITHUB_OUTPUT"
           echo "measured binary sourceStamp: $stamp"
 
       # ONE cold process. Whole package. Canonical collection order.
@@ -182,6 +202,8 @@ jobs:
             --suite-identity="$SUITE_IDENTITY_PATH" \
             --suite-commit="$GITHUB_SHA" \
             --suite-binary-stamp="$SUITE_BINARY_STAMP" \
+            --suite-requested-binary-profile="$SUITE_REQUESTED_BINARY_PROFILE" \
+            --suite-resolved-binary-profile="$SUITE_RESOLVED_BINARY_PROFILE" \
             --suite-order=canonical \
             --suite-label=python-package-suite-canonical \
             2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
@@ -190,6 +212,8 @@ jobs:
           set +e
           SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
           SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
+          SUITE_REQUESTED_BINARY_PROFILE='${{ steps.binary.outputs.requested-profile }}' \
+          SUITE_RESOLVED_BINARY_PROFILE='${{ steps.binary.outputs.resolved-profile }}' \
           python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
             --class python-package-suite \
             --record "$GITHUB_WORKSPACE/lease-record.json" \
@@ -338,7 +362,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sugar_bin="$(bin/sugarbin --profile release)"
+          requested_profile="release"
+          sugar_bin="$(bin/sugarbin --profile "$requested_profile")"
           echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
           manifest="$sugar_bin.sugarbin.json"
           if [ ! -f "$manifest" ]; then
@@ -346,7 +371,26 @@ jobs:
             exit 1
           fi
           stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
+          resolved_profile="$(
+            python3 - "$manifest" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              manifest = json.load(handle)
+          profile = manifest.get("profile")
+          if profile is None:
+              print(
+                  "resolved binary manifest predates the profile identity boundary; rebuild it",
+                  file=sys.stderr,
+              )
+              raise SystemExit(3)
+          print(profile)
+          PY
+          )"
           echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          echo "requested-profile=$requested_profile" >> "$GITHUB_OUTPUT"
+          echo "resolved-profile=$resolved_profile" >> "$GITHUB_OUTPUT"
 
       # A SEPARATE COLD PROCESS per order. Sharing a process would let the
       # first order warm exactly the caches whose influence we are measuring.
@@ -370,6 +414,8 @@ jobs:
             --suite-identity="$SUITE_IDENTITY_PATH" \
             --suite-commit="$GITHUB_SHA" \
             --suite-binary-stamp="$SUITE_BINARY_STAMP" \
+            --suite-requested-binary-profile="$SUITE_REQUESTED_BINARY_PROFILE" \
+            --suite-resolved-binary-profile="$SUITE_RESOLVED_BINARY_PROFILE" \
             --suite-order="$SUITE_ORDER" \
             --suite-shuffle-seed="$GITHUB_RUN_ID" \
             --suite-label="python-package-suite-$SUITE_ORDER" \
@@ -379,6 +425,8 @@ jobs:
           set +e
           SUITE_IDENTITY_PATH='${{ steps.env.outputs.identity-path }}' \
           SUITE_BINARY_STAMP='${{ steps.binary.outputs.stamp }}' \
+          SUITE_REQUESTED_BINARY_PROFILE='${{ steps.binary.outputs.requested-profile }}' \
+          SUITE_RESOLVED_BINARY_PROFILE='${{ steps.binary.outputs.resolved-profile }}' \
           SUITE_ORDER='${{ matrix.order }}' \
           python3 "$GITHUB_WORKSPACE/tools/heavy_measurement_lease.py" \
             --class python-package-suite \

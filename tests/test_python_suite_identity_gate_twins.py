@@ -552,6 +552,18 @@ def test_gate_refuses_absent_authority_without_rewriting():
         assert returncode == 1
 
 
+def test_workflow_carries_manifest_profile_into_suite_report():
+    workflow = open(
+        os.path.join(REPO_ROOT, ".github/workflows/python-package-suite.yml"),
+        encoding="utf-8",
+    ).read()
+    assert 'requested_profile="release"' in workflow
+    assert 'manifest.get("profile")' in workflow
+    assert "predates the profile identity boundary; rebuild it" in workflow
+    assert "--suite-requested-binary-profile=" in workflow
+    assert "--suite-resolved-binary-profile=" in workflow
+
+
 def main():
     failures = 0
     for name, function in sorted(globals().items()):
