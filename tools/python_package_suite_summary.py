@@ -70,6 +70,7 @@ def main(argv=None):
     resources = report.get("resourceTelemetry", {})
     timing = report.get("timing", {})
     counts = report.get("counts", {})
+    authority = report.get("authority") or {}
 
     lines = [
         "### Python package suite (authoritative)",
@@ -87,6 +88,10 @@ def main(argv=None):
         f"- sourceStamp: {_field(report.get('sourceStamp'))}"
         f" (binary: {_field(report.get('binarySourceStamp'))})",
         f"- testExtraInputHash: {_field(report.get('testExtraInputHash'))}",
+        f"- authority: {_field(authority.get('status'))}"
+        f" / profile identity {_field(authority.get('profileIdentity'))}",
+        f"- Sugar profile: requested {_field(report.get('requestedBinaryProfile'))}"
+        f" / resolved {_field(report.get('resolvedBinaryProfile'))}",
         f"- packageBuildInputs: `{(identity.get('packageBuildInputs') or {}).get('hash')}`",
         f"- python: `{identity.get('pythonImplementation')} {identity.get('pythonVersion')}`"
         f" abi `{(identity.get('pythonAbi') or {}).get('soabi')}`",

@@ -54,12 +54,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 
 STAMP_PATTERN = re.compile(r"blake3-512_[0-9a-f]{128}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{7,40}")
+PROFILES = frozenset({"release", "debug"})
 
 # The fields that make a report authoritative. Absent, malformed or marked
 # unavailable, any one of them makes the artifact a provisional receipt.
@@ -97,7 +100,75 @@ def unavailable_marker(node, path="$"):
     return None
 
 
+def _check_authority_prestate(report, crimes):
+    authority = report.get("authority")
+    if not isinstance(authority, dict):
+        crimes.append(
+            "crime=authority-object-absent illegal shape=suite-report.json has "
+            "no authority object replacement=produce the report with the current "
+            "suite plugin; the gate does not manufacture testimony"
+        )
+        return
+    if authority.get("status") == "authoritative":
+        crimes.append(
+            "crime=authority-already-decided illegal shape=report was already "
+            "decided replacement=gate each artifact exactly once"
+        )
+        return
+    if authority.get("status") != "provisional" or authority.get(
+        "profileIdentity"
+    ) != "unverified":
+        crimes.append(
+            "crime=authority-prestate-malformed illegal shape=authority is not "
+            "provisional/unverified replacement=start from the plugin's exact "
+            "single-use pre-state"
+        )
+    if "crimes" in authority:
+        crimes.append(
+            "crime=authority-stale-crimes illegal shape=unverified report "
+            "already carries crimes replacement=do not recycle a decided artifact"
+        )
+
+
+def _check_profile_identity(report, crimes):
+    requested = report.get("requestedBinaryProfile")
+    resolved_present = "resolvedBinaryProfile" in report
+    resolved = report.get("resolvedBinaryProfile")
+
+    if requested in (None, ""):
+        crimes.append(
+            "crime=profile-identity-absent illegal shape=no "
+            "requestedBinaryProfile replacement=state the requested profile"
+        )
+    elif requested not in PROFILES:
+        crimes.append(
+            f"crime=profile-identity-malformed illegal shape=requested profile "
+            f"{requested!r} replacement=profile is release or debug"
+        )
+
+    if not resolved_present or resolved in (None, ""):
+        crimes.append(
+            "crime=profile-manifest-predates-boundary illegal shape=resolved "
+            "binary manifest has no profile replacement=this manifest predates "
+            "the profile identity boundary; rebuild it"
+        )
+    elif resolved not in PROFILES:
+        crimes.append(
+            f"crime=profile-identity-malformed illegal shape=resolved profile "
+            f"{resolved!r} replacement=profile is release or debug"
+        )
+
+    if requested in PROFILES and resolved in PROFILES and requested != resolved:
+        crimes.append(
+            f"crime=profile-identity-mismatch illegal shape=requested "
+            f"{requested!r} != resolved {resolved!r} replacement=measure the "
+            "profile the report claims"
+        )
+
+
 def _check_identity(report, require_commit, crimes):
+    _check_authority_prestate(report, crimes)
+    _check_profile_identity(report, crimes)
     marker = unavailable_marker(report)
     if marker is not None:
         crimes.append(
@@ -300,6 +371,28 @@ def gate(report, require_commit=None):
     return crimes
 
 
+def _crime_ids(crimes):
+    return [crime.split(" ", 1)[0] for crime in crimes]
+
+
+def _write_report_atomic(path, report):
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, temporary = tempfile.mkstemp(prefix=".suite-report-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, sort_keys=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def gate_environment_identity(identity):
     """The same law, applied to environment-identity.json on its own.
 
@@ -392,6 +485,24 @@ def main(argv=None):
 
     report = document
     crimes = gate(report, args.require_commit)
+    authority = report.get("authority")
+    authority_is_absent = not isinstance(authority, dict)
+    authority_is_decided = isinstance(authority, dict) and authority.get(
+        "status"
+    ) == "authoritative"
+    if not authority_is_absent and not authority_is_decided:
+        if crimes:
+            report["authority"] = {
+                "status": "provisional",
+                "profileIdentity": "unresolved",
+                "crimes": _crime_ids(crimes),
+            }
+        else:
+            report["authority"] = {
+                "status": "authoritative",
+                "profileIdentity": "resolved",
+            }
+        _write_report_atomic(path, report)
     if crimes:
         print("### Suite identity gate: UNRESOLVED — not authoritative\n")
         for crime in crimes:

@@ -110,6 +110,21 @@ def pytest_addoption(parser):
         ),
     )
     group.addoption(
+        "--suite-requested-binary-profile",
+        action="store",
+        default=None,
+        choices=("release", "debug"),
+        metavar="PROFILE",
+        help="Sugar profile requested by the suite",
+    )
+    group.addoption(
+        "--suite-resolved-binary-profile",
+        action="store",
+        default=None,
+        metavar="PROFILE",
+        help="profile read from the resolved binary's .sugarbin.json manifest",
+    )
+    group.addoption(
         "--suite-label",
         action="store",
         default=None,
@@ -219,6 +234,16 @@ class SuiteReporter:
             ).get("testExtraInputHash"),
             "environmentIdentityHash": self.identity.get("environmentIdentityHash"),
             "binarySourceStamp": self.config.getoption("--suite-binary-stamp"),
+            "requestedBinaryProfile": self.config.getoption(
+                "--suite-requested-binary-profile"
+            ),
+            "resolvedBinaryProfile": self.config.getoption(
+                "--suite-resolved-binary-profile"
+            ),
+            "authority": {
+                "status": "provisional",
+                "profileIdentity": "unverified",
+            },
             "environmentIdentity": self.identity,
             "runnerIdentity": _runner_identity(),
             "resourceTelemetry": _resource_telemetry(),
