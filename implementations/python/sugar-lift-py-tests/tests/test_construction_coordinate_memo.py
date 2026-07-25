@@ -1,4 +1,4 @@
-'''Construction is memoized at the construction COORDINATE, not per DAG path.
+"""Construction is memoized at the construction COORDINATE, not per DAG path.
 
 Substitution SHARES node objects (a bound name substitutes to the bound node
 itself), so the constructed graph is a DAG while ``walk``/``_construct_sugar``
@@ -18,7 +18,8 @@ These twins pin what the coordinate must NOT merge and what it must NOT lose:
   * a gap stays a gap on EVERY call: the panic is remembered and re-raised,
     never swallowed, never softened into a value;
   * and the point of it all: each coordinate constructs exactly once.
-'''
+"""
+
 import gc
 import os
 import tempfile
@@ -234,9 +235,7 @@ def test_each_coordinate_constructs_exactly_once():
 
         def counting(self, _original=original):
             cache = self._construction_cache()
-            constructed.append(
-                cache.key(self.ref, self.reporter, self.control_context)
-            )
+            constructed.append(cache.key(self.ref, self.reporter, self.control_context))
             return _original(self)
 
         patched.append((cls, original))

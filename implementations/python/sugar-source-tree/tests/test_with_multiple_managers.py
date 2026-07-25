@@ -56,7 +56,6 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SourceTreePanic
 from sugar_source_tree.tree import SourceFile
 
-
 # ---------------------------------------------------------------- tree fixture
 
 
@@ -181,7 +180,9 @@ def test_enter_order_is_left_to_right(tmp_path):
     sugar = _function_sugar(tmp_path, TWO_MANAGERS)
     outer, inner = _with_chain(sugar)
     path = tmp_path / "case.py"
-    node = next(n for n in SourceFile(path_source(str(path))).nodes() if n.kind == "With")
+    node = next(
+        n for n in SourceFile(path_source(str(path))).nodes() if n.kind == "With"
+    )
     first_slot = node.items[0]._manager_slot_id()
     second_slot = node.items[1]._manager_slot_id()
     assert outer.manager_slot_id == first_slot
@@ -193,7 +194,9 @@ def test_discrimination_enter_order_is_not_right_to_left(tmp_path):
     sugar = _function_sugar(tmp_path, TWO_MANAGERS)
     outer, inner = _with_chain(sugar)
     path = tmp_path / "case.py"
-    node = next(n for n in SourceFile(path_source(str(path))).nodes() if n.kind == "With")
+    node = next(
+        n for n in SourceFile(path_source(str(path))).nodes() if n.kind == "With"
+    )
     with pytest.raises(AssertionError):
         assert outer.manager_slot_id == node.items[1]._manager_slot_id()
 
@@ -234,7 +237,9 @@ def test_discrimination_equivalence_is_not_vacuous(tmp_path):
     """BITE: the equivalence would fail against a genuinely different shape."""
     flat = _with_chain(_function_sugar(tmp_path, TWO_MANAGERS))
     one = _with_chain(
-        _function_sugar(tmp_path, "def f(m, n):\n    with m:\n        pass\n    return m\n")
+        _function_sugar(
+            tmp_path, "def f(m, n):\n    with m:\n        pass\n    return m\n"
+        )
     )
     with pytest.raises(AssertionError):
         assert len(flat) == len(one)

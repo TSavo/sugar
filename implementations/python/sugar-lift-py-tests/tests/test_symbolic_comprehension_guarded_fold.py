@@ -250,11 +250,14 @@ def test_list_shaped_target_destructures_like_a_tuple_target():
     def structure(source):
         _kind, _iterable, body = _fold(_post_of(source))
         element = _coordinate(body)
-        return _destructure(
-            element,
-            2,
-            _ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)]),
-        ) == body.body
+        return (
+            _destructure(
+                element,
+                2,
+                _ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)]),
+            )
+            == body.body
+        )
 
     assert structure("def f(xs):\n    return [g(a, b) for [a, b] in xs]\n")
     assert structure("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
@@ -317,9 +320,7 @@ def test_destructure_halt_and_filter_latch_are_distinct_exits():
     assert body.body == _destructure(
         element,
         2,
-        _filtered(
-            _ctor("call:p", [_project(element, 1, 2)]), _project(element, 0, 2)
-        ),
+        _filtered(_ctor("call:p", [_project(element, 1, 2)]), _project(element, 0, 2)),
     ), f"body was {body.body!r}"
 
 
@@ -389,9 +390,9 @@ def test_a_raising_filter_propagates_rather_than_deciding_membership():
     except SugarNotWritten:
         return
     _kind, _iterable, body = _fold(post)
-    assert body.body.name == "python:loop.filter_guard", (
-        "an undecided filter keeps its guard rather than choosing a side"
-    )
+    assert (
+        body.body.name == "python:loop.filter_guard"
+    ), "an undecided filter keeps its guard rather than choosing a side"
 
 
 # -- the four collection semantics -------------------------------------------
@@ -459,9 +460,10 @@ def test_a_concrete_dict_comprehension_keeps_last_write_overwrite_behaviour():
     )
     entries = post.args[1]
     assert entries.name == "python:dict", f"post was {post!r}"
-    assert [
-        (entry.args[0].value, entry.args[1].value) for entry in entries.args
-    ] == [(1, 5), (3, 4)], f"post was {post!r}"
+    assert [(entry.args[0].value, entry.args[1].value) for entry in entries.args] == [
+        (1, 5),
+        (3, 4),
+    ], f"post was {post!r}"
 
 
 def test_a_set_comprehension_uses_set_membership_over_a_concrete_iterable():
@@ -576,7 +578,9 @@ def test_a_comprehension_nested_in_a_dict_comprehension_key_is_constructed():
 
 
 def test_a_comprehension_nested_in_a_set_comprehension_element_is_constructed():
-    post = _post_of("def f(xs, g):\n    return {tuple([g(y) for y in x]) for x in xs}\n")
+    post = _post_of(
+        "def f(xs, g):\n    return {tuple([g(y) for y in x]) for x in xs}\n"
+    )
     kind, iterable, body = _fold(post)
     assert kind == "py.setcomp"
     assert iterable == make_var("xs")
@@ -600,7 +604,10 @@ def test_every_collection_form_accepts_a_nested_comprehension():
             "def f(xs, g):\n    return {tuple([g(y) for y in x]) for x in xs}\n",
             "py.setcomp",
         ),
-        ("def f(xs, g):\n    return {x: [g(y) for y in x] for x in xs}\n", "py.dictcomp"),
+        (
+            "def f(xs, g):\n    return {x: [g(y) for y in x] for x in xs}\n",
+            "py.dictcomp",
+        ),
     ):
         post = _post_of(source)
         observed, _iterable, _body = _fold(post)

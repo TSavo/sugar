@@ -1,4 +1,4 @@
-'''A constructed value whose testimony cannot be content-addressed stays LOUD.
+"""A constructed value whose testimony cannot be content-addressed stays LOUD.
 
 ``ConstructionTestimonyReporterV1.present_construction`` used to have two
 silent ``return`` doors: one when the node's construction-shape CID would not
@@ -18,7 +18,7 @@ There is no third arm now:
 The gap is testified through the SAME roll call the census reads, and
 ``Node.sugar`` raises before recording the present answer, so conservation is
 atomic: exactly one discharge per coordinate, and it is the loud absent one.
-'''
+"""
 
 import os
 import tempfile

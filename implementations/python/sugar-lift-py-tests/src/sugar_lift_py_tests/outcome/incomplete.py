@@ -50,9 +50,7 @@ class Incomplete:
         )
 
         if is_store_family_effect(self.effect):
-            return FollowStep.continue_with(
-                halt_guard=store_halted_guard(self.effect)
-            )
+            return FollowStep.continue_with(halt_guard=store_halted_guard(self.effect))
         return FollowStep.halt(keeps_rest=True)
 
     def contribution(self):

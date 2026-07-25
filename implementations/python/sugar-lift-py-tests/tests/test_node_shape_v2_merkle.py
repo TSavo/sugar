@@ -1,4 +1,4 @@
-'''NodeShapeV2: a node authenticates its OWN structure plus its children's CIDs.
+"""NodeShapeV2: a node authenticates its OWN structure plus its children's CIDs.
 
 V1 embedded each child's FULL subtree preimage inside its parent, so the same
 descendant content was authenticated once for every ancestor path above it.
@@ -31,7 +31,8 @@ These twins pin what the preimage must NOT lose and must NOT merge:
   * V1 and V2 never share an identity namespace: the V2 preimage carries a
     domain, a schema tag, and a NAMED child-CID algorithm that no V1 preimage
     ever carried.
-'''
+"""
+
 from sugar_source_tree import construction_cache as CC
 from sugar_source_tree.backend import (
     BackendNode,

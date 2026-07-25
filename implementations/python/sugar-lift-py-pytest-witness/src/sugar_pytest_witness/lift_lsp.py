@@ -234,7 +234,9 @@ def component_plan_result(params: dict) -> dict:
 _SPLIT_CACHE: dict[tuple[str, tuple[str, ...]], tuple[List[str], List[str]]] = {}
 
 
-def _split_python_files(ws: str, source_paths: List[str]) -> tuple[List[str], List[str]]:
+def _split_python_files(
+    ws: str, source_paths: List[str]
+) -> tuple[List[str], List[str]]:
     """Project-relative (code_files, test_files), both sorted.
 
     Memoized: the fold asks `universe` once per censused file, and each of those

@@ -570,9 +570,9 @@ def test_kit_declaration_advertises_enumerate_and_never_lift():
         "kit must advertise sugar.enumerate or dispatch_lift_path refuses the "
         f"surface as a retired-lift kit: {names}"
     )
-    assert "lift" not in names, (
-        f"`lift` is not a kit method; advertising it re-opens the retired door: {names}"
-    )
+    assert (
+        "lift" not in names
+    ), f"`lift` is not a kit method; advertising it re-opens the retired door: {names}"
     required = {m["name"] for m in methods if m.get("required")}
     assert "sugar.enumerate" in required, methods
 
@@ -618,13 +618,13 @@ def test_enumerate_runs_the_suite_once_at_the_anchor_file_only(tmp_path):
             "nodes"
         ]
     ]
-    assert len(non_empty) == 1, (
-        f"exactly one anchor file may carry the package; got {non_empty}"
-    )
+    assert (
+        len(non_empty) == 1
+    ), f"exactly one anchor file may carry the package; got {non_empty}"
     tests = sorted(f for f in files if f.split("/")[-1].startswith("test_"))
-    assert non_empty == [tests[0]], (
-        f"anchor must be the first test file in sorted order: {non_empty} vs {tests}"
-    )
+    assert non_empty == [
+        tests[0]
+    ], f"anchor must be the first test file in sorted order: {non_empty} vs {tests}"
 
 
 def test_enumerate_link_units_and_unrelated_levels_are_empty_not_errors(tmp_path):

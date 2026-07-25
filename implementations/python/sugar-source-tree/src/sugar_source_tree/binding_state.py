@@ -348,7 +348,12 @@ class ConstructionTestimonyReporterV1:
     the structural identity of the exact source/shadow node that produced it.
     """
 
-    __slots__ = ("_delegate", "_by_node_shape", "_failed_by_node_shape", "_trace_builder")
+    __slots__ = (
+        "_delegate",
+        "_by_node_shape",
+        "_failed_by_node_shape",
+        "_trace_builder",
+    )
 
     def __init__(
         self, delegate: object, trace_builder: SubstitutionTraceBuilderV1

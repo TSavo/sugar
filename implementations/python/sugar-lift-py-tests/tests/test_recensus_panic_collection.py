@@ -105,9 +105,7 @@ def test_construction_gap_occurrence_counted_once(tmp_path: Path) -> None:
         "def use(manager):\n" "    with manager:\n" "        pass\n",
         encoding="utf-8",
     )
-    row = module._measure_file(
-        path, relative="with_param.py", workspace_root=tmp_path
-    )
+    row = module._measure_file(path, relative="with_param.py", workspace_root=tmp_path)
     assert row["category"] == "completed"
     families = row.get("families") or {}
     # One With site → one CM gap occurrence (not catch+reporter = 2).
@@ -140,9 +138,7 @@ def test_backend_defect_keys_split_cm_and_call_demand() -> None:
 def test_cm_membrane_bucket_keeps_assertion_separate_from_resource() -> None:
     """With ΔR must never merge assertion membrane with protocol resource."""
     module = _load("control_effect_recensus")
-    assert (
-        module._cm_membrane_bucket("python:pytest.raises") == "assertion-membrane"
-    )
+    assert module._cm_membrane_bucket("python:pytest.raises") == "assertion-membrane"
     assert (
         module._cm_membrane_bucket("python:pandas._testing.assert_produces_warning")
         == "assertion-membrane"

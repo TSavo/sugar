@@ -122,8 +122,7 @@ def test_combining_forms_are_not_normalized():
 
 
 def test_zero_width_and_bidi_controls_are_verbatim():
-    for value in ["​‌‍﻿", "‪‫‬‭‮",
-                  "⁦⁧⁨⁩", "؜"]:
+    for value in ["​‌‍﻿", "‪‫‬‭‮", "⁦⁧⁨⁩", "؜"]:
         assert C.encode_jcs(C.vstr(value)) == f'"{value}"'
         _assert_identical(value)
 
@@ -216,7 +215,9 @@ def test_differential_fuzz_whole_documents_and_cids():
             checked += 1
         else:
             raised += 1
-    assert checked > 0 and raised > 0, "fuzz must cover both encodable and lone-surrogate documents"
+    assert (
+        checked > 0 and raised > 0
+    ), "fuzz must cover both encodable and lone-surrogate documents"
 
 
 def test_realistic_preimage_documents_keep_their_cids():
@@ -235,7 +236,9 @@ def test_realistic_preimage_documents_keep_their_cids():
             "coordinate": ["blake3-512:" + "ab" * 64, "reporter/0", "control:none"],
             "testimony": {"present": True, "note": 'quote " and backslash \\ and \n'},
         },
-        {"docstring": "Return the sum.\n\n    Parameters\n    ----------\n    x : int\n"},
+        {
+            "docstring": "Return the sum.\n\n    Parameters\n    ----------\n    x : int\n"
+        },
         {"names": ["≤", "≠", "∀", "日本語", "😀"], "empty": "", "nested": [[], [[]]]},
     ]
     for doc in docs:

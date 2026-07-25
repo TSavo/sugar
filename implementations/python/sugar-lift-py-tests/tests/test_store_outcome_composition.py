@@ -165,7 +165,9 @@ def test_sequential_stores_preserve_both_outcomes_per_store(tmp_path: Path) -> N
     assert len(completed) == 1
 
 
-def test_sequential_stores_preserve_both_outcomes_per_store_discrimination(tmp_path: Path) -> None:
+def test_sequential_stores_preserve_both_outcomes_per_store_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: the pre-repair expectation (one Completed arm, no Halted arm)
     is exactly what this construction no longer produces."""
     halted, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
@@ -187,13 +189,15 @@ def test_first_store_halt_has_no_second_store_occurrence(tmp_path: Path) -> None
         "the first store's halt arm must not be conditioned on the second "
         "store's outcome -- the second store never ran"
     )
-    assert _store_entries(first.state) == [], (
-        "the first store's halt arm must contain no store occurrence at all"
-    )
+    assert (
+        _store_entries(first.state) == []
+    ), "the first store's halt arm must contain no store occurrence at all"
     assert isinstance(first.effect, AttributeStoreRuntimeEffect)
 
 
-def test_first_store_halt_has_no_second_store_occurrence_discrimination(tmp_path: Path) -> None:
+def test_first_store_halt_has_no_second_store_occurrence_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: asserting the second store DID occur on the first-halt arm
     fails, so the assertion above is load-bearing."""
     halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
@@ -212,17 +216,19 @@ def test_second_store_halt_preserves_the_first_store(tmp_path: Path) -> None:
     halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
 
-    assert _polarity(second.guard, "x") is True, (
-        "the second store only runs when the first completed"
-    )
+    assert (
+        _polarity(second.guard, "x") is True
+    ), "the second store only runs when the first completed"
     surviving = _store_entries(second.state)
     assert len(surviving) == 1, surviving
-    assert "attr=x" in surviving[0].effect.reason, (
-        "the first store must survive on the second store's halt arm"
-    )
+    assert (
+        "attr=x" in surviving[0].effect.reason
+    ), "the first store must survive on the second store's halt arm"
 
 
-def test_second_store_halt_preserves_the_first_store_discrimination(tmp_path: Path) -> None:
+def test_second_store_halt_preserves_the_first_store_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: a rolled-back first store (empty prefix) fails."""
     halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
@@ -231,7 +237,9 @@ def test_second_store_halt_preserves_the_first_store_discrimination(tmp_path: Pa
         assert _store_entries(second.state) == [], "assignment rolled back"
 
 
-def test_sequential_completed_arm_requires_every_store_to_complete(tmp_path: Path) -> None:
+def test_sequential_completed_arm_requires_every_store_to_complete(
+    tmp_path: Path,
+) -> None:
     """The continuation after the stores is reachable only when BOTH completed,
     and it still states the real post."""
     _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
@@ -244,7 +252,9 @@ def test_sequential_completed_arm_requires_every_store_to_complete(tmp_path: Pat
     )
 
 
-def test_sequential_completed_arm_requires_every_store_to_complete_discrimination(tmp_path: Path) -> None:
+def test_sequential_completed_arm_requires_every_store_to_complete_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: an unconditional (true) completed guard fails -- the guard is
     a real conjunction of two store coordinates."""
     from sugar_lift_py_tests.outcome.exit_set import true_guard
@@ -277,7 +287,9 @@ def test_each_store_occurrence_mints_its_own_coordinate(tmp_path: Path) -> None:
     assert values == {"p", "q"}
 
 
-def test_each_store_occurrence_mints_its_own_coordinate_discrimination(tmp_path: Path) -> None:
+def test_each_store_occurrence_mints_its_own_coordinate_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: collapsing the two stores to one coordinate fails."""
     _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     coordinates = _store_coordinates(completed[0].guard)
@@ -298,9 +310,9 @@ def test_store_outcome_guards_are_exactly_complementary(tmp_path: Path) -> None:
 
     assert _polarity(halt.guard, "x") is False
     assert _polarity(success.guard, "x") is True
-    assert _and_guards(halt.guard, success.guard) == false_guard(), (
-        "the halt face and the success face of ONE store cannot both hold"
-    )
+    assert (
+        _and_guards(halt.guard, success.guard) == false_guard()
+    ), "the halt face and the success face of ONE store cannot both hold"
 
 
 def test_store_pairing_enforcement_one_occurrence_complementary_total(
@@ -332,9 +344,9 @@ def test_store_pairing_enforcement_one_occurrence_complementary_total(
     halt_coords = _store_coordinates(halt.guard)
     success_coords = _store_coordinates(success.guard)
     assert len(halt_coords) == 1 and len(success_coords) == 1
-    assert halt_coords[0] == success_coords[0], (
-        "halt and success must share one store-occurrence coordinate"
-    )
+    assert (
+        halt_coords[0] == success_coords[0]
+    ), "halt and success must share one store-occurrence coordinate"
     assert _polarity(halt.guard, "x") is False
     assert _polarity(success.guard, "x") is True
 
@@ -346,7 +358,9 @@ def test_store_pairing_enforcement_one_occurrence_complementary_total(
     assert {type(e).__name__ for e in exits.exits} == {"Halted", "Completed"}
 
 
-def test_store_outcome_guards_are_exactly_complementary_discrimination(tmp_path: Path) -> None:
+def test_store_outcome_guards_are_exactly_complementary_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: two DIFFERENT stores' guards are not contradictory -- so the
     contradiction above comes from complementarity, not from everything being
     trivially false."""
@@ -372,7 +386,9 @@ def test_no_invented_exception_type_on_a_store_halt(tmp_path: Path) -> None:
         assert isinstance(arm.effect, AttributeStoreRuntimeEffect), type(arm.effect)
 
 
-def test_no_invented_exception_type_on_a_store_halt_discrimination(tmp_path: Path) -> None:
+def test_no_invented_exception_type_on_a_store_halt_discrimination(
+    tmp_path: Path,
+) -> None:
     """The bite: the halt is NOT a RaiseEffect of some guessed class."""
     from sugar_lift_py_tests.effect import RaiseEffect
 

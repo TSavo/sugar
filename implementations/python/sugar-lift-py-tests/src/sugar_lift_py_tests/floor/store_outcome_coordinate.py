@@ -56,9 +56,7 @@ STORE_FAMILY_EFFECT_NAMES = (
 def store_family_effects() -> tuple[type, ...]:
     from sugar_lift_py_tests import effect as effect_module
 
-    return tuple(
-        getattr(effect_module, name) for name in STORE_FAMILY_EFFECT_NAMES
-    )
+    return tuple(getattr(effect_module, name) for name in STORE_FAMILY_EFFECT_NAMES)
 
 
 def is_store_family_effect(effect) -> bool:

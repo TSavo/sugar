@@ -1,6 +1,7 @@
 """Value-correctness twins for the Phase-3 resume (the gate the merge was
 missing): a resolved conditional candidate must contribute its CARRIED value's
 post, not vanish to an implicit None. Each asserts the ACTUAL post formula."""
+
 import os, tempfile, dataclasses
 import pytest
 
@@ -39,10 +40,13 @@ def _universe_and_unit(src):
 def _self_declared_set(unit):
     cand = unit.candidates[0]
     pre = {
-        "kind": "parameter-contract-resolution", "schemaVersion": "1",
-        "demandCid": cand.demand.demand_cid, "candidateCid": cand.candidate_cid,
+        "kind": "parameter-contract-resolution",
+        "schemaVersion": "1",
+        "demandCid": cand.demand.demand_cid,
+        "candidateCid": cand.candidate_cid,
         "contractCid": unit.parameter_owned_contract.contract_cid,
-        "basis": "declared-demand", "callerUniverseCid": None,
+        "basis": "declared-demand",
+        "callerUniverseCid": None,
     }
     res = {**pre, "resolutionCid": _cid(pre)}
     return ParameterContractResolutionSetV1.mint(
@@ -68,11 +72,13 @@ def test_twin_b_lying_candidate_is_rejected():
     universe, unit = _universe_and_unit("def transform(items):\n    return items[0]\n")
     cand = unit.candidates[0]
     pre = {
-        "kind": "parameter-contract-resolution", "schemaVersion": "1",
+        "kind": "parameter-contract-resolution",
+        "schemaVersion": "1",
         "demandCid": cand.demand.demand_cid,
-        "candidateCid": "blake3-512:" + "b" * 128,   # LIE
+        "candidateCid": "blake3-512:" + "b" * 128,  # LIE
         "contractCid": unit.parameter_owned_contract.contract_cid,
-        "basis": "declared-demand", "callerUniverseCid": None,
+        "basis": "declared-demand",
+        "callerUniverseCid": None,
     }
     res = {**pre, "resolutionCid": _cid(pre)}
     rset = ParameterContractResolutionSetV1.mint(
@@ -87,6 +93,7 @@ def test_twin_c_missing_resolution_still_panics():
     # sole projection path.
     universe, unit = _universe_and_unit("def transform(items):\n    return items[0]\n")
     from sugar_source_tree.panic import SugarNotWritten
+
     # empty accepted -> replacement leaves the CCC standing -> post() panics.
     resolved = resume_project(universe, {})
     with pytest.raises(BaseException):
@@ -98,7 +105,8 @@ def test_twin_d_retained_value_identity_unchanged():
     # byte-identical, not a reconstruction.
     universe, unit = _universe_and_unit("def transform(items):\n    return items[0]\n")
     ccc = next(
-        e for e in universe.record.statements
+        e
+        for e in universe.record.statements
         if isinstance(e, ContractConditionalConstructionV1)
     )
     retained_value_id = id(ccc.value)
@@ -116,4 +124,6 @@ def test_report_declared_demand_basis_grounded():
     demand_cid = unit.candidates[0].demand.demand_cid
     declared = unit.parameter_owned_contract.declared_demand_cids
     assert demand_cid in declared, "pending demand must be self-declared"
-    assert len(declared) >= 1, "declaredDemandCids is NON-empty (the prior claim was false)"
+    assert (
+        len(declared) >= 1
+    ), "declaredDemandCids is NON-empty (the prior claim was false)"

@@ -81,9 +81,9 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
     # faces reach the record -- carrying the same effect under complementary
     # conditions over the store's own outcome coordinate.
     assert len(stores) == 2, [s.branch_conditions for s in stores]
-    assert {s.effect for s in stores} == {stores[0].effect}, (
-        "both faces are the SAME store occurrence, not two stores"
-    )
+    assert {s.effect for s in stores} == {
+        stores[0].effect
+    }, "both faces are the SAME store occurrence, not two stores"
 
     def cites_store_outcome(term):
         if getattr(term, "name", None) == "python:store_completed":
@@ -112,10 +112,10 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
 
     conditions = [s.branch_conditions for s in stores]
     assert all(len(c) == 1 for c in conditions), conditions
-    assert any(mentions_store_outcome(c[0], False) for c in conditions), (
-        "one face must hold where the store COMPLETED"
-    )
-    assert any(mentions_store_outcome(c[0], True) for c in conditions), (
-        "the complementary face must hold where the store HALTED"
-    )
+    assert any(
+        mentions_store_outcome(c[0], False) for c in conditions
+    ), "one face must hold where the store COMPLETED"
+    assert any(
+        mentions_store_outcome(c[0], True) for c in conditions
+    ), "the complementary face must hold where the store HALTED"
     assert any(type(entry).__name__ == "ReturnValue" for entry in record)

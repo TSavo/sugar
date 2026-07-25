@@ -248,9 +248,7 @@ def test_positional_correspondence_binds_each_target_to_its_own_member(
     # ...and the swap is visible on the partial arm alone: a lie that only ever
     # showed up once both stores completed would escape a halted execution.
     swapped_arms = _arm_projections(tmp_path, swapped_source, stem="swappedarms")
-    (swapped_partial,) = (
-        arm for arm in swapped_arms if len(_store_rows(arm)) == 1
-    )
+    (swapped_partial,) = (arm for arm in swapped_arms if len(_store_rows(arm)) == 1)
     assert _store_rows(swapped_partial) != _store_rows(partial)
 
 

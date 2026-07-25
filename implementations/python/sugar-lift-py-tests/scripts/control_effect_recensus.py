@@ -203,8 +203,10 @@ def _backend_defect_key(exc: object) -> str:
         # Always keyed `BackendDefect:<what>` — a bare "BackendDefect" would
         # collide with the axis label itself and made this key unreadable as a
         # row (its own twin asserted the prefix and was red).
-        return f"BackendDefect:{name}" if name != "BackendDefect" else (
-            "BackendDefect:unclassified"
+        return (
+            f"BackendDefect:{name}"
+            if name != "BackendDefect"
+            else ("BackendDefect:unclassified")
         )
     return f"BackendDefect:{name}"
 
@@ -243,7 +245,9 @@ def _measure_file(
     desugar_axis = DesugarAxis()
     root = workspace_root if workspace_root is not None else path.parent
 
-    def tally_construction(kind: str, node: object | None = None, line: object = "?") -> None:
+    def tally_construction(
+        kind: str, node: object | None = None, line: object = "?"
+    ) -> None:
         key = _occurrence_key(kind, relative, node=node, line=line)
         if key in construction_seen:
             return
@@ -718,9 +722,13 @@ def main() -> int:
                 msg = f"{defect.get('type', '')}: {defect.get('message', '')}"
             else:
                 msg = str(category)
-            if "BackendDefect" in msg or "backend defect" in msg.lower() or (
-                isinstance(defect, dict)
-                and "BackendDefect" in str(defect.get("type", ""))
+            if (
+                "BackendDefect" in msg
+                or "backend defect" in msg.lower()
+                or (
+                    isinstance(defect, dict)
+                    and "BackendDefect" in str(defect.get("type", ""))
+                )
             ):
                 backend_defects[_backend_defect_key(msg)] += 1
             elif category == "backend-defect":
