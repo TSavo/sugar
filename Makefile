@@ -665,6 +665,14 @@ test-3809-dod-scoreboard:
 # `coretests-source-audit` is the bulk measuring stick (R = unresolved loci);
 # keep it offline/instrument until R is driven to 0 — a permanent R>0 red in
 # default CI is a gate wearing a scoreboard vest (see docs/analysis/ci-whack-a-mole-*).
+#
+# `test-python` is NOT in this list and must not be added silently. The Python
+# package suite is owned and measured by
+# .github/workflows/python-package-suite.yml — one authoritative cold sweep per
+# merge, reporting the exact collected / failed / error / skipped node-ID
+# vector. It carries ~131 known failures, so adding it here would be a
+# merge-policy change wearing a wiring-fix hat. Drive those node IDs to zero
+# first; then add it here deliberately, in a PR that says so.
 ci: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires test-showcases self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="

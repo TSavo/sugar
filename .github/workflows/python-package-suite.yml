@@ -1,0 +1,232 @@
+name: Python package suite (authoritative)
+
+# THE DEFECT THIS FIXES
+#
+# `sugar-lift-py-tests` had no PR-gate coverage. `python-sole-construction-floors`
+# runs targeted law scripts with `--noconftest` -- not the suite. The only
+# workflow that touched the whole `sugar-lift-py-tests/tests` directory was
+# `restored-suite-scoreboard`, nightly cron / manual dispatch only. `make
+# test-python` was in no workflow at all. So the unit tests for
+# `ExitSet.and_exit` did not run against #6270, the PR that rewrote that
+# algebra.
+#
+# This workflow is the ONE authoritative whole-package sweep. Nothing else may
+# define, install, or run "the Python suite": the environment comes from
+# ./.github/actions/python-test-environment, and the zero-tolerance floors
+# consume that same action rather than building their own.
+#
+# IT REPORTS; IT DOES NOT GATE. ~131 known failures exist. Turning that red
+# into a merge gate is a merge-policy change and this wiring is a measurement-
+# ownership change. The `suite` job therefore records pytest's exit status as
+# evidence and exits 0. The SCHEDULED discrimination job DOES fail, because
+# order-dependence is not a known failure -- it is a claim that our verdicts
+# are not verdicts.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Discrimination cadence: canonical vs reversed vs shuffled, each cold.
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+    inputs:
+      discrimination:
+        description: Also run the reversed/shuffled discrimination arms.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Repository-wide, ref-independent, and NEVER cancelling: a run already
+# producing evidence outlives the push that superseded it. New runs queue.
+#
+# Deliberately NOT the `sugar-python-heavy-measurement` group that
+# factory-zero-tolerance.yml owns. GitHub keeps only ONE pending run per group,
+# so a third queued run evicts the second -- sharing that group with the floors
+# would make the authoritative sweep the first thing dropped on a busy day,
+# which is the no-coverage defect this workflow exists to end. One heavy group
+# per heavy instrument, each ref-independent and each cancel-in-progress: false.
+concurrency:
+  group: sugar-python-package-suite
+  cancel-in-progress: false
+
+jobs:
+  prepare-python-test-environment:
+    name: prepare-python-test-environment
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    outputs:
+      identity-hash: ${{ steps.env.outputs.identity-hash }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare immutable Python test environment
+        id: env
+        uses: ./.github/actions/python-test-environment
+        with:
+          identity-artifact: "true"
+      - name: Publish environment identity to the run summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Python test environment"
+            echo
+            echo '`environmentIdentityHash`: `${{ steps.env.outputs.identity-hash }}`'
+            echo
+            echo 'Runs that do not share this hash are not comparable measurements.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python-package-suite:
+    name: python-package-suite (canonical)
+    needs: prepare-python-test-environment
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Prepare immutable Python test environment
+        id: env
+        uses: ./.github/actions/python-test-environment
+
+      # ONE cold process. Whole package. Canonical collection order.
+      # `-p no:cacheprovider` so no run inherits another's cache; `-p
+      # no:randomly` so canonical means canonical.
+      - name: Whole-package sweep
+        id: sweep
+        shell: bash
+        working-directory: implementations/python
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools
+        run: |
+          set -uo pipefail
+          set +e
+          python -m pytest sugar-lift-py-tests/tests -q \
+            -p no:cacheprovider -p no:randomly \
+            -p python_package_suite_report \
+            --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
+            --suite-identity="${{ steps.env.outputs.identity-path }}" \
+            --suite-order=canonical \
+            --suite-label=python-package-suite-canonical \
+            2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
+          pytest_exit=${PIPESTATUS[0]}
+          set -e
+          echo "pytest_exit=$pytest_exit" >> "$GITHUB_OUTPUT"
+          test -s "$GITHUB_WORKSPACE/suite.log"
+          test -s "$GITHUB_WORKSPACE/suite-report.json"
+
+      - name: Publish the node-ID vector
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/python_package_suite_summary.py \
+            --report suite-report.json \
+            --pytest-exit '${{ steps.sweep.outputs.pytest_exit }}' \
+            --node-id-dir suite-node-ids \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Artifacts carry the node-ID lists. The step summary carries counts.
+      # Counts are summaries of the lists; the lists are the evidence.
+      - name: Upload authoritative suite artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-suite-canonical
+          path: |
+            suite.log
+            suite-report.json
+            suite-node-ids/
+          if-no-files-found: error
+
+      # Deliberately no `exit $pytest_exit`. See the header: this job reports.
+      - name: Report, do not gate
+        if: always()
+        shell: bash
+        run: |
+          echo "pytest exit status ${{ steps.sweep.outputs.pytest_exit }} recorded as evidence."
+          echo "This job does not gate merges; it owns the measurement."
+
+  python-package-suite-discrimination:
+    name: python-package-suite (${{ matrix.order }})
+    # Scheduled cadence only -- plus explicit dispatch. Per-merge CI pays for
+    # exactly one sweep; order-dependence is caught nightly, not by tripling
+    # every merge's cost.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.discrimination)
+    needs: prepare-python-test-environment
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        order: [reversed, shuffled]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Prepare immutable Python test environment
+        id: env
+        uses: ./.github/actions/python-test-environment
+
+      # A SEPARATE COLD PROCESS per order. Sharing a process would let the
+      # first order warm exactly the caches whose influence we are measuring.
+      - name: Whole-package sweep (${{ matrix.order }})
+        shell: bash
+        working-directory: implementations/python
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools
+        run: |
+          set -uo pipefail
+          set +e
+          python -m pytest sugar-lift-py-tests/tests -q \
+            -p no:cacheprovider -p no:randomly \
+            -p python_package_suite_report \
+            --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
+            --suite-identity="${{ steps.env.outputs.identity-path }}" \
+            --suite-order='${{ matrix.order }}' \
+            --suite-shuffle-seed="$GITHUB_RUN_ID" \
+            --suite-label='python-package-suite-${{ matrix.order }}' \
+            2>&1 | tee "$GITHUB_WORKSPACE/suite.log"
+          echo "pytest exit ${PIPESTATUS[0]}"
+          set -e
+          test -s "$GITHUB_WORKSPACE/suite-report.json"
+
+      - name: Upload discrimination artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-suite-${{ matrix.order }}
+          path: |
+            suite.log
+            suite-report.json
+          if-no-files-found: error
+
+  discrimination-verdict:
+    name: identical verdict sets across orders
+    if: >-
+      always() && !cancelled() && (
+        github.event_name == 'schedule' ||
+        (github.event_name == 'workflow_dispatch' && inputs.discrimination)
+      )
+    needs: [python-package-suite, python-package-suite-discrimination]
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-package-suite-*
+          path: runs
+      # THIS ONE HAS TEETH. A verdict that changes with execution order is not
+      # a verdict. Red here means one of the two runs lied and we do not know
+      # which; fix the dependence, do not re-run for green.
+      - name: Require identical verdict sets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/python_suite_discrimination.py \
+            --baseline runs/python-package-suite-canonical/suite-report.json \
+            --candidate runs/python-package-suite-reversed/suite-report.json \
+            --candidate runs/python-package-suite-shuffled/suite-report.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"

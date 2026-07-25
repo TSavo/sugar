@@ -1,11 +1,33 @@
 # Sugar CI: the acid test
 #
 # Drop sugar into a project, prove correctness with zero code changes.
-# `make ci` runs the two suites that actually do that: `test-rust` (the rust
-# workspace, including the crate-pair inheritance E2E, exercising the ts
-# / python realize kits over RPC) and `test-python` (the python kit, including
-# the numpy proof). No federation conformance gate; the Makefile is the
-# contract.
+#
+# WHAT THIS WORKFLOW ACTUALLY RUNS -- read the `jobs:` block, not a slogan.
+# It runs `make ${{ matrix.target }}` over the `core` matrix plus sharded
+# `make test-showcases`. That is `make ci` decomposed for parallelism:
+# check-lift-refusal-vocabulary, check-fleet-claim-contract,
+# test-python-format, test-claim-mass-tripwires, test-showcases, self-attest,
+# coretests-invariants.
+#
+# IT DOES NOT RUN `test-rust` OR `test-python`, AND `make ci` DOES NOT EITHER.
+# This comment used to claim it did. It was false for both halves, and the
+# cost of the lie was concrete: `sugar-lift-py-tests` had no PR-gate coverage
+# at all, so the unit tests for `ExitSet.and_exit` did not run against #6270,
+# the PR that rewrote that algebra. A comment describing wiring nobody built
+# is worse than no comment -- it is a green light with no circuit behind it.
+#
+# Both suites are deliberately out of `make ci`, and each has a named owner:
+#   - `test-rust` / `test-python` are the development frontier, run by
+#     `make test-all`. They include intentionally red audits and ratchets;
+#     see the `ci:` target's comment in the Makefile.
+#   - the Python package suite is measured by
+#     .github/workflows/python-package-suite.yml, on every PR and push, as
+#     ONE authoritative cold whole-package sweep. It REPORTS -- ~131 known
+#     failures are recorded as node-ID evidence, not converted into a gate.
+#     Promoting it to a gate is a merge-policy decision and must be made
+#     explicitly, by driving those node IDs to zero and then wiring it here.
+#
+# No federation conformance gate; the Makefile is the contract.
 
 name: CI
 
