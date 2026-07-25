@@ -198,7 +198,13 @@ def test_no_name_based_fallback_behind_the_coordinate_door() -> None:
     # authenticated coordinate carries scope owner, binding site, and
     # projection path — no identifier.  A name-keyed route has nothing to key.
     fields = set(type(ref.coordinate).__dataclass_fields__)
-    assert fields == {"scope_owner_cid", "binding_site", "projection_path", "cid", "_interned"}
+    assert fields == {
+        "scope_owner_cid",
+        "binding_site",
+        "projection_path",
+        "cid",
+        "_interned",
+    }
     assert not any("name" in field for field in fields)
 
 
@@ -356,9 +362,7 @@ def test_two_call_occurrences_retain_distinct_occurrences() -> None:
     # Discrimination: the shared coordinate is not a shared *value* cell.  If
     # occurrence identity collapsed, reducing the second would have rewritten
     # the first.
-    replayed = first_value.force_floor(
-        None, owner="occurrence", project_callsite=False
-    )
+    replayed = first_value.force_floor(None, owner="occurrence", project_callsite=False)
     assert replayed.statements[0].value == TermValue(7)
 
 

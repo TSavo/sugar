@@ -304,8 +304,8 @@ def test_one_project_cannot_warm_another_projects_result(tmp_path: Path) -> None
     # CID, and that is what content addressing means.  What must never coincide
     # is the VALUE: a projected node carries a live construction context, and
     # project B must own its own.
-    (a_frame, a_target), = session_a.frame_results.values()
-    (b_frame, b_target), = session_b.frame_results.values()
+    ((a_frame, a_target),) = session_a.frame_results.values()
+    ((b_frame, b_target),) = session_b.frame_results.values()
     assert a_target is not b_target
     assert a_frame is not b_frame
     assert a_target.unit.construction_context is not b_target.unit.construction_context
@@ -410,18 +410,18 @@ def authority_blind_key(monkeypatch):
     monkeypatch.setattr(
         SourceResolutionSession,
         "export_hit",
-        lambda self, key: self.export_resolutions.get(strip(key))
-        if self.enabled
-        else None,
+        lambda self, key: (
+            self.export_resolutions.get(strip(key)) if self.enabled else None
+        ),
     )
     monkeypatch.setattr(
         SourceResolutionSession,
         "remember_export",
-        lambda self, key, result: self.export_resolutions.__setitem__(
-            strip(key), result
-        )
-        if self.enabled
-        else None,
+        lambda self, key, result: (
+            self.export_resolutions.__setitem__(strip(key), result)
+            if self.enabled
+            else None
+        ),
     )
     monkeypatch.setattr(
         SourceResolutionSession,
@@ -431,11 +431,9 @@ def authority_blind_key(monkeypatch):
     monkeypatch.setattr(
         SourceResolutionSession,
         "remember_frame",
-        lambda self, key, result, hold=None: self.frame_results.__setitem__(
-            strip(key), result
-        )
-        if self.enabled
-        else None,
+        lambda self, key, result, hold=None: (
+            self.frame_results.__setitem__(strip(key), result) if self.enabled else None
+        ),
     )
 
 
