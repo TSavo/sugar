@@ -35,7 +35,6 @@ import hashlib
 import re
 from pathlib import Path
 
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.assign_sugar import (
     MultiAssignSugar,
     UnpackStoreAssignSugar,
@@ -398,10 +397,20 @@ def test_opaque_receiver_subscript_leaves_stay_loud(tmp_path: Path) -> None:
 
 
 def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
-    """The admitted shape still constructs to a Complete universe."""
-    out = _function_sugar(tmp_path, TWO_ATTRIBUTE).desugar(None)
-    assert isinstance(out, Complete)
-    assert len(_unpack(tmp_path, TWO_ATTRIBUTE, stem="dual").stores) == 2
+    """The admitted shape constructs: two store leaves, both authenticated.
+
+    This asserts nothing about the OUTCOME shape. It used to assert
+    ``isinstance(out, Complete)``, which is the current single-unconditional-
+    exit behaviour -- i.e. it asserted that a store cannot fail, the very
+    thing ``test_assign_unpack_store_outcome_composition`` names as the
+    remaining defect. Two committed twins cannot disagree about whether a
+    store body reduces to one exit or to guarded exits; the outcome shape is
+    owned there, so it is not restated here.
+    """
+    unpack = _unpack(tmp_path, TWO_ATTRIBUTE, stem="dual")
+    assert len(unpack.stores) == 2
+    assert [store.attr for store in unpack.stores] == ["x", "y"]
+    assert unpack.bindings == ()
 
 
 # ---------------------------------------------------------------------------
@@ -413,16 +422,21 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
 # be restated per arm. This list is the rebase checklist for #6239; it is not
 # a licence to edit an expectation to match new behaviour -- re-measure.
 #
+# The OUTCOME SHAPE itself is not on this list and is not asserted anywhere in
+# this module: it is owned by test_assign_unpack_store_outcome_composition,
+# whose four twins are red on exactly that law. Nothing here may assert
+# `isinstance(out, Complete)` -- that is the defect those twins name, and two
+# committed twins must never disagree about it.
+#
 # SINGLE-ARM HELPERS -- fix these first, the twins follow:
 #   _record / _projection / _post  read `.desugar(None).value` as one Complete.
-#     They must take an exit arm (or return one projection per arm).
+#     They must take an exit arm (or return one projection per arm). This is
+#     the highest-priority rewrite: every twin below flows through them.
 #
 #   Twin                                            what it must become
 #   ----------------------------------------------  -----------------------
-#   test_dual_attribute_display_unpack_constructs   asserts isinstance(out,
-#     Complete) for the whole universe -- the bare single-arm assumption.
-#     Must assert BOTH arms: Completed with both stores, Halted after the
-#     first. Highest-priority rewrite.
+#   test_dual_attribute_display_unpack_constructs   already arm-independent
+#     (sugar-layer only: store count, attrs, bindings). No change needed.
 #
 #   test_name_leaf_binding_is_discharged_beside_    PRIMARY site for law 6.
 #     the_store_effect                              Today asserts one post
