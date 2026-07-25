@@ -38,9 +38,7 @@ def test_empty_list_membership_is_false():
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
     empty = ListValue(())
-    assert isinstance(
-        empty.contains(TermValue(1), "site").value, FalseBoolLiteralSugar
-    )
+    assert isinstance(empty.contains(TermValue(1), "site").value, FalseBoolLiteralSugar)
 
 
 def test_finite_tuple_membership_is_decided_from_constructed_members():
@@ -108,9 +106,7 @@ def test_symbolic_string_membership_emits_py_in():
     from sugar_lift_py_tests.ir import _Atomic, make_var
 
     result = (
-        StringValue("abc")
-        .contains(SymbolicValue(make_var("needle")), "site")
-        .value
+        StringValue("abc").contains(SymbolicValue(make_var("needle")), "site").value
     )
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "py.in"
