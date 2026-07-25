@@ -107,6 +107,28 @@ class RuntimeSelectedContextManager(SugarNotWritten):
     _LABEL = "RUNTIME-SELECTED CONTEXT MANAGER"
 
 
+class ConstructedValueTestimonyNotWritten(SugarNotWritten):
+    """A construction succeeded but its constructed-value testimony could not
+    be content-addressed.
+
+    The coordinate registered, the node constructed, and the testimony
+    serialization failed. Before, both failure doors in
+    ``ConstructionTestimonyReporterV1.present_construction`` returned silently:
+    the node kept its PRESENT discharge and the failure disappeared -- a falsely
+    green construction coordinate. There is no such third arm now. Either the
+    constructed value canonicalizes (present testimony) or this typed gap is
+    reported through the same roll call and raised.
+
+    A *named* subclass of ``SugarNotWritten`` (like
+    ``RuntimeSelectedContextManager``) so the census counts testimony gaps
+    separately from shapes with no ``.sugar()`` override. The fix is always to
+    teach canonicalization the general value CATEGORY -- never a per-type
+    allowlist, never a silent return.
+    """
+
+    _LABEL = "CONSTRUCTED VALUE TESTIMONY NOT WRITTEN"
+
+
 class WithConstructionGapKind(str, Enum):
     RUNTIME_SELECTED = "runtime-selected"
     UNRESOLVED_SYMBOL = "unresolved-symbol"

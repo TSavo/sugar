@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, TypeAlias
+from typing import TYPE_CHECKING, Any, Callable, NoReturn, TypeAlias
 
 from sugar_lift_python_source.canonical import cid_of_json
 
@@ -371,8 +371,8 @@ class ConstructionTestimonyReporterV1:
     def present_construction(self, node: Node, value: object) -> None:
         try:
             node_shape_cid = node_construction_shape_cid(node)
-        except (TypeError, ValueError):
-            return
+        except (TypeError, ValueError) as cause:
+            self._testimony_gap(node, value, "node construction shape", cause)
         # Same content, same testimony: a node view is presented in every
         # snapshot it survives (asof: 2,277 presentations, 187 distinct shapes
         # -- 12x). The shape CID is the content key; once it is recorded, the
@@ -382,18 +382,51 @@ class ConstructionTestimonyReporterV1:
             return
         try:
             semantic_value_cid = cid_of_json(_constructed_preimage(value))
-        except (TypeError, ValueError):
-            return
+        except (TypeError, ValueError) as cause:
+            self._testimony_gap(node, value, "constructed value", cause)
         self._by_node_shape[node_shape_cid] = mint_constructed_value_testimony_v1(
             source_fragment=node.fragment,
             semantic_value_cid=semantic_value_cid,
         )
 
+    def _testimony_gap(
+        self, node: Node, value: object, canonicalized: str, cause: Exception
+    ) -> NoReturn:
+        """The ONE typed door for a failed constructed-value testimony.
+
+        Conservation is atomic: the gap is testified through the SAME roll call
+        the census reads (``report_gap``, delegated to the collecting reporter)
+        BEFORE the panic is raised, and ``Node.sugar`` raises before it records
+        the present answer. So the coordinate carries exactly one discharge --
+        the loud absent one -- never a present testimony it does not have and
+        never no discharge at all.
+        """
+        from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
+
+        panic = ConstructedValueTestimonyNotWritten(
+            owner="CollectingReporter.present_construction",
+            observed=(
+                f"{canonicalized} of {type(value).__name__} at "
+                f"{_testimony_blame(node)} does not canonicalize: "
+                f"{type(cause).__name__}: {cause}"
+            ),
+            requested="content-addressable constructed-value testimony",
+            fix=(
+                "teach canonicalization the general value category "
+                "(_canonical_constructed_value) or keep the coordinate loud"
+            ),
+        )
+        self.report_gap(node, panic)
+        raise panic
+
     def testimony_for(self, node: Node) -> ConstructedValueTestimonyV1 | None:
+        # A miss is an honest None (this node was never presented); a
+        # canonicalization FAILURE is not, and never returns quietly.
         try:
-            return self._by_node_shape.get(node_construction_shape_cid(node))
-        except (TypeError, ValueError):
-            return None
+            node_shape_cid = node_construction_shape_cid(node)
+        except (TypeError, ValueError) as cause:
+            self._testimony_gap(node, node, "node construction shape", cause)
+        return self._by_node_shape.get(node_shape_cid)
 
     def seal_snapshot(
         self, snapshot: tuple[tuple[str, BindingEntryV1], ...]
@@ -402,6 +435,21 @@ class ConstructionTestimonyReporterV1:
 
     def projected_snapshots_for(self, statement: Node):
         return self._trace_builder.projected_snapshots_for(statement, self)
+
+
+def _testimony_blame(node: object) -> str:
+    """The node's site, by the same projection ``Node.sugar`` uses."""
+    from sugar_source_tree.panic import SourceTreePanic
+
+    unit = getattr(node, "unit", None)
+    where = getattr(unit, "filename", None)
+    if not isinstance(where, str):
+        return str(type(node).__name__)
+    try:
+        lc = node.line_col_span()
+    except SourceTreePanic:
+        return where
+    return f"{where}:{lc.start_line}:{lc.start_col}"
 
 
 def _seal_trace_record(
