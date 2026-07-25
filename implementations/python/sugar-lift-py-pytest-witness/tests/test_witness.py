@@ -505,15 +505,39 @@ def test_discharge_command_refuses_mutated(tmp_path):
 # python-literal-base64).
 
 
-def test_lsp_lift_stamps_witness_package_contract_with_proofir_provenance(tmp_path):
-    from sugar_pytest_witness.lift_lsp import handle_lift
+def _enumerate_call(proj, params):
+    from sugar_pytest_witness.lift_lsp import handle_enumerate
 
-    proj = _project(tmp_path, GOOD)
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured):
-        handle_lift(1, {"workspace_root": proj})
-    resp = json.loads(captured.getvalue().strip().splitlines()[-1])
-    ir = resp["result"]["ir"]
+        handle_enumerate(1, dict(params, workspace_root=proj))
+    return json.loads(captured.getvalue().strip().splitlines()[-1])
+
+
+def _enumerate_universe_ir(proj):
+    """Drive the kit's ONE construction door and return the anchor's IR rows.
+
+    Mirrors `fold_enumerate_source_tree`: census `source_files`, then ask
+    `universe` at each file and collect every node's `audit` as an IR row.
+    """
+    census = _enumerate_call(proj, {"level": "source_files"})
+    assert "error" not in census, census
+    files = [node["memento"]["file"] for node in census["result"]["nodes"]]
+    assert files, f"source census enumerated no files: {census}"
+    rows = []
+    for file_rel in files:
+        reply = _enumerate_call(proj, {"level": "universe", "at": {"file": file_rel}})
+        assert "error" not in reply, reply
+        assert not reply["result"]["gaps"], reply
+        rows.extend(
+            node["audit"] for node in reply["result"]["nodes"] if node.get("audit")
+        )
+    return rows
+
+
+def test_lsp_lift_stamps_witness_package_contract_with_proofir_provenance(tmp_path):
+    proj = _project(tmp_path, GOOD)
+    ir = _enumerate_universe_ir(proj)
     contracts = [
         m
         for m in ir
@@ -529,3 +553,86 @@ def test_lsp_lift_stamps_witness_package_contract_with_proofir_provenance(tmp_pa
     )
     warrants = contract["proofirProvenance"]["warrants"]
     assert warrants and warrants[0]["kind"] == "Derived", contract["proofirProvenance"]
+
+
+# --- The retired `lift` door: construction is sugar.enumerate only -----------
+# sugar-cli `lift_plugin::dispatch_lift_path` refuses a surface that neither
+# advertises `sugar.enumerate` nor sets a non-`lift` manifest method: "sending
+# JSON-RPC method `lift` is retired". The kit declaration is what that gate
+# reads, so the advertisement is load-bearing, not documentation.
+
+
+def test_kit_declaration_advertises_enumerate_and_never_lift():
+    reply = _rpc("sugar.plugin.kit_declaration", {})
+    methods = reply["result"]["rpc"]["methods"]
+    names = [m["name"] for m in methods]
+    assert "sugar.enumerate" in names, (
+        "kit must advertise sugar.enumerate or dispatch_lift_path refuses the "
+        f"surface as a retired-lift kit: {names}"
+    )
+    assert "lift" not in names, (
+        f"`lift` is not a kit method; advertising it re-opens the retired door: {names}"
+    )
+    required = {m["name"] for m in methods if m.get("required")}
+    assert "sugar.enumerate" in required, methods
+
+
+def test_enumerate_emits_the_signed_witness_package_memento_as_an_ir_row(tmp_path):
+    """The memento is the proof's ONLY pointer to the witness body.
+
+    It rides the same `audit` channel as the contract it pins, so
+    `sugar_compiler::tree::looks_like_ir_contract_row` must let `witness-memento`
+    through -- otherwise mint's `witness-memento` dispatch never sees it and the
+    custom-evidence contract can never be discharged.
+    """
+    proj = _project(tmp_path, GOOD)
+    rows = _enumerate_universe_ir(proj)
+    mementos = [r for r in rows if r.get("kind") == "witness-memento"]
+    assert len(mementos) == 1, f"expected exactly one package memento: {rows}"
+    memento = mementos[0]
+    assert memento["witness_kind"] == "pytest-witness-package", memento
+    for field in ("witness_cid", "signer", "signature", "test_files", "code_files"):
+        assert memento.get(field), f"memento missing {field}: {memento}"
+    contracts = [
+        r
+        for r in rows
+        if r.get("kind") == "contract"
+        and r.get("name", "").startswith("witness-package:")
+    ]
+    assert len(contracts) == 1, rows
+    # The memento pins exactly the package the contract's evidence names.
+    assert contracts[0]["name"] == f"witness-package:{memento['witness_cid']}"
+
+
+def test_enumerate_runs_the_suite_once_at_the_anchor_file_only(tmp_path):
+    """A witness package is a whole-suite artifact, so exactly one file in the
+    census may answer a non-empty universe -- otherwise the suite runs N times
+    and the proof carries N duplicate packages."""
+    proj = _project(tmp_path, GOOD)
+    census = _enumerate_call(proj, {"level": "source_files"})
+    files = [node["memento"]["file"] for node in census["result"]["nodes"]]
+    non_empty = [
+        f
+        for f in files
+        if _enumerate_call(proj, {"level": "universe", "at": {"file": f}})["result"][
+            "nodes"
+        ]
+    ]
+    assert len(non_empty) == 1, (
+        f"exactly one anchor file may carry the package; got {non_empty}"
+    )
+    tests = sorted(f for f in files if f.split("/")[-1].startswith("test_"))
+    assert non_empty == [tests[0]], (
+        f"anchor must be the first test file in sorted order: {non_empty} vs {tests}"
+    )
+
+
+def test_enumerate_link_units_and_unrelated_levels_are_empty_not_errors(tmp_path):
+    proj = _project(tmp_path, GOOD)
+    link_units = _enumerate_call(proj, {"level": "parameter-contract-link-units"})
+    assert link_units["result"] == {"rows": []}, link_units
+    for level in ("functions", "call_sites", "assertions", "facts", "exports"):
+        reply = _enumerate_call(proj, {"level": level})
+        assert reply["result"] == {"nodes": [], "gaps": []}, (level, reply)
+    unknown = _enumerate_call(proj, {"level": "no-such-level"})
+    assert "error" in unknown, unknown

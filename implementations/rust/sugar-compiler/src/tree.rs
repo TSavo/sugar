@@ -512,6 +512,16 @@ fn looks_like_ir_contract_row(value: &Value) -> bool {
     if kind == "contract" || kind == "function-contract" {
         return true;
     }
+    // A WITNESS kit (pytest-witness, cargo-test-witness) folds its signed
+    // WitnessMemento through the same audit channel as the contract that
+    // memento pins -- there is no second wire for it. Mint dispatches
+    // `witness-memento` rows straight out of `response["ir"]`
+    // (`cmd_mint::mint_witness_memento`), so dropping the row here would
+    // strip the proof's ONLY pointer to the witness body and leave the
+    // custom-evidence contract permanently undischargeable.
+    if kind == "witness-memento" {
+        return true;
+    }
     // IR rows always carry at least one body slot or formals even if kind is
     // missing under a future kit dialect.
     obj.contains_key("inv")
