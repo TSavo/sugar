@@ -183,12 +183,12 @@ def construct_manager_behavior(
     # constructor call.  Every hop's prefix statements are KEPT, in execution
     # order, in factory_prefix -- an unwrapped hop must never silently drop the
     # statements it stepped over.  The chain is finite because the frame graph
-    # refused its own cycles at resolution; a repeated call identity is still
+    # closed its own cycles at resolution; a repeated call identity is still
     # reported as a typed gap rather than looped on.
     #
     # Every force_floor in the chain -- the factory call and each unwrapped hop
     # -- projects under ONE typed membrane: a ConstructionPanic raised by the
-    # floor is the force-floor STAGE refusing, and becomes the stage-keyed
+    # floor is the force-floor STAGE declining, and becomes the stage-keyed
     # `force-floor` residual rather than a bare crash or a collapsed
     # `no-derived-contract`.  Nothing but ConstructionPanic is caught here, and
     # the typed gaps returned inside (cycle, non-manager) are returns, not
@@ -594,7 +594,7 @@ def _named_call_is_source_opaque(
     family — including assertion EffectBoundary factories.
 
     A name bound in the builtin temporal is not source-opaque. Construction may
-    still refuse at force_floor when the builtin is not yet reducible; that is a
+    still halt at force_floor when the builtin is not yet reducible; that is a
     later, stage-keyed gap, not a false free-name opaque.
 
     This is the LOCAL question only.  A name that is source-opaque here is then
