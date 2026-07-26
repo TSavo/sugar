@@ -144,8 +144,20 @@ def test_an_absent_provider_is_a_counted_skip_not_a_collection_error():
 
 
 def test_a_present_provider_is_imported_and_returned():
-    """The positive arm: a provider that IS installed must not skip."""
-    module = optional_law_import("json", OPTIONAL_PROVIDER, "stdlib stand-in")
+    """The positive arm: a provider that IS installed must not skip.
+
+    The skip has to be caught explicitly. A gate that skipped unconditionally
+    would leave this test SKIPPED -- green, proving nothing -- because a
+    Skipped raised in the body simply skips the test. Fourth instance of that
+    shape today, so it is written out rather than trusted.
+    """
+    try:
+        module = optional_law_import("json", OPTIONAL_PROVIDER, "stdlib stand-in")
+    except pytest.skip.Exception as skipped:
+        raise AssertionError(
+            f"the provider gate skipped a provider that IS installed "
+            f"({skipped!r}); every law behind it would then be silently unrun"
+        ) from None
     assert module.loads("[1]") == [1]
 
 
