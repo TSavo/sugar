@@ -110,6 +110,12 @@ class _Handle(BackendNode):
         self._node = node
         self._desc: Optional[Description] = None
 
+
+    @property
+    def minting_unit(self):
+        """Parsed out of this unit's text, so its span is that unit's."""
+        return self._unit
+
     def describe(self) -> Description:
         if self._desc is None:
             self._desc = _describe(self._unit, self._node)
