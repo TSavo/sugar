@@ -44,12 +44,12 @@ class LiveOutwardHaltedFaceV1:
 
 
 def _formula_cid(formula) -> str:
-    import json
-
-    from sugar_lift_py_tests.canonicalizer import encode_jcs
+    # Encode the Value tree once and hash those bytes. Do not decode the
+    # canonical JCS string back through JSON merely to re-encode for the CID.
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
     from sugar_lift_py_tests.ir import formula_to_value
 
-    return cid_of_json(json.loads(encode_jcs(formula_to_value(formula))))
+    return blake3_512_of(encode_jcs(formula_to_value(formula)).encode("utf-8"))
 
 
 def _seal_runtime_state(state):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from typing import Any, Literal
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
@@ -19,8 +18,8 @@ ParameterKindV1 = Literal[
 
 
 def _cid(value: Any) -> str:
-    canonical = json.loads(encode_jcs(_json_value(value)))
-    return blake3_512_of(encode_jcs(_json_value(canonical)).encode("utf-8"))
+    # One encode of the Value tree; no JSON decode/re-encode of the same bytes.
+    return blake3_512_of(encode_jcs(_json_value(value)).encode("utf-8"))
 
 
 @dataclass(frozen=True)
