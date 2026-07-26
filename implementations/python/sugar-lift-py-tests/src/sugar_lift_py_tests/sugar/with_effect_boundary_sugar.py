@@ -52,7 +52,6 @@ class WithEffectBoundarySugar(Sugar):
         )
         from sugar_source_tree.panic import SugarNotWritten
 
-        del ctx
         semantics = self.semantics
         if (
             not isinstance(semantics, EffectBoundarySemanticsV1)
@@ -66,7 +65,7 @@ class WithEffectBoundarySugar(Sugar):
                 fix="keep other effect-boundary variants loud until their typed router exists",
             )
 
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar())
+        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         routed = []
         for manager_exit in manager_es.exits:
             if isinstance(manager_exit, Halted):
@@ -99,9 +98,9 @@ class WithEffectBoundarySugar(Sugar):
                     variadic_keyword_actuals={},
                 )
 
-            body_es = promote_raise_halts(reduce_block_to_exitset(self.body)).guarded(
-                manager_exit.guard
-            )
+            body_es = promote_raise_halts(
+                reduce_block_to_exitset(self.body, ctx)
+            ).guarded(manager_exit.guard)
 
             # One typed contract, both edges. ``unmet`` is what makes this an
             # assertion boundary rather than a resource ``__exit__``: under
