@@ -1,7 +1,9 @@
-# Try / ExitSet — staged, do not merge
+# Try / ExitSet — gate discharged, merged
 
-**Status:** STAGED ONLY. Merge waits on the **post-cache authoritative
-baseline and its ledger**. Building against the ExitSet law now costs nothing.
+**Status:** MERGED as `421ef4157` (#6242). The staging gate was discharged on
+the ruling that the landed content is **twins-only, with no production
+capability** — it changes no production behavior, and `Try` already rode the
+shared `ExitSet` algebra this plan describes.
 
 **Region:** `try_sugar.py` + `exit_set_routing.py`.
 **Coordinate with:** Assign (`#6239`) — do not edit the Assign region.
