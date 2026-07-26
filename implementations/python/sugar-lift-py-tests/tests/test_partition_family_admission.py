@@ -271,3 +271,59 @@ def test_both_admissions_build_through_one_door():
         return seen
 
     assert values(by_family) == values(by_pairwise) == ["x", "y"]
+
+
+# --------------------------------------------------------------------------
+# The latch ruling: an exit partition has TWO faces, and the latch is not one
+# --------------------------------------------------------------------------
+
+
+def test_the_loops_exit_partition_is_two_faced_and_excludes_the_latch():
+    """THE RULING, pinned. `{BreakExit, NormalExhaustion}` — not the latch.
+
+    A loop leaves exactly one way, and `live_loop_construction` says so in its
+    own `completed_specs` list. `BodyFallthrough` is the LATCH input
+    (`loop_construction.py:593` requires it as the loop-back edge), so it is not
+    an exit route and must not be a member of the exit partition.
+
+    Retention is not the same as claiming exclusivity: the latch face is still
+    carried, and it claims nothing. That is the honest state for an edge that
+    is not an exit.
+    """
+    brk, done = partition_family(
+        "loop@target", ("BreakExit", "NormalExhaustion")
+    )
+
+    assert brk.arity == done.arity == 2
+    factored = ExitSet(
+        (_arm(_g("broke"), "a", brk), _arm(_g("exhausted"), "b", done))
+    ).factor_completed()
+    assert len(_completed(factored)) == 1
+
+
+def test_stamping_the_latch_into_the_exit_partition_is_rejected():
+    """DISCRIMINATING for the ruling, and it is the arm that matters.
+
+    If the latch were minted as a third member, the two genuine exit arms would
+    no longer COMPLETE the family — two of three faces is not exhaustive — so
+    the family door refuses them. The mis-stamp does not silently widen the
+    partition; it costs the admission the exit routes had legitimately earned.
+
+    That is the shape of the error the ruling forbids: asserting an exclusion
+    nobody established, and paying for it where the honest testimony used to
+    work.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import _complete_family
+
+    brk, latch, done = partition_family(
+        "loop@target", ("BreakExit", "BodyFallthrough", "NormalExhaustion")
+    )
+    exit_arms = [_arm(_g("broke"), "a", brk), _arm(_g("exhausted"), "b", done)]
+
+    assert not _complete_family(exit_arms)
+    # ...and the two-faced mint, over the exit routes alone, does admit them.
+    brk2, done2 = partition_family("loop@target", ("BreakExit", "NormalExhaustion"))
+    assert _complete_family(
+        [_arm(_g("broke"), "a", brk2), _arm(_g("exhausted"), "b", done2)]
+    )
+    del latch
