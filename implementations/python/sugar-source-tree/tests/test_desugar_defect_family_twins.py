@@ -469,30 +469,19 @@ def test_unhandled_projection_names_the_union_and_the_verb() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_loop_outward_face_returning_a_partition_lifts() -> None:
-    """POSITIVE. A loop's outward face whose `return` expression PARTITIONS used
-    to raise `BindingStateWireGap: loop outward face did not construct return or
-    raise testimony`. It was never a missing wire -- the face contributes its
-    partition under its own guard."""
-    out = _out(
-        "def f(xs, d, k, v):\n"
-        " for x in xs:\n"
-        "  if x:\n"
-        "   return d.setdefault(k, v)\n"
-        " return 0\n"
-    )
-    assert _statements(out)
+def test_loop_outward_face_owing_a_contract_lifts_and_keeps_its_demand() -> None:
+    """POSITIVE. A loop's outward face whose `return` reduces to something richer
+    than one value or one effect -- here a return that owes a parameter contract
+    -- used to raise `BindingStateWireGap: loop outward face did not construct
+    return or raise testimony`. It was never a missing wire, and the demand is
+    not lost on the way through: a block entry is exactly its home."""
+    out = _out("def f(xs, p):\n for x in xs:\n  if x:\n   return p[0]\n return 0\n")
+    assert len(_pending(out)) == 1
 
 
-def test_loop_outward_face_with_a_plain_return_stays_one_completed_face() -> None:
-    """DISCRIMINATING. The simple face must NOT be routed through the partition
-    path: a plain `return` is still one completed exit carrying one return."""
-    from sugar_lift_py_tests.floor import ReturnValue
-
+def test_loop_outward_face_with_a_plain_return_keeps_the_simple_arm() -> None:
+    """DISCRIMINATING. A face that DOES construct one return value must still go
+    through the simple arm: exactly one completed exit carrying one return, with
+    no pending demand invented on the way."""
     out = _out("def f(xs):\n for x in xs:\n  if x:\n   return 1\n return 0\n")
-    returns = [
-        row
-        for row in _statements(out)
-        if isinstance(row, ReturnValue) or isinstance(getattr(row, "value", None), ReturnValue)
-    ]
-    assert len(returns) >= 1
+    assert _pending(out) == ()
