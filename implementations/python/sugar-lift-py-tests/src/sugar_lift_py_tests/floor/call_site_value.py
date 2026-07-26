@@ -141,14 +141,7 @@ class CallSiteValue(FloorValue):
         recursive payload fields is safe for hash equality (equal values still
         receive the same hash) and makes identity total over cyclic bodies.
         """
-        return hash(
-            (
-                type(self),
-                self.target_name,
-                self.parameters,
-                _term_cycle_key(self.term),
-            )
-        )
+        return hash(self._identity())
 
     def __eq__(self, other: object) -> bool:
         """Compare the same finite authenticated coordinate used by ``__hash__``.
@@ -160,17 +153,32 @@ class CallSiteValue(FloorValue):
         """
         if not isinstance(other, CallSiteValue):
             return NotImplemented
-        return (
+        return self._identity() == other._identity()
+
+    def _identity(self) -> tuple:
+        """The finite authenticated coordinate, memoized per object (#6305).
+
+        Every field in it is frozen and immutable (``term`` is a content-
+        addressed IR term), so the tuple a given object yields never changes;
+        the memo is cache control, never identity. ``normalize`` compares one
+        exit against every prior one, so without this the same callsite remints
+        its coordinate once per comparison instead of once per object.
+
+        Stored through ``object.__setattr__`` because the dataclass is frozen,
+        and under a private name excluded from every field list — it is not
+        state, and it must not reach ``__repr__``, equality, or serialization.
+        """
+        cached = self.__dict__.get("_identity_key")
+        if cached is not None:
+            return cached
+        identity = (
             type(self),
             self.target_name,
             self.parameters,
             _term_cycle_key(self.term),
-        ) == (
-            type(other),
-            other.target_name,
-            other.parameters,
-            _term_cycle_key(other.term),
         )
+        object.__setattr__(self, "_identity_key", identity)
+        return identity
 
     def to_term(self, *, owner: str):
         del owner
