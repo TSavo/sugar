@@ -482,3 +482,50 @@ def test_formula_operand_carries_the_substituted_actual() -> None:
         .value.force_floor(None, owner="formula", project_callsite=False)
     )
     assert other.statements[0].formula.args[0] != other.statements[0].formula.args[1]
+
+
+# ---------------------------------------------------------------------------
+# 11. force_floor carries formal binds into if-branch suites.
+# ---------------------------------------------------------------------------
+
+
+def test_if_branch_formal_substitutes_under_force_floor_temporal() -> None:
+    """IfSugar must reduce branch suites under the curried force_floor ctx.
+
+    pytest.raises-shaped factories gate the CM return on ``if not args:``;
+    the then-branch reads formals via BindingCoordinateRef. Dropping ctx on
+    ``reduce_block_to_exitset(then_body)`` left those coordinates unbound and
+    panicked with ``unspecialized source-call formal`` even though
+    formal_coordinate_cids were curried onto the outer temporal.
+    """
+    context, functions, calls = _tree(
+        "def gated_formal(value, *args):\n"
+        "    if not args:\n"
+        "        return value\n"
+        "    return value\n\n"
+        "gated_formal(7)\n"
+    )
+    frame = _install(context, calls[-1], functions["gated_formal"])
+
+    constructed = (
+        calls[-1]
+        .sugar()
+        .desugar()
+        .value.force_floor(None, owner="if-branch-formal", project_callsite=False)
+    )
+
+    assert isinstance(constructed, BlockValue)
+    # If-union yields guarded faces, not a bare ReturnValue — but every face
+    # that returns the formal must carry the substituted actual.
+    rendered = repr(constructed)
+    assert "TermValue(value=7)" in rendered
+    assert "SugarNotWritten" not in rendered
+    assert len(frame.formal_coordinates) == 2
+
+    # Discrimination: the same body with the formal coordinate unbound stays
+    # loud — the if-branch still goes through BindingCoordinateRefSugar.desugar,
+    # never a name map.
+    refs = _coordinate_refs(frame.body)
+    assert refs
+    with pytest.raises(SugarNotWritten):
+        refs[0].desugar(_ReduceCtx(TemporalContext.empty()))

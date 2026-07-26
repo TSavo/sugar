@@ -121,8 +121,13 @@ class IfSugar(Sugar):
             self.branch_slot, observed_formula, self.site
         )
 
-        then_exits = reduce_block_to_exitset(self.then_body)
-        else_exits = reduce_block_to_exitset(self.else_body)
+        # Branch suites must reduce under the same temporal as the condition.
+        # force_floor curries formal_coordinate_cids → actuals onto ``ctx``
+        # before body.desugar; dropping that ctx left BindingCoordinateRef
+        # reads in ``if not args: return RaisesExc(expected)`` unbound and
+        # aborted every pytest.raises-shaped factory at the force-floor stage.
+        then_exits = reduce_block_to_exitset(self.then_body, ctx)
+        else_exits = reduce_block_to_exitset(self.else_body, ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a

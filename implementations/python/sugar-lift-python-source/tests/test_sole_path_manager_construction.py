@@ -203,6 +203,51 @@ def test_local_assigned_callee_is_not_false_opaque_call_target(tmp_path):
         assert result.kind != "opaque-call-target" or result.detail != "cls"
 
 
+def test_raises_style_if_not_args_factory_substitutes_formals(tmp_path):
+    """pytest.raises CM path: ``if not args: return RaisesExc(expected)``.
+
+    force_floor curries formal_coordinate_cids onto TemporalContext; IfSugar
+    must reduce the then-branch under that ctx so BindingCoordinateRef for
+    ``expected_exception`` substitutes the actual. Without the ctx hand-off
+    residual was:
+      force-floor:BindingCoordinateRefSugar.desugar:unspecialized source-call formal
+
+    Later stages may still refuse (GuardedReturn block unwrap, **kwargs call
+    body attachment) — that is not unspecialized formal substitution.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return effect_type is self.expected_exception\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+        "    func = args[0]\n"
+        "    with RaisesExc(expected_exception) as excinfo:\n"
+        "        func(*args[1:], **kwargs)\n"
+        "    return excinfo\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert "BindingCoordinateRefSugar" not in detail, result
+    assert "unspecialized source-call formal" not in detail, result
+    if isinstance(result, ManagerConstructionGapV1):
+        assert result.kind != "force-floor" or "BindingCoordinateRef" not in detail
+
+
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
     """Python builtin names are not free-name opaques at frame resolution.
 
