@@ -73,6 +73,10 @@ I/O split (never mixed):
 
 from __future__ import annotations
 
+# The sole authoritative Python corpus scoreboard. Enforced by
+# tests/test_one_authoritative_scoreboard.py: exactly one module may say True.
+SCOREBOARD_AUTHORITY = True
+
 import argparse
 import json
 import logging

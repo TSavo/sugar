@@ -22,14 +22,56 @@ rather than silently inventing one.
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = (
-    Path(__file__).resolve().parents[1] / "scripts" / "control_effect_recensus.py"
-)
+# Import the tree package here, at module scope, the way every other test in
+# this kit does. Deferring it to the moment the CLI runs left it unresolvable in
+# the managed closure, which looked like a measurement failure and was an import
+# ordering artefact.
+import sugar_source_tree.tree  # noqa: F401,E402  (path warm-up, load-bearing)
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPT = SCRIPTS / "control_effect_recensus.py"
+
+
+def _recensus():
+    """Load the CLI as a module and drive its real ``main``.
+
+    In-process on purpose. A subprocess would need this interpreter's import
+    path reconstructed by hand, and under the managed test closure that
+    reconstruction is exactly the kind of environment guess that produces a
+    green test measuring nothing. ``main`` still parses argv, so the argument
+    handling these teeth are about is genuinely exercised.
+    """
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("control_effect_recensus", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class Completed:
+    def __init__(self, returncode: int, stderr: str) -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def _invoke(argv: list[str], capsys=None) -> Completed:
+    module = _recensus()
+    saved = sys.argv
+    sys.argv = ["control_effect_recensus.py", *argv]
+    try:
+        code = module.main()
+    except SystemExit as exit_:  # argparse refusals arrive this way
+        code = exit_.code if isinstance(exit_.code, int) else 1
+    finally:
+        sys.argv = saved
+    captured = capsys.readouterr() if capsys is not None else None
+    return Completed(int(code or 0), captured.err if captured else "")
 
 
 def _corpus(tmp_path: Path) -> Path:
@@ -62,11 +104,16 @@ def _corpus(tmp_path: Path) -> Path:
     return root
 
 
-def _run(corpus: Path, *, root: Path, out: Path, extra: list[str] | None = None):
-    return subprocess.run(
+def _run(
+    corpus: Path,
+    *,
+    root: Path,
+    out: Path,
+    extra: list[str] | None = None,
+    capsys=None,
+) -> Completed:
+    return _invoke(
         [
-            sys.executable,
-            str(SCRIPT),
             str(corpus),
             "--corpus-root",
             str(root),
@@ -78,8 +125,7 @@ def _run(corpus: Path, *, root: Path, out: Path, extra: list[str] | None = None)
             "test-pin",
             *(extra or []),
         ],
-        capture_output=True,
-        text=True,
+        capsys=capsys,
     )
 
 
@@ -140,12 +186,10 @@ def test_a_different_root_does_not_produce_the_same_row(tmp_path) -> None:
     assert drifted_rows[0]["file"] != TARGET
 
 
-def test_single_file_run_without_corpus_root_is_refused(tmp_path) -> None:
+def test_single_file_run_without_corpus_root_is_refused(tmp_path, capsys) -> None:
     root = _corpus(tmp_path)
-    result = subprocess.run(
+    result = _invoke(
         [
-            sys.executable,
-            str(SCRIPT),
             str(root / "sub" / "uses.py"),
             "--out-dir",
             str(tmp_path / "refused"),
@@ -154,20 +198,23 @@ def test_single_file_run_without_corpus_root_is_refused(tmp_path) -> None:
             "--corpus-version",
             "test-pin",
         ],
-        capture_output=True,
-        text=True,
+        capsys=capsys,
     )
     assert result.returncode != 0
     assert "--corpus-root is required" in result.stderr
 
 
-def test_corpus_pin_refuses_a_changed_corpus(tmp_path) -> None:
+def test_corpus_pin_refuses_a_changed_corpus(tmp_path, capsys) -> None:
     """A board is comparable only against the corpus it was pinned to."""
     root = _corpus(tmp_path)
     pin = tmp_path / "corpus.pin.json"
 
     first = _run(
-        root, root=root, out=tmp_path / "pinned", extra=["--write-corpus-pin", str(pin)]
+        root,
+        root=root,
+        out=tmp_path / "pinned",
+        extra=["--write-corpus-pin", str(pin)],
+        capsys=capsys,
     )
     assert pin.exists(), first.stderr
 
@@ -176,6 +223,7 @@ def test_corpus_pin_refuses_a_changed_corpus(tmp_path) -> None:
         root=root,
         out=tmp_path / "same",
         extra=["--require-corpus-pin", str(pin)],
+        capsys=capsys,
     )
     assert "CORPUS PIN DEFECT" not in same.stderr
 
@@ -185,6 +233,7 @@ def test_corpus_pin_refuses_a_changed_corpus(tmp_path) -> None:
         root=root,
         out=tmp_path / "changed",
         extra=["--require-corpus-pin", str(pin)],
+        capsys=capsys,
     )
     assert changed.returncode == 2
     assert "CORPUS PIN DEFECT" in changed.stderr

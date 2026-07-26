@@ -23,6 +23,11 @@ Without a measurement payload the auditor refuses (exit 2) rather than faking R=
 
 from __future__ import annotations
 
+# Not the board. This module measures its own named denominator; the sole
+# authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
+# See tests/test_one_authoritative_scoreboard.py.
+SCOREBOARD_AUTHORITY = False
+
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
