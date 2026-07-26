@@ -4,6 +4,8 @@
   "version": "3.0.3",
   "fileCount": 1421,
   "aggregateHash": "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c",
+  "contentOnlyHash": "a1155ae27c10a1828ac6a02b890a8b1ee23881a5f78c3d6265f02a63065ca77d",
+  "pathBoundHash": "04b67544e3628d25d1b20653558fb2c702a870ae3f97bc8492a9f70f854a9c31",
   "root": "/home/tsavo/pandas303-audit/pandas",
   "files": [
     {

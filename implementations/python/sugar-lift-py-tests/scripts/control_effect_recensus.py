@@ -621,6 +621,7 @@ def main() -> int:
     # into R_desugar and both make the run red.
     desugar_construction_panics: list[dict[str, Any]] = []
     desugar_defects: list[dict[str, Any]] = []
+    unresolvable_dispatch: list[dict[str, Any]] = []
     files_completed = 0
     functions_total = 0
     functions_clean = 0
@@ -790,6 +791,25 @@ def main() -> int:
                     contract_refs=contract_refs,
                     on_function=_on_function,
                 )
+            except (ImportError, AttributeError) as error:
+                # An arm that cannot resolve its dispatch target is UNWRITTEN,
+                # wearing a working arm's clothes. It is not a panic, not a
+                # typed refusal, and not in any family below -- so absorbing it
+                # into `backend-defect` would leave the row short with nothing
+                # saying so. Own category, named, loud, red (#6329).
+                row = {
+                    "category": "instrument-defect-unresolvable-dispatch",
+                    "defect": {
+                        "file": relative,
+                        "type": type(error).__name__,
+                        "message": str(error),
+                        "owner": "kit dispatch target",
+                        "fix": (
+                            "the arm imports a name that does not exist; write "
+                            "the target or delete the arm"
+                        ),
+                    },
+                }
             except Exception as error:  # noqa: BLE001 -- per-file terminal
                 row = {
                     "category": "backend-defect",
@@ -887,6 +907,15 @@ def main() -> int:
             # that has no site identity.
             if "ConstructionPanic" not in (row.get("families") or {}):
                 families["ConstructionPanic"] += 1
+        elif category == "instrument-defect-unresolvable-dispatch":
+            defect = row.get("defect")
+            if isinstance(defect, dict):
+                unresolvable_dispatch.append(dict(defect))
+            defects.append(
+                dict(defect)
+                if isinstance(defect, dict)
+                else {"file": file, "type": category, "message": category}
+            )
         else:
             defect = row.get("defect")
             defects.append(
@@ -999,6 +1028,10 @@ def main() -> int:
         "R_desugar_construction_panics": len(desugar_construction_panics),
         "desugarDefects": desugar_defects,
         "R_desugar_defects": len(desugar_defects),
+        # #6329 -- an arm reaching a dispatch target that does not exist. Its
+        # own axis: never semantic R, never quietly a backend defect.
+        "unresolvableDispatchTargets": unresolvable_dispatch,
+        "R_unresolvable_dispatch_targets": len(unresolvable_dispatch),
         "elapsedSeconds": time.time() - started,
         "python": sys.version,
         # WHERE and WHEN this was measured. A board row without its stamp
@@ -1032,9 +1065,29 @@ def main() -> int:
             unmeasurable_reasons=(),
         ),
     }
-    # stableZero, stated as its own conjunction rather than inferred by a
-    # reader from a wall of counters. Every conjunct is reported beside it, so
-    # a false claim is visible in the same object that makes it.
+    # stableZero -- RULING ON PLACEMENT.
+    #
+    # This is a ONE-FLOOR term and is deliberately named
+    # ``controlEffectStableZero``, not ``stableZero``. The corpus-level verdict
+    # is NOT here: it belongs to ``reconcile_pandas_floors.py``, which merges
+    # all five floors, enforces that they name one identical manifest CID and
+    # one identical file list, and emits ``verdict: green|red``. A second
+    # corpus-level verdict computed here would be a parallel authority --
+    # exactly the disease this repair exists to cure -- and it would be
+    # computed from one floor's view while claiming to speak for all five.
+    #
+    # It does not go into ``floor_summary`` either: that helper is shared by
+    # every floor and already owns conservation (rows account for every corpus
+    # file exactly once) plus the measured/unmeasurable distinction. Adding a
+    # zero-verdict there would make each floor separately claim a corpus-level
+    # property it cannot see.
+    #
+    # So: this floor states its own terms honestly, the reconciler owns the
+    # corpus verdict, and ``desugar_repro.py`` keeps its own reproducer-level
+    # ``stableZero`` as a process exit verdict. Three scopes, three names.
+    #
+    # Every conjunct is reported beside the term, so a false claim is visible
+    # in the same object that makes it.
     denominator = result["denominator"]
 
     def _matching(needle: str) -> int:
@@ -1063,19 +1116,21 @@ def main() -> int:
         "timeouts": _matching("imeout"),
         "constructionPanics": len(construction_panics),
         "factoringGaps": _matching("FactoringGap"),
+        "unresolvableDispatchTargets": len(unresolvable_dispatch),
         "backendDefectFiles": sum(
             1 for defect in defects if "BackendDefect" in str(defect.get("type", ""))
         ),
         "desugarConstructionPanics": len(desugar_construction_panics),
         "desugarDefects": len(desugar_defects),
     }
-    result["stableZeroTerms"] = stable_zero_terms
-    result["stableZero"] = (
+    result["controlEffectStableZeroTerms"] = stable_zero_terms
+    result["controlEffectStableZero"] = (
         stable_zero_terms["completedDenominatorPositive"]
         and stable_zero_terms["denominatorComplete"]
         and stable_zero_terms["timeouts"] == 0
         and stable_zero_terms["constructionPanics"] == 0
         and stable_zero_terms["factoringGaps"] == 0
+        and stable_zero_terms["unresolvableDispatchTargets"] == 0
     )
     rendered = json.dumps(result, indent=2)
     result_path.parent.mkdir(parents=True, exist_ok=True)

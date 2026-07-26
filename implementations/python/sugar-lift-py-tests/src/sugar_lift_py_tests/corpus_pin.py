@@ -76,6 +76,10 @@ class CorpusPin:
     file_count: int
     aggregate_hash: str
     files: tuple[CorpusFile, ...]
+    # The two circulating conventions, computed from the same bytes at pin
+    # time. Empty only for pins decoded from an older file that lacked them.
+    content_only_hash: str = ""
+    path_bound_hash: str = ""
     root: str = ""
 
     def to_json(self) -> dict[str, Any]:
@@ -85,6 +89,8 @@ class CorpusPin:
             "version": self.version,
             "fileCount": self.file_count,
             "aggregateHash": self.aggregate_hash,
+            "contentOnlyHash": self.content_only_hash,
+            "pathBoundHash": self.path_bound_hash,
             # Testimony only — deliberately outside the aggregate hash so the
             # same corpus pins identically on every box.
             "root": self.root,
@@ -99,7 +105,38 @@ class CorpusPin:
             "version": self.version,
             "fileCount": self.file_count,
             "aggregateHash": self.aggregate_hash,
+            # WHICH CONVENTION. A bare digest is not checkable across agents:
+            # two are already in circulation for this corpus and boards failed
+            # to reconcile on that alone, for reasons that had nothing to do
+            # with the code. Always say how the number was computed.
+            "aggregateHashConvention": (
+                "sha256 over: pin kind, distribution, version, then one "
+                "'<relpath> <sha256> <sizeBytes>' line per file, sorted by "
+                "relpath. Root path excluded so the same corpus pins "
+                "identically on every box."
+            ),
+            "interoperableDigests": self.interoperable_digests(),
             "root": self.root,
+        }
+
+    def interoperable_digests(self) -> dict[str, str]:
+        """The two conventions already in circulation, emitted alongside ours.
+
+        Neither matches our aggregate, because ours also binds distribution and
+        version. Both are carried so a board reconciles against existing
+        receipts without anyone re-deriving a digest by hand -- that
+        convention drift already cost a round-trip and was mistaken for a
+        corpus difference.
+
+        ``contentOnly`` -- raw file bytes concatenated in sorted-relpath order,
+        path-blind. Independently agreed by two agents for this corpus.
+        ``pathBound`` -- per file ``sha256(relpath_utf8 || sha256_hex_ascii)``,
+        concatenated in sorted-relpath order.
+        """
+        return {
+            "contentOnly": self.content_only_hash,
+            "pathBound": self.path_bound_hash,
+            "enumerator": "SourceTree(root).paths()",
         }
 
     @property
@@ -130,6 +167,8 @@ class CorpusPin:
             file_count=int(payload["fileCount"]),
             aggregate_hash=str(payload["aggregateHash"]),
             files=files,
+            content_only_hash=str(payload.get("contentOnlyHash") or ""),
+            path_bound_hash=str(payload.get("pathBoundHash") or ""),
             root=str(payload.get("root") or ""),
         )
         # A pin whose own aggregate disagrees with its own manifest is a
@@ -236,15 +275,12 @@ def pin_corpus(
     resolved_version = version or distribution_version(root, dist)
 
     files: list[CorpusFile] = []
+    by_path: dict[str, Path] = {}
     for path in SourceTree(root).paths():
         sha, size = _sha256_file(path)
-        files.append(
-            CorpusFile(
-                path=path.resolve().relative_to(root).as_posix(),
-                sha256=sha,
-                size_bytes=size,
-            )
-        )
+        relative = path.resolve().relative_to(root).as_posix()
+        by_path[relative] = path
+        files.append(CorpusFile(path=relative, sha256=sha, size_bytes=size))
     if not files:
         raise CorpusPinDefect(
             owner="corpus pin",
@@ -263,12 +299,22 @@ def pin_corpus(
                 fix="the enumerator yielded a path twice — fix SourceTree.paths()",
             )
         seen.add(entry.path)
+    # The two circulating conventions, over the SAME bytes and the SAME
+    # enumeration, so a reader never has to guess which walk produced them.
+    content = hashlib.sha256()
+    path_bound = hashlib.sha256()
+    for entry in ordered:
+        content.update(by_path[entry.path].read_bytes())
+        path_bound.update(entry.path.encode("utf-8"))
+        path_bound.update(entry.sha256.encode("ascii"))
     return CorpusPin(
         distribution=dist,
         version=resolved_version,
         file_count=len(ordered),
         aggregate_hash=aggregate_hash(dist, resolved_version, ordered),
         files=ordered,
+        content_only_hash=content.hexdigest(),
+        path_bound_hash=path_bound.hexdigest(),
         root=str(root),
     )
 

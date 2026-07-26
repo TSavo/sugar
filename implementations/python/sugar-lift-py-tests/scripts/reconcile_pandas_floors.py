@@ -103,8 +103,30 @@ def main() -> int:
     for floor in FLOORS:
         parser.add_argument("--" + floor, type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("validated-summary.json"))
-    parser.add_argument("--expected-files", type=int, default=1415)
+    # NO DEFAULT. A hardcoded expected count silently blesses one denominator:
+    # this read 1415 while the docs said 1421, and nothing reconciled the six.
+    # The denominator is a property of the PINNED CORPUS, not of this script --
+    # pass --corpus-pin and it is derived, or pass --expected-files and own the
+    # number explicitly. Never both, never neither.
+    parser.add_argument("--expected-files", type=int, default=None)
+    parser.add_argument(
+        "--corpus-pin",
+        type=Path,
+        default=None,
+        help="derive the expected denominator from a content-addressed corpus pin",
+    )
     args = parser.parse_args()
+    if (args.expected_files is None) == (args.corpus_pin is None):
+        parser.error(
+            "give exactly one of --corpus-pin (derive the denominator from the "
+            "pinned corpus) or --expected-files (own the number explicitly). "
+            "Neither means the reconciler asserts nothing about the "
+            "denominator; both means two sources of truth for one count."
+        )
+    if args.corpus_pin is not None:
+        from sugar_lift_py_tests.corpus_pin import load_pin
+
+        args.expected_files = load_pin(args.corpus_pin).file_count
     reports = {
         floor: json.loads(
             getattr(args, floor.replace("-", "_")).read_text(encoding="utf-8")
