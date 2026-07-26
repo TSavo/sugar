@@ -41,6 +41,12 @@ from sugar_lift_py_tests.idd.live_construction_panic_isolation import (
     maybe_write_isolation_receipt_from_env,
 )
 
+from declared_corpus import (
+    HEAVY_OPT_IN,
+    optional_law_skip,
+    require_declared_corpus,
+)
+
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -726,7 +732,13 @@ def test_stdlib_vendor_conservation_delta_is_zero(package: str) -> None:
         ]
         root = path
         if not files:
-            pytest.skip(f"{package}: no .py files under {path}")
+            require_declared_corpus(
+                f"{package}: no .py source files",
+                path,
+                "_CONSERVATION_VENDORS (stdlib modules that ship with CPython)",
+                "repair the Python installation; a stdlib module with no .py "
+                "source cannot be censused and its absence is never routine",
+            )
 
     body = _census_conservation_for_paths(files, root=root, label=package)
     _assert_conservation_delta_zero(body, label=package)
@@ -750,7 +762,15 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
     """
     path = _resolve_installed_package_path(package)
     if not path.exists():
-        pytest.skip(f"{package}: not installed at {path}")
+        require_declared_corpus(
+            f"{package} is not installed",
+            path,
+            "sugar-build.toml (numpy = 2.5.1, pandas = 3.0.3) and the "
+            "sugar-lift-py-tests [test] extra, which calls itself THE SOLE "
+            "DEPENDENCY AUTHORITY for every CI job touching this package",
+            "install the package extra: pip install -e "
+            "'implementations/python/sugar-lift-py-tests[test]'",
+        )
     if path.is_file():
         files = [path]
         root = path.parent
@@ -758,7 +778,13 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
         files = sorted(p for p in path.rglob("*.py") if "__pycache__" not in p.parts)
         root = path
         if not files:
-            pytest.skip(f"{package}: no .py files under {path}")
+            require_declared_corpus(
+                f"{package}: no .py source files",
+                path,
+                "_HEAVY_CONSERVATION_VENDORS against the pinned vendor versions",
+                "reinstall the pinned vendor; an installed package with no .py "
+                "source cannot supply the on-disk census side",
+            )
 
     body = _census_conservation_for_paths(
         files, root=root, label=f"{package}-full-tree"
@@ -797,7 +823,14 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     """
     path = _resolve_installed_package_path(package)
     if not path.exists():
-        pytest.skip(f"{package}: not installed at {path}")
+        require_declared_corpus(
+            f"{package} is not installed",
+            path,
+            "sugar-build.toml (numpy = 2.5.1, pandas = 3.0.3) and the "
+            "sugar-lift-py-tests [test] extra, THE SOLE DEPENDENCY AUTHORITY",
+            "install the package extra: pip install -e "
+            "'implementations/python/sugar-lift-py-tests[test]'",
+        )
     if path.is_file():
         files = [path] if _file_has_assert(path) else []
         root = path.parent
@@ -805,7 +838,14 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
         root = path
         files = _assert_bearing_py_files(root)
     if not files:
-        pytest.skip(f"{package}: no assert-bearing .py files under {path}")
+        require_declared_corpus(
+            f"{package}: no assert-bearing .py files",
+            path,
+            "_HEAVY_LIVE_ISOLATION_VENDORS, which asserts assert_files > 40 "
+            "below -- so an empty set contradicts the law's own floor",
+            "reinstall the pinned vendor; the live isolation gate has no "
+            "subject without assert-bearing files",
+        )
 
     result = _live_per_file_isolation_conservation(files, root=root, package=package)
     # Optional durable receipt for recensus / wave re-measure (env path).
@@ -852,7 +892,11 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
 def test_heavy_vendor_live_isolation_opt_in_pandas() -> None:
     """Same live isolation residual class as numpy; opt-in (heavy)."""
     if os.environ.get("SUGAR_4013_HEAVY_PANDAS") != "1":
-        pytest.skip("set SUGAR_4013_HEAVY_PANDAS=1 for full pandas live isolation")
+        optional_law_skip(
+            HEAVY_OPT_IN,
+            "set SUGAR_4013_HEAVY_PANDAS=1 for full pandas live isolation "
+            "(~1h, same residual class as the numpy gate that DOES run)",
+        )
     test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero("pandas")
 
 
@@ -876,7 +920,14 @@ def test_showcase_live_report_conservation_delta_is_zero(relative: str) -> None:
     """
     target = ROOT / relative
     if not target.is_dir():
-        pytest.skip(f"showcase missing: {target}")
+        require_declared_corpus(
+            f"showcase target {relative}",
+            target,
+            "_SHOWCASE_CONSERVATION_TARGETS, which names directories tracked "
+            "in this repository",
+            "restore the checkout; an in-repo directory is present by "
+            "construction and its absence means the tree is broken",
+        )
     with tempfile.TemporaryDirectory(prefix="lift-cov-showcase-") as td:
         ws = Path(td) / target.name
         _prepare_audit_workspace(target, ROOT, ws, audit_only=False)

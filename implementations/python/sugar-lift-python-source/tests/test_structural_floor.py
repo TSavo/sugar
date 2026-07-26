@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from declared_corpus import HOST_GRAMMAR, optional_law_skipif
+
 ROOT = Path(__file__).resolve().parents[4]
 PKG_SRC = ROOT / "implementations/python/sugar-lift-python-source/src"
 if str(PKG_SRC) not in sys.path:
@@ -57,7 +59,9 @@ def test_floor_detects_pattern_growth(monkeypatch):
 # --- the two holes the floor caught while being built ---
 
 
-@pytest.mark.skipif(not hasattr(ast, "TryStar"), reason="needs except* (3.11+)")
+@optional_law_skipif(
+    not hasattr(ast, "TryStar"), HOST_GRAMMAR, "needs except* (3.11+)"
+)
 def test_except_star_as_rebinding_refuses_pin():
     scan = _scan(
         "X = 1\n" "try:\n" "    pass\n" "except* ValueError as X:\n" "    pass\n"
@@ -66,7 +70,9 @@ def test_except_star_as_rebinding_refuses_pin():
     assert _refusals(scan) and "except-as" in _refusals(scan)[0]["reason"]
 
 
-@pytest.mark.skipif(not hasattr(ast, "TypeAlias"), reason="needs type aliases (3.12+)")
+@optional_law_skipif(
+    not hasattr(ast, "TypeAlias"), HOST_GRAMMAR, "needs type aliases (3.12+)"
+)
 def test_type_alias_shadow_refuses_pin():
     scan = _scan("X = 1\ntype X = int\n")
     assert "X" not in scan.pins
