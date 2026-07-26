@@ -323,13 +323,33 @@ def test_the_resolution_guard_can_actually_fail():
     resolved = require_local_resolution("unprivileged_identity", str(ROOT))
     assert resolved.startswith(str(ROOT))
 
-    # Negative: a stdlib module lives outside the checkout and must be refused.
-    with pytest.raises(CheckoutResolutionEscaped) as caught:
-        require_local_resolution("json", str(ROOT))
-
-    message = str(caught.value)
-    assert "resolved OUTSIDE this checkout" in message
-    assert "fabricates" in message
-    assert not isinstance(caught.value, pytest.skip.Exception), (
+    # The refusal must BE a failure. pytest.raises cannot establish this:
+    # if the mechanism regressed to pytest.skip, the Skipped propagates
+    # straight through the raises block and this control SKIPS -- green, and
+    # proving nothing. Exactly the hole found in #6362's control, so the skip
+    # is caught explicitly and converted.
+    assert issubclass(CheckoutResolutionEscaped, AssertionError), (
+        "the refusal must be an AssertionError so it lands as a failure"
+    )
+    assert not issubclass(CheckoutResolutionEscaped, pytest.skip.Exception), (
         "escaping the checkout must FAIL, never skip"
     )
+
+    # Negative: a stdlib module lives outside the checkout and must be refused.
+    try:
+        require_local_resolution("json", str(ROOT))
+    except pytest.skip.Exception as skipped:
+        raise AssertionError(
+            f"require_local_resolution degraded into a SKIP ({skipped!r}); a "
+            "package measuring the wrong checkout would then report green"
+        ) from None
+    except CheckoutResolutionEscaped as refusal:
+        message = str(refusal)
+    else:
+        raise AssertionError(
+            "a module outside the checkout was ACCEPTED; the guard cannot "
+            "catch the defect it exists for"
+        )
+
+    assert "resolved OUTSIDE this checkout" in message
+    assert "fabricates" in message
