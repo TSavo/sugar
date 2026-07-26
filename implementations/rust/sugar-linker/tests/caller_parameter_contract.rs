@@ -5,9 +5,9 @@ use sugar_ir_types::{IrFormula, IrTerm, Sort};
 use sugar_linker::caller_parameter::{
     discharge_parameter_candidate, AuthenticatedCallerV1, CallEdgeV2, ClosedCallerUniverseV1,
     ContractConditionalConstructionV1, FormalActualBindingV1, FormalParameterCoordinateV1,
-    FormalParameterDeclarationV1, ParameterContractDemandV1, ParameterKindV1,
-    ParameterContractResolutionV1, ParameterOwnedContractV1, ParameterResolutionGapV1,
-    ResolutionBasisV1, SourceFragmentCoordinateV1, ValueOccurrenceCoordinateV1,
+    FormalParameterDeclarationV1, ParameterContractDemandV1, ParameterContractResolutionV1,
+    ParameterKindV1, ParameterOwnedContractV1, ParameterResolutionGapV1, ResolutionBasisV1,
+    SourceFragmentCoordinateV1, ValueOccurrenceCoordinateV1,
 };
 use sugar_linker::{canonical_json_cid, Cid};
 
@@ -319,8 +319,7 @@ fn closed_callers_resolution_carries_basis_and_authorizing_universe_cid() {
             edge: f.edge.clone(),
         }],
     };
-    let resolved =
-        discharge_parameter_candidate(&f.candidate, &f.contract, &universe).unwrap();
+    let resolved = discharge_parameter_candidate(&f.candidate, &f.contract, &universe).unwrap();
     assert_eq!(resolved.basis, ResolutionBasisV1::ClosedCallers);
     assert_eq!(resolved.contract_cid, f.contract.contract_cid);
     assert_eq!(resolved.caller_universe_cid, Some(universe.cid()));
@@ -367,8 +366,7 @@ fn resolution_round_trips_and_stale_cid_is_rejected() {
             edge: f.edge.clone(),
         }],
     };
-    let resolved =
-        discharge_parameter_candidate(&f.candidate, &f.contract, &universe).unwrap();
+    let resolved = discharge_parameter_candidate(&f.candidate, &f.contract, &universe).unwrap();
     let wire = serde_json::to_value(&resolved).unwrap();
     let round_trip: ParameterContractResolutionV1 = serde_json::from_value(wire).unwrap();
     assert_eq!(round_trip, resolved);

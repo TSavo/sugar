@@ -62,6 +62,49 @@ class TupleValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def contains(self, item, site):
+        # Membership over a constructed tuple: same closed-equality law as
+        # ListValue / SetValue — fold, emit typed obligation, or stay loud.
+        from sugar_lift_py_tests.floor.set_value import (
+            _bool_result,
+            _closed_member_equal,
+        )
+
+        decisions = tuple(
+            _closed_member_equal(item, element) for element in self.elements
+        )
+        if any(decision is True for decision in decisions):
+            return _bool_result(True, site)
+        if all(decision is False for decision in decisions):
+            return _bool_result(False, site)
+        if any(decision is None for decision in decisions):
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+            from sugar_lift_py_tests.ir import atomic
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                PredicateValue(
+                    atomic(
+                        "python.tuple.contains",
+                        [
+                            item.to_term(owner="python.tuple.contains member"),
+                            self.to_term(owner="python.tuple.contains tuple"),
+                        ],
+                    ),
+                    site,
+                    operand_callsites=(*item.callsites(), *self.callsites()),
+                )
+            )
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="TupleValue.contains",
+            blame=str(site),
+            observed=type(item).__name__,
+            requested="constructed finite member or typed symbolic membership operand",
+            fix="construct member equality on the Python floor or keep it loud",
+        )
+
     def add(self, other, site):
         if type(other) is TupleValue:
             from sugar_lift_py_tests.outcome import Complete

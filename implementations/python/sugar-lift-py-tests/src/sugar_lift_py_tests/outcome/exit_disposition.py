@@ -21,16 +21,40 @@ by ad-hoc name checks outside these types.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class RetainedObligation:
+    """A verdict this compiler cannot settle, kept as an explicit FOL partition.
+
+    Returned instead of an effect when the contract's predicate is real but
+    undecidable at lift. ``obligation`` is the predicate; ``held`` is the
+    verdict under it and ``failed`` the verdict under its complement, each in
+    the same codomain as an ordinary verdict (an ``Effect`` to halt with, or
+    ``None`` to complete).
+
+    This is the only shape that lets a router honour "never admitted, never
+    dropped": the incoming exit leaves as two exits under complementary
+    guards, so both faces reach the emitted FOL and neither was decided by
+    silence.
+    """
+
+    obligation: object
+    held: object
+    failed: object
+
 
 def exit_disposition_effect(disposition: object, incoming: object):
-    """The effect the outgoing exit halts with, or None to complete.
+    """The verdict for one body exit: an ``Effect``, ``None``, or a retention.
 
     ``incoming`` is one body exit — ``Completed`` or ``Halted``. The outgoing
     exit always carries the incoming exit's state; the *only* thing a contract
     decides is whether that state leaves as a completion or as a halt, and with
     which effect. Returning ``incoming.effect`` therefore restores, returning
     ``None`` consumes, and returning a fresh effect is the boundary halting on
-    its own behalf.
+    its own behalf. A ``RetainedObligation`` says the contract's predicate did
+    not settle and hands the router both faces plus the predicate.
 
     Never invents True/False for runtime-selected faces.
     """
@@ -56,7 +80,9 @@ def exit_disposition_effect(disposition: object, incoming: object):
 def _boundary_halted_edge(disposition, incoming):
     """Consume the halt this boundary was written to observe; restore the rest."""
     from sugar_lift_py_tests.authenticated_exception_matching import (
-        matches_raise_effect_with_message,
+        MatchDecided,
+        MatchRetained,
+        raise_effect_message_verdict,
     )
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_source_tree.panic import SugarNotWritten
@@ -64,10 +90,14 @@ def _boundary_halted_edge(disposition, incoming):
     matcher = disposition.matcher
     if not isinstance(incoming.effect, RaiseEffect):
         return incoming.effect
-    if not matches_raise_effect_with_message(
+    verdict = raise_effect_message_verdict(
         incoming.effect, matcher.expected, matcher.message_pattern
-    ):
+    )
+    if isinstance(verdict, MatchDecided) and not verdict.value:
         return incoming.effect
+    # Consuming this halt means the boundary claims the body reached the raise
+    # and stopped there, so the pre-halt state is load-bearing on BOTH the
+    # settled and the retained face. Demand it before either.
     if incoming.state is None:
         raise SugarNotWritten(
             owner="EffectBoundaryDisposition",
@@ -75,7 +105,18 @@ def _boundary_halted_edge(disposition, incoming):
             requested="ExitSet Halted face carrying the real pre-halt state",
             fix="repair the block reducer; never fabricate a continuation state",
         )
-    return None
+    if isinstance(verdict, MatchDecided):
+        return None
+    if isinstance(verdict, MatchRetained):
+        # The identity matched; only the message predicate is open. Under it
+        # the boundary consumes, under its complement the ORIGINAL halt stands.
+        return RetainedObligation(
+            obligation=verdict.obligation, held=None, failed=incoming.effect
+        )
+    raise TypeError(
+        "message verdict must be MatchDecided or MatchRetained; "
+        f"got {type(verdict).__name__}"
+    )
 
 
 def _authenticate(disposition: object) -> None:

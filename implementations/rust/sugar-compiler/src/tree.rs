@@ -606,9 +606,11 @@ impl CallEdgeHarvest {
 /// leaves it absent otherwise (`verify_rpc.py`, `len(candidates) == 1`), so
 /// absent is a legitimate outcome and must be counted, not repaired here.
 fn edge_has_resolved_target(edge: &Value) -> bool {
-    ["targetContract", "targetContractCid"]
-        .iter()
-        .any(|key| edge.get(*key).and_then(Value::as_str).is_some_and(|value| !value.is_empty()))
+    ["targetContract", "targetContractCid"].iter().any(|key| {
+        edge.get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+    })
 }
 
 /// Stable identity for de-duplication. This crate builds `serde_json` with
@@ -1452,8 +1454,7 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     // its authenticated resolution set so post() projects. Resolved functions are
     // then skipped by the universe scan (their contract comes from the resume).
     let mut resolved_mementos: Vec<Value> = Vec::new();
-    let link_unit_rows =
-        preconstruction_rows_rpc(&conn, Level::ParameterContractLinkUnits)?;
+    let link_unit_rows = preconstruction_rows_rpc(&conn, Level::ParameterContractLinkUnits)?;
     for row in &link_unit_rows {
         // The caller side of a parameter-contract link unit carries the very
         // edges mint needs; they are on the raw wire row, not on the typed
@@ -1483,9 +1484,7 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
         // panic-gap, exactly as before this feature. A single un-dischargeable
         // demand never aborts the rest of the project.
         for unit in &units {
-            let set = match sugar_linker::caller_parameter::fold_one_link_unit(
-                unit, &units,
-            ) {
+            let set = match sugar_linker::caller_parameter::fold_one_link_unit(unit, &units) {
                 Ok(set) => set,
                 Err(gap) => {
                     diagnostics.push(json!({
@@ -1507,8 +1506,9 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
                     call_edges.route_audit(&mut ir, audit);
                 }
             }
-            resolved_mementos
-                .push(Value::String(continuation_key_from_memento(&unit.source_memento)));
+            resolved_mementos.push(Value::String(continuation_key_from_memento(
+                &unit.source_memento,
+            )));
         }
     }
     let resolved_option = Value::Array(resolved_mementos);
@@ -2355,10 +2355,14 @@ mod tests {
     #[test]
     fn ir_row_filter_still_admits_contracts_and_rejects_non_rows() {
         assert!(looks_like_ir_contract_row(&json!({"kind": "contract"})));
-        assert!(looks_like_ir_contract_row(&json!({"kind": "function-contract"})));
+        assert!(looks_like_ir_contract_row(
+            &json!({"kind": "function-contract"})
+        ));
         assert!(looks_like_ir_contract_row(&json!({"inv": {}})));
         // Not an IR row: no recognized kind and no body slot.
-        assert!(!looks_like_ir_contract_row(&json!({"kind": "source-memento"})));
+        assert!(!looks_like_ir_contract_row(
+            &json!({"kind": "source-memento"})
+        ));
         assert!(!looks_like_ir_contract_row(&json!({"kind": "term-ref"})));
         assert!(!looks_like_ir_contract_row(&json!("not an object")));
     }
@@ -2817,13 +2821,12 @@ mod tests {
 
     #[test]
     fn call_edge_rows_never_land_in_ir() {
-        let (ir, harvest) = route_all(&[
-            contract_row("double"),
-            call_edge_row("main", "double", 7),
-        ]);
+        let (ir, harvest) =
+            route_all(&[contract_row("double"), call_edge_row("main", "double", 7)]);
 
         assert!(
-            !ir.iter().any(|row| row.get("kind") == Some(&json!("call-edge"))),
+            !ir.iter()
+                .any(|row| row.get("kind") == Some(&json!("call-edge"))),
             "ir must stay contract-shaped: mint copies every ir row into the \
              published document without a shape filter (issue #6251), and it \
              reads edges off the top-level callEdges field, never out of ir"
@@ -2890,5 +2893,4 @@ mod tests {
              from nothing arriving, and sourceLedger.call_edges collapses both"
         );
     }
-
 }

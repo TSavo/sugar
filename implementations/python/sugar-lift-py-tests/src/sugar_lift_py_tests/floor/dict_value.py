@@ -39,6 +39,47 @@ class DictValue(FloorValue):
 
         return Complete(TermValue(len(self.entries)))
 
+    def contains(self, item, site):
+        # Python ``k in d`` is key membership over constructed entry keys.
+        from sugar_lift_py_tests.floor.set_value import (
+            _bool_result,
+            _closed_member_equal,
+        )
+
+        keys = tuple(key for key, _value in self.entries)
+        decisions = tuple(_closed_member_equal(item, key) for key in keys)
+        if any(decision is True for decision in decisions):
+            return _bool_result(True, site)
+        if all(decision is False for decision in decisions):
+            return _bool_result(False, site)
+        if any(decision is None for decision in decisions):
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+            from sugar_lift_py_tests.ir import atomic
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                PredicateValue(
+                    atomic(
+                        "python.dict.contains",
+                        [
+                            item.to_term(owner="python.dict.contains key"),
+                            self.to_term(owner="python.dict.contains dict"),
+                        ],
+                    ),
+                    site,
+                    operand_callsites=(*item.callsites(), *self.callsites()),
+                )
+            )
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="DictValue.contains",
+            blame=str(site),
+            observed=type(item).__name__,
+            requested="constructed finite key or typed symbolic membership operand",
+            fix="construct key equality on the Python floor or keep it loud",
+        )
+
     def bitwise_or(self, other, site):
         if type(other) is not DictValue:
             return super().bitwise_or(other, site)

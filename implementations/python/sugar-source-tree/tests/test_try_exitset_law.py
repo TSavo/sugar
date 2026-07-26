@@ -540,9 +540,9 @@ def test_finally_return_override_bites_when_cleanup_is_read_as_restoring():
 
     from sugar_lift_py_tests.outcome import Incomplete
 
-    assert isinstance(out, Incomplete), (
-        "perturbation must resurrect the overridden halt"
-    )
+    assert isinstance(
+        out, Incomplete
+    ), "perturbation must resurrect the overridden halt"
     assert out.effect.exception_name == "ValueError"
 
 
@@ -642,8 +642,7 @@ def test_try_finally_routes_through_the_shared_exitset_and_finally():
     incoming = seen[0]
     kinds = {type(exit_).__name__ for exit_ in incoming.exits}
     assert kinds == {"Completed", "Halted"}, (
-        "the shared fold must receive BOTH edges of the body partition, "
-        f"got {kinds}"
+        "the shared fold must receive BOTH edges of the body partition, " f"got {kinds}"
     )
     assert any(
         isinstance(e, Halted) and e.effect.exception_name == "ValueError"
@@ -786,8 +785,12 @@ def _routed(src):
     node = _find_try(_fn(src).sugar())
     assert node is not None
     body_es = promote_raise_halts(reduce_block_to_exitset(node.body, None))
-    return node, body_es, _route_handlers_over_exits(
-        body_es, node.handlers, node.orelse, site=node.site, ctx=None
+    return (
+        node,
+        body_es,
+        _route_handlers_over_exits(
+            body_es, node.handlers, node.orelse, site=node.site, ctx=None
+        ),
     )
 
 
@@ -917,9 +920,9 @@ def test_first_match_is_source_order_and_bites_when_the_arms_are_reversed():
 
     # Precondition of the discriminator: BOTH arms genuinely match.
     matchers = [m for m, _b, _s in node.handlers]
-    assert all(_effect_matches(halted[0].effect, m, None) for m in matchers), (
-        "both arms must match, else source order is not what is being tested"
-    )
+    assert all(
+        _effect_matches(halted[0].effect, m, None) for m in matchers
+    ), "both arms must match, else source order is not what is being tested"
 
     forward = _route_handlers_over_exits(
         body_es, node.handlers, node.orelse, site=node.site, ctx=None
