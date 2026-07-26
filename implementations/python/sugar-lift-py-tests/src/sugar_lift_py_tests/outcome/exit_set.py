@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Generic, TypeVar
+from typing import Callable, Generic, Iterable, TypeVar
 
 from sugar_lift_py_tests.effect import Effect, require_effect
 from sugar_lift_py_tests.ir import Formula, and_, not_, or_
@@ -98,6 +98,38 @@ class Halted:
 Exit = Completed[T] | Halted
 
 
+# Arms whose destination has no ``__hash__`` and therefore kept the full
+# all-pairs scan in ``normalize``. The fallback is exact, but it is the
+# quadratic shape, so it is COUNTED rather than allowed to be quietly slow.
+_UNHASHABLE_DESTINATION_ARMS = 0
+
+
+def unhashable_destination_arms() -> int:
+    """Arms that fell back to the exact all-pairs scan (diagnostics / tests)."""
+    return _UNHASHABLE_DESTINATION_ARMS
+
+
+def reset_unhashable_destination_arms() -> None:
+    global _UNHASHABLE_DESTINATION_ARMS
+    _UNHASHABLE_DESTINATION_ARMS = 0
+
+
+def _destination_key(exit_: "Exit") -> tuple | None:
+    """The destination coordinate ``normalize`` compares, as a hash bucket key.
+
+    ``None`` means the destination is unhashable — never "not equal". Equality
+    is still decided by the exact comparison in ``normalize``; a hash collision
+    is a collision, and this key invents no semantic coordinate: it hashes
+    exactly the fields the existing equality reads.
+    """
+    try:
+        if isinstance(exit_, Completed):
+            return ("completed", hash(exit_.value))
+        return ("halted", hash(exit_.effect), hash(exit_.state))
+    except TypeError:
+        return None
+
+
 @dataclass(frozen=True)
 class ExitSet(Generic[T]):
     """A partition of reachable execution into completed and halted exits."""
@@ -135,12 +167,37 @@ class ExitSet(Generic[T]):
         return ExitSet(tuple(exits)).normalize()
 
     def normalize(self) -> "ExitSet[T]":
-        """Drop false exits and merge equal destinations by disjoining guards."""
+        """Drop false exits and merge equal destinations by disjoining guards.
+
+        The merge is all-pairs in MEANING and bucketed in LOOKUP. ``merged``
+        stays in insertion order and the exact equality below still decides
+        every merge; the hash index only narrows which priors are asked. A
+        bucketing that reordered the output would break the byte-identical
+        ExitSet fingerprint silently, so the index maps a destination key to
+        ascending indices INTO ``merged`` and never holds the exits itself.
+        """
+        global _UNHASHABLE_DESTINATION_ARMS
         merged: list[Exit[T]] = []
+        buckets: dict[tuple, list[int]] = {}
+        unhashable: list[int] = []
         for exit_ in self.exits:
             if _is_false(exit_.guard):
                 continue
-            for index, prior in enumerate(merged):
+            key = _destination_key(exit_)
+            if key is None:
+                # No quiet degrade: an unhashable destination keeps the exact
+                # all-pairs scan AND is counted, so the species that owes a
+                # ``__hash__`` is measurable instead of merely slow.
+                _UNHASHABLE_DESTINATION_ARMS += 1
+                candidates: Iterable[int] = range(len(merged))
+            elif unhashable:
+                # An unhashable destination can still compare equal to a
+                # hashable one, so it is never excluded by a hash bucket.
+                candidates = sorted(set(buckets.get(key, ())) | set(unhashable))
+            else:
+                candidates = buckets.get(key, ())
+            for index in candidates:
+                prior = merged[index]
                 same_completed = (
                     isinstance(exit_, Completed)
                     and isinstance(prior, Completed)
@@ -164,6 +221,10 @@ class ExitSet(Generic[T]):
                     break
             else:
                 merged.append(exit_)
+                if key is None:
+                    unhashable.append(len(merged) - 1)
+                else:
+                    buckets.setdefault(key, []).append(len(merged) - 1)
         return ExitSet(tuple(merged))
 
     def sequence(self, step: Callable[[T], "ExitSet[U]"]) -> "ExitSet[U]":
@@ -394,4 +455,6 @@ __all__ = [
     "sole_completed_outcome",
     "true_guard",
     "outcome_to_exitset",
+    "unhashable_destination_arms",
+    "reset_unhashable_destination_arms",
 ]
