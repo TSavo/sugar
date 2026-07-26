@@ -623,6 +623,13 @@ def main() -> int:
     # into R_desugar and both make the run red.
     desugar_construction_panics: list[dict[str, Any]] = []
     desugar_defects: list[dict[str, Any]] = []
+    # A FOURTH, disjoint from all three and RED-NEUTRAL: a declared mechanism
+    # refusing on purpose, as its correct answer, in something that is not a
+    # SugarNotWritten. See sugar_lift_py_tests.desugar_axis._designed_gap_types
+    # for why membership is a declared TYPE and never "a ValueError from this
+    # call". Published with its MEMBERS, not a bare count: `factoringGaps = 13`
+    # as a lone scalar sent an owner hunting for a whole session.
+    desugar_designed_gaps: list[dict[str, Any]] = []
     unresolvable_dispatch: list[dict[str, Any]] = []
     files_completed = 0
     functions_total = 0
@@ -901,6 +908,7 @@ def main() -> int:
         ast_sites.update(row.get("astSites") or {})
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
         desugar_defects.extend(row.get("desugarDefects") or [])
+        desugar_designed_gaps.extend(row.get("desugarDesignedGaps") or [])
         if category == "completed":
             files_completed += 1
         elif category == "construction-panic":
@@ -1049,6 +1057,17 @@ def main() -> int:
         "R_desugar_construction_panics": len(desugar_construction_panics),
         "desugarDefects": desugar_defects,
         "R_desugar_defects": len(desugar_defects),
+        # Correct output from a named mechanism. Disjoint from desugarDefects
+        # (not a bug), from R_desugar (not a typed refusal) and from the panic
+        # collection. Never added to any of them, and never a red reason.
+        "desugarDesignedGaps": desugar_designed_gaps,
+        "R_desugar_designed_gaps": len(desugar_designed_gaps),
+        "desugarDesignedGapOwners": dict(
+            Counter(
+                str(gap.get("owner", "?"))
+                for gap in desugar_designed_gaps
+            )
+        ),
         # #6329 -- an arm reaching a dispatch target that does not exist. Its
         # own axis: never semantic R, never quietly a backend defect.
         "unresolvableDispatchTargets": unresolvable_dispatch,
