@@ -17,6 +17,7 @@ from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     GeneratorTerminationV1,
+    GeneratorTransitionGapV1,
     YieldEffect,
 )
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
@@ -215,3 +216,93 @@ def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
     field = next(f for f in value.class_fields if f.name == "state")
     assert field.value.term.name == "call:make_state"
     assert field.value.body is None
+
+
+def test_yield_from_only_function_allocates_a_generator_not_an_eager_call() -> None:
+    """TRUTHFUL FACE: `yield from` owns the suspension boundary just as `yield` does.
+
+    Ownership recognized only `Yield`, so a `yield from`-only function built an
+    ordinary eager call frame: the call completed as a plain `CallSiteValue`
+    and the boundary escaped as an ordinary value. Both constructors of the
+    boundary must make the function a generator.
+    """
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "def arbitrarily_renamed():\n"
+        "    yield from (1, 2)\n"
+        "    return 9\n\n"
+        "arbitrarily_renamed()\n",
+        context=context,
+    )
+    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    frame = function.source_visible_call_frame()
+    context.source_call_frames[_coordinate(call)] = frame
+
+    assert frame.generator_steps is not None
+
+    outcome = call.sugar().desugar()
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GeneratorConstructionV1)
+    assert not isinstance(outcome.value, CallSiteValue)
+
+
+def test_yield_from_delegation_stays_a_typed_gap_and_is_never_invented() -> None:
+    """LYING FACE: recognizing the boundary must not fabricate delegated iteration.
+
+    Owning the boundary is exactly what the recognition fix buys; it does NOT
+    buy `yield from`'s delegation protocol. Resuming names
+    `GeneratorConstructionV1.transition` as the owner that still owes it, so
+    the debt is loud and attributed rather than silently discharged as a
+    yielded value or a termination.
+    """
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "def arbitrarily_renamed():\n"
+        "    yield from (1, 2)\n"
+        "    return 9\n\n"
+        "arbitrarily_renamed()\n",
+        context=context,
+    )
+    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
+
+    machine = call.sugar().desugar().value
+    transition = machine.resume()
+
+    assert isinstance(transition, GeneratorTransitionGapV1)
+    assert transition.owner == "GeneratorConstructionV1.transition"
+    assert transition.requested == "resume"
+    assert not isinstance(transition, YieldEffect)
+    assert not isinstance(transition, GeneratorTerminationV1)
+
+
+def test_census_door_refuses_both_yield_constructors_with_no_call_site() -> None:
+    """CLASSIFICATION PIN: the census door's yield refusals are accounted semantics.
+
+    `functions() -> sugar -> desugar` reduces a function body with no call, so
+    no call frame and therefore no generator instance can exist. Only
+    `GeneratorConstructionV1` may consume a suspension boundary, so BOTH
+    constructors must refuse here — permanently, for every implementation of
+    the generator machine. These occurrences are correct output, not owed work,
+    and no fix at any layer drains them.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+
+    for body, owner in (
+        ("    yield 7\n    return 9\n", "YieldSuspensionSugar.desugar"),
+        ("    yield from (1, 2)\n    return 9\n", "YieldFromSugar.desugar"),
+    ):
+        source = _source_file("def arbitrarily_renamed():\n" + body)
+        function = next(
+            node for node in source.nodes() if isinstance(node, FunctionDef)
+        )
+        sugar = function.sugar()
+        try:
+            sugar.desugar(None)
+        except SugarNotWritten as refusal:
+            assert refusal.owner == owner
+        else:
+            raise AssertionError(f"{owner} must refuse under the census door")
