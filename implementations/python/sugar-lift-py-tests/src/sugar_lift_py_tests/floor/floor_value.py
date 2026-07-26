@@ -886,21 +886,34 @@ class FloorValue:
         return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
 
     def matrix_multiply(self, other, site):
-        self._binary_floor_gap(
-            other, site, "matrix_multiply", "matrix-multiplication"
-        )
+        self._binary_floor_gap(other, site, "matrix_multiply", "matrix-multiplication")
 
     def _runtime_bitwise_gap(self, other, site, owner, label):
         self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
 
     def to_term(self, *, owner: str) -> "Term":
+        """The ONE None arm for floor-value projection.
+
+        ``owner`` names the REQUESTER — and nearly every caller in the lift
+        spells it ``str(site)``, which is a ``SourceFragment``'s ``__repr__``
+        (``<SourceFragment 'x.py' [12, 34) node=Call>``: the fragment defines
+        no ``__str__``). Passing that straight into ``ConstructionGap.owner``
+        made the panic board's dispatch key an ADDRESS, so one projection law
+        with no arm scattered into one undispatchable row per call site.
+
+        The owner of this gap is the law that has no arm: this value's own
+        projection, ``<Value>.to_term``. The requester's coordinate is what
+        ``blame`` is for, so it moves there — nothing is discarded, and the
+        board buckets by (value category × to_term) as every other floor gap
+        buckets by (value category × operation).
+        """
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
         observed = type(self).__name__
         info = ConstructionGap(
-            owner=owner,
-            blame=observed,
+            owner=f"{observed}.to_term",
+            blame=owner,
             observed=observed,
             requested="project this floor value to a term",
             fix=f"write more Floor: implement {observed}.to_term",

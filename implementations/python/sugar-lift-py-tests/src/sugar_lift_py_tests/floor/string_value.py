@@ -139,20 +139,20 @@ class StringValue(FloorValue):
         # body; call_method_with still owns static folds when the call site is
         # known.
         del site
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "py.getattr",
-                    [self.to_term(owner="StringValue.attribute"), str_const(name)],
-                )
-            )
-        )
+        return getattr_coordinate(self, name, owner="StringValue.attribute")
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         # Python ``needle in haystack`` for str: substring when both are strings;
         # TypeError for ground non-string needles; py.in when the needle is
         # symbolic/opaque. Never invent membership for unconstructed shapes.

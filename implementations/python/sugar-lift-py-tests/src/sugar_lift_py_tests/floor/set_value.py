@@ -16,6 +16,15 @@ class SetValue(FloorValue):
 
     elements: tuple
 
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed set (``set().add``, ``s.union``) stay the
+        # py.getattr coordinate -- one law, shared with StringValue and the
+        # other constructed containers. Never invent a method body or a field.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="SetValue.attribute")
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
@@ -49,6 +58,15 @@ class SetValue(FloorValue):
         return Complete(TermValue(len(self.elements)))
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         decisions = tuple(
             _closed_member_equal(item, element) for element in self.elements
         )

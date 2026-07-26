@@ -40,6 +40,15 @@ class DictValue(FloorValue):
         return Complete(TermValue(len(self.entries)))
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         # Python ``k in d`` is key membership over constructed entry keys.
         from sugar_lift_py_tests.floor.set_value import (
             _bool_result,
@@ -97,6 +106,15 @@ class DictValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(DictValue(tuple(entries)))
+
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed dict (``{{}}.get``, ``mapping.items``) stay the
+        # py.getattr coordinate -- one law, shared with StringValue and the
+        # other constructed containers. Never invent a method body or a field.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="DictValue.attribute")
 
     def to_term(self, *, owner: str):
         # Project as python:dict of entry pairs (layout-preserving coordinate).

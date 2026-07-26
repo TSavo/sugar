@@ -84,9 +84,22 @@ def rewrap_pending(pending, outcome, *, owner, blame):
     # PENDING entry wants the entry to carry a demand SET; a PARTITION wants the
     # exit algebra to have an arm for a pending demand at all.
     if isinstance(outcome, ContractConditionalConstructionV1):
+        if outcome.demand.demand_cid == pending.demand.demand_cid:
+            # NOT two demands. ``demand_cid`` is the content address of the
+            # whole obligation -- owner source identity, formal coordinate,
+            # operation site, demanded formula, candidate. Equal cids mean the
+            # SAME obligation reached this join twice through a shared outcome
+            # DAG (`p[0]` read once and consumed on both faces of a fold).
+            #
+            # Conjunction is idempotent: `F and F` IS `F`. The joined outcome
+            # already carries that exact demand, so it rides on unchanged. This
+            # discharges nothing, weakens nothing and invents nothing -- it is
+            # the arithmetic of the obligation, not a fallback. Two DISTINCT
+            # demands still need a demand SET and stay loud below.
+            return outcome
         observed = (
-            f"two pending contract demands ({pending.demand.demand_cid} and "
-            f"{outcome.demand.demand_cid}) joined onto one constructed value"
+            f"two distinct pending contract demands ({pending.demand.demand_cid} "
+            f"and {outcome.demand.demand_cid}) joined onto one constructed value"
         )
         fix = (
             "widen ContractConditionalConstructionV1 to carry a demand SET; "

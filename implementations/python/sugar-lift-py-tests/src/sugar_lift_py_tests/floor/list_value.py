@@ -18,6 +18,15 @@ class ListValue(FloorValue):
 
     elements: tuple
 
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed list (``[].append``, ``xs.index``) stay the
+        # py.getattr coordinate -- one law, shared with StringValue and the
+        # other constructed containers. Never invent a method body or a field.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="ListValue.attribute")
+
     def to_term(self, *, owner: str):
         # Project elements into FOL — assert equality / dig return faces.
         from sugar_lift_py_tests.ir import ctor
@@ -52,6 +61,15 @@ class ListValue(FloorValue):
         return Complete(TermValue(len(self.elements)))
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         # Membership over a constructed list: decide when every element has a
         # closed equality; emit a typed obligation when a member is symbolic;
         # stay loud for unconstructed member shapes (same law as SetValue).
