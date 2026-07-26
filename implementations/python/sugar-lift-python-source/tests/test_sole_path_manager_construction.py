@@ -1081,19 +1081,16 @@ def test_call_result_attribute_keeps_the_exact_constructed_call_coordinate():
     assert projected.value.term.args[1].value == "__name__"
 
 
-def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_path):
+def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
     consumer = (
         "import pytest\n"
         "def use_boundary():\n"
-        "    with pytest.raises(ValueError):\n"
-        "        raise ValueError('boom')\n"
+        f"    with {manager_call}:\n"
+        f"        {body}\n"
     )
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerResolutionGapV1,
-        TreeConstructionContextV1,
-    )
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
@@ -1101,31 +1098,42 @@ def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_pa
         construction_context=context,
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    return tree, context
 
-    resolution = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(resolution, ContextManagerResolutionGapV1)
-    # Stage-keyed residual — not a silent generic no-derived-contract, and not
-    # a resource-membrane admission. pytest.raises stays typed-loud until its
-    # free-name / force-floor chain constructs without vendor arms.
-    assert resolution.kind != "derived-contract"
-    assert resolution.target_symbol and "raises" in resolution.target_symbol
-    # EXACT membership, not `startswith`: the kind is now the whole key, so a
-    # prefix match would pass on a fused `kind:symbol` string too -- which is
-    # precisely the shape this control has to refuse.
-    assert resolution.kind in (
-        _CALL_TARGET_GAP_KINDS
-        | {
-            "force-floor",
-            "non-manager-result",
-            "no-derived-contract",
-            "enter-missing",
-            "exit-missing",
-            "method-construction",
-            "enter-may-halt",
-            "exit-may-halt",
-            "opaque-exit-truthiness",
-        }
-    ), resolution.kind
+
+def test_installed_pytest_raises_truthful_route_keeps_missing_derivation_typed(
+    tmp_path,
+):
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
+
+    with pytest.raises(WithConstructionGap) as caught:
+        _installed_pytest_boundary(
+            tmp_path,
+            'pytest.raises(ValueError, match="boom")',
+            'raise ValueError("boom")',
+        )
+
+    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+
+def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
+    tmp_path,
+):
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
+
+    with pytest.raises(WithConstructionGap) as caught:
+        _installed_pytest_boundary(
+            tmp_path,
+            'pytest.raises(ValueError, int, "bad")',
+            "pass",
+        )
+
+    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
 
 
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):
