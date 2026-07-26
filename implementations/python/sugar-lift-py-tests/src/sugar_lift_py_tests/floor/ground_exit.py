@@ -33,7 +33,28 @@ def ground_raise_effect(*, exception_name: str, site, owner: str):
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-    if Path(site.filename).is_absolute():
+    # A ground exit cites source it can RE-READ: a filename to address and the
+    # unit holding the text that filename indexes into. A locus that states
+    # neither -- prose, a bare string, anything not carrying a fragment's
+    # testimony -- cannot produce that citation at all. Before this arm the
+    # locus law below read ``site.filename`` first and died with
+    # ``AttributeError: 'str' object has no attribute 'filename'``: a crash
+    # wearing a law's clothes, which says nothing about what was wrong or what
+    # to thread instead. The requirement is stated, not tripped over.
+    filename = getattr(site, "filename", None)
+    unit = getattr(site, "unit", None)
+    if not isinstance(filename, str) or unit is None:
+        construction_panic_gap(
+            owner=owner,
+            blame=site,
+            observed=f"{type(site).__name__} locus stating no source fragment",
+            requested="a fragment stating filename and unit",
+            fix=(
+                "thread the fragment that owns the boundary; a ground exit "
+                "cites source it can re-read, which prose cannot address"
+            ),
+        )
+    if Path(filename).is_absolute():
         construction_panic_gap(
             owner=owner,
             blame=site,
@@ -41,7 +62,7 @@ def ground_raise_effect(*, exception_name: str, site, owner: str):
             requested="workspace-relative source locus",
             fix="route the source through the workspace-relative lift door",
         )
-    source = site.unit.source
+    source = unit.source
     source_sha256 = (
         hashlib.sha256(source.encode()).hexdigest() if source is not None else None
     )
@@ -55,9 +76,7 @@ def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome
 
     return Complete(
         RaiseValue(
-            ground_raise_effect(
-                exception_name=exception_name, site=site, owner=owner
-            ),
+            ground_raise_effect(exception_name=exception_name, site=site, owner=owner),
             exception=ExceptionValue(exception_name, (), site),
         )
     )
