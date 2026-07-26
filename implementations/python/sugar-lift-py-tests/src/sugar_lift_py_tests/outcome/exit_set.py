@@ -390,7 +390,13 @@ def _obligations(exit_: "Exit[T]") -> tuple:
     Keyed by ``demand_cid`` -- the obligation's own content address -- never by
     hashing the carrier, which holds a floor value and a term. Both arm kinds
     answer here: a completed face owes exactly the way a halted face does.
+
+    The empty case is the overwhelmingly common one and is answered without
+    building anything: this runs once per arm per ``normalize``, and
+    ``normalize`` is the hottest call in the reducer.
     """
+    if not exit_.pending_contracts:
+        return ()
     return tuple(
         sorted(
             demand.demand_cid
@@ -445,10 +451,11 @@ class Completed(Generic[T]):
     ``demand_cid`` -- a blake3 over the JCS of the formula -- on every
     ``guarded``, ``sequence`` and ``and_exit`` step, and since a re-minted
     obligation is a DIFFERENT destination, it also stops arms merging in
-    ``normalize``. Measured on pandas `core/reshape/merge.py`: minting per
-    restriction did not finish the file in 13 minutes at 600MB resident, with
-    the sample dominated by blake3 and JCS encoding; minting once does. Same
-    obligation, same face, one mint.
+    ``normalize`` and stops the same obligation deduping when it reaches a join
+    twice -- `F and F` would stop being `F`. Observed on pandas
+    `core/reshape/merge.py`, where a `sample` of the per-restriction spelling
+    was dominated by blake3 and JCS encoding. Same obligation, same face, one
+    mint.
 
     Like ``Halted.pending_contracts`` it is part of the DESTINATION, not
     testimony: two arms owing different things are different destinations and

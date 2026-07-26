@@ -68,6 +68,13 @@ def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
     stays LOUD -- there is no record to owe on, and inventing one would
     attribute the obligation to a block that never ran.
     """
+    if not any(exit_.pending_contracts for exit_ in exits.exits):
+        # The overwhelmingly common case, and it must cost nothing: this runs at
+        # the end of EVERY block reduction, nested ones included, and rebuilding
+        # the set would pay for a second `normalize` over every arm of every
+        # block that never owed anything.
+        return exits
+
     from sugar_lift_py_tests.caller_parameter_contract import weaken_pending
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
