@@ -24,7 +24,8 @@ them into ``R_desugar`` produces a number whose denominator is a lie:
                               cycle, effect with no occurrence coordinate).
 ``desugarDesignedGaps``       a DECLARED mechanism refusing on purpose, as its
                               correct answer, in something that is not a
-                              ``SugarNotWritten``. Counted under its own owner,
+                              ``SugarNotWritten`` — AND classifying as not
+                              remaining work. Counted under its own owner,
                               never red, never summed into the three above.
 
 The first two new collections make the final instrument exit RED. None of the
@@ -34,9 +35,16 @@ WHY THE FOURTH EXISTS. ``ExitSetFactoringGap`` is a ``ValueError``, so it landed
 in ``desugarDefects`` — twelve rows of the pandas board, every one classifying
 ``isRemainingWork: False``, which is ``factor_completed`` doing exactly its job.
 Counting correct output as a defect is the same disease that made ``R_desugar``
-overstate its board by 7.6x, at smaller scale. The door is by DECLARED TYPE and
-nothing else: see ``_designed_gap_types`` for why "a ValueError from this call"
-would have been a cure worse than the disease.
+overstate its board by 7.6x, at smaller scale.
+
+THE DOOR TAKES TWO CONDITIONS, and neither alone is enough. Type identity says
+which MECHANISM spoke — see ``_designed_gap_types`` for why it is an exact
+declared type and not ``isinstance``, and never "a ValueError from this call".
+The carried classification says whether THIS OCCURRENCE was that mechanism
+working — see ``_is_designed_gap``. Gating on type alone would file a producer
+that owns a split and never testified as a finished result, in a bucket that is
+never red. That is the same disease pointed the other way, and the worse
+direction: a wrong defect count is loud, a wrong designed-gap count is not.
 
 Row identity is the *effect occurrence*, not the enclosing function line. A
 function holding three distinct stores is three rows; the same occurrence
@@ -290,13 +298,23 @@ def _is_designed_gap(exc: BaseException) -> bool:
     """
     if type(exc) not in _designed_gap_types():
         return False
-    classify = getattr(exc, "classification", None)
-    if not callable(classify):
-        return False
-    verdict = classify()
+    verdict = _carried_verdict(exc)
     if verdict is None:
         return False
     return getattr(verdict, "is_remaining_work", True) is False
+
+
+def _carried_verdict(exc: BaseException):
+    """The verdict the exception itself carries, or ``None``. Never re-derived.
+
+    #6364 mints the classification as data ON the exception, off the arms it
+    already holds. Re-deriving it here would be a second classifier that can
+    disagree with the first, so this only READS.
+    """
+    classify = getattr(exc, "classification", None)
+    if not callable(classify):
+        return None
+    return classify()
 
 
 class DesugarAxis:
@@ -424,6 +442,21 @@ class DesugarAxis:
             # the second is the load-bearing one — see `_is_designed_gap`.
             if _is_designed_gap(exc):
                 self._designed_gap(where, exc)
+                return
+            # A DECLARED TYPE THAT CARRIES NO VERDICT IS NEITHER. The classifier
+            # is supposed to attach one, so its absence is a defect in the
+            # INSTRUMENT, not a finding about the code under measurement.
+            # Defaulting it into either bucket — quietly correct, or quietly a
+            # code defect — is the silent-lossy shape one level up from the one
+            # this door closes. It gets its own named kind and stays red.
+            if type(exc) in _designed_gap_types() and _carried_verdict(exc) is None:
+                self._defect(
+                    "instrument-gap",
+                    where,
+                    f"designed-gap-without-classification:{type(exc).__name__}: "
+                    f"{exc}",
+                    exc=exc,
+                )
                 return
             self._defect(
                 "desugar-exception", where, f"{type(exc).__name__}: {exc}", exc=exc

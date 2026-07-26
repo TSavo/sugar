@@ -545,4 +545,12 @@ def test_twin_12_no_verdict_is_not_a_verdict_of_designed() -> None:
     row = axis.row()
     assert row["R_desugar_designed_gaps"] == 0
     assert len(row["desugarDefects"]) == 1
+    # NEITHER bucket on its merits: the classifier was supposed to attach a
+    # verdict, so its absence is a defect in the INSTRUMENT and says nothing
+    # about the code being measured. Named as such rather than filed as an
+    # ordinary desugar exception, which would blame the wrong thing.
+    assert row["desugarDefects"][0]["kind"] == "instrument-gap"
+    assert row["desugarDefects"][0]["detail"].startswith(
+        "designed-gap-without-classification:ExitSetFactoringGap"
+    )
     assert axis.red is True
