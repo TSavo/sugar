@@ -498,21 +498,36 @@ def _term_intern_arg_key(term: "Term") -> tuple:
 _term_formula_key = _term_content_key
 
 
-def _formula_key(formula: "Formula", *, term_key) -> tuple:
-    """Finite structural formula key; ``term_key`` selects intern vs identity."""
+def _formula_key(formula: "Formula", *, term_key, layer=None) -> tuple:
+    """Finite structural formula key; ``term_key`` selects intern vs identity.
+
+    ``layer`` is an optional cross-call node memo (see ``_FORMULA_CONTENT_KEY``).
+    Only the content variant may pass one: the intern variant's term keys are
+    ``id()``-based under an active scope and must never outlive it.
+    """
     memo: dict[int, tuple] = {}
     active: set[int] = set()
+    walked: list[Formula] = []
+    cyclic = False
     stack: list[tuple[Formula, bool]] = [(formula, False)]
     while stack:
         node, expanded = stack.pop()
         marker = id(node)
         if marker in memo:
             continue
-        if not expanded and marker in active:
-            memo[marker] = ("cycle", marker)
-            continue
+        if not expanded:
+            if marker in active:
+                memo[marker] = ("cycle", marker)
+                cyclic = True
+                continue
+            if layer is not None:
+                cached = _formula_layer_get(layer, node)
+                if cached is not None:
+                    memo[marker] = cached
+                    continue
         if expanded:
             active.discard(marker)
+            walked.append(node)
             if isinstance(node, _Atomic):
                 memo[marker] = (
                     "atomic",
@@ -540,7 +555,91 @@ def _formula_key(formula: "Formula", *, term_key) -> tuple:
             stack.extend((child, False) for child in reversed(node.operands))
         elif isinstance(node, _Quantifier):
             stack.append((node.body, False))
+    if layer is not None and not cyclic:
+        # Only an acyclic walk may publish. A node reached inside a cycle
+        # carries a raw-address ``("cycle", id(...))`` marker, which is
+        # not that node's own content coordinate — publishing it would hand a
+        # later standalone lookup the wrong key.
+        for node in walked:
+            _formula_layer_put(layer, node, memo[id(node)])
     return memo[id(formula)]
+
+
+# Content-key memo for Formula nodes: id(node) → (weakref(node), key).
+#
+# Same discipline as ``_TERM_CONTENT_CID`` (#5572): identity is the structural
+# key, ``id()`` is a memo index only, and the weakref ``is``-guard rejects
+# recycled ids. Deliberately not a WeakKeyDictionary — that would invoke
+# ``Formula.__hash__``, which is the very thing this memo serves.
+#
+# Correctness invariant: entries are published only from an acyclic walk under
+# ``_term_content_key``, whose term CIDs are scope-stable (#5568 / #5569). So a
+# cached key is exactly what a fresh computation would mint, in or out of any
+# ``term_intern_scope``. Eviction is cache control only, never identity.
+_FORMULA_CONTENT_KEY: dict[int, tuple[weakref.ReferenceType, tuple]] = {}
+
+_FORMULA_CONTENT_KEY_MINTS = 0
+
+
+def _formula_content_key_memo_size() -> int:
+    """Live memo entries (test / diagnostics only)."""
+    return len(_FORMULA_CONTENT_KEY)
+
+
+def _formula_content_key_mints() -> int:
+    """Structural walks performed since process start (test / diagnostics only).
+
+    The identity gate: this counts *distinct objects* keyed, not comparisons.
+    """
+    return _FORMULA_CONTENT_KEY_MINTS
+
+
+def _formula_layer_get(layer: dict, node: "Formula") -> "tuple | None":
+    entry = layer.get(id(node))
+    if entry is None:
+        return None
+    wr, cached = entry
+    if wr() is node:
+        return cached
+    if wr() is None:
+        layer.pop(id(node), None)
+    return None
+
+
+def _formula_layer_put(layer: dict, node: "Formula", key: tuple) -> None:
+    global _FORMULA_CONTENT_KEY_MINTS
+    nid = id(node)
+    existing = layer.get(nid)
+    if existing is not None and existing[0]() is node:
+        return
+
+    def _on_die(wr: weakref.ReferenceType, *, _nid: int = nid) -> None:
+        cur = layer.get(_nid)
+        if cur is not None and cur[0] is wr:
+            layer.pop(_nid, None)
+
+    layer[nid] = (weakref.ref(node, _on_die), key)
+    _FORMULA_CONTENT_KEY_MINTS += 1
+
+
+def _evict_formula_content_key(formula: "Formula") -> bool:
+    """Drop any memoized content key for ``formula``.
+
+    Returns True when the memo held an entry for this exact object.
+    Recomputation after eviction is deterministic: same structural formula →
+    same key.
+    """
+    nid = id(formula)
+    entry = _FORMULA_CONTENT_KEY.get(nid)
+    if entry is None:
+        return False
+    wr, _key = entry
+    if wr() is formula:
+        del _FORMULA_CONTENT_KEY[nid]
+        return True
+    if wr() is None:
+        _FORMULA_CONTENT_KEY.pop(nid, None)
+    return False
 
 
 def _formula_intern_key(formula: "Formula") -> tuple:
@@ -553,8 +652,15 @@ def _formula_content_key(formula: "Formula") -> tuple:
 
     Always content-addressed term CIDs. Never ``id(_intern_term(...))``.
     Hash and equality share this one key (no hash-on-A / eq-on-B split).
+
+    Memoized per object (#6305): repeated hashing and equality of the same
+    guard — the shape ``ExitSet.normalize`` produces — pays one structural walk
+    per distinct node, not one per comparison.
     """
-    return _formula_key(formula, term_key=_term_content_key)
+    cached = _formula_layer_get(_FORMULA_CONTENT_KEY, formula)
+    if cached is not None:
+        return cached
+    return _formula_key(formula, term_key=_term_content_key, layer=_FORMULA_CONTENT_KEY)
 
 
 def _formula_cycle_key(formula: "Formula") -> tuple:
