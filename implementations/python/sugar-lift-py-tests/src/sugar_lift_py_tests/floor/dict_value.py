@@ -16,6 +16,10 @@ class DictValue(FloorValue):
 
     entries: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``dict``."""
+        return True
+
     def truth(self, site):
         """A constructed dict is truthy exactly when it has an entry."""
         from sugar_lift_py_tests.outcome import Complete

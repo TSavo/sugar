@@ -16,6 +16,10 @@ class TupleValue(FloorValue):
 
     elements: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``tuple``."""
+        return True
+
     def attribute(self, name, site):
         # Bound methods and fields on a constructed tuple (``().count``, ``t.index``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the

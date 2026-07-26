@@ -16,6 +16,10 @@ class SetValue(FloorValue):
 
     elements: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``set``."""
+        return True
+
     def attribute(self, name, site):
         # Bound methods and fields on a constructed set (``set().add``, ``s.union``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the

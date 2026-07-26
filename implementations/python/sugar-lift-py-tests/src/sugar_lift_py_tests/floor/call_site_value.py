@@ -127,6 +127,20 @@ class CallSiteValue(FloorValue):
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
+    def denotes_value(self) -> bool:
+        """A call result denotes a Python runtime value."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Undecided: no citation fixes an unexecuted call's result type.
+
+        Which ``__op__``/``__rop__`` Python would select for an operation
+        over this value is undecided too, so a binary operation with it
+        constructs a symbolic coordinate rather than standing on a ground
+        field law.
+        """
+        return False
+
     def exception_type_identity(self) -> Term | None:
         return self.exception_type_coordinate
 

@@ -12,6 +12,10 @@ class TermValue(FloorValue):
     # their calculus sort: int -> Int and float -> Real. There is no Number sort.
     value: int | float
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a Python scalar it carries as its own payload."""
+        return True
+
     def python_isinstance(self, type_name: str, type_term, site):
         del type_term
         from sugar_lift_py_tests.outcome import Complete

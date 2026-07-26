@@ -18,6 +18,10 @@ class ListValue(FloorValue):
 
     elements: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``list``."""
+        return True
+
     def attribute(self, name, site):
         # Bound methods and fields on a constructed list (``[].append``, ``xs.index``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the

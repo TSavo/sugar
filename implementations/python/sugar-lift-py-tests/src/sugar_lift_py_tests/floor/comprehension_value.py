@@ -28,6 +28,15 @@ class ComprehensionValue(GuardStableValue):
     term: object
     finite_elements: tuple | None = None
 
+    def denotes_value(self) -> bool:
+        """A constructed fold denotes the sequence it builds.
+
+        Its runtime TYPE is decided -- the fold constructor names whether
+        it is a list, set, or dict comprehension -- so this value alone
+        never makes a pair undecided. Only an undecided right operand does.
+        """
+        return True
+
     def to_term(self, *, owner: str):
         del owner
         return self.term

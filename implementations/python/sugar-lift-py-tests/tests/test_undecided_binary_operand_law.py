@@ -1,0 +1,281 @@
+"""One law, not eight arms: a binary operation with an undecided operand.
+
+The binary-operation floor gaps measured on the pinned pandas tree
+(``docs/ledgers/pandas-3.0.3-control-effect-9a78828ee.json``) came in eight
+operator names -- ``add``, ``subtract``, ``multiply``, ``divide``,
+``bitwise_and``/``or``/``xor`` -- wearing one shape: a left value with no arm
+named for THIS right operand, falling to the (owner x pair) gap.
+
+Most of those pairs are not eight arms to write. When at least one operand's
+runtime TYPE is undecided, Python's own operator dispatch for the pair is
+undecided, so the exact denotation is the symbolic coordinate
+``operator(left, right)`` -- the coordinate ``SymbolicValue`` already
+constructed, hoisted off that one class onto the law it was always stating.
+
+The category is read from each value's own testimony (``denotes_value`` /
+``runtime_type_is_decided``), never from a lexical type name.
+
+Every positive arm below carries its discriminating arm: the law admits the
+undecided pair and stays LOUD everywhere else.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from sugar_lift_py_tests.floor.bytes_value import BytesValue
+from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+from sugar_lift_py_tests.floor.complex_value import ComplexValue
+from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+from sugar_lift_py_tests.floor.list_value import ListValue
+from sugar_lift_py_tests.floor.none_value import NoneValue
+from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+from sugar_lift_py_tests.floor.set_value import SetValue
+from sugar_lift_py_tests.floor.string_value import StringValue
+from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+from sugar_lift_py_tests.floor.term_value import TermValue
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, _Lambda, ctor, make_var
+from sugar_lift_py_tests.outcome import Complete
+
+SITE = "undecided-binary-site"
+
+
+def _symbolic() -> SymbolicValue:
+    return SymbolicValue(make_var("s"))
+
+
+def _callsite() -> CallSiteValue:
+    return CallSiteValue("vendor.op", (), (), ctor("call:vendor.op", []), None)
+
+
+def _predicate() -> PredicateValue:
+    return PredicateValue(_Atomic("py.gt", (make_var("a"), make_var("b"))), SITE)
+
+
+def _comprehension() -> ComprehensionValue:
+    return ComprehensionValue(
+        ctor(
+            "py.listcomp",
+            [
+                make_var("xs"),
+                _Lambda("p", PrimitiveSort("Value"), make_var("p")),
+                ctor("python:loop.exhaustion", []),
+            ],
+        )
+    )
+
+
+def _coordinate(outcome, operator: str):
+    assert isinstance(outcome, Complete), outcome
+    assert type(outcome.value) is SymbolicValue
+    term = outcome.value.term
+    assert term.name == operator
+    assert len(term.args) == 2
+    return term
+
+
+# -- positive arm: the pairs the pinned census actually found -----------------
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "method", "operator"),
+    (
+        # pandas/io/formats/{excel,html,xml}.py, io/parsers/arrow_parser_wrapper.py
+        (_comprehension(), _symbolic(), "add", "+"),
+        # pandas/io/formats/html.py, io/formats/style.py
+        (_predicate(), _symbolic(), "add", "+"),
+        # pandas/core/ops/missing.py, tests/io/pytables/test_select.py
+        (_predicate(), _callsite(), "bitwise_and", "&"),
+        # pandas/core/strings/accessor.py
+        (SetValue((TermValue(1),)), _callsite(), "subtract", "-"),
+        # pandas/io/stata.py, tests/io/json/test_ujson.py
+        (BytesValue(b"x"), _symbolic(), "multiply", "*"),
+        (BytesValue(b"x"), _symbolic(), "add", "+"),
+        (BytesValue(b"x"), _callsite(), "add", "+"),
+        # pandas/tests/internals/test_internals.py
+        (ComplexValue(1.0, 2.0), _symbolic(), "multiply", "*"),
+        # pandas/tests/arithmetic/test_string.py
+        (NoneValue(), _callsite(), "add", "+"),
+    ),
+)
+def test_an_undecided_operand_constructs_the_symbolic_coordinate(
+    left, right, method, operator
+) -> None:
+    _coordinate(getattr(left, method)(right, SITE), operator)
+
+
+def test_the_law_covers_every_operator_it_names_from_one_place() -> None:
+    """Eight operator names, one law -- so a ninth costs no new arm."""
+    for method, operator in (
+        ("add", "+"),
+        ("subtract", "-"),
+        ("multiply", "*"),
+        ("divide", "/"),
+        ("floor_divide", "//"),
+        ("modulo", "%"),
+        ("power", "**"),
+        ("matrix_multiply", "@"),
+        ("bitwise_and", "&"),
+        ("bitwise_or", "|"),
+        ("bitwise_xor", "^"),
+        ("left_shift", "<<"),
+        ("right_shift", ">>"),
+    ):
+        _coordinate(getattr(BytesValue(b"x"), method)(_symbolic(), SITE), operator)
+
+
+def test_both_operands_are_conserved_in_the_coordinate() -> None:
+    """One output arm conserves exactly its two input arms, in order."""
+    left = BytesValue(b"ab")
+    right = _symbolic()
+
+    term = _coordinate(left.add(right, SITE), "+")
+
+    assert term.args[0] == left.to_term(owner=SITE)
+    assert term.args[1] == right.to_term(owner=SITE)
+
+
+# -- the real reproducers: whole functions, lifted from source ---------------
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    (
+        # pandas/io/stata.py: `b"\x00" * (n - len(name))`
+        ("bytes_times_param", 'def f(n):\n    return b"x" * n\n'),
+        # pandas/tests/arithmetic/test_string.py
+        ("none_plus_call", "def f(g):\n    return None + g()\n"),
+        # pandas/io/formats/{excel,html,xml}.py
+        ("comp_plus_param", "def f(xs, y):\n    return [x for x in xs] + y\n"),
+        # pandas/io/stata.py: `self.sep + want_bytes(x)`
+        ("bytes_plus_call", 'def f(g):\n    return b"x" + g()\n'),
+        # pandas/core/strings/accessor.py
+        ("set_minus_call", "def f(g):\n    return {1, 2} - g()\n"),
+    ),
+)
+def test_the_whole_function_lifts_where_it_construction_panicked(
+    tmp_path, name, source
+) -> None:
+    """Each of these construction_panicked on the tree before the law: a
+    snippet flip is not the acceptance, the whole function is."""
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_source_tree.tree import SourceFile
+
+    path = tmp_path / f"{name}.py"
+    path.write_text(source, encoding="utf-8")
+
+    fn = next(SourceFile(path_source(str(path))).functions())
+    outcome = fn.sugar().desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert type(outcome.value) is UniverseValue
+
+
+# -- discriminating arm: the law refuses, loudly, everywhere else -------------
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "method"),
+    (
+        # Two DECIDED types are a ground question, not an unknown:
+        # `list + bool` is Python's TypeError. Constructing a coordinate here
+        # would launder a ground exit into a value.
+        (ListValue((TermValue(1),)), _predicate(), "add"),
+        (_predicate(), TermValue(1), "add"),
+        (_predicate(), StringValue("x"), "add"),
+        (_comprehension(), SetValue((TermValue(1),)), "subtract"),
+    ),
+)
+def test_two_decided_operands_stay_loud(left, right, method) -> None:
+    with pytest.raises(ConstructionPanic) as raised:
+        getattr(left, method)(right, SITE)
+
+    info = raised.value.info
+    assert info.owner == method
+    assert info.observed == type(left).__name__
+    assert type(right).__name__ in info.fix
+
+
+def test_a_value_that_has_not_testified_stays_loud() -> None:
+    """``denotes_value`` defaults to the honest "no": carrying a term is not
+    the discriminator, so a class that has not spoken never enters the law."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    class _Unspoken(FloorValue):
+        def to_term(self, *, owner: str):
+            return make_var("unspoken")
+
+    assert _Unspoken().denotes_value() is False
+
+    with pytest.raises(ConstructionPanic) as raised:
+        _Unspoken().add(_symbolic(), SITE)
+
+    assert raised.value.info.observed == "_Unspoken"
+
+
+def test_a_non_denoting_operand_stays_loud() -> None:
+    """A callable is not an operand. The law refuses it from the right too."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    class _NotAValue(FloorValue):
+        def runtime_type_is_decided(self) -> bool:
+            return False
+
+        def to_term(self, *, owner: str):
+            return make_var("callable")
+
+    assert _NotAValue().denotes_value() is False
+
+    with pytest.raises(ConstructionPanic) as raised:
+        BytesValue(b"x").add(_NotAValue(), SITE)
+
+    assert raised.value.info.observed == "BytesValue"
+    assert "_NotAValue" in raised.value.info.fix
+
+
+def test_the_law_never_converts_a_panic_into_a_refusal() -> None:
+    """The loud arm is still a ConstructionPanic -- never an Incomplete, never
+    a refusal value that a caller could mistake for an answer."""
+    with pytest.raises(ConstructionPanic):
+        ListValue((TermValue(1),)).add(_predicate(), SITE)
+
+
+# -- the testimony is the value's own, never a lexical name ------------------
+
+
+@pytest.mark.parametrize(
+    "undecided",
+    (
+        SymbolicValue(make_var("s")),
+        CallSiteValue("f", (), (), ctor("call:f", []), None),
+    ),
+)
+def test_undecided_values_testify_to_their_own_category(undecided) -> None:
+    assert undecided.denotes_value() is True
+    assert undecided.runtime_type_is_decided() is False
+
+
+@pytest.mark.parametrize(
+    "ground",
+    (
+        TermValue(1),
+        StringValue("x"),
+        BytesValue(b"x"),
+        NoneValue(),
+        ListValue(()),
+        SetValue(()),
+        ComplexValue(0.0, 1.0),
+    ),
+)
+def test_ground_values_testify_that_their_type_is_decided(ground) -> None:
+    assert ground.denotes_value() is True
+    assert ground.runtime_type_is_decided() is True
+
+
+def test_a_fold_knows_its_own_sequence_type() -> None:
+    """A comprehension's constructor names the sequence it builds, so the fold
+    alone never makes a pair undecided -- only its operand can."""
+    assert _comprehension().denotes_value() is True
+    assert _comprehension().runtime_type_is_decided() is True
