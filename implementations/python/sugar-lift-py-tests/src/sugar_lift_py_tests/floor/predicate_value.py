@@ -109,6 +109,16 @@ class PredicateValue(FloorValue):
 
         return Complete(self)
 
+    def guarded(self, formula):
+        """A predicate rides under a branch guard unchanged.
+
+        The branch guard owns control; the formula already is the boolean value.
+        Same law as CallSiteValue / ImportAliasValue. Absence was
+        ``write more Floor: implement PredicateValue.guarded``.
+        """
+        del formula
+        return self
+
     def subscript(self, index, site):
         """Keep unknown scalar-versus-array predicate results visibly red.
 

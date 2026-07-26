@@ -71,6 +71,19 @@ class TupleValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def project_sequence_with(self, operation, ctx):
+        """Unpack against authenticated reduced members already in hand.
+
+        ``TupleValue.elements`` is the finite member testimony from construction;
+        SequenceProjectionOperation binds names only when arity matches.
+        """
+        return operation.project_tuple(self, ctx)
+
+    @property
+    def items(self) -> tuple:
+        """Member sequence for SequenceProjectionOperation.project_tuple."""
+        return self.elements
+
     def contains(self, item, site):
         # A guarded needle is not one needle: distribute into its faces and
         # rejoin under the same guard before this receiver's own law runs.
