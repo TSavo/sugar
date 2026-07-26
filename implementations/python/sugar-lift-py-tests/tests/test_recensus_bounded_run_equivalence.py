@@ -27,12 +27,6 @@ import json
 import sys
 from pathlib import Path
 
-# Import the tree package here, at module scope, the way every other test in
-# this kit does. Deferring it to the moment the CLI runs left it unresolvable in
-# the managed closure, which looked like a measurement failure and was an import
-# ordering artefact.
-import sugar_source_tree.tree  # noqa: F401,E402  (path warm-up, load-bearing)
-
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 SCRIPT = SCRIPTS / "control_effect_recensus.py"
 
