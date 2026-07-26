@@ -109,7 +109,11 @@ class SpreadCollectionSugar(Sugar):
             from sugar_lift_py_tests.floor import SymbolicValue
             from sugar_lift_py_tests.ir import ctor
 
-            owner = str(self.site)
+            # The owner of a construction gap is a NAME the row can be
+            # dispatched by; SourceFragment has no __str__, so str(site)
+            # yields a repr and the owner field carries an object
+            # projection instead. The coordinate belongs in blame.
+            owner = type(self).__name__
             terms = []
             for (wrapper, _), value in zip(self.elements, values):
                 term = value.to_term(owner=owner)
@@ -147,7 +151,11 @@ class SpreadDictSugar(Sugar):
             from sugar_lift_py_tests.floor import SymbolicValue
             from sugar_lift_py_tests.ir import ctor
 
-            owner = str(self.site)
+            # The owner of a construction gap is a NAME the row can be
+            # dispatched by; SourceFragment has no __str__, so str(site)
+            # yields a repr and the owner field carries an object
+            # projection instead. The coordinate belongs in blame.
+            owner = type(self).__name__
             value_iter = iter(values)
             terms = []
             for key, _ in self.entries:
@@ -200,7 +208,8 @@ class SpreadCallSugar(Sugar):
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        owner = str(self.site)
+        # See the note above: owner is a dispatchable NAME, not a repr.
+        owner = type(self).__name__
         callee_term = (
             str_const(self.callee_name)
             if self.callee_name is not None
