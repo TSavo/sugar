@@ -2354,11 +2354,18 @@ class FunctionDef(Statement):
                 ):
                     from pathlib import Path
 
-                    relative = (
-                        Path(self.unit.filename)
-                        .resolve()
-                        .relative_to(Path(workspace_root).resolve())
-                    )
+                    # The construction door already mints the locus
+                    # workspace-relative (`workspace_path_source`). Re-deriving
+                    # it here would be a second answer to a question already
+                    # resolved; an absolute filename means the unit did NOT come
+                    # through that door, and that stays LOUD.
+                    relative = Path(self.unit.filename)
+                    if relative.is_absolute():
+                        raise SugarNotWritten(
+                            f"module-level bridge symbol needs a workspace-relative "
+                            f"locus; `{self.unit.filename}` is absolute -- route the "
+                            f"source through the workspace-relative lift door"
+                        )
                     module_parts = list(relative.with_suffix("").parts)
                     if module_parts and module_parts[-1] == "__init__":
                         module_parts.pop()

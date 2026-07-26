@@ -205,7 +205,7 @@ def open_source_file_for_construction(
     freezes source-derived manager refs at exact use-sites. Callers that already
     hold a frozen context (shared demand table across a census) may pass it.
     """
-    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
 
@@ -218,7 +218,7 @@ def open_source_file_for_construction(
             call_contract_refs=call_contract_refs,
         )
     source_file = SourceFile(
-        path_source(str(path)),
+        workspace_path_source(str(path), root=str(root)),
         reporter=reporter,
         construction_context=construction_context,
     )
