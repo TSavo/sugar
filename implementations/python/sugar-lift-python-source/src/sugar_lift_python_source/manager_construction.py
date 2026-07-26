@@ -171,14 +171,21 @@ def _project_factory_manager(
         )
 
         if managers:
-            # Sole manager identity wins. Multiple distinct receivers stay loud.
+            # Sole manager identity wins. Multiple distinct receivers: prefer a
+            # field-wise refinement (more bound fields, equal where both bound)
+            # — complementary ``if x is None: return CM() else: return CM(x)``
+            # faces construct both; the refined arm is the callsite's manager.
+            # Incomparable multi-receivers stay loud.
             identities = {item[1].identity for item in managers}
             if len(identities) > 1:
-                return ManagerConstructionGapV1(
-                    "non-manager-result",
-                    resolved_cid,
-                    f"GuardedReturn with {len(identities)} manager receivers",
-                )
+                refined = _sole_refined_manager(tuple(item[1] for item in managers))
+                if refined is None:
+                    return ManagerConstructionGapV1(
+                        "non-manager-result",
+                        resolved_cid,
+                        f"GuardedReturn with {len(identities)} manager receivers",
+                    )
+                managers = [item for item in managers if item[1].identity == refined.identity]
             _face, obj, call = managers[0]
             factory_prefix = factory_prefix + prefix_without_returns
             if call is not None:
@@ -244,13 +251,65 @@ def _project_manager_from_exitset(
         )
     identities = {item[0].identity for item in managers}
     if len(identities) > 1:
-        return ManagerConstructionGapV1(
-            "non-manager-result",
-            resolved_cid,
-            f"ExitSet with {len(identities)} manager receivers",
-        )
+        refined = _sole_refined_manager(tuple(item[0] for item in managers))
+        if refined is None:
+            return ManagerConstructionGapV1(
+                "non-manager-result",
+                resolved_cid,
+                f"ExitSet with {len(identities)} manager receivers",
+            )
+        managers = [item for item in managers if item[0].identity == refined.identity]
     obj, prefix = managers[0]
     return obj, factory_prefix + prefix
+
+
+def _sole_refined_manager(
+    managers: tuple[ObjectValue, ...],
+) -> ObjectValue | None:
+    """Return the unique manager that field-wise refines every peer, else None.
+
+    Manager A refines B when they share field names, every non-None field of B
+    equals the same field on A, and A has at least one additional non-None
+    field. Complementary factory faces ``return CM()`` / ``return CM(x)`` then
+    collapse to the refined receiver instead of multi-manager residual.
+    """
+    from sugar_lift_py_tests.floor import NoneValue
+
+    def fields_of(obj: ObjectValue) -> dict[str, FloorValue]:
+        return {field.name: field.value for field in obj.fields}
+
+    def is_none(value: FloorValue) -> bool:
+        return isinstance(value, NoneValue)
+
+    def refines(a: ObjectValue, b: ObjectValue) -> bool:
+        if a.identity == b.identity:
+            return False
+        fa, fb = fields_of(a), fields_of(b)
+        if set(fa) != set(fb):
+            return False
+        gained = False
+        for name, vb in fb.items():
+            va = fa[name]
+            if is_none(vb):
+                if not is_none(va):
+                    gained = True
+                continue
+            if is_none(va) or va != vb:
+                return False
+        return gained
+
+    candidates = [
+        candidate
+        for candidate in managers
+        if all(
+            candidate.identity == peer.identity or refines(candidate, peer)
+            for peer in managers
+        )
+    ]
+    identities = {item.identity for item in candidates}
+    if len(identities) != 1:
+        return None
+    return candidates[0]
 
 
 def construct_manager_behavior(

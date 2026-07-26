@@ -165,12 +165,19 @@ class SpreadDictSugar(Sugar):
 
 @dataclass(frozen=True)
 class SpreadCallSugar(Sugar):
-    """A call containing ``*``/``**``, using the reference call vocabulary."""
+    """A call containing ``*``/``**``, using the reference call vocabulary.
+
+    When an authenticated source-visible callee frame is enrolled (class
+    constructor / function body), typed ``**`` expansions project through that
+    frame so the CallSiteValue carries the factory-built body. Opaque spreads
+    without a frame keep the reference bodyless coordinate.
+    """
 
     callee_name: str | None
     callee: Sugar | None
     arguments: tuple  # (role, optional-name, sugar), source order
     site: object = dataclass_field(compare=False)
+    source_call_frame: object | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -189,14 +196,14 @@ class SpreadCallSugar(Sugar):
                 sugars,
                 ctx,
                 (),
-                lambda values: self._finish(callee_value, values),
+                lambda values: self._finish(callee_value, values, ctx),
             )
 
         if self.callee is None:
             return after_callee(None)
         return self.callee.desugar(ctx).and_then(after_callee)
 
-    def _finish(self, callee_value, values) -> Outcome:
+    def _finish(self, callee_value, values, ctx=None) -> Outcome:
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -217,6 +224,11 @@ class SpreadCallSugar(Sugar):
                 term = ctor("python:kwarg", [str_const(name), term])
             arg_terms.append(term)
         term = ctor("python:call", [callee_term, *arg_terms])
+
+        framed = self._body_bearing_callsite(values, term, ctx)
+        if framed is not None:
+            return Complete(framed)
+
         return Complete(
             CallSiteValue(
                 target_name=self.callee_name or "python:call",
@@ -226,4 +238,54 @@ class SpreadCallSugar(Sugar):
                 body=None,
                 site=self.site,
             )
+        )
+
+    def _body_bearing_callsite(self, values, term, ctx) -> object | None:
+        """Project ``*``/``**`` actuals onto an enrolled source frame when lawful.
+
+        Star operands stay bodyless (no typed vararg projection here). A
+        double-star must be a constructed DictValue so bind_actuals can merge
+        keys onto formals — the same law FunctionCallable uses for ``**``.
+        """
+        frame = self.source_call_frame
+        if frame is None:
+            return None
+        if any(role == "star" for role, _, _ in self.arguments):
+            return None
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.source_call_frame import (
+            SourceCallBindingGap,
+            SourceVisibleCallFrameV1,
+        )
+
+        if not isinstance(frame, SourceVisibleCallFrameV1):
+            return None
+        positional: list = []
+        keywords: list = []
+        for (role, name, _), value in zip(self.arguments, values):
+            if role == "positional":
+                positional.append(value)
+            elif role == "keyword":
+                keywords.append((name, value))
+            elif role == "double-star":
+                keywords.append(("**", value))
+            else:
+                return None
+        try:
+            bound = frame.bind_actuals(tuple(positional), tuple(keywords), ctx)
+        except SourceCallBindingGap:
+            return None
+        source_body = frame.body
+        owner = getattr(frame, "owner", None)
+        if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
+            source_body = owner.source_visible_constructor_frame().body
+        return CallSiteValue(
+            target_name=self.callee_name or "python:call",
+            arg_values=bound,
+            parameters=frame.parameters,
+            term=term,
+            body=source_body,
+            site=self.site,
+            source_call_frame_cid=frame.frame_cid,
+            formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
         )

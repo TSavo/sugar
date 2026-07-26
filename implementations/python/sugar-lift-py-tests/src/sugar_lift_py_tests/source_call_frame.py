@@ -48,12 +48,39 @@ class SourceVisibleCallFrameV1:
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
 
     def bind_actuals(self, positional: tuple, keywords: tuple, ctx=None) -> tuple:
+        """Bind positional/keyword FloorValues onto this frame's formals.
+
+        ``keywords`` is ``(name, value)`` pairs in source order. A name of
+        ``None`` or ``\"**\"`` is a typed ``**`` expansion: when the value is a
+        constructed ``DictValue`` with string keys, its entries join the
+        named-keyword map (Python's call-time ``**mapping`` projection). Other
+        expansion shapes stay a ``SourceCallBindingGap`` so the call remains
+        loud rather than inventing keys.
+        """
         from sugar_lift_py_tests.floor import DictValue, StringValue, TupleValue
 
         remaining = list(positional)
-        named = dict(keywords)
-        if len(named) != len(keywords):
-            raise SourceCallBindingGap("duplicate keyword actual")
+        named: dict = {}
+        for key, value in keywords:
+            if key is None or key == "**":
+                if type(value) is not DictValue:
+                    raise SourceCallBindingGap(
+                        "spread keyword requires typed DictValue projection"
+                    )
+                for entry_key, entry_value in value.entries:
+                    if type(entry_key) is not StringValue:
+                        raise SourceCallBindingGap(
+                            "non-string keyword expansion key"
+                        )
+                    if entry_key.value in named:
+                        raise SourceCallBindingGap(
+                            "duplicate keyword actual from expansion"
+                        )
+                    named[entry_key.value] = entry_value
+                continue
+            if key in named:
+                raise SourceCallBindingGap("duplicate keyword actual")
+            named[key] = value
         bound = []
         for index, (name, kind, default) in enumerate(
             zip(

@@ -294,6 +294,212 @@ def test_raises_style_guarded_return_is_not_blockvalue_residual(tmp_path):
     assert fields["expected_exception"] is actual.value
 
 
+def test_raises_style_kwargs_return_attaches_constructor_body(tmp_path):
+    """General **kwargs factory law: ``return CM(x, **kwargs)`` is not bodyless.
+
+    Real pytest.raises returns ``RaisesExc(expected, **kwargs)``. Without typed
+    variadic projection the nested CallSiteValue had body=None → force_floor
+    missing-body → non-manager-result:CallSiteValue (or ExitSet-with-N-arms when
+    multi-arm factories wrap the same shape). Red without body attachment on
+    SpreadCallSugar; green when ** DictValue projects onto the enrolled
+    constructor frame.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "non-manager-result"
+        and result.detail == "CallSiteValue"
+    ), result
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "force-floor"
+        and "ExitSet" in detail
+    ), result
+    assert "missing callsite body" not in detail, result
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual.value
+
+
+def test_raises_style_kwargs_only_return_attaches_constructor_body(tmp_path):
+    """``return CM(**kwargs)`` with keyword actuals constructs via DictValue expand."""
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(**kwargs):\n"
+        "    return RaisesExc(**kwargs)\n"
+    )
+    graph = DependencyArtifactGraph.authenticate(
+        _distribution(tmp_path, implementation, exported="raises")
+    )
+    consumer = "import arbitrary\narbitrary.raises(expected_exception=23)\n"
+    path = tmp_path / "consumer_kw.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode())
+    receipts, _ = authenticated_import_use_receipts(
+        tmp_path, path, consumer, source_cid
+    )
+    resolved = resolve_import_binding(receipts[0], graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    source_file = SourceFile((consumer, str(path), source_cid))
+    call = next(item for item in source_file.nodes() if isinstance(item, Call))
+    literal = next(item for item in call.keywords if item.arg == "expected_exception")
+    from sugar_lift_py_tests.ir import _term_content_cid
+
+    actual_value = TermValue(23)
+    testimony = ConstructedValueTestimonyV1.mint(
+        literal.value.fragment,
+        _term_content_cid(actual_value.to_term(owner="test")),
+    )
+    keyword_actual = ConstructedCallActualV1(literal.value, actual_value, testimony)
+
+    result = construct_manager_behavior(
+        resolved,
+        graph=graph,
+        actuals=(),
+        keyword_actuals=(("expected_exception", keyword_actual),),
+        call_site=call.fragment,
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual_value
+
+
+def test_raises_style_multi_arm_kwargs_is_not_exitset_force_floor(tmp_path):
+    """Multi-arm factory with **kwargs CM return must not residual as ExitSet-N.
+
+    Mirrors the pytest.raises validation raise + CM return shape:
+    ``if bad_kwargs: raise TypeError`` then ``return RaisesExc(x, **kwargs)``.
+    Halted raise arms do not block the Completed manager arm. Red when **kwargs
+    body is missing (force-floor:ExitSet with N arms / bodyless CallSiteValue);
+    green when typed variadic projection attaches the constructor body.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        if set(kwargs) - {'match', 'check', 'expected_exception'}:\n"
+        "            raise TypeError('unexpected')\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "force-floor"
+        and "ExitSet" in detail
+    ), result
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "non-manager-result"
+        and result.detail == "CallSiteValue"
+    ), result
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual.value
+
+
+def test_raises_style_dual_kwargs_returns_not_exitset_force_floor(tmp_path):
+    """Dual complementary CM returns stay typed (not ExitSet force-floor).
+
+    ``if expected is None: return CM(**kwargs) else: return CM(expected, **kwargs)``
+    may residual as multi-manager when both faces construct distinct ObjectValues;
+    that is a typed non-manager-result, never force-floor:ExitSet-with-N-arms.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        if expected_exception is None:\n"
+        "            return RaisesExc(**kwargs)\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "force-floor"
+        and "ExitSet" in detail
+    ), result
+    # Either sole manager (if projection collapses) or multi-manager typed gap —
+    # never bodyless CallSiteValue / ExitSet force-floor.
+    if isinstance(result, ManagerConstructionGapV1):
+        assert result.kind == "non-manager-result", result
+        assert "manager receivers" in detail, result
+    else:
+        assert isinstance(result, ConstructedManagerBehaviorV1), result
+        fields = {field.name: field.value for field in result.receiver_state.fields}
+        assert fields["expected_exception"] is actual.value
+
+
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
     """Python builtin names are not free-name opaques at frame resolution.
 
