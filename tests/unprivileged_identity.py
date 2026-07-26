@@ -92,14 +92,37 @@ def reachable_by_unprivileged(path):
     return path
 
 
-def run_unprivileged(law):
+def writable_by_unprivileged(directory):
+    """Let a dropped identity WRITE into ``directory``, not merely reach it.
+
+    A law whose subject writes a receipt needs somewhere to write it. Without
+    this the receipt is missing and the test fails on the wrong thing, which
+    proves nothing about the law.
+    """
+    directory = reachable_by_unprivileged(directory)
+    try:
+        mode = directory.stat().st_mode
+        directory.chmod(mode | stat.S_IRWXO)
+    except OSError:
+        pass
+    return directory
+
+
+def run_unprivileged(law, expected=()):
     """Run ``law()`` under an unprivileged identity and return its result.
 
     When the caller is already unprivileged the law runs inline. Otherwise it
     runs in a forked child that has irrevocably dropped to a non-root uid, so
-    the kernel enforces mode bits against it. An exception raised inside the
-    child is transported back and re-raised in the parent, so ``pytest.raises``
-    around this call behaves exactly as it does for an ordinary caller.
+    the kernel enforces mode bits against it.
+
+    An exception raised inside the child is transported back and re-raised, so
+    ``pytest.raises`` around this call behaves as it does for an ordinary
+    caller. Exception *classes* do not always survive a fork boundary: a module
+    loaded by file location (as the lease wrapper is, freshly per call) defines
+    classes that are unpicklable and whose identity differs between parent and
+    child. So the caller names the classes it expects in ``expected`` and they
+    are matched by name and re-raised as the parent's own class. Anything
+    unexpected is still raised, never swallowed.
     """
     identity = unprivileged_identity()
     if identity is None:
@@ -110,7 +133,6 @@ def run_unprivileged(law):
     pid = os.fork()
 
     if pid == 0:  # child
-        status = 1
         try:
             os.close(read_fd)
             os.setgroups([])
@@ -121,20 +143,24 @@ def run_unprivileged(law):
                     "privilege drop did not take effect; the law would have "
                     "run as root and proved nothing"
                 )
-            payload = ("value", law())
+            value = law()
+            try:
+                payload = pickle.dumps(("value", None, None, pickle.dumps(value)))
+            except Exception:
+                payload = pickle.dumps(("value", None, repr(value), None))
         except BaseException as error:  # transported to the parent, not swallowed
             try:
-                payload = ("error", error)
-                pickle.dumps(payload)
+                blob = pickle.dumps(error)
             except Exception:
-                payload = ("error", RuntimeError(f"{type(error).__name__}: {error}"))
+                blob = None
+            payload = pickle.dumps(
+                ("error", type(error).__name__, str(error), blob)
+            )
         try:
-            blob = pickle.dumps(payload)
-            os.write(write_fd, blob)
-            status = 0
+            os.write(write_fd, payload)
         finally:
             os.close(write_fd)
-            os._exit(status)
+            os._exit(0)
 
     # parent
     os.close(write_fd)
@@ -153,10 +179,19 @@ def run_unprivileged(law):
             f"result (wait status {wait_status}); the law did not execute"
         )
 
-    kind, payload = pickle.loads(b"".join(chunks))
-    if kind == "error":
-        raise payload
-    return payload
+    kind, name, text, blob = pickle.loads(b"".join(chunks))
+
+    if kind == "value":
+        return pickle.loads(blob) if blob is not None else text
+
+    if isinstance(expected, type):
+        expected = (expected,)
+    for candidate in expected:
+        if candidate.__name__ == name:
+            raise candidate(text)
+    if blob is not None:
+        raise pickle.loads(blob)
+    raise RuntimeError(f"{name}: {text}")
 
 
 def unprivileged_preexec():

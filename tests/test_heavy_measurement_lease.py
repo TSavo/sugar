@@ -35,6 +35,7 @@ from unprivileged_identity import (
     reachable_by_unprivileged,
     run_unprivileged,
     unprivileged_preexec,
+    writable_by_unprivileged,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -327,7 +328,10 @@ def test_unwritable_lease_directory_refuses_by_name_and_states_the_right_path(tm
     lease = module.HeavyMeasurementLease("t", str(locked / "sub" / "x.lease"), 1)
 
     with pytest.raises(module.LeaseDirectoryUnusable) as caught:
-        run_unprivileged(lease._require_usable_directory)
+        run_unprivileged(
+            lease._require_usable_directory,
+            expected=module.LeaseDirectoryUnusable,
+        )
 
     message = str(caught.value)
     assert ".cache/sugar/binaries" in message, "the refusal must state the right path"
@@ -342,7 +346,7 @@ def test_an_unusable_lease_directory_never_runs_the_command(tmp_path, record):
     # identity so the kernel enforces the mode bits, instead of the test
     # skipping under the root identity bpytest runs as.
     reachable_by_unprivileged(tmp_path)
-    reachable_by_unprivileged(record.parent)
+    writable_by_unprivileged(record.parent)
     locked = tmp_path / "locked"
     locked.mkdir()
     locked.chmod(0o500)
