@@ -32,11 +32,15 @@
 - [ ] **Step 1: Write the truthful failing test**
 
 Define a minimal `Sugar` leaf returning `Complete(value)`. Build a real
-`GuardedProjection(slot, leaf, leaf)` whose two branches return the same value,
-call `read_binding`, and assert normalization produced one completed destination
-with two authenticated path alternatives. Combine that result with a sibling
-completed arm carrying the opposite face of one surviving alternative and call
-`factor_completed()`. Assert the factoring succeeds and retains both values.
+`GuardedProjection(slot, leaf, leaf)` whose two branches return the same value.
+The true leaf already carries `Q+`; the false leaf already carries `R+`.
+`read_binding` adds the producer's `P+`/`P-` split and normalization must produce
+one completed destination with alternatives `{P+, Q+}` and `{P-, R+}`. Combine
+that result with a sibling completed arm carrying `{Q-, R-}` and call
+`factor_completed()`. Every cross-path pair is authenticated-exclusive (first
+via Q, second via R), so factoring must succeed and retain both values. Merely
+unioning all faces into one set would also pass incorrectly; assert the exact two
+path alternatives before factoring.
 
 - [ ] **Step 2: Write the lying failing test**
 
