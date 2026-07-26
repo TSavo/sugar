@@ -377,3 +377,77 @@ def test_a_fold_knows_its_own_sequence_type() -> None:
     alone never makes a pair undecided -- only its operand can."""
     assert _comprehension().denotes_value() is True
     assert _comprehension().runtime_type_is_decided() is True
+
+
+# -- the law is still HERE ---------------------------------------------------
+
+
+def test_the_base_class_still_states_the_law() -> None:
+    """A merged law has no instrument saying it is still there an hour later.
+
+    #6427 wrote `floor_value.py` wholesale from a base that predated #6415 and
+    deleted this law -- the map, both testimony methods, `_undecided_binary_law`
+    and the `return` on every binary arm -- with no conflict to review, because
+    a whole-file overwrite is not a conflict. Five files lost content and 30
+    tests went red on main before anyone looked.
+
+    Those 30 caught it eventually. This one names it in a single assertion, so
+    the next overwrite reports "the law is gone" instead of thirty downstream
+    symptoms.
+    """
+    from sugar_lift_py_tests.floor.floor_value import (
+        _BINARY_OPERATOR_COORDINATE,
+        FloorValue,
+    )
+
+    for method in ("denotes_value", "runtime_type_is_decided", "_undecided_binary_law"):
+        assert method in vars(FloorValue), f"FloorValue lost {method}"
+
+    # All thirteen operators, keyed by the dispatch surface's own vocabulary.
+    assert len(_BINARY_OPERATOR_COORDINATE) == 13
+
+
+def test_no_value_class_states_testimony_the_base_class_lost() -> None:
+    """An override of a method that no longer exists is a silent no-op.
+
+    When #6427 removed the base methods, the per-class `denotes_value`
+    overrides survived on eleven value classes -- each one a dead declaration
+    that reads as intent. This fires on the orphan directly, so the state
+    cannot recur quietly on any class that has spoken or ever will.
+    """
+    import importlib
+    import inspect
+
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    testimony = ("denotes_value", "runtime_type_is_decided")
+    orphaned = []
+    for module_name in (
+        "bytes_value",
+        "call_site_value",
+        "complex_value",
+        "comprehension_value",
+        "dict_value",
+        "list_value",
+        "none_value",
+        "predicate_value",
+        "set_value",
+        "string_value",
+        "symbolic_value",
+        "term_value",
+        "tuple_value",
+    ):
+        module = importlib.import_module(f"sugar_lift_py_tests.floor.{module_name}")
+        for value in vars(module).values():
+            if not (inspect.isclass(value) and issubclass(value, FloorValue)):
+                continue
+            for method in testimony:
+                if method in vars(value) and not hasattr(FloorValue, method):
+                    orphaned.append(f"{value.__name__}.{method}")
+
+    assert orphaned == []
+
+
+def test_the_undecided_pair_still_answers_end_to_end() -> None:
+    """The one shape that proves the law is wired, not merely present."""
+    _coordinate(BytesValue(b"x").add(_symbolic(), SITE), "+")
