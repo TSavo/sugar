@@ -45,6 +45,20 @@ class SymbolicValue(FloorValue):
     term: Term
     formal_coordinate: object | None = None
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a Python runtime value."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Undecided: this is an unresolved term: nothing names its Python type.
+
+        Which ``__op__``/``__rop__`` Python would select for an
+        operation over this value is therefore undecided too, so a
+        binary operation with it constructs a symbolic coordinate
+        rather than standing on a ground field law.
+        """
+        return False
+
     def denotes_a_value(self) -> bool:
         # A symbolic term IS a value whose identity is not decidable yet --
         # membership over it is an obligation, never a gap.

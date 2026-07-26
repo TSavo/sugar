@@ -16,6 +16,10 @@ class SetValue(FloorValue):
 
     elements: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``set``."""
+        return True
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
