@@ -38,7 +38,14 @@ ToolSearch if deferred. Model is gpt-5.5 xhigh (their default).
 
 **Briefs must be COMPLETE and INLINE** (memory: `$(cat file)` does NOT survive the MCP boundary —
 paste the whole thing). Every brief contains, in order:
-- **Required sentence (every fleet brief, verbatim):**
+- 
+**Build mode (2026-07-26):** Stop measuring the frontier. Build it. Gate =
+truthful twin + lying twin + focused tests + crash/timeout zeros preserved.
+No new census/scoreboard/receipt/classification/pin-only work. Re-measure only
+after assertion-With, resource-With, or final closure. See
+`docs/ledgers/python-build-not-measure-directive.md`.
+
+**Required sentence (every fleet brief, verbatim):**
   > The objective is to eliminate authenticated residuals, not preserve today’s board. Pins protect completed laws only. A red residual is work or reattribution—never a baseline to ratify.
 - Reality sync: "PR #N merged, #issue closed" — spiky workers lose track; tell them where they are.
 - Exact worktree path + branch + "verify with git rev-parse --show-toplevel".
