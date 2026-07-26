@@ -19,7 +19,11 @@ from sugar_lift_python_source.manager_construction import (
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
     ManagerConstructionGapV1,
+    _call_coordinate,
+    _install_opaque_call_obligation,
+    _install_source_call_frame,
     construct_manager_behavior,
+    resolve_source_visible_frame,
 )
 from sugar_lift_python_source.manager_protocol_construction import (
     ConstructedManagerProtocolV1,
@@ -34,7 +38,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import BindingEntryV1
-from sugar_source_tree.nodes import Call, ClassDef, Constant
+from sugar_source_tree.nodes import Call, ClassDef, Constant, Name
 from sugar_source_tree.tree import SourceFile
 
 
@@ -170,6 +174,81 @@ def test_free_name_call_stays_typed_loud(tmp_path):
     assert result.kind == "call-target-source-absent"
     assert ":" not in result.kind
     assert result.detail == "missing_helper"
+
+
+def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
+    graph, resolved, _, _ = _resolved(
+        tmp_path,
+        "def make_guard(expected):\n"
+        "    if expected:\n"
+        "        return expected\n"
+        "    return missing_helper(expected)\n",
+    )
+
+    projected = resolve_source_visible_frame(resolved, graph=graph)
+
+    assert isinstance(projected, tuple), projected
+    _, target = projected
+    context = target.unit.construction_context
+    missing_call = next(
+        node
+        for node in target.walk()
+        if isinstance(node, Call)
+        and isinstance(node.func, Name)
+        and node.func.id == "missing_helper"
+    )
+    coordinate = _call_coordinate(missing_call)
+    obligation = context.opaque_source_call_obligations[coordinate]
+    assert obligation.coordinate == coordinate
+    assert obligation.target_name == "missing_helper"
+    assert obligation.resolved_object_cid == resolved.cid
+
+
+def test_source_call_coordinate_rejects_conflicting_testimony():
+    source = "missing_helper(1)\n"
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, "conflict.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
+    )
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    coordinate = _call_coordinate(call)
+    from sugar_source_tree.panic import BackendDefect
+
+    obligation = OpaqueSourceCallObligationV1(
+        coordinate,
+        "missing_helper",
+        "blake3-512:" + "1" * 128,
+    )
+    _install_opaque_call_obligation(context, call, obligation)
+    _install_opaque_call_obligation(context, call, obligation)
+
+    with pytest.raises(BackendDefect, match="conflicting opaque-call obligation"):
+        _install_opaque_call_obligation(
+            context,
+            call,
+            OpaqueSourceCallObligationV1(
+                coordinate,
+                "other_helper",
+                "blake3-512:" + "2" * 128,
+            ),
+        )
+    with pytest.raises(BackendDefect, match="frame/obligation collision"):
+        _install_source_call_frame(context, call, object())
+
+    context.opaque_source_call_obligations.clear()
+    frame = object()
+    _install_source_call_frame(context, call, frame)
+    _install_source_call_frame(context, call, frame)
+    with pytest.raises(BackendDefect, match="frame/obligation collision"):
+        _install_opaque_call_obligation(context, call, obligation)
+    with pytest.raises(BackendDefect, match="conflicting source-call frame"):
+        _install_source_call_frame(context, call, object())
 
 
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):

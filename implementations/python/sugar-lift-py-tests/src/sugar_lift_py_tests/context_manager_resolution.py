@@ -66,6 +66,7 @@ class OpaqueSourceCallObligationV1:
     coordinate: SourceFragmentCoordinateV1
     target_name: str
     resolved_object_cid: str
+    resolution_kind: str = "opaque-call-target"
 
 
 @dataclass(frozen=True)

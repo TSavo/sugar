@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.context_manager_resolution import (
+    OpaqueSourceCallObligationV1,
+    TreeConstructionContextV1,
+)
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -778,26 +781,18 @@ def _resolve_source_visible_frame_uncached(
     external_frames: dict[str, object] = {}
     external_opaque: dict[str, str] = {}
 
-    def _blocking_call_targets(
+    def _parked_call_targets(
         function: FunctionDef,
-    ) -> tuple[str, tuple[str, ...]] | None:
-        """The structural condition blocking this definition's named callees.
+    ) -> tuple[tuple[Call, str, str], ...]:
+        """Return exact unresolved callees with their landed typed kind.
 
-        Returns ``(kind, names)`` where ``names`` is the WHOLE blocking set for
-        that kind, sorted -- never a first-hit projection.  The old
-        ``opaque[0]`` made the reported symbol depend on statement order, so a
-        definition blocked on several callees named one arbitrarily and
-        discarded the rest.
-
-        When a definition is blocked by more than one condition it is genuinely
-        blocked by all of them, and the row carries one kind, so the reported
-        kind follows the fixed precedence in ``_CALL_TARGET_GAP_PRECEDENCE``:
-        the capability gap that no coverage change can close, then the door
-        defect, then coverage.  The order is a property of this module, not of
-        the corpus.
+        Frame preparation classifies every named call through main's closed
+        call-target vocabulary, but it does not decide reachability.  Each
+        unresolved call is parked at its own coordinate; ordinary Sugar
+        control flow selects which obligation, if any, becomes a refusal.
         """
         binders = _frame_bound_names(function)
-        blocked: dict[str, set[str]] = {}
+        blocked: list[tuple[Call, str, str]] = []
         for call in _local_named_calls(function):
             name = call.func.id
             if name in external_frames:
@@ -810,7 +805,7 @@ def _resolve_source_visible_frame_uncached(
             if classification == "frame-bound-value":
                 # Bound HERE: a value, not a symbol.  The export door is never
                 # asked, because there is nothing for it to look up.
-                blocked.setdefault("value-call-target", set()).add(name)
+                blocked.append((call, name, "value-call-target"))
                 continue
             declined = external_opaque.get(name)
             if declined is None:
@@ -826,7 +821,7 @@ def _resolve_source_visible_frame_uncached(
                     # callee; memoizing it against the name would serve a
                     # traversal verdict to an unrelated one.
                     external_opaque[name] = declined
-            blocked.setdefault(declined, set()).add(name)
+            blocked.append((call, name, declined))
         # Dual-mode EffectBoundary factories return a concrete manager
         # (``return RaisesExc(...)``) without requiring every frame-bound
         # callee on the function-form branch (``func = args[0]; func(...)``).
@@ -834,11 +829,12 @@ def _resolve_source_visible_frame_uncached(
         # ``return helper()`` — pure higher-order sole returns and methods
         # with no return (``self.x = helper()``) still block (see twins).
         if _has_non_higher_order_return(function, binders):
-            blocked.pop("value-call-target", None)
-        for kind in _CALL_TARGET_GAP_PRECEDENCE:
-            if kind in blocked:
-                return kind, tuple(sorted(blocked[kind]))
-        return None
+            blocked = [
+                obligation
+                for obligation in blocked
+                if obligation[2] != "value-call-target"
+            ]
+        return tuple(blocked)
 
     # Every reachable definition is scanned, whether it is written as a
     # module-level function or as a method of a reachable class.
@@ -856,10 +852,18 @@ def _resolve_source_visible_frame_uncached(
     # loudly, so the two faces disagreed and the silent one was wrong.
     for definition in (target,) + tuple(definitions):
         for scanned in _scanned_definitions(definition):
-            blocking = _blocking_call_targets(scanned)
-            if blocking is not None:
-                kind, names = blocking
-                return ManagerConstructionGapV1(kind, resolved.cid, ",".join(names))
+            for call, name, kind in _parked_call_targets(scanned):
+                coordinate = _call_coordinate(call)
+                _install_opaque_call_obligation(
+                    context,
+                    call,
+                    OpaqueSourceCallObligationV1(
+                        coordinate,
+                        name,
+                        resolved.cid,
+                        resolution_kind=kind,
+                    ),
+                )
 
     frames: dict[str, object] = {}
     reaching_classes: dict[str, ClassDef] = {}
@@ -884,10 +888,18 @@ def _resolve_source_visible_frame_uncached(
         progressed = False
         for function in tuple(pending):
             local_calls = tuple(_local_named_calls(function))
-            blocking = _blocking_call_targets(function)
-            if blocking is not None:
-                kind, names = blocking
-                return ManagerConstructionGapV1(kind, resolved.cid, ",".join(names))
+            for call, name, kind in _parked_call_targets(function):
+                coordinate = _call_coordinate(call)
+                _install_opaque_call_obligation(
+                    context,
+                    call,
+                    OpaqueSourceCallObligationV1(
+                        coordinate,
+                        name,
+                        resolved.cid,
+                        resolution_kind=kind,
+                    ),
+                )
             unresolved = tuple(
                 call.func.id
                 for call in local_calls
@@ -900,7 +912,7 @@ def _resolve_source_visible_frame_uncached(
                 if nested is None:
                     nested = external_frames.get(call.func.id)
                 if nested is not None:
-                    context.source_call_frames[_call_coordinate(call)] = nested
+                    _install_source_call_frame(context, call, nested)
             frames[function.name] = function.source_visible_call_frame()
             pending.remove(function)
             progressed = True
@@ -1175,3 +1187,62 @@ def _call_coordinate(call: Call):
         span.end_line,
         span.end_col,
     )
+
+
+def _install_opaque_call_obligation(
+    context: TreeConstructionContextV1,
+    call: Call,
+    obligation: OpaqueSourceCallObligationV1,
+) -> None:
+    from sugar_source_tree.panic import BackendDefect
+
+    coordinate = _call_coordinate(call)
+    if obligation.coordinate != coordinate:
+        raise BackendDefect(
+            owner="manager_construction._install_opaque_call_obligation",
+            observed="obligation/call coordinate mismatch",
+            requested="exact source-call coordinate testimony",
+            fix="mint the obligation from the call being installed",
+        )
+    if coordinate in context.source_call_frames:
+        raise BackendDefect(
+            owner="manager_construction._install_opaque_call_obligation",
+            observed="frame/obligation collision",
+            requested="one source-call classification at the exact coordinate",
+            fix="keep authenticated frames and opaque obligations disjoint",
+        )
+    existing = context.opaque_source_call_obligations.get(coordinate)
+    if existing is not None and existing != obligation:
+        raise BackendDefect(
+            owner="manager_construction._install_opaque_call_obligation",
+            observed="conflicting opaque-call obligation",
+            requested="byte-identical duplicate testimony",
+            fix="resolve the conflicting target or authenticated owner",
+        )
+    context.opaque_source_call_obligations[coordinate] = obligation
+
+
+def _install_source_call_frame(
+    context: TreeConstructionContextV1,
+    call: Call,
+    frame: object,
+) -> None:
+    from sugar_source_tree.panic import BackendDefect
+
+    coordinate = _call_coordinate(call)
+    if coordinate in context.opaque_source_call_obligations:
+        raise BackendDefect(
+            owner="manager_construction._install_source_call_frame",
+            observed="frame/obligation collision",
+            requested="one source-call classification at the exact coordinate",
+            fix="keep authenticated frames and opaque obligations disjoint",
+        )
+    existing = context.source_call_frames.get(coordinate)
+    if existing is not None and existing != frame:
+        raise BackendDefect(
+            owner="manager_construction._install_source_call_frame",
+            observed="conflicting source-call frame",
+            requested="byte-identical duplicate frame testimony",
+            fix="resolve the conflicting authenticated source frame",
+        )
+    context.source_call_frames[coordinate] = frame
