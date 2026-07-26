@@ -131,9 +131,7 @@ def test_no_arm_disappears_and_order_is_first_occurrence(seed: int) -> None:
 def test_equal_destinations_merge_and_disjoin_guards_exactly_once() -> None:
     """Two arms, one destination: one output arm carrying the disjunction."""
     left, right = _guard(1), _guard(2)
-    produced = ExitSet(
-        (Completed(left, "same"), Completed(right, "same"))
-    ).normalize()
+    produced = ExitSet((Completed(left, "same"), Completed(right, "same"))).normalize()
 
     assert len(produced.exits) == 1
     assert produced.exits[0].value == "same"

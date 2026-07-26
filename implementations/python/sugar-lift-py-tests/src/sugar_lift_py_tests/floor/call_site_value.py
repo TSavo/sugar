@@ -31,7 +31,6 @@ def _callsite_coordinate_memo_size() -> int:
     return len(_CALLSITE_COORDINATE)
 
 
-
 def _term_cycle_key(term: Term) -> str:
     """Return a permanent content coordinate for an arbitrarily deep term.
 
