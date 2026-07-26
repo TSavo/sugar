@@ -40,6 +40,7 @@ def _reduce_into(element_sugars, ctx, build):
         rewrap_pending,
     )
     from sugar_lift_py_tests.outcome import true_guard
+    from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
     owner = f"collection {build.__name__}"
     reduced = tuple(element.desugar(ctx) for element in element_sugars)
@@ -71,10 +72,19 @@ def _reduce_into(element_sugars, ctx, build):
         pending = entry if entry is not None else pending
         stripped.append(plain)
 
+    # An element that PARTITIONS enters the fold with at most one completed arm
+    # (#6324). `and_then` is `ExitSet.sequence`, which distributes the tail
+    # under every completed arm of the prefix, so an unfactored element makes
+    # the accumulator grow multiplicatively: `test_arrow.py` measured 133,104
+    # arms arriving at one `normalize` call through this loop. Factoring moves
+    # the element's partition onto its VALUE (a `GuardedValue`, which a list
+    # holds like any other floor value) and leaves its halted arms at the exit
+    # level. The accumulator itself cannot be factored -- its completed value is
+    # the growing tuple this fold is building.
     outcome = Complete(())
     for element_outcome in stripped:
         outcome = outcome.and_then(
-            lambda collected, got=element_outcome: got.and_then(
+            lambda collected, got=factored_operand(element_outcome): got.and_then(
                 lambda value: Complete((*collected, value))
             )
         )

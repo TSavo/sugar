@@ -716,6 +716,41 @@ def sole_completed_outcome(outcome):
     return Complete(completed[0].value)
 
 
+def factored_operand(outcome):
+    """An OPERAND outcome presenting at most one completed arm (#6324).
+
+    THE LAW THIS ENFORCES. Every k-operand fold in the lift is written the same
+    way -- ``outcome = outcome.and_then(next_operand)``, k times, in
+    ``collection_sugar._reduce_into``, ``method_call_sugar._collect``,
+    ``bool_op_sugar``, ``fstring_sugar``. ``and_then`` is ``ExitSet.sequence``,
+    and ``sequence`` appends every exit of the tail under every COMPLETED exit
+    of the prefix. So an operand carrying m completed arms multiplies the
+    accumulator by m, and k operands distribute into m ** k arms.
+
+    #6319 made halting and partitioning operands LIFT instead of raising --
+    correctly; that ruling drained 369 defect rows and stays. But it thereby
+    put multi-arm completed faces into every one of those folds for the first
+    time. `pandas/tests/extension/test_arrow.py` measured 133,104 arms arriving
+    at ONE ``normalize`` call through ``collection_sugar._reduce_into``.
+
+    The accumulator itself cannot be factored: its completed value is the
+    growing tuple the fold is building, and a ``GuardedValue`` chain over
+    tuples is not a tuple. The OPERAND can. Factoring it moves that operand's
+    partition from the exit level to the value level -- one arm carrying a
+    ``GuardedValue``, which is an ordinary floor value that a collection, a
+    call argument, or a concatenation holds like any other. The accumulator
+    then stays at one completed arm by induction from ``Complete(())``, and the
+    halted arms stay at the exit level where they already grow linearly.
+
+    Same denotation, linear growth. Nothing is capped, pruned, or dropped, and
+    ``ExitSetFactoringGap`` still refuses loudly when an operand's completed
+    arms are not provably pairwise exclusive.
+    """
+    if not isinstance(outcome, ExitSet):
+        return outcome
+    return outcome.factor_completed().collapse()
+
+
 def outcome_to_exitset(outcome) -> ExitSet:
     if isinstance(outcome, ExitSet):
         return outcome
@@ -736,6 +771,7 @@ __all__ = [
     "partition",
     "Halted",
     "complement_guard",
+    "factored_operand",
     "false_guard",
     "sole_completed_outcome",
     "true_guard",
