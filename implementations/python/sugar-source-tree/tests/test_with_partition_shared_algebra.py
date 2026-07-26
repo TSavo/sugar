@@ -60,6 +60,8 @@ from sugar_lift_py_tests.context_manager_contract import (
     RaiseEffectKindV1,
     RuntimeSelected,
     Suppresses,
+    WarningEffectKindV1,
+    WarningObservationBindingV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
@@ -71,7 +73,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-from sugar_lift_py_tests.ir import PrimitiveSort
+from sugar_lift_py_tests.ir import PrimitiveSort, and_, atomic, make_var, str_const
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
@@ -762,6 +764,7 @@ ROUTER_SOURCES = (
     "sugar_lift_py_tests/outcome/exit_set.py",
     "sugar_lift_py_tests/outcome/exit_disposition.py",
     "sugar_lift_py_tests/sugar/with_effect_boundary_sugar.py",
+    "sugar_lift_py_tests/authenticated_exception_matching.py",
 )
 
 FORBIDDEN_IN_ROUTERS = (
@@ -851,6 +854,230 @@ def test_discrimination_the_routing_probe_observes_a_real_call(tmp_path, monkeyp
         assert not isinstance(
             disposition, EffectBoundaryDisposition
         ), "the resource with reached the algebra carrying an assertion contract"
+
+
+# ---------------------------------------------------------------------------
+# Law 12 -- an undecidable message predicate is RETAINED, not admitted, not dropped
+# ---------------------------------------------------------------------------
+
+# Same manager, same contract, same `match="boom"`. The only change is that the
+# raised message is a formal parameter instead of a literal, so "does this
+# message match this pattern" is a real predicate this compiler cannot settle.
+UNDECIDABLE_MESSAGE_BODY = (
+    "from contracts import scope as hold\n"
+    "def f(flag, note):\n"
+    '    with hold(ValueError, match="boom"):\n'
+    "        if flag:\n"
+    "            raise ValueError(note)\n"
+)
+
+
+def _retained_atoms(formula):
+    """Every ``py.re_search`` atom reachable in a guard."""
+    name = getattr(formula, "name", None)
+    if name is not None:
+        return {formula} if name == "py.re_search" else set()
+    found = set()
+    for operand in getattr(formula, "operands", ()):
+        found |= _retained_atoms(operand)
+    return found
+
+
+def test_undecidable_message_predicate_is_retained_as_an_obligation(tmp_path):
+    """The open predicate survives into the guards, on BOTH of its faces.
+
+    The body partitions into one halt (``flag``) and one completion. The halt
+    carries a ``ValueError`` whose identity the contract matches, so the only
+    open question is the message. A router that answered it would emit two
+    exits; retaining it emits three, and the two new ones stand on complementary
+    guards over the SAME predicate.
+    """
+    resource, boundary = _both_arms(
+        tmp_path, source=UNDECIDABLE_MESSAGE_BODY, stem="undecidable"
+    )
+    body_halt = _sole(_body_exitset(resource.body), Halted)
+
+    routed = _assertion_route(boundary)
+    on_halt = [
+        exit_
+        for exit_ in routed.exits
+        if _retained_atoms(exit_.guard) and exit_.guard != body_halt.guard
+    ]
+    assert len(on_halt) == 2, f"expected exactly 2 retained faces, got {on_halt}"
+
+    obligations = set()
+    for exit_ in on_halt:
+        obligations |= _retained_atoms(exit_.guard)
+    assert len(obligations) == 1, "the two faces do not share ONE predicate"
+    obligation = next(iter(obligations))
+
+    # Never admitted: the consumed face stands under the predicate, not under
+    # the incoming guard alone.
+    consumed = _on_guard(routed, and_([body_halt.guard, obligation]))
+    assert isinstance(consumed, Completed)
+    # Never dropped: the other face restores the EXACT incoming effect.
+    retained = _on_guard(
+        routed, and_([body_halt.guard, complement_guard(obligation)])
+    )
+    assert isinstance(retained, Halted)
+    assert retained.effect == body_halt.effect
+    assert retained.effect.occurrence == body_halt.effect.occurrence
+    assert retained.state == body_halt.state
+
+    # The predicate is the vendor's own, over the two constructed operands.
+    assert obligation.name == "py.re_search"
+    assert obligation.args[0] == str_const("boom")
+    assert obligation.args[1] == make_var("note")
+
+
+def test_discrimination_a_ground_message_is_decided_and_not_retained(tmp_path):
+    """The same law, same shape, literal message: NOTHING is retained.
+
+    Without this arm the law above is satisfied by a router that retains every
+    predicate, which would be a different lie (an obligation invented where the
+    fact was available). Assert exact cardinality on both sides: two exits, zero
+    retained atoms.
+    """
+    resource, boundary = _both_arms(tmp_path, stem="ground_message")
+    body_halt = _sole(_body_exitset(resource.body), Halted)
+
+    routed = _assertion_route(boundary)
+    assert len(routed.exits) == 2
+    assert not any(_retained_atoms(exit_.guard) for exit_ in routed.exits)
+    assert isinstance(_on_guard(routed, body_halt.guard), Completed)
+
+
+# ---------------------------------------------------------------------------
+# Law 13 -- a missing expected observation never becomes an absence fact
+# ---------------------------------------------------------------------------
+
+# The completed-edge disposition of the SAME one mechanism: the contract expects
+# an effect the body EMITS rather than one it halts on, so the observation rides
+# the completed edge. Everything else -- mode, operands, binding, signature,
+# source -- is the raise arm's.
+OBSERVATION_SEMANTICS = EffectBoundarySemanticsV1(
+    ExpectsModeV1(),
+    WarningEffectKindV1(),
+    FormalArgumentProjectionV1(0),
+    OptionalFormalArgumentProjectionV1(1),
+    WarningObservationBindingV1(),
+)
+
+
+def test_expected_observation_with_no_constructed_occurrence_stays_loud(tmp_path):
+    """No observation model, no routing -- and above all, no absence fact.
+
+    This compiler constructs no occurrence for an effect the body EMITS, so it
+    cannot say whether the expected observation happened. The one forbidden
+    output is the quiet one: a ``Completed`` exit, which would assert on the
+    record that the body ran and the expectation was met, or an
+    ``ExpectationNotMet`` halt, which would assert the opposite. Both are facts
+    about an observation nobody constructed. The site stays loud instead.
+
+    The refusal lands one rung earlier than a desugar gap: the contract never
+    installs a boundary sugar at all, so there is no object that could later be
+    routed into a completion by a hopeful arm.
+    """
+    from sugar_source_tree.panic import UnsupportedContextManagerSemantics
+
+    with pytest.raises(UnsupportedContextManagerSemantics) as raised:
+        _with_statement(
+            tmp_path, MATCHING_BODY, OBSERVATION_SEMANTICS, stem="observation"
+        )
+    assert raised.value.owner == "With._construct_sugar"
+    # The refusal names the observation as the missing thing, not the manager.
+    assert "semantics" in raised.value.observed
+
+
+def test_discrimination_the_same_site_routes_under_a_constructed_effect_kind(tmp_path):
+    """The refusal is about the observation, not about the fixture.
+
+    Byte-identical source, same signature, same operands, same binding shape --
+    only ``effect_kind`` differs. That arm routes and produces exactly two
+    exits, so the law above cannot be passing because the ``with`` failed to
+    construct.
+    """
+    boundary = _with_statement(
+        tmp_path, MATCHING_BODY, ASSERTION_SEMANTICS, stem="observation_control"
+    )
+    routed = boundary.desugar()
+    assert isinstance(routed, ExitSet)
+    assert len(routed.exits) == 2
+
+
+# ---------------------------------------------------------------------------
+# Law 14 -- arm conservation: every output arm traces to one input arm
+# ---------------------------------------------------------------------------
+
+
+def _conservation_report(body_es, routed):
+    """Map each output arm to the input arms whose guard it refines.
+
+    An output arm is *conserved* when its guard entails exactly one input
+    guard: either the input guard itself (the arm passed through, possibly with
+    its verdict changed) or that guard conjoined with a named retained
+    predicate (the arm was partitioned by an obligation the contract could not
+    settle). Anything else is an arm this router grew or lost.
+    """
+    report = []
+    for out in routed.exits:
+        atoms = _retained_atoms(out.guard)
+        sources = []
+        for incoming in body_es.exits:
+            if out.guard == incoming.guard:
+                sources.append((incoming, None))
+                continue
+            for atom in atoms:
+                for face in (atom, complement_guard(atom)):
+                    if out.guard == and_([incoming.guard, face]):
+                        sources.append((incoming, atom))
+        report.append((out, sources))
+    return report
+
+
+def test_every_output_arm_conserves_exactly_one_input_arm(tmp_path):
+    """Both the settled body and the retained body conserve their arms.
+
+    Run the law over the ground source (no retention) and the undecidable
+    source (one retention), because a conservation check that only ever sees
+    pass-through arms cannot see a fabricated one.
+    """
+    for source, stem, expected_arms in (
+        (MATCHING_BODY, "conserve_ground", 2),
+        (UNDECIDABLE_MESSAGE_BODY, "conserve_open", 3),
+    ):
+        resource, boundary = _both_arms(tmp_path, source=source, stem=stem)
+        body_es = _body_exitset(resource.body)
+        routed = _assertion_route(boundary)
+
+        assert len(routed.exits) == expected_arms
+        for out, sources in _conservation_report(body_es, routed):
+            assert len(sources) == 1, (
+                f"output arm {out.guard} traces to {len(sources)} input arms; "
+                "an arm was fabricated or two were merged"
+            )
+
+
+def test_discrimination_the_conservation_report_can_see_an_unconserved_arm(tmp_path):
+    """Arm the detector: a hand-added arm must trace to zero input arms.
+
+    ``!= 1`` is satisfied by 0 and by 2, so the law asserts exact cardinality
+    and this arm proves the 0 case is reachable by the same report.
+    """
+    resource, boundary = _both_arms(tmp_path, stem="conserve_probe")
+    body_es = _body_exitset(resource.body)
+    routed = _assertion_route(boundary)
+
+    invented = ExitSet(
+        (
+            *routed.exits,
+            Completed(atomic("py.truthy", [make_var("invented")]), None),
+        )
+    )
+    counts = sorted(
+        len(sources) for _out, sources in _conservation_report(body_es, invented)
+    )
+    assert counts == [0, 1, 1], counts
 
 
 # ---------------------------------------------------------------------------
