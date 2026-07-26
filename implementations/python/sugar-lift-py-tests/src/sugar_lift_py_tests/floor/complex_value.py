@@ -53,6 +53,35 @@ class ComplexValue(FloorValue):
             )
         return super().equals(other, site)
 
+    # Python's numeric tower is CLOSED over int/float/bool/complex under these
+    # three operations, so a complex literal stands on each of their floors for
+    # any field member. See floor/complex_arithmetic.py for the one law; a
+    # non-member right operand falls through to this floor's own loud gap.
+
+    def add(self, other, site):
+        from sugar_lift_py_tests.floor.complex_arithmetic import complex_add
+
+        folded = complex_add(self, other, site)
+        if folded is None:
+            return super().add(other, site)
+        return folded
+
+    def subtract(self, other, site):
+        from sugar_lift_py_tests.floor.complex_arithmetic import complex_subtract
+
+        folded = complex_subtract(self, other, site)
+        if folded is None:
+            return super().subtract(other, site)
+        return folded
+
+    def multiply(self, other, site):
+        from sugar_lift_py_tests.floor.complex_arithmetic import complex_multiply
+
+        folded = complex_multiply(self, other, site)
+        if folded is None:
+            return super().multiply(other, site)
+        return folded
+
     def to_term(self, *, owner: str):
         del owner
         from decimal import Decimal

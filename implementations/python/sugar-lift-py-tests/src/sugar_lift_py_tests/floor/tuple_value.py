@@ -243,47 +243,10 @@ class TupleValue(FloorValue):
         )
 
     def multiply(self, other, site):
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
+        # Python tuple repetition, through the one sequence-repetition law.
+        from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-        if type(other) is TermValue and type(other.value) in (int, bool):
-            from sugar_lift_py_tests.outcome import Complete
-
-            repeated = len(self.elements) * max(other.value, 0)
-            static_unfold_limit = 128
-
-            if repeated > static_unfold_limit:
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="TupleValue.multiply",
-                    blame=str(site),
-                    observed=f"tuple repetition cardinality={repeated}",
-                    requested=f"finite repetition at or below {static_unfold_limit}",
-                    fix="keep exact sequence repetition within the finite unfold budget",
-                )
-            return Complete(TupleValue(self.elements * other.value))
-        from sugar_lift_py_tests.floor.sequence_repetition import (
-            is_known_invalid_repetition_count,
-            known_invalid_repetition_type_error,
-        )
-
-        if is_known_invalid_repetition_count(other):
-            return known_invalid_repetition_type_error(self, other, site)
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "python:sequence_repeat",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return repeat_sequence(self, other, site, rebuild=TupleValue)
 
     def subscript(self, index, site):
         # Concrete tuple + in-range TermValue int folds to the element; out of

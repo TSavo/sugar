@@ -132,6 +132,14 @@ def _closed_member_equal(left, right):
     supported = (TermValue, StringValue, BytesValue, NoneValue, *bool_types)
     if type(left) in supported and type(right) in supported:
         return False
+    # A residual pair measured on the installed pandas tree lands here:
+    # `{List,Tuple}Value.contains x CallSiteValue`. A call's result IS a value of
+    # undecided identity, so the honest answer is ``None`` (emit the typed
+    # python.*.contains obligation), not NotImplemented (a gap). What it is NOT
+    # is "any value carrying a term": FunctionCallable carries one and is a
+    # callable, never a member -- two tests pin that refusal deliberately. The
+    # discriminator has to be the value's own testimony about whether it DENOTES
+    # a value, which no floor states yet. Left loud until it does.
     return NotImplemented
 
 

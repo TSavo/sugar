@@ -807,152 +807,71 @@ class FloorValue:
             )
         )
 
+    def _binary_floor_gap(self, other, site, owner, floor):
+        """The ONE None arm for every binary-operation floor.
+
+        A binary operation stands on a floor only for a NAMED PAIR of operand
+        categories, so the gap names both: the left value's own category
+        (``observed``) and the right operand's, in ``requested``/``fix``.
+        Discarding the right operand made every gap of one owner look alike --
+        34 ``add`` panics on the installed pandas tree said only "TermValue
+        does not stand on the addition floor" and named nothing to implement.
+        The pair IS the dispatch unit; a gap that cannot name its pair cannot
+        be worked.
+
+        The category is read from the operand's own type, which is its
+        authenticated construction coordinate -- never from a lexical name.
+        """
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        observed = type(self).__name__
+        operand = type(other).__name__
+        construction_panic_gap(
+            owner=owner,
+            blame=str(site),
+            observed=observed,
+            requested=f"stand on the {floor} floor for a {operand} right operand",
+            fix=f"write more Floor: implement {observed}.{owner} for {operand}",
+        )
+
     def add(self, other, site):
         # Default: this value does not stand on the addition floor -- it cannot answer
         # what it is to add another value. The None arm: a value that CAN implements
         # add and gives back the sum (or concat); absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="add",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the addition floor",
-            fix=f"write more Floor: implement {observed}.add",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "add", "addition")
 
     def subtract(self, other, site):
         # Default: this value does not stand on the subtraction floor -- it cannot
         # answer what it is minus another value. The None arm: a value that CAN
         # implements subtract and gives back a term; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="subtract",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the subtraction floor",
-            fix=f"write more Floor: implement {observed}.subtract",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "subtract", "subtraction")
 
     def multiply(self, other, site):
         # Default: this value does not stand on the multiplication floor -- it cannot
         # answer what it multiplies by another value to. The None arm: a value that CAN
         # implements multiply and gives back a product; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="multiply",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the multiplication floor",
-            fix=f"write more Floor: implement {observed}.multiply",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "multiply", "multiplication")
 
     def power(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        observed = type(self).__name__
-        construction_panic_gap(
-            owner="power",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the power floor",
-            fix=f"write more Floor: implement {observed}.power",
-        )
+        self._binary_floor_gap(other, site, "power", "power")
 
     def divide(self, other, site):
         # Default: this value does not stand on the division floor -- it cannot answer
         # what it divides by another value to. The None arm: a value that CAN
         # implements divide and gives back a quotient; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="divide",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the division floor",
-            fix=f"write more Floor: implement {observed}.divide",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "divide", "division")
 
     def modulo(self, other, site):
         # Default: this value does not stand on the modulo floor -- it cannot answer
         # what remainder it leaves by another value. The None arm: a value that CAN
         # implements modulo and gives back a remainder; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="modulo",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the modulo floor",
-            fix=f"write more Floor: implement {observed}.modulo",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "modulo", "modulo")
 
     def floor_divide(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="floor_divide",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the floor-division floor",
-            fix=f"write more Floor: implement {observed}.floor_divide",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "floor_divide", "floor-division")
 
     def right_shift(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="right_shift",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the right-shift floor",
-            fix=f"write more Floor: implement {observed}.right_shift",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        self._binary_floor_gap(other, site, "right_shift", "right-shift")
 
     def bitwise_and(self, other, site):
         return self._runtime_bitwise_gap(other, site, "bitwise_and", "and")
@@ -967,30 +886,12 @@ class FloorValue:
         return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
 
     def matrix_multiply(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        observed = type(self).__name__
-        construction_panic_gap(
-            owner="matrix_multiply",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the matrix-multiplication floor",
-            fix=f"write more Floor: implement {observed}.matrix_multiply",
+        self._binary_floor_gap(
+            other, site, "matrix_multiply", "matrix-multiplication"
         )
 
     def _runtime_bitwise_gap(self, other, site, owner, label):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        observed = type(self).__name__
-        construction_panic_gap(
-            owner=owner,
-            blame=str(site),
-            observed=observed,
-            requested=f"stand on the runtime bitwise {label} floor",
-            fix=f"write more Floor: implement {observed}.{owner}",
-        )
+        self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
 
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.gap.panic import construction_panic
