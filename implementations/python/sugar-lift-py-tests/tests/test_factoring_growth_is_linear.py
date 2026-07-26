@@ -5,9 +5,26 @@ into m ** k exit-level arms, because `sequence` appends every exit of the tail
 under every completed exit of the prefix. `factor_completed` fixed it by moving
 the partition onto the VALUE, so k steps contribute k guarded values to one arm.
 
-Any change to the exit algebra -- and in particular to what a merged arm RETAINS
-(#6336/#6420) -- can silently restore the exponential. A family that grows as
-factors are appended is `m ** k` under a new name.
+WHAT THIS GUARDS, AND WHAT IT DOES NOT. It covers `factor_completed`'s admission
+and how a factored family is built: a change there can silently restore the
+exponential, and a family that grows as factors are appended is `m ** k` under a
+new name.
+
+It does NOT cover what a merged arm RETAINS (#6336/#6420), and an earlier draft
+of this docstring claimed it did. Measured, not assumed: reverting `_merge_faces`
+to `return frozenset()` -- #6420's rule fully removed, and worse than the
+intersection that preceded it -- leaves both tests below GREEN, while
+`test_exit_set_partition_testimony.py` reds two. That surface is guarded there,
+by `test_a_disjoining_merge_keeps_every_side_either_contributor_could_be_on` and
+`test_a_merge_whose_arms_agree_KEEPS_the_face_they_share`.
+
+The reason is structural, and it is the trap below taken one turn further: the
+equal-destination merge only fires on EQUAL destinations, and the accumulation
+that makes the exponential reachable is exactly what makes every destination
+distinct. You cannot have both in one fold -- no accumulation, no exponential;
+accumulation, no merge. A retention guard therefore needs its own non-accumulating
+fold asserting on FACES RETAINED, because arm count cannot see it: with no
+accumulation the count is flat regardless of what the rule does.
 
 THE CONSTRAINT THAT MAKES THIS TEST REAL, and it is not obvious: a fold whose
 tail IGNORES the prefix value cannot blow up at all, no matter what the algebra
