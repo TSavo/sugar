@@ -231,6 +231,9 @@ class DesugarAxis:
 
     def __init__(self) -> None:
         self.families: Counter[str] = Counter()
+        # The disjoint split of R_desugar, read off the occurrence-key prefix.
+        self.categories: Counter[str] = Counter()
+        self.by_category_owner: Counter[str] = Counter()
         self.construction_panics: list[dict[str, Any]] = []
         self.defects: list[dict[str, Any]] = []
         # Row identity: (owner, authenticated effect-occurrence coordinate).
@@ -244,9 +247,40 @@ class DesugarAxis:
             return
         self._seen.add(key)
         self.families[owner] += 1
+        # R_desugar is a MIXED number and must never be published raw. The
+        # occurrence key already says which kind of row this is: a
+        # ``desugar-call:`` key is a typed refusal (the reduction stopped and
+        # owes work), anything else is an authenticated effect occurrence --
+        # the correct OUTPUT of a reduction that succeeded. Publishing the sum
+        # as "work remaining" overstated the earlier board by 7.6x, because
+        # 7483 of 8624 rows were accounted semantics.
+        category = (
+            "typed-refusal"
+            if occurrence.startswith("desugar-call:")
+            else "constructed-effect"
+        )
+        self.categories[category] += 1
+        self.by_category_owner[f"{category}/{owner}"] += 1
 
-    def _defect(self, kind: str, where: str, detail: str) -> None:
-        self.defects.append({"kind": kind, "where": where, "detail": detail})
+    def _defect(
+        self, kind: str, where: str, detail: str, *, exc: object | None = None
+    ) -> None:
+        row: dict[str, Any] = {"kind": kind, "where": where, "detail": detail}
+        # If the exception carries a classifier verdict, RECORD IT. #6364 built
+        # the remaining-work vs correct-refusal split as data on the exception
+        # (ExitSetFactoringGap.classification), and this census was
+        # stringifying the message and throwing that data away -- so every
+        # factoring gap reached the ledger UNCLASSIFIED and the split could not
+        # be read at corpus scale. Never re-derive it by parsing a repr.
+        classify = getattr(exc, "classification", None)
+        if callable(classify):
+            try:
+                verdict = classify()
+            except Exception:  # noqa: BLE001 -- a classifier defect is not R
+                verdict = None
+            if verdict is not None and hasattr(verdict, "row"):
+                row["classification"] = verdict.row()
+        self.defects.append(row)
 
     # -- the one door -------------------------------------------------------
 
@@ -294,7 +328,9 @@ class DesugarAxis:
             return
         if isinstance(outcome, tuple) and len(outcome) == 2 and outcome[0] == "defect":
             exc = outcome[1]
-            self._defect("desugar-exception", where, f"{type(exc).__name__}: {exc}")
+            self._defect(
+                "desugar-exception", where, f"{type(exc).__name__}: {exc}", exc=exc
+            )
             return
 
         walk = OutcomeWalk().walk(outcome)
@@ -317,6 +353,8 @@ class DesugarAxis:
 
     def merge(self, other: "DesugarAxis") -> None:
         self.families.update(other.families)
+        self.categories.update(other.categories)
+        self.by_category_owner.update(other.by_category_owner)
         self.construction_panics.extend(other.construction_panics)
         self.defects.extend(other.defects)
         self._seen |= other._seen
@@ -325,6 +363,13 @@ class DesugarAxis:
         return {
             "desugarFamilies": dict(self.families),
             "R_desugar": sum(self.families.values()),
+            # Disjoint and summing to R_desugar. Read these, not the total.
+            "desugarCategories": dict(self.categories),
+            "desugarByCategoryOwner": dict(self.by_category_owner),
+            "R_desugar_owed_work": int(self.categories.get("typed-refusal", 0)),
+            "R_desugar_accounted_semantics": int(
+                self.categories.get("constructed-effect", 0)
+            ),
             "desugarConstructionPanics": list(self.construction_panics),
             "desugarDefects": list(self.defects),
         }
