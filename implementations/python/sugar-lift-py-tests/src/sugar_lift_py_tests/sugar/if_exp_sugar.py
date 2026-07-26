@@ -136,6 +136,32 @@ class IfExpSugar(Sugar):
         exits = outcome_to_exitset(then_out).guarded(formula)
         exits = exits.union(outcome_to_exitset(else_out).guarded(not_formula))
 
+        # FACTOR THE COMPLETED FACE (#6324). An EXPRESSION's exit set is consumed
+        # by `and_then`, and `ExitSet.sequence` appends every exit of the tail
+        # under every completed exit of the prefix: a receiver with m completed
+        # arms followed by k operands distributes into m ** k arms. Two completed
+        # arms here is not a small number downstream -- it is the base of an
+        # exponent. The corpus measured it: one union at this line arrived with
+        # 131,364 arms on `pandas/tests/extension/test_arrow.py`, reached through
+        # `method_call_sugar._collect`'s operand chain, and the file crossed a
+        # 300s deadline on an idle 32-core box.
+        #
+        # Factoring moves the SAME partition from the exit level to the value
+        # level -- one arm carrying a `GuardedValue` chain -- where k steps
+        # contribute k guarded values instead of m ** k arms. Same denotation,
+        # linear growth. It is the primitive #6315 built for exactly this and
+        # until now had exactly one caller (`SpreadSugar`); the conditional
+        # expression is the second producer of a multi-arm completed face, and it
+        # reached `sequence` without passing through it.
+        #
+        # `factor_completed` REFUSES (`ExitSetFactoringGap`) when the completed
+        # arms are not provably pairwise exclusive, and that refusal is kept: the
+        # two faces here are guarded by `formula` and `not formula`, so a chain
+        # that is first-match-wins carries them exactly. Nothing is capped,
+        # nothing is pruned, no arm is dropped, and no halted arm is touched --
+        # the halted face already grows linearly at the exit level.
+        exits = exits.factor_completed()
+
         # A partition with a single completed face and no halt is a plain value
         # again (normalize may have merged the faces): collapse rather than hand
         # callers a one-arm ExitSet they would have to unwrap. Anything still
