@@ -4,6 +4,69 @@
 **Corpus:** pandas 3.0.3, 1,421 files, `battleaxe:~/pandas303-audit/pandas`
 **Pin:** `docs/ledgers/pins/pandas-3.0.3.pin.json`
 
+## The baseline
+
+`docs/ledgers/pandas-3.0.3-control-effect-9a78828ee.json`. 1,421 enrolled,
+**1,421 terminal rows**, 55 min wall, peak RSS 12.1 GB for the whole corpus.
+Zero missing, zero duplicate, zero malformed. **Red**, and it says why.
+
+```
+enrolled 1421   terminal rows 1421   completed 1416   (5 terminal defect rows)
+functions 27451                      construct-clean 22550
+
+R_construction                    4     construction panics            0
+R_desugar                      9694     desugar construction panics  502
+R_backend_defects                 5     desugar defects               40
+R_unresolvable_dispatch (#6329)   0     factoring gaps                13
+timeouts                          0     controlEffectStableZero    False
+```
+
+### The two quantities, side by side — this is the whole point
+
+```
+site coverage   site:with-statement 7663    site:with-item 7673
+ΔR              With-attributable construction R: 2
+                (ContextManagerResolutionConstructionGap 1, UnsupportedWithBindingTarget 1)
+```
+
+**7,663 With sites. Two construction-R occurrences.** The `4125 / 811 / 85`
+partition is neither of these numbers, and could not be reproduced by either,
+because it was a name-derived split of a third thing. Total construction R over
+the whole corpus is **4**.
+
+### With residual, bucketed structurally
+
+```
+5737  gap:unrecognized:opaque-call-target:func      17  derived-contract
+ 715  gap:dynamic-export                            17  gap:unrecognized:non-manager-result:BlockValue
+ 709  gap:unrecognized:opaque-call-target:cast      14  gap:unrecognized:artifact-module-absent
+  24  gap:unrecognized:target-outside-binding        7  gap:no-derived-contract
+```
+
+Two things fall out of this table that a name-table classifier could not have
+shown. **`dynamic-export` is now 715 measured rows** rather than 780 aborted
+files — the decode fix turned a fatal into a number. And the vocabulary is
+dominated by `gap:unrecognized:*`, meaning `WithConstructionGapKind`'s closed
+enum covers a small fraction of the resolution kinds actually produced. The
+`parse` fallback preserves each wire kind instead of crashing or collapsing it,
+which is the `dynamic-export` fix generalized — but the gap between the declared
+vocabulary and the live one is itself a finding.
+
+### What is red, and whose
+
+- **502 desugar construction panics** — top owner
+  `ContractConditionalConstructionV1.and_then` (283), then `IfExpSugar._join`
+  (46), `collection ListValue` (41). Construction-law None arms: red, and never
+  semantic R.
+- **13 `ExitSetFactoringGap`** survive #6336, at named sites
+  (`core/arrays/datetimelike.py:1397`, `:1461`, `core/generic.py:13403`).
+  Partition testimony did not close all of them. Reported as observed; the
+  prediction was zero.
+- **5 terminal defect rows** — 3 are one backend defect,
+  `spans.LineTable.line_col` reporting `offset 55069 outside 0..27637` on large
+  test files; 2 are `SourceCallBindingGap: unconsumed call actual`.
+- **0 construction panics and 0 timeouts** across 1,421 files.
+
 ## Why this exists
 
 Two measurements were quoted against each other as one frontier. An AST-shape

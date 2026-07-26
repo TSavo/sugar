@@ -1148,8 +1148,14 @@ def main() -> int:
             f"{len(unresolvable_dispatch)} unresolvable dispatch targets (#6329)"
         )
     if files_completed != len(file_names):
+        # NOT "denominator incomplete" -- that phrasing was itself misleading.
+        # Every enrolled file DID produce a terminal row (that is what a
+        # complete denominator means); some of those rows are defects rather
+        # than completions. Two different facts, two different sentences.
         red_reasons.append(
-            f"denominator incomplete: {files_completed}/{len(file_names)} completed"
+            f"{len(file_names) - files_completed} of {len(file_names)} enrolled "
+            "files produced a terminal row that is not a completion "
+            "(denominator is complete; the completion count is not)"
         )
     if not denominator["complete"]:
         red_reasons.append("denominator contaminated (missing/duplicate/malformed)")
