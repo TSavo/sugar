@@ -128,6 +128,10 @@ class FalseBoolLiteralSugar(Sugar, GuardStableValue):
     def callsites(self):
         return ()
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes ``False``."""
+        return True
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import bool_const

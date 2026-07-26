@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 class StringValue(GuardStableValue):
     value: str
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``str``."""
+        return True
+
     def python_isinstance(self, type_name: str, type_term, site):
         del type_term
         from sugar_lift_py_tests.outcome import Complete
