@@ -65,6 +65,61 @@ class ExitSetFactoringGap(ValueError):
     """
 
 
+@dataclass(frozen=True)
+class PartitionFace:
+    """Testimony that this exit lies on ONE named side of a producer's split.
+
+    The producer that decided to branch mints both faces at that moment (see
+    ``partition``) and applies one to each arm. Two exits carrying the same
+    ``partition`` with different ``side`` provably cannot both hold, because
+    the producer SAID SO when it split — nobody re-derives it from how the
+    guards happen to be spelled.
+
+    This is the difference the factoring gap turns on. ``_are_exclusive`` is a
+    sound but shallow prover over guard SHAPE: it sees ``g`` against ``not g``
+    one literal deep and nothing else. A partition that survives a disjunctive
+    merge, a nested conjunction, or a value-level rewrite is still a partition,
+    but its shape no longer advertises it. Carried testimony does not decay
+    that way.
+    """
+
+    partition: object
+    side: object
+
+
+def partition(owner: object) -> tuple[PartitionFace, PartitionFace]:
+    """Mint the two faces of a split OWNED by ``owner``.
+
+    ``owner`` is the producing sugar's own identity for this one branch
+    decision — a site key, a fragment coordinate, anything it can content
+    address. It is testimony, not a hint: the faces are complementary because
+    this call created them as a pair, not because a formula looks negated.
+
+    A producer that does not own a genuine two-way split must not call this.
+    Handing unrelated arms faces of one partition would assert an exclusion
+    that does not hold, and the refusal in ``factor_completed`` exists to catch
+    exactly the case where no such testimony was ever earned.
+    """
+    token = ("sugar.exit_set.partition", owner)
+    return PartitionFace(token, True), PartitionFace(token, False)
+
+
+_NO_FACES: frozenset[PartitionFace] = frozenset()
+
+
+def _faces_exclusive(
+    left: frozenset[PartitionFace], right: frozenset[PartitionFace]
+) -> bool:
+    """Whether carried testimony alone proves the two arms cannot both hold."""
+    if not left or not right:
+        return False
+    sides: dict[object, object] = {face.partition: face.side for face in left}
+    for face in right:
+        if face.partition in sides and sides[face.partition] != face.side:
+            return True
+    return False
+
+
 def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
     """Flatten a conjunction into its literals; anything else is one literal."""
     if getattr(guard, "kind", None) == "and":
@@ -150,6 +205,7 @@ def _destination_key(exit_: "Exit[T]") -> object:
 class Completed(Generic[T]):
     guard: Formula
     value: T
+    faces: frozenset[PartitionFace] = _NO_FACES
 
 
 @dataclass(frozen=True)
@@ -157,6 +213,7 @@ class Halted:
     guard: Formula
     effect: Effect
     state: object | None = None
+    faces: frozenset[PartitionFace] = _NO_FACES
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
@@ -183,22 +240,36 @@ class ExitSet(Generic[T]):
 
     @classmethod
     def conditional_halt(cls, guard: Formula, effect: Effect, state: T) -> "ExitSet[T]":
+        # A halt-or-not split this constructor owns outright: mint it rather
+        # than leave the exclusion legible only in the ``not_`` spelling.
+        halt_face, pass_face = partition(("conditional_halt", guard))
         return cls(
-            (Halted(guard, effect, state), Completed(not_(guard), state))
+            (
+                Halted(guard, effect, state, frozenset({halt_face})),
+                Completed(not_(guard), state, frozenset({pass_face})),
+            )
         ).normalize()
 
     def union(self, other: "ExitSet[T]") -> "ExitSet[T]":
         return ExitSet((*self.exits, *other.exits)).normalize()
 
-    def guarded(self, guard: Formula) -> "ExitSet[T]":
-        """Restrict every exit to one branch of an enclosing partition."""
+    def guarded(self, guard: Formula, face: PartitionFace | None = None) -> "ExitSet[T]":
+        """Restrict every exit to one branch of an enclosing partition.
+
+        ``face`` is the caller's testimony that ``guard`` is one named side of a
+        split it owns (see ``partition``). It rides along on every restricted
+        exit so that a later ``factor_completed`` can read the exclusion off the
+        arms instead of trying to re-prove it from guard shape. Omitting it is
+        the honest default for a restriction that is not a partition face.
+        """
         exits: list[Exit[T]] = []
         for exit_ in self.exits:
             combined = _and_guards(guard, exit_.guard)
+            faces = exit_.faces if face is None else exit_.faces | {face}
             if isinstance(exit_, Completed):
-                exits.append(Completed(combined, exit_.value))
+                exits.append(Completed(combined, exit_.value, faces))
             else:
-                exits.append(Halted(combined, exit_.effect, exit_.state))
+                exits.append(Halted(combined, exit_.effect, exit_.state, faces))
         return ExitSet(tuple(exits)).normalize()
 
     def factor_completed(self) -> "ExitSet[T]":
@@ -236,6 +307,13 @@ class ExitSet(Generic[T]):
 
         for index, arm in enumerate(completed):
             for other in completed[index + 1 :]:
+                # Carried testimony first: a producer that minted these as two
+                # faces of ONE split already answered this, and its answer does
+                # not decay when the guards are merged or rewritten. The
+                # shape-level prover stays as the sound fallback for arms whose
+                # producer never claimed a partition.
+                if _faces_exclusive(arm.faces, other.faces):
+                    continue
                 if not _are_exclusive(arm.guard, other.guard):
                     raise ExitSetFactoringGap(
                         "ExitSet.factor_completed cannot factor a completed face "
@@ -248,11 +326,18 @@ class ExitSet(Generic[T]):
                         "face, so it can only carry a partition. Overlapping "
                         "arms with different values are two simultaneously "
                         "reachable outcomes, and collapsing them would drop one.\n"
-                        "  fix: give the producing sugar complementary guards "
-                        "(the branch join shape ``g`` / ``not g``), or extend "
-                        "_are_exclusive to see the exclusion these two guards "
-                        "already carry. Do NOT re-materialize the product: that "
-                        "is the m ** k blow-up #6309 removed."
+                        "  fix: if the producing sugar OWNS a two-way split "
+                        "here, mint it with outcome.exit_set.partition(owner) "
+                        "and pass each face to .guarded(guard, face) — carried "
+                        "testimony survives merges and rewrites that guard "
+                        "shape does not. If it owns no split, these arms really "
+                        "are simultaneously reachable and this gap is correct: "
+                        "keep both at the exit level. Do NOT re-materialize the "
+                        "product (the m ** k blow-up #6309 removed), and do NOT "
+                        "widen _are_exclusive to guess exclusivity from how the "
+                        "formulas are spelled.\n"
+                        f"  arm A faces: {sorted(str(f) for f in arm.faces)}\n"
+                        f"  arm B faces: {sorted(str(f) for f in other.faces)}"
                     )
 
         from sugar_lift_py_tests.floor import GuardedValue
@@ -265,7 +350,14 @@ class ExitSet(Generic[T]):
         for arm in completed[1:]:
             face_guard = _or_guards(face_guard, arm.guard)
 
-        factored = Completed(face_guard, chain)
+        # The factored arm holds under the DISJUNCTION of the arms' guards, so
+        # only testimony every arm carried still holds of it. Intersection, not
+        # union: a face true of one arm says nothing about the merged face.
+        factored_faces = completed[0].faces
+        for arm in completed[1:]:
+            factored_faces = factored_faces & arm.faces
+
+        factored = Completed(face_guard, chain, factored_faces)
         exits: list[Exit[T]] = []
         placed = False
         for exit_ in self.exits:
@@ -340,14 +432,23 @@ class ExitSet(Generic[T]):
                     and exit_.effect == prior.effect
                     and exit_.state == prior.state
                 )
+                # Same destination under a DISJOINED guard: only testimony both
+                # arms carried survives the merge, for the same reason as in
+                # factor_completed. Intersecting here is what keeps a merged
+                # arm from claiming a face it only held on one side.
                 if same_completed:
                     merged[index] = Completed(
-                        _or_guards(prior.guard, exit_.guard), prior.value
+                        _or_guards(prior.guard, exit_.guard),
+                        prior.value,
+                        prior.faces & exit_.faces,
                     )
                     break
                 if same_halted:
                     merged[index] = Halted(
-                        _or_guards(prior.guard, exit_.guard), prior.effect, prior.state
+                        _or_guards(prior.guard, exit_.guard),
+                        prior.effect,
+                        prior.state,
+                        prior.faces & exit_.faces,
                     )
                     break
             else:
@@ -369,10 +470,14 @@ class ExitSet(Generic[T]):
                 continue
             for following in step(exit_.value).exits:
                 guard = _and_guards(exit_.guard, following.guard)
+                # Conjoined guard: both sets of testimony hold of the result.
+                faces = exit_.faces | following.faces
                 if isinstance(following, Completed):
-                    exits.append(Completed(guard, following.value))
+                    exits.append(Completed(guard, following.value, faces))
                 else:
-                    exits.append(Halted(guard, following.effect, following.state))
+                    exits.append(
+                        Halted(guard, following.effect, following.state, faces)
+                    )
         return ExitSet(tuple(exits)).normalize()
 
     def and_then(self, step):
@@ -405,17 +510,20 @@ class ExitSet(Generic[T]):
         for incoming in self.exits:
             for clean in cleanup_exits:
                 guard = _and_guards(incoming.guard, clean.guard)
+                faces = incoming.faces | clean.faces
                 if isinstance(clean, Halted):
-                    exits.append(Halted(guard, clean.effect, clean.state))
+                    exits.append(Halted(guard, clean.effect, clean.state, faces))
                     continue
                 if restores(clean.value):
                     if isinstance(incoming, Completed):
-                        exits.append(Completed(guard, incoming.value))
+                        exits.append(Completed(guard, incoming.value, faces))
                     else:
-                        exits.append(Halted(guard, incoming.effect, incoming.state))
+                        exits.append(
+                            Halted(guard, incoming.effect, incoming.state, faces)
+                        )
                 else:
                     # Terminal cleanup completion supersedes (return in finally).
-                    exits.append(Completed(guard, clean.value))
+                    exits.append(Completed(guard, clean.value, faces))
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit(
@@ -454,8 +562,9 @@ class ExitSet(Generic[T]):
         for incoming in self.exits:
             for ex in exit_exits:
                 guard = _and_guards(incoming.guard, ex.guard)
+                faces = incoming.faces | ex.faces
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect, ex.state))
+                    exits.append(Halted(guard, ex.effect, ex.state, faces))
                     continue
                 carried = (
                     incoming.value
@@ -468,23 +577,41 @@ class ExitSet(Generic[T]):
                     # incoming exit leaves as BOTH faces under complementary
                     # guards, so the predicate reaches the emitted FOL instead
                     # of being admitted or dropped by silence here.
+                    #
+                    # This site OWNS that split, so it mints the partition and
+                    # stamps each side. The two guards are complementary by
+                    # construction here; downstream must not have to rediscover
+                    # that from their shape after they have been conjoined with
+                    # a prefix or merged with a sibling arm.
                     obligation = verdict.obligation
-                    for sub_guard, sub_verdict in (
-                        (_and_guards(guard, obligation), verdict.held),
+                    # Owner identity is the split itself — the deciding
+                    # predicate under the prefix it is decided beneath. No
+                    # object identity: two runs that build the same split must
+                    # agree, and a token that changes with allocation would
+                    # make the testimony unreproducible.
+                    held_face, failed_face = partition(
+                        ("and_exit.retained_obligation", obligation, guard)
+                    )
+                    for sub_guard, sub_verdict, sub_face in (
+                        (_and_guards(guard, obligation), verdict.held, held_face),
                         (
                             _and_guards(guard, complement_guard(obligation)),
                             verdict.failed,
+                            failed_face,
                         ),
                     ):
+                        sub_faces = faces | {sub_face}
                         if sub_verdict is None:
-                            exits.append(Completed(sub_guard, carried))
+                            exits.append(Completed(sub_guard, carried, sub_faces))
                         else:
-                            exits.append(Halted(sub_guard, sub_verdict, carried))
+                            exits.append(
+                                Halted(sub_guard, sub_verdict, carried, sub_faces)
+                            )
                     continue
                 if verdict is None:
-                    exits.append(Completed(guard, carried))
+                    exits.append(Completed(guard, carried, faces))
                 else:
-                    exits.append(Halted(guard, verdict, carried))
+                    exits.append(Halted(guard, verdict, carried, faces))
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
@@ -502,11 +629,12 @@ class ExitSet(Generic[T]):
         for incoming in self.exits:
             for ex in exit_es.exits:
                 guard = _and_guards(incoming.guard, ex.guard)
+                faces = incoming.faces | ex.faces
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect, ex.state))
+                    exits.append(Halted(guard, ex.effect, ex.state, faces))
                     continue
                 if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value))
+                    exits.append(Completed(guard, incoming.value, faces))
                     continue
                 from sugar_lift_py_tests.floor import TermValue
 
@@ -519,12 +647,25 @@ class ExitSet(Generic[T]):
                     if _is_true(truth)
                     else true_guard() if _is_false(truth) else not_(truth)
                 )
-                exits.append(Completed(_and_guards(guard, truth), incoming.state))
+                # The truth predicate is a split this site owns: exactly one of
+                # truth/falsity holds. Mint it so the exclusion survives being
+                # conjoined with a prefix guard downstream.
+                truth_face, falsity_face = partition(
+                    ("and_exit_truthiness", site, truth, guard)
+                )
+                exits.append(
+                    Completed(
+                        _and_guards(guard, truth),
+                        incoming.state,
+                        faces | {truth_face},
+                    )
+                )
                 exits.append(
                     Halted(
                         _and_guards(guard, falsity),
                         incoming.effect,
                         incoming.state,
+                        faces | {falsity_face},
                     )
                 )
         return ExitSet(tuple(exits)).normalize()
@@ -583,6 +724,8 @@ __all__ = [
     "Completed",
     "ExitSet",
     "ExitSetFactoringGap",
+    "PartitionFace",
+    "partition",
     "Halted",
     "complement_guard",
     "false_guard",

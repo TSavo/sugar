@@ -103,6 +103,7 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import partition as _partition
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
@@ -128,7 +129,15 @@ class IfSugar(Sugar):
         # polarity, then the partitions normalize together. In particular, a
         # halt on one face coexists with the complementary Completed exit.
         not_formula = not_(formula)
-        exits = then_exits.guarded(formula).union(else_exits.guarded(not_formula))
+        # This If OWNS the split, so it mints the partition and stamps each
+        # branch with its face. Downstream factoring reads the exclusion off
+        # the arms as testimony instead of re-proving it from guard spelling,
+        # which stops being legible once these guards are conjoined with a
+        # prefix or merged with a sibling arm.
+        then_face, else_face = _partition(("IfSugar", self.site, formula))
+        exits = then_exits.guarded(formula, then_face).union(
+            else_exits.guarded(not_formula, else_face)
+        )
         entries = []
         for exit_ in exits.exits:
             if isinstance(exit_, Halted):

@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import signal
+import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -29,6 +31,8 @@ def _desugar_one(
     status = "clean"
     timed_out = False
     prior_handler = None
+    detail: str | None = None
+    origin: list[str] = []
     try:
         if deadline_seconds > 0:
             prior_handler = signal.signal(signal.SIGALRM, _timeout)
@@ -40,19 +44,31 @@ def _desugar_one(
     except BaseException as exc:
         # ConstructionPanic is intentionally BaseException, not Exception.
         status = type(exc).__name__
+        # A residual axis that reports only a class name hands the next agent a
+        # count, not a fix. Carry the refusal's own message and the frames that
+        # raised it, so the owner of each residual is readable off the row.
+        detail = str(exc)
+        origin = [
+            f"{frame.filename}:{frame.lineno} {frame.name}"
+            for frame in traceback.extract_tb(exc.__traceback__)[-6:]
+        ]
     finally:
         if deadline_seconds > 0:
             signal.setitimer(signal.ITIMER_REAL, 0)
             assert prior_handler is not None
             signal.signal(signal.SIGALRM, prior_handler)
     span = function.line_col_span()
-    return {
+    row: dict[str, Any] = {
         "name": name,
         "line": span.start_line,
         "status": status,
         "timedOut": timed_out,
         "elapsedSeconds": round(time.perf_counter() - started, 6),
     }
+    if detail is not None:
+        row["detail"] = detail
+        row["origin"] = origin
+    return row
 
 
 def _report(
@@ -123,12 +139,17 @@ def main() -> int:
     source_file = _open_source_file(path, root=corpus)
     rows = []
     for index, function in enumerate(source_file.functions()):
-        rows.append(
-            _desugar_one(
-                function,
-                name=getattr(function, "name", f"function-{index}"),
-                deadline_seconds=args.deadline,
-            )
+        row = _desugar_one(
+            function,
+            name=getattr(function, "name", f"function-{index}"),
+            deadline_seconds=args.deadline,
+        )
+        rows.append(row)
+        # Progress on stderr: stdout stays exactly the one JSON report.
+        print(
+            f"[{index}] {row['name']} {row['status']} {row['elapsedSeconds']}s",
+            file=sys.stderr,
+            flush=True,
         )
     report = _report(
         file=args.file,
