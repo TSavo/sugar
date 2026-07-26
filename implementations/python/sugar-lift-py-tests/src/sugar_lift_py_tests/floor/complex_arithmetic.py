@@ -83,7 +83,19 @@ def closed_complex_operation(
     right_coordinate = complex_field_coordinate(right)
     if left_coordinate is None or right_coordinate is None:
         return None
-    product = operate(left_coordinate, right_coordinate)
+    try:
+        product = operate(left_coordinate, right_coordinate)
+    except OverflowError:
+        return None
+    import math
+
+    if not (math.isfinite(product.real) and math.isfinite(product.imag)):
+        # Python's own answer here is an infinity or a NaN. Those are real IEEE
+        # results, but ``ComplexValue.to_term`` projects through a canonical
+        # decimal string and has no coordinate for them -- it would emit the
+        # text "Infinity" as if it were a number. Constructing the value would
+        # therefore be inventing a preimage, so the pair stays loud instead.
+        return None
     return Complete(ComplexValue(product.real, product.imag))
 
 

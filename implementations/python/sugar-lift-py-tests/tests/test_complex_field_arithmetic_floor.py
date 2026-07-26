@@ -162,6 +162,36 @@ def test_an_integer_too_large_for_the_float_field_stays_loud() -> None:
     assert "ComplexValue" in info.fix
 
 
+def test_a_result_that_overflows_the_float_field_stays_loud() -> None:
+    """Python answers `(1e308+0j) * (1e308+0j)` with an infinity. That is a real
+    IEEE result, but ComplexValue projects through a canonical decimal string
+    and has no coordinate for it -- so this constructs nothing."""
+    huge = ComplexValue(1e308, 0.0)
+
+    assert not all(
+        abs(part) < float("inf") for part in ((huge.real * huge.real), 0.0)
+    )
+    with pytest.raises(ConstructionPanic) as raised:
+        huge.multiply(huge, SITE)
+
+    assert raised.value.info.owner == "multiply"
+
+
+def test_a_nan_result_stays_loud() -> None:
+    nan_maker = ComplexValue(float("inf"), 0.0)
+
+    with pytest.raises(ConstructionPanic):
+        nan_maker.multiply(ComplexValue(0.0, 0.0), SITE)
+
+
+def test_a_finite_result_at_the_edge_of_the_field_still_folds() -> None:
+    """The non-finite guard must not have become a magnitude cap."""
+    outcome = ComplexValue(1e308, 0.0).add(ComplexValue(1.0, 0.0), SITE)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.real == 1e308 + 1.0
+
+
 def test_a_symbolic_operand_keeps_its_own_symbolic_door() -> None:
     """A complex plus an opaque callsite is not a field member; the complex
     floor must not swallow it into a fabricated concrete complex."""
