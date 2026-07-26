@@ -57,6 +57,42 @@ def complement_guard(guard: Formula) -> Formula:
     return not_(guard)
 
 
+class ExitSetFactoringGap(ValueError):
+    """A completed face that a guarded-value chain cannot faithfully carry.
+
+    Loud on contact, in the same shape as ``SourceCallBindingGap``: the message
+    names the two guards, why the collapse would lose an outcome, and the fix.
+    """
+
+
+def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
+    """Flatten a conjunction into its literals; anything else is one literal."""
+    if getattr(guard, "kind", None) == "and":
+        flattened: list[Formula] = []
+        for operand in getattr(guard, "operands", ()):
+            flattened.extend(_conjuncts(operand))
+        return tuple(flattened)
+    return (guard,)
+
+
+def _are_exclusive(left: Formula, right: Formula) -> bool:
+    """Whether two guards provably cannot hold together, syntactically.
+
+    Branch joins produce guards that carry a literal and its negation (``g``
+    against ``not g``), which is why one level of literal comparison is enough
+    for the shapes the tower builds. This is a SOUND-ONLY test: a False answer
+    means "not provably exclusive", never "provably overlapping". Factoring
+    refuses on a False answer rather than assuming a partition.
+    """
+    if _is_false(left) or _is_false(right):
+        return True
+    right_literals = frozenset(_conjuncts(right))
+    for literal in _conjuncts(left):
+        if complement_guard(literal) in right_literals:
+            return True
+    return False
+
+
 def _and_guards(left: Formula, right: Formula) -> Formula:
     if _is_false(left) or _is_false(right) or _is_negation(left, right):
         return false_guard()
@@ -164,6 +200,82 @@ class ExitSet(Generic[T]):
             else:
                 exits.append(Halted(combined, exit_.effect, exit_.state))
         return ExitSet(tuple(exits)).normalize()
+
+    def factor_completed(self) -> "ExitSet[T]":
+        """Collapse the completed FACE into one arm carrying a guarded value.
+
+        This is the factoring primitive #6309 is built on. An ExitSet with
+        several completed arms is a partition of the completed face over guards;
+        the SAME partition can live at the exit level (m arms, one value each)
+        or at the value level (one arm, a ``GuardedValue`` chain). Both retain
+        every arm's guard and every arm's value — nothing is pruned, nothing is
+        assumed to succeed, nothing is capped.
+
+        The difference is what happens when such a face is SEQUENCED. Exit-level
+        arms multiply: k steps of m arms distribute into m ** k arms, because
+        ``sequence`` appends every exit of the tail under every completed exit of
+        the prefix. Value-level arms compose: k steps contribute k guarded values
+        to one arm, so both work and storage grow linearly in k. Same denotation,
+        different growth — which is the whole fix.
+
+        Halted arms are untouched: the halted face is not part of the value, so
+        it stays at the exit level where it already grows linearly.
+
+        REFUSES loudly when the completed arms are not provably pairwise
+        exclusive. A ``GuardedValue`` chain is first-match-wins, so it denotes
+        the same face as the arms only when at most one arm's guard can hold.
+        Two overlapping completed arms with different values mean both values are
+        reachable together — a set, not a selection — and quietly picking the
+        first would be a silent semantic change. There is no materializing
+        fallback here on purpose: the exponential is the defect, so the honest
+        answer is a named gap, not a return to it.
+        """
+        completed = [e for e in self.exits if isinstance(e, Completed)]
+        if len(completed) <= 1:
+            return self
+
+        for index, arm in enumerate(completed):
+            for other in completed[index + 1 :]:
+                if not _are_exclusive(arm.guard, other.guard):
+                    raise ExitSetFactoringGap(
+                        "ExitSet.factor_completed cannot factor a completed face "
+                        "whose arms are not provably exclusive.\n"
+                        f"  owner: {type(arm.value).__name__} / "
+                        f"{type(other.value).__name__}\n"
+                        f"  arm A guard: {arm.guard!r}\n"
+                        f"  arm B guard: {other.guard!r}\n"
+                        "  why this is a gap: a GuardedValue chain selects ONE "
+                        "face, so it can only carry a partition. Overlapping "
+                        "arms with different values are two simultaneously "
+                        "reachable outcomes, and collapsing them would drop one.\n"
+                        "  fix: give the producing sugar complementary guards "
+                        "(the branch join shape ``g`` / ``not g``), or extend "
+                        "_are_exclusive to see the exclusion these two guards "
+                        "already carry. Do NOT re-materialize the product: that "
+                        "is the m ** k blow-up #6309 removed."
+                    )
+
+        from sugar_lift_py_tests.floor import GuardedValue
+
+        chain = completed[-1].value
+        for arm in reversed(completed[:-1]):
+            chain = GuardedValue(arm.guard, arm.value, chain)
+
+        face_guard = completed[0].guard
+        for arm in completed[1:]:
+            face_guard = _or_guards(face_guard, arm.guard)
+
+        factored = Completed(face_guard, chain)
+        exits: list[Exit[T]] = []
+        placed = False
+        for exit_ in self.exits:
+            if isinstance(exit_, Halted):
+                exits.append(exit_)
+                continue
+            if not placed:
+                exits.append(factored)
+                placed = True
+        return ExitSet(tuple(exits))
 
     def normalize(self) -> "ExitSet[T]":
         """Drop false exits and merge equal destinations by disjoining guards.
@@ -470,6 +582,7 @@ def outcome_to_exitset(outcome) -> ExitSet:
 __all__ = [
     "Completed",
     "ExitSet",
+    "ExitSetFactoringGap",
     "Halted",
     "complement_guard",
     "false_guard",
