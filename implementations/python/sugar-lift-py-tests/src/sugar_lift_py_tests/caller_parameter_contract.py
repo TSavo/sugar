@@ -108,6 +108,18 @@ def merge_pending(*groups) -> tuple:
     two folds that happened to run in a different order must not mint two
     different rows.
     """
+    # THE EMPTY AND SINGLETON CASES COST NOTHING. This is called once per exit
+    # pair in `ExitSet.sequence` -- the innermost loop of every k-operand fold
+    # in the lift -- and almost every arm owes nothing at all, so building a
+    # dict, sorting it and rebuilding a tuple to answer `()` is work done per
+    # arm per fold step for no result. A group of at most one carrier is
+    # already sorted and already deduped, so it is returned as it stands.
+    populated = [group for group in groups if group]
+    if not populated:
+        return ()
+    if len(populated) == 1 and len(populated[0]) <= 1:
+        return tuple(populated[0])
+
     by_candidate: dict[str, "ContractConditionalConstructionV1"] = {}
     for group in groups:
         for entry in group:
