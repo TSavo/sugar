@@ -32,17 +32,29 @@
       "sites": 32
     }
   ],
-  "sharedAlgebra": "one ExitSet; EffectBoundaryWith retains undecidable message predicates (#6298) \u2014 soundness, \u0394R unmeasured",
+  "sharedAlgebra": "one ExitSet; EffectBoundaryWith retains undecidable message predicates (#6298) — soundness, ΔR unmeasured",
+  "nameErrorDisposition": {
+    "6284": "correctness-only; pandas NameErrorEffect Δ=0; keep all 940 legitimate rows"
+  },
+  "operatingOrder": [
+    "Complete timeout bisect; restore R(timeout)=0",
+    "Record #6284 as correctness-only for pandas (zero target-family Δ)",
+    "Keep all 940 legitimate NameErrorEffect rows",
+    "Full current-head authenticated census (not project unmeasured 1116)",
+    "Measure actual Floor and EffectBoundary ΔR",
+    "Dispatch structural assertion-With from those results (pytest.raises first)"
+  ],
   "drainOrder": [
     "structural contract requirements per head (pytest.raises first: 3555)",
     "authenticated preconstruction of manager contracts at use-site",
     "route every outgoing edge; retain undecidable message/category obligations",
     "no vendor-name admission arms",
-    "measure \u0394R on assertion-effect-boundary sites only after each head lands"
+    "measure ΔR on assertion-effect-boundary sites only after each head lands"
   ],
   "blockedOn": [
-    "Floor remeasure at a0d38afca (post contains/guarded/residual)",
-    "EffectBoundaryWith coverage \u0394R (not claimed from #6298 alone)"
+    "R(timeout)=0 restored",
+    "full authenticated census at current head",
+    "Floor / EffectBoundary ΔR measured (not projected)"
   ],
-  "nextOwner": "assertion-With structural contracts for pytest.raises mass"
+  "nextOwner": "timeout bisect then full authenticated census"
 }

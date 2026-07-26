@@ -5,23 +5,50 @@
   "targetFamily": "NameErrorEffect",
   "boundFiles": 305,
   "notReplayed": 1116,
+  "corpusFiles": 1421,
+  "wallSeconds": 2434,
+  "fullCensusWallSecondsApprox": 1041,
   "NameErrorEffect": {
     "pinned": 940,
     "replay": 940,
-    "delta": 0
+    "delta": 0,
+    "scope": "corpus-wide for this family: bound files contained all 940 pinned occurrences"
   },
-  "nonzeroFamilyDeltasInBound": {
+  "sliceOnlyFamilyDeltasInBound": {
     "SubscriptStoreRuntimeEffect": {
       "pinned": 1166,
       "replay": 1161,
-      "delta": -5
+      "delta": -5,
+      "scope": "replayed slice only; not a global projection (1116 files unmeasured)"
     },
     "YieldSuspensionSugar.desugar": {
       "pinned": 20,
       "replay": 17,
-      "delta": -3
+      "delta": -3,
+      "scope": "replayed slice only; not a global projection (1116 files unmeasured)"
     }
   },
-  "verdict": "NameErrorEffect \u0394=0 within bound; #6284 retirement claim NOT measured as reduction at c11767c5e",
-  "measuredDeltaR": "unmeasured for full corpus; bound-only NameErrorEffect \u0394=0"
+  "ledger": {
+    "6284_semantic_correctness": "proven by twins",
+    "6284_pandas_NameErrorEffect_delta": 0,
+    "fabricated_pandas_rows": 0,
+    "legitimate_pandas_rows": 940,
+    "family_subtraction": "forbidden"
+  },
+  "verdict": [
+    "#6284 is correctness-only for pandas NameErrorEffect: Δ=0.",
+    "All 940 NameErrorEffect rows are legitimate accounted semantics — keep them.",
+    "Do not book family subtraction or a fictitious 10.9% gain.",
+    "Slice-only movements (−5 SubscriptStore, −3 YieldSuspension) are real for the bound; not global pinned−8.",
+    "Bounded replay here cost ~2434s vs ~1041s full census and left 79% of files unmeasured — use only when cheaper or uniquely sharp."
+  ],
+  "desugarLedgerTaxonomy": {
+    "correctly_constructed_effects": "accounted semantics (e.g. legitimate NameErrorEffect); not defects to eliminate",
+    "explicit_incomplete_obligations": "typed Incomplete / retained obligations",
+    "construction_panics_gaps": "Floor gaps, SugarNotWritten, resolution gaps",
+    "implementation_defects": "crashes, instrument false-red, hung measurement"
+  },
+  "pythonDoneDoesNotRequire": "deleting legitimate effects",
+  "pythonDoneRequires": "every effect correctly constructed, routed, and accounted",
+  "nextAttributionRun": "full current-head authenticated census after R(timeout)=0 restored; not projection of unmeasured 1116 files"
 }
