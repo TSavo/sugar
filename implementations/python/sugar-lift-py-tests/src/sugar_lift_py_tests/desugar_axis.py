@@ -261,6 +261,44 @@ def _designed_gap_types() -> tuple[type, ...]:
     return (ExitSetFactoringGap,)
 
 
+def _is_designed_gap(exc: BaseException) -> bool:
+    """Whether THIS occurrence is correct output. Type is necessary, not sufficient.
+
+    A DECLARED TYPE ONLY SAYS WHICH MECHANISM SPOKE. It does not say that this
+    occurrence was the mechanism working. ``ExitSetFactoringGap`` has two
+    populations and its own classifier is what tells them apart:
+
+    * ``isRemainingWork: False`` — the gate doing its job. Correct output.
+    * ``isRemainingWork: True``  — ``UNSTAMPED`` and not merged: a producer that
+      owns a split and has not testified. That is CLOSABLE WORK, and it is the
+      shape #6375 actually closed at ``selectn.py:224``.
+
+    Gating on type alone would file the second kind as correct output in a
+    bucket that is never red and never summed — publishing a closable
+    producer-omission as a finished result and silencing it. That is a red
+    residual ratified as a baseline. It is the same disease this door cures,
+    pointed the other way, and it is the WORSE direction: counting correct
+    output as a defect is loud and self-correcting, counting work as correct
+    output is neither.
+
+    It is latent only because all twelve occurrences on tonight's board classify
+    ``False``. That is a fact about one measurement, not a property of the type.
+
+    NO VERDICT IS NOT A VERDICT OF "DESIGNED". ``classification()`` answers
+    ``None`` when the refusal carries no arms, and an unclassifiable occurrence
+    stays a defect and stays red rather than defaulting into the quiet bucket.
+    """
+    if type(exc) not in _designed_gap_types():
+        return False
+    classify = getattr(exc, "classification", None)
+    if not callable(classify):
+        return False
+    verdict = classify()
+    if verdict is None:
+        return False
+    return getattr(verdict, "is_remaining_work", True) is False
+
+
 class DesugarAxis:
     """Accumulates the four disjoint desugar-layer quantities for a file/run."""
 
@@ -382,10 +420,9 @@ class DesugarAxis:
             return
         if isinstance(outcome, tuple) and len(outcome) == 2 and outcome[0] == "defect":
             exc = outcome[1]
-            # A DECLARED designed gap is correct output, not an implementation
-            # defect, and gets its own counted bucket. Exact type identity
-            # against the declared set — see `_designed_gap_types`.
-            if type(exc) in _designed_gap_types():
+            # A designed gap gets its own counted bucket. TWO conditions, and
+            # the second is the load-bearing one — see `_is_designed_gap`.
+            if _is_designed_gap(exc):
                 self._designed_gap(where, exc)
                 return
             self._defect(

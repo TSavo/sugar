@@ -300,19 +300,21 @@ def _factoring_gap(*, stamped: bool):
 
 
 def test_twin_10_factoring_gap_carries_its_classification() -> None:
+    """An UNSTAMPED, unmerged pair is OWED WORK, so its row is a defect — and it
+    still carries the verdict that says so. This twin owns the READING; twin 12
+    owns the membership rule that keeps this population red."""
     axis = _axis()
     axis.measure(_FakeSugar(raises=_factoring_gap(stamped=False)), where="gen.py:1:0")
     row = axis.row()
     assert row["R_desugar"] == 0
     assert row["desugarFamilies"] == {}
     assert row["desugarConstructionPanics"] == []
-    # Exactly one row, on the designed-gap axis (twin 11 owns that placement).
-    assert len(row["desugarDesignedGaps"]) == 1
-    gap = row["desugarDesignedGaps"][0]
-    assert gap["owner"] == "ExitSetFactoringGap"
-    assert gap["detail"].startswith("ExitSetFactoringGap")
-    assert gap["classification"]["kind"] == "unstamped"
-    assert gap["classification"]["isRemainingWork"] is True
+    assert len(row["desugarDefects"]) == 1
+    defect = row["desugarDefects"][0]
+    assert defect["kind"] == "desugar-exception"
+    assert defect["detail"].startswith("ExitSetFactoringGap")
+    assert defect["classification"]["kind"] == "unstamped"
+    assert defect["classification"]["isRemainingWork"] is True
 
 
 def test_twin_10_discriminator_stamped_arms_are_not_reported_as_owed_work() -> None:
@@ -328,6 +330,7 @@ def test_twin_10_discriminator_stamped_arms_are_not_reported_as_owed_work() -> N
     assert len(gaps) == 1
     assert gaps[0]["classification"]["kind"] == "stamped-not-separating"
     assert gaps[0]["classification"]["isRemainingWork"] is False
+    assert axis.red is False
 
 
 def test_twin_10_discriminator_an_exception_with_no_testimony_gets_no_key() -> None:
@@ -346,9 +349,9 @@ def test_twin_10_discriminator_an_exception_with_no_testimony_gets_no_key() -> N
 
     bare = _axis()
     bare.measure(_FakeSugar(raises=ExitSetFactoringGap("bare")), where="gen.py:2:0")
-    bare_gaps = bare.row()["desugarDesignedGaps"]
-    assert len(bare_gaps) == 1
-    assert "classification" not in bare_gaps[0]
+    bare_defects = bare.row()["desugarDefects"]
+    assert len(bare_defects) == 1
+    assert "classification" not in bare_defects[0]
 
 
 def test_twin_10_discriminator_a_merged_arm_is_not_reported_as_owed_work() -> None:
@@ -395,7 +398,10 @@ def test_twin_10_discriminator_a_merged_arm_is_not_reported_as_owed_work() -> No
 
 def test_twin_11_a_declared_designed_gap_is_counted_not_a_defect() -> None:
     axis = _axis()
-    axis.measure(_FakeSugar(raises=_factoring_gap(stamped=False)), where="gen.py:1:0")
+    # `stamped=True` is the CORRECT-OUTPUT population. The other one is work and
+    # twin 12 holds it red; using it here would have made this twin assert that
+    # a closable producer-omission is a finished result.
+    axis.measure(_FakeSugar(raises=_factoring_gap(stamped=True)), where="gen.py:1:0")
     row = axis.row()
     # Off the defect axis, and NOT onto any other measured quantity.
     assert row["desugarDefects"] == []
@@ -408,7 +414,8 @@ def test_twin_11_a_declared_designed_gap_is_counted_not_a_defect() -> None:
     gap = row["desugarDesignedGaps"][0]
     assert gap["owner"] == "ExitSetFactoringGap"
     assert gap["where"] == "gen.py:1:0"
-    assert gap["classification"]["kind"] == "unstamped"
+    assert gap["classification"]["kind"] == "stamped-not-separating"
+    assert gap["classification"]["isRemainingWork"] is False
     # Correct output does not hold the instrument red.
     assert axis.red is False
 
@@ -452,7 +459,7 @@ def test_twin_11_designed_gaps_survive_merge_and_stay_disjoint() -> None:
     merge reports zero for every file but the last. Exact cardinality on both
     sides, and the four quantities stay disjoint across the merge."""
     left = _axis()
-    left.measure(_FakeSugar(raises=_factoring_gap(stamped=False)), where="a.py:1:0")
+    left.measure(_FakeSugar(raises=_factoring_gap(stamped=True)), where="a.py:1:0")
     right = _axis()
     right.measure(_FakeSugar(raises=_factoring_gap(stamped=True)), where="b.py:1:0")
     right.measure(_FakeSugar(raises=KeyError("boom")), where="b.py:9:0")
@@ -468,3 +475,74 @@ def test_twin_11_designed_gaps_survive_merge_and_stay_disjoint() -> None:
     # The real defect is untouched by any of it, and still red.
     assert len(row["desugarDefects"]) == 1
     assert left.red is True
+
+
+# -- 12. TYPE IS NECESSARY, NOT SUFFICIENT ----------------------------------
+#
+# A declared type says which MECHANISM spoke, never that this occurrence was the
+# mechanism working. `ExitSetFactoringGap` has two populations and its own
+# classifier separates them: `isRemainingWork: False` is the gate doing its job,
+# `isRemainingWork: True` is UNSTAMPED-and-not-merged — a producer that owns a
+# split and has not testified, which is closable work and exactly what #6375
+# closed at `selectn.py:224`.
+#
+# Gating on type alone files the second kind into a bucket that is never red and
+# never summed: a closable producer-omission published as a finished result and
+# silenced. That is the worse direction — counting correct output as a defect is
+# loud and self-correcting; counting work as correct output is neither. It is
+# latent only because every occurrence on today's board classifies `False`,
+# which is a fact about one measurement and not a property of the type.
+
+
+def test_twin_12_a_declared_gap_that_is_REMAINING_WORK_stays_a_red_defect() -> None:
+    """The arm that cannot be bought back later."""
+    gap = _factoring_gap(stamped=False)
+    # Precondition asserted, not assumed: if the classifier ever stops calling
+    # this shape owed work, this test must fail loudly rather than pass because
+    # its fixture drifted into the other population.
+    assert gap.classification().is_remaining_work is True
+
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=gap), where="gen.py:1:0")
+    row = axis.row()
+    assert row["R_desugar_designed_gaps"] == 0
+    assert row["desugarDesignedGaps"] == []
+    assert len(row["desugarDefects"]) == 1
+    assert row["desugarDefects"][0]["classification"]["isRemainingWork"] is True
+    assert axis.red is True
+
+
+def test_twin_12_the_mirror_correct_output_still_reaches_the_quiet_bucket() -> None:
+    """The other face. A gate that refused everything would satisfy the twin
+    above; correct output must still be re-attributed and must not hold the
+    run red."""
+    gap = _factoring_gap(stamped=True)
+    assert gap.classification().is_remaining_work is False
+
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=gap), where="gen.py:1:0")
+    row = axis.row()
+    assert row["R_desugar_designed_gaps"] == 1
+    assert row["desugarDefects"] == []
+    assert axis.red is False
+
+
+def test_twin_12_no_verdict_is_not_a_verdict_of_designed() -> None:
+    """An unclassifiable occurrence must not DEFAULT into the quiet bucket.
+
+    `classification()` answers `None` when the refusal carries no arms. Silence
+    from the classifier is not a finding of correct output, so the row stays a
+    defect and stays red — the same rule as the absent-key discipline in twin 10,
+    applied to membership instead of to reporting.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
+
+    bare = ExitSetFactoringGap("carries no arms")
+    assert bare.classification() is None
+
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=bare), where="gen.py:1:0")
+    row = axis.row()
+    assert row["R_desugar_designed_gaps"] == 0
+    assert len(row["desugarDefects"]) == 1
+    assert axis.red is True
