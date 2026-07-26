@@ -31,9 +31,12 @@ def census(root: Path) -> int:
         collect_construction_panic,
     )
     from sugar_lift_py_tests.desugar_axis import DesugarAxis
+    from sugar_lift_py_tests.lift_rpc import (
+        open_source_file_for_construction,
+        tree_construction_context_for_workspace,
+    )
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
 
     files = sorted(root.rglob("*.py"))
     families: Counter = Counter()
@@ -43,6 +46,12 @@ def census(root: Path) -> int:
     total_fns = 0
     clean_fns = 0
     t0 = time.time()
+    # Shared demand/gap table across the package; per-file context still
+    # freezes source-derived manager refs at exact use-sites. Bare
+    # ``SourceFile.from_path`` without this table paints every With as
+    # RuntimeSelectedContextManager — false red that launders the 5021-site
+    # With residual as one amorphous bucket (#control_effect_recensus door).
+    shared_contract_refs = tree_construction_context_for_workspace(root).contract_refs
     for i, f in enumerate(files):
         ft = time.time()
         rel = str(f.relative_to(root))
@@ -53,7 +62,16 @@ def census(root: Path) -> int:
         ):
             nonlocal total_fns, clean_fns, clean_files
             reporter = CollectingReporter()
-            sf = SourceFile.from_path(str(_f), reporter=reporter)
+            construction_context = tree_construction_context_for_workspace(
+                root, contract_refs=shared_contract_refs
+            )
+            sf = open_source_file_for_construction(
+                _f,
+                root=root,
+                reporter=reporter,
+                construction_context=construction_context,
+                populate_derived=True,
+            )
             for fn in sf.functions():
                 total_fns += 1
                 try:
