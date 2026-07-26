@@ -95,7 +95,7 @@ class _BoundState(Sugar):
 
 def _demand_shape(entry):
     """The demanded formula's outermost connective, as wire vocabulary."""
-    return json.loads(encode_jcs(formula_to_value(entry.demand.demanded_formula)))
+    return json.loads(encode_jcs(formula_to_value(entry.sole_demand().demanded_formula)))
 
 
 # --------------------------------------------------------------------------
@@ -333,24 +333,39 @@ def test_conditional_receiver_with_one_pending_contract_arm_lifts() -> None:
     assert len(pending) == 1
 
 
-def test_two_pending_contract_arms_are_loud_and_named() -> None:
-    """DISCRIMINATING. One entry carries exactly one demand, so a join of TWO
-    pending arms has no representation. It must panic NAMING the next
-    architecture -- never silently drop one of the two obligations."""
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+def test_two_pending_contract_arms_join_and_conserve_both_demands() -> None:
+    """SUPERSEDED PANIC, NOW A LAW (#6352).
 
-    with pytest.raises(ConstructionPanic) as raised:
-        _out(
-            "def f(c, p, q):\n"
-            " if c:\n"
-            "  x = p\n"
-            " else:\n"
-            "  x = q\n"
-            " return x[0]\n"
-        )
-    message = str(raised.value)
-    assert "never drop the obligation" in message
-    assert "demand SET" in message or "carry a pending contract demand" in message
+    This used to assert the panic: one entry carried exactly one demand, so a
+    join of TWO pending arms had no representation and had to be loud. The
+    panic named its own replacement -- "widen ContractConditionalConstructionV1
+    to carry a demand SET" -- and that widening landed, so the assertion moves
+    from "it refuses" to "it joins, and conserves BOTH obligations".
+
+    The twin is rewritten rather than deleted: the obligation being conserved is
+    what the panic was protecting, and deleting the test would retire the
+    protection along with the panic. Both formals must still be owed.
+    """
+    out = _out(
+        "def f(c, p, q):\n"
+        " if c:\n"
+        "  x = p\n"
+        " else:\n"
+        "  x = q\n"
+        " return x[0]\n"
+    )
+    pending = _pending(out)
+    assert pending
+
+    formals = {
+        demand.formal_coordinate_cid
+        for entry in pending
+        for demand in entry.demands
+    }
+    assert len(formals) == 2, (
+        "a join of two pending arms conserved only one formal's obligation: the "
+        "demands were dropped or conjoined instead of unioned (#6352)"
+    )
 
 
 # --------------------------------------------------------------------------

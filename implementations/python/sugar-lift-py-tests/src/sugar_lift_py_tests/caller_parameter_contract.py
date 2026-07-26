@@ -67,12 +67,56 @@ class ParameterContractDemandV1:
         }
 
 
+def merge_demands(*groups) -> tuple[ParameterContractDemandV1, ...]:
+    """The demand SET: union by content address, ordered by content address.
+
+    `demand_cid` is the content address of the WHOLE obligation — owner source
+    identity, formal coordinate, operation site, demanded formula, candidate —
+    so equal cids are the same obligation and dedupe is not a heuristic. It is
+    the arithmetic of the obligation: a conjunction is idempotent, `F and F` IS
+    `F`, and one obligation reaching a join twice through a shared outcome DAG
+    (`p[0]` read once and consumed on both faces of a fold) is one obligation.
+
+    Ordering is by cid, never by arrival. The universe is content: a set that
+    ordered by the order two folds happened to run would make the same
+    obligations mint two different rows, and there is no RNG and no clock here
+    to justify that.
+    """
+    by_cid: dict[str, ParameterContractDemandV1] = {}
+    for group in groups:
+        for demand in group:
+            by_cid.setdefault(demand.demand_cid, demand)
+    return tuple(by_cid[cid] for cid in sorted(by_cid))
+
+
 @dataclass(frozen=True)
 class ContractConditionalConstructionV1:
+    """A constructed value together with every caller obligation it incurred.
+
+    `demands` is a SET, not one demand (#6352). One expression can incur several
+    distinct obligations — `[p[0], q[1]]` owes `python:indexable(p)` AND
+    `python:indexable(q)`, `f(p[0], q[1])` the same — and the entry used to hold
+    exactly one. Every join that met a second one panicked NAMED: `collection
+    TupleValue`, `IfExpSugar._join`, and `ContractConditionalConstructionV1
+    .and_then` each said the same sentence, "widen ... to carry a demand SET".
+    Three call sites requesting one widening is the ontology telling you it is
+    missing a kind of thing, so the thing is here now.
+
+    Two demands are NOT conjoined into one. Each carries its own
+    `formal_coordinate_cid` and `owner_source_identity_cid`; fusing their
+    formulas would mint one obligation attributed to one formal that actually
+    spans two, which is a fabricated fact, not a smaller answer.
+
+    THE WIRE SHAPE IS UNCHANGED. `contribution` splits the entry into one entry
+    per demand before anything is projected, so `to_value`, the link unit, and
+    the Rust linker still see exactly one demand per row. The set exists only
+    in flight, where the joins happen.
+    """
+
     source_node: SourceFragmentCoordinateV1
     candidate: Term
     candidate_cid: str
-    demand: ParameterContractDemandV1
+    demands: tuple[ParameterContractDemandV1, ...]
     value: FloorValue
 
     @classmethod
@@ -92,12 +136,12 @@ class ContractConditionalConstructionV1:
             demanded_formula=demand_formula,
             candidate_cid=candidate_cid,
         )
-        return cls(source_node, candidate, candidate_cid, demand, value)
+        return cls(source_node, candidate, candidate_cid, (demand,), value)
 
     def and_then(self, step):
-        """Continue with the carried value; the demand rides on the result.
+        """Continue with the carried value; every demand rides on the result.
 
-        A following ``Complete`` takes the demand back and the entry rides on
+        A following ``Complete`` takes the demands back and the entry rides on
         into the block record, where ``link_unit_projection`` enrols it and the
         linker discharges it.
 
@@ -140,14 +184,22 @@ class ContractConditionalConstructionV1:
         """
         from sugar_lift_py_tests.ir import implies
 
+        # EVERY demand weakens. Weakening only one of a set would leave the
+        # others owed unconditionally on a face that may never run, which is a
+        # stronger obligation than the source states.
         return replace(
             self,
-            demand=ParameterContractDemandV1.mint(
-                owner_source_identity_cid=self.demand.owner_source_identity_cid,
-                formal_coordinate_cid=self.demand.formal_coordinate_cid,
-                operation_site=self.demand.operation_site,
-                demanded_formula=implies(formula, self.demand.demanded_formula),
-                candidate_cid=self.demand.candidate_cid,
+            demands=merge_demands(
+                tuple(
+                    ParameterContractDemandV1.mint(
+                        owner_source_identity_cid=demand.owner_source_identity_cid,
+                        formal_coordinate_cid=demand.formal_coordinate_cid,
+                        operation_site=demand.operation_site,
+                        demanded_formula=implies(formula, demand.demanded_formula),
+                        candidate_cid=demand.candidate_cid,
+                    )
+                    for demand in self.demands
+                )
             ),
         )
 
@@ -179,7 +231,14 @@ class ContractConditionalConstructionV1:
         )
 
     def contribution(self):
-        return (self,)
+        """One row per demand: the SET collapses back to singletons HERE.
+
+        This is the boundary the wire lives behind. `to_value`, the link unit,
+        and the Rust linker each state one demand per row, and they are right
+        to -- an obligation is owned by ONE formal coordinate. The set is an
+        in-flight join carrier, not a wire shape, so it never reaches them.
+        """
+        return tuple(replace(self, demands=(demand,)) for demand in self.demands)
 
     def inv_contribution(self):
         return ()
@@ -207,6 +266,35 @@ class ContractConditionalConstructionV1:
     def extend_scope(self, ctx):
         return self.value.extend_scope(ctx)
 
+    def sole_demand(self) -> ParameterContractDemandV1:
+        """The one demand a PROJECTED row states, or a named gap.
+
+        Every projection boundary reads this. `contribution` splits the set
+        before anything is projected, so a set arriving here means a producer
+        reached the wire without going through the block record -- loud, not
+        silently first-of-set.
+        """
+        if len(self.demands) == 1:
+            return self.demands[0]
+        from sugar_lift_py_tests.gap.info import GapKind
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="ContractConditionalConstructionV1.sole_demand",
+            blame=self.source_node,
+            observed=(
+                f"a projected contract row carries {len(self.demands)} demands "
+                f"({', '.join(demand.demand_cid for demand in self.demands)})"
+            ),
+            requested="exactly one demand per projected row",
+            fix=(
+                "route the entry through `contribution`, which splits the "
+                "in-flight demand SET into one row per demand, before "
+                "projecting it to the wire"
+            ),
+            gap_kind=GapKind.FLOOR,
+        )
+
     def to_value(self) -> dict[str, Any]:
         return {
             "kind": "contract-conditional-construction",
@@ -214,7 +302,7 @@ class ContractConditionalConstructionV1:
             "sourceNode": self.source_node.wire(),
             "candidate": _json(term_to_value(self.candidate)),
             "candidateCid": self.candidate_cid,
-            "demand": self.demand.to_value(),
+            "demand": self.sole_demand().to_value(),
         }
 
 
@@ -609,7 +697,7 @@ def resume_project(universe, accepted: dict[str, dict]):
             entry.value
             if (
                 isinstance(entry, ContractConditionalConstructionV1)
-                and entry.demand.demand_cid in accepted
+                and entry.sole_demand().demand_cid in accepted
             )
             else entry
         )
@@ -644,7 +732,7 @@ def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
         )
     pending = {}
     for candidate in link_unit.candidates:
-        key = candidate.demand.demand_cid
+        key = candidate.sole_demand().demand_cid
         if key in pending:
             raise ResumeStalePanic("duplicate pending demand in link unit")
         pending[key] = candidate

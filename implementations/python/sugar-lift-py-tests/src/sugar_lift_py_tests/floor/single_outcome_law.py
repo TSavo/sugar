@@ -68,58 +68,66 @@ def rewrap_pending(pending, outcome, *, owner, blame):
     """
     from dataclasses import replace
 
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        ContractConditionalConstructionV1,
+        merge_demands,
+    )
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
 
     if pending is None:
         return outcome
+
+    # A VALUE takes the obligations back and rides on into the block record.
     if isinstance(outcome, Complete):
         return replace(pending, value=outcome.value)
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        ContractConditionalConstructionV1,
-    )
+
+    # A SECOND CARRIER: union the demand sets (#6352). `demand_cid` is the
+    # content address of the whole obligation, so the union dedupes the same
+    # obligation reaching this join twice through a shared outcome DAG (`p[0]`
+    # read once, consumed on both faces of a fold) and keeps two DISTINCT
+    # obligations distinct. Nothing is conjoined into a single demand: each
+    # carries its own formal coordinate, and fusing them would attribute one
+    # obligation to a formal that does not own it.
+    if isinstance(outcome, ContractConditionalConstructionV1):
+        return replace(
+            outcome, demands=merge_demands(pending.demands, outcome.demands)
+        )
+
+    # AN EFFECT: the obligation was incurred BEFORE the effect, on the path that
+    # reached it (`o.x = p[k]` evaluates `p[k]`, then the store answers). It is
+    # owed, and `Incomplete` carries it to the block record the same way it
+    # carries branch conditions. The carried VALUE is dropped here on purpose --
+    # there is no value on this face -- but the obligation is not.
+    if isinstance(outcome, Incomplete):
+        return replace(
+            outcome,
+            pending_contracts=(*outcome.pending_contracts, pending),
+        )
+
+    # A PARTITION stays LOUD. An `ExitSet`'s faces each carry their own guard,
+    # and the entry has one value with no seam to split across them. Inventing
+    # an arm here would either attribute the obligation to every face (owing
+    # more than the source states) or pick one (dropping the rest). Neither is
+    # a smaller answer; both are wrong ones.
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-    # Two different next architectures, named apart rather than blurred: a second
-    # PENDING entry wants the entry to carry a demand SET; a PARTITION wants the
-    # exit algebra to have an arm for a pending demand at all.
-    if isinstance(outcome, ContractConditionalConstructionV1):
-        if outcome.demand.demand_cid == pending.demand.demand_cid:
-            # NOT two demands. ``demand_cid`` is the content address of the
-            # whole obligation -- owner source identity, formal coordinate,
-            # operation site, demanded formula, candidate. Equal cids mean the
-            # SAME obligation reached this join twice through a shared outcome
-            # DAG (`p[0]` read once and consumed on both faces of a fold).
-            #
-            # Conjunction is idempotent: `F and F` IS `F`. The joined outcome
-            # already carries that exact demand, so it rides on unchanged. This
-            # discharges nothing, weakens nothing and invents nothing -- it is
-            # the arithmetic of the obligation, not a fallback. Two DISTINCT
-            # demands still need a demand SET and stay loud below.
-            return outcome
-        observed = (
-            f"two distinct pending contract demands ({pending.demand.demand_cid} "
-            f"and {outcome.demand.demand_cid}) joined onto one constructed value"
-        )
-        fix = (
-            "widen ContractConditionalConstructionV1 to carry a demand SET; "
-            "never drop the obligation"
-        )
-    else:
-        observed = (
-            f"a hoisted parameter contract demand ({pending.demand.demand_cid}) "
-            f"joined onto a {type(outcome).__name__}, which carries no single value"
-        )
-        fix = (
-            "give the exit algebra an arm for a pending contract demand so a "
-            "partition can carry it; never drop the obligation"
-        )
     construction_panic_gap(
         owner=owner,
         blame=blame,
-        observed=observed,
-        requested="one joined value that can carry every pending demand",
-        fix=fix,
+        observed=(
+            "pending parameter contract demands ("
+            + ", ".join(demand.demand_cid for demand in pending.demands)
+            + f") joined onto a {type(outcome).__name__}, whose faces each carry "
+            "their own guard and cannot share one carried value"
+        ),
+        requested="one joined outcome that can carry every pending demand",
+        fix=(
+            "give the exit algebra an arm for a pending contract demand, so each "
+            "completed face carries the demands weakened under its own guard; "
+            "never drop the obligation and never owe it on a face that does not "
+            "run"
+        ),
         gap_kind=GapKind.FLOOR,
     )
 

@@ -154,41 +154,45 @@ def _pending(cid: str, value):
         source_node="renamed_module.py:1:0",
         candidate=atomic("renamed_candidate", []),
         candidate_cid=f"blake3-512:{cid}",
-        demand=_RenamedDemand(f"blake3-512:{cid}"),
+        demands=(_RenamedDemand(f"blake3-512:{cid}"),),
         value=value,
     )
 
 
 def test_one_obligation_reached_twice_is_carried_once() -> None:
+    """Idempotence: `demand_cid` is content, so the same obligation unions to one."""
     from sugar_lift_py_tests.floor.single_outcome_law import rewrap_pending
 
-    joined = _pending("aaaa", TermValue(2))
     result = rewrap_pending(
         _pending("aaaa", TermValue(1)),
-        joined,
+        _pending("aaaa", TermValue(2)),
         owner="renamed_join",
         blame="renamed_module.py:1:0",
     )
-    assert result is joined
-    assert result.demand.demand_cid == "blake3-512:aaaa"
+    assert result.sole_demand().demand_cid == "blake3-512:aaaa"
 
 
-def test_two_distinct_obligations_stay_loud() -> None:
-    """The discriminating face: carrying one would DROP the other."""
+def test_two_distinct_obligations_join_and_both_survive() -> None:
+    """SUPERSEDED PANIC, NOW A LAW (#6352).
+
+    This used to assert the loud refusal, because the carrier held exactly one
+    demand and carrying one would DROP the other. The panic named its own
+    replacement -- a demand SET -- and that landed. The assertion moves from
+    "it refuses" to "BOTH obligations survive the join", which is the property
+    the refusal was protecting.
+    """
     from sugar_lift_py_tests.floor.single_outcome_law import rewrap_pending
 
-    with pytest.raises(ConstructionPanic) as excinfo:
-        rewrap_pending(
-            _pending("aaaa", TermValue(1)),
-            _pending("bbbb", TermValue(2)),
-            owner="renamed_join",
-            blame="renamed_module.py:1:0",
-        )
-    info = excinfo.value.info
-    assert "two distinct pending contract demands" in info.observed
-    assert "blake3-512:aaaa" in info.observed
-    assert "blake3-512:bbbb" in info.observed
-    assert "demand SET" in info.fix
+    result = rewrap_pending(
+        _pending("aaaa", TermValue(1)),
+        _pending("bbbb", TermValue(2)),
+        owner="renamed_join",
+        blame="renamed_module.py:1:0",
+    )
+    assert {demand.demand_cid for demand in result.demands} == {
+        "blake3-512:aaaa",
+        "blake3-512:bbbb",
+    }
 
 
 def test_a_partition_still_has_nowhere_to_carry_a_demand() -> None:
@@ -203,7 +207,7 @@ def test_a_partition_still_has_nowhere_to_carry_a_demand() -> None:
             owner="renamed_join",
             blame="renamed_module.py:1:0",
         )
-    assert "carries no single value" in excinfo.value.info.observed
+    assert "cannot share one carried value" in excinfo.value.info.observed
 
 
 # --------------------------------------------------------------------------

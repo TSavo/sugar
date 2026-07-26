@@ -42,7 +42,7 @@ def _self_declared_set(unit):
     pre = {
         "kind": "parameter-contract-resolution",
         "schemaVersion": "1",
-        "demandCid": cand.demand.demand_cid,
+        "demandCid": cand.sole_demand().demand_cid,
         "candidateCid": cand.candidate_cid,
         "contractCid": unit.parameter_owned_contract.contract_cid,
         "basis": "declared-demand",
@@ -74,7 +74,7 @@ def test_twin_b_lying_candidate_is_rejected():
     pre = {
         "kind": "parameter-contract-resolution",
         "schemaVersion": "1",
-        "demandCid": cand.demand.demand_cid,
+        "demandCid": cand.sole_demand().demand_cid,
         "candidateCid": "blake3-512:" + "b" * 128,  # LIE
         "contractCid": unit.parameter_owned_contract.contract_cid,
         "basis": "declared-demand",
@@ -121,7 +121,7 @@ def test_report_declared_demand_basis_grounded():
     # #2: the ACTUAL emitted link unit carries the exact pending demand CID in
     # declaredDemandCids (that is why Rust selects DeclaredDemand).
     universe, unit = _universe_and_unit("def transform(items):\n    return items[0]\n")
-    demand_cid = unit.candidates[0].demand.demand_cid
+    demand_cid = unit.candidates[0].sole_demand().demand_cid
     declared = unit.parameter_owned_contract.declared_demand_cids
     assert demand_cid in declared, "pending demand must be self-declared"
     assert (

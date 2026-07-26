@@ -39,6 +39,9 @@ def _reduce_into(element_sugars, ctx, build):
         pending_demand,
         rewrap_pending,
     )
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.caller_parameter_contract import merge_demands
     from sugar_lift_py_tests.outcome import true_guard
     from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
@@ -52,37 +55,24 @@ def _reduce_into(element_sugars, ctx, build):
     # display has no guard of its own -- so it hoists at `true_guard`.
     pending = None
     stripped = []
-    # Two elements carrying the SAME obligation are not two obligations:
-    # ``demand_cid`` is the content address of the whole demand, so equal cids
-    # are the same formal, site, formula and candidate reached twice (`[p[0],
-    # p[0]]`, or one reduced element shared by a fold). Conjunction is
-    # idempotent, so one entry carries both. Only DISTINCT demands need a
-    # demand SET, and those stay loud.
     for outcome in reduced:
         entry, plain = pending_demand(outcome, true_guard())
-        if (
-            entry is not None
-            and pending is not None
-            and entry.demand.demand_cid != pending.demand.demand_cid
-        ):
-            from sugar_lift_py_tests.gap.info import GapKind
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner=owner,
-                blame=str(entry.source_node),
-                observed=(
-                    "two collection elements enrolled DISTINCT contract demands "
-                    f"({pending.demand.demand_cid} and {entry.demand.demand_cid})"
-                ),
-                requested="one pending demand per constructed value",
-                fix=(
-                    "widen ContractConditionalConstructionV1 to carry a demand SET "
-                    "before building a collection from two pending elements"
-                ),
-                gap_kind=GapKind.FLOOR,
+        if entry is not None:
+            # EVERY element's obligations accumulate into one demand SET
+            # (#6352). `[p[0], q[1]]` owes `python:indexable(p)` AND
+            # `python:indexable(q)`; this used to panic NAMED on the second
+            # distinct demand because the carrier held exactly one. The union
+            # dedupes by `demand_cid` -- the content address of the whole
+            # obligation -- so `[p[0], p[0]]` is still one obligation, and two
+            # different ones stay two.
+            pending = (
+                entry
+                if pending is None
+                else replace(
+                    pending,
+                    demands=merge_demands(pending.demands, entry.demands),
+                )
             )
-        pending = entry if entry is not None else pending
         stripped.append(plain)
 
     # An element that PARTITIONS enters the fold with at most one completed arm

@@ -45,9 +45,9 @@ def test_symbolic_parameter_subscript_constructs_one_pending_candidate(
     ]
     assert len(pending) == 1
     conditional = pending[0]
-    assert conditional.demand.formal_coordinate_cid
-    assert conditional.demand.candidate_cid == conditional.candidate_cid
-    assert conditional.demand.demand_cid
+    assert conditional.sole_demand().formal_coordinate_cid
+    assert conditional.sole_demand().candidate_cid == conditional.candidate_cid
+    assert conditional.sole_demand().demand_cid
     assert calls == 1
     with pytest.raises(ConstructionPanic, match="ParameterContractResolutionV1"):
         out.value.post()
