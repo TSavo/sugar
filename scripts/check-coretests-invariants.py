@@ -47,6 +47,7 @@ def parse_headline(text: str) -> dict:
         "discharged": i(grab(r"discharged \(lifted to FOL\):\s*(-?\d+)")),
         "refused": i(grab(r"refused\s+\(TERMINAL[^:]*:\s*(-?\d+)")),
         "unclassified": i(grab(r"unclassified \(lifter[^:]*:\s*(-?\d+)")),
+        "panicked_files": i(grab(r"panicked files \(LIFTER GAP\):\s*(-?\d+)")),
         "silent": i(grab(r"missing assertions \(SILENT\):\s*(-?\d+)")),
         "missing_assertions": i(grab(r"missing assertions \(SILENT\):\s*(-?\d+)")),
         "callsite_expansion": i(grab(r"callsite-expanded obligations:\s*(-?\d+)")),
@@ -70,6 +71,9 @@ EXACT = [
      "terminal-refused count is not what the commit claimed"),
     ("unclassified", "unclassified",
      "unclassified is not what the commit claimed it would move to"),
+    ("panicked_files", "panicked_files",
+     "a file's lift PANICKED and was binned whole -- every count above is a floor, "
+     "not a reading; fix the lifter gap or the ledger is not what it says it is"),
 ]
 
 
@@ -81,8 +85,20 @@ def main() -> int:
     pin = json.load(open(sys.argv[2], encoding="utf-8"))
 
     failures = []
+    # A sweep binary predating the per-file panic boundary prints no `panicked
+    # files` line at all. That is not "0 panics" -- it is a sweep that cannot
+    # tell you either way, so say that instead of blaming a lifter gap.
+    if "panicked_files" in pin and got.get("panicked_files") is None:
+        failures.append(
+            "panicked_files: the sweep output has no `panicked files (LIFTER GAP)` line -- "
+            "this binary predates the per-file panic boundary and cannot show whether the "
+            "ledger is a reading or a floor; rebuild coretests_sweep"
+        )
     for sweep_key, pin_key, why in EXACT:
         if pin_key not in pin:
+            continue
+        # Already reported above with the accurate cause.
+        if sweep_key == "panicked_files" and got.get(sweep_key) is None:
             continue
         if got.get(sweep_key) != pin[pin_key]:
             failures.append(
@@ -112,6 +128,7 @@ def main() -> int:
         f"coretests invariants: OK  (unclassified={got['unclassified']}, "
         f"refused={got['refused']}, discharged={got['discharged']}, SILENT={got['silent']}, "
         f"missing={got['missing_assertions']}, expanded={got['callsite_expansion']}, "
+        f"panicked_files={got['panicked_files']}, "
         f"CID pinned{moved})"
     )
     return 0

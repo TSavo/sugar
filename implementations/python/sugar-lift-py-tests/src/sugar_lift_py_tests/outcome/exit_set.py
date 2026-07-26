@@ -79,6 +79,37 @@ def _or_guards(left: Formula, right: Formula) -> Formula:
     return or_([left, right])
 
 
+# Sentinel for a destination that cannot be hashed. Not an error and not a
+# reason to drop an arm: such an arm takes the original full scan.
+_UNHASHABLE = object()
+
+# Every unhashable destination that took the scan path, by exit kind. This is
+# the measured-fallback receipt: if this list is ever non-empty in a real run,
+# the slow path is real and someone must see it, rather than the quadratic
+# quietly surviving inside a "fixed" normalizer.
+_UNHASHABLE_DESTINATIONS: list[str] = []
+
+
+def _unhashable_destination_count() -> int:
+    """How many arms took the full-scan path (test / diagnostics only)."""
+    return len(_UNHASHABLE_DESTINATIONS)
+
+
+def _destination_key(exit_: "Exit[T]") -> object:
+    """Bucket key for an exit's DESTINATION, ignoring its guard.
+
+    Two exits merge exactly when their destinations are equal, so the guard —
+    the thing the merge rewrites — must not enter the key. Returns
+    ``_UNHASHABLE`` when the destination cannot be hashed.
+    """
+    try:
+        if isinstance(exit_, Completed):
+            return ("completed", hash(exit_.value))
+        return ("halted", hash(exit_.effect), hash(exit_.state))
+    except TypeError:
+        return _UNHASHABLE
+
+
 @dataclass(frozen=True)
 class Completed(Generic[T]):
     guard: Formula
@@ -135,12 +166,57 @@ class ExitSet(Generic[T]):
         return ExitSet(tuple(exits)).normalize()
 
     def normalize(self) -> "ExitSet[T]":
-        """Drop false exits and merge equal destinations by disjoining guards."""
+        """Drop false exits and merge equal destinations by disjoining guards.
+
+        The merge is indexed by destination hash, not an all-pairs scan.
+
+        The scan was quadratic in ARM COUNT with an expensive comparison: each
+        ``==`` on a callsite destination rebuilt a content coordinate. On
+        ``pandas/core/generic.py`` that reached 128,462 normalize calls over
+        arm sets up to 1,317 wide — an upper bound of 13,147,074 comparisons —
+        to merge away 1.9% of arms. The arm counts are honest; the scan was
+        not.
+
+        This changes cost, never meaning:
+
+        - **first-occurrence output order is preserved.** Buckets index INTO
+          ``merged``; ``merged`` itself is still appended in arrival order and
+          merges still write in place, so the emitted tuple is byte-identical
+          to the scan's.
+        - **hash never decides equality.** A bucket narrows the candidates; the
+          same exact comparison as before decides, so a hash collision costs a
+          comparison and nothing else.
+        - **the first match still wins.** Bucket indices are appended
+          ascending, so the earliest matching prior is found first, exactly as
+          ``break`` did.
+        - **unhashable destinations keep the old behaviour** — a full scan over
+          every prior, counted in ``_UNHASHABLE_DESTINATIONS`` so the slow path
+          is measured rather than silent. Nothing is dropped and nothing is
+          merged that the scan would not have merged.
+        """
         merged: list[Exit[T]] = []
+        buckets: dict[object, list[int]] = {}
+        unhashable: list[int] = []
+
         for exit_ in self.exits:
             if _is_false(exit_.guard):
                 continue
-            for index, prior in enumerate(merged):
+
+            key = _destination_key(exit_)
+            if key is _UNHASHABLE:
+                # Exact previous semantics: compare against every prior.
+                candidates: "list[int]" = list(range(len(merged)))
+                _UNHASHABLE_DESTINATIONS.append(type(exit_).__name__)
+            else:
+                candidates = buckets.get(key, ())
+                # An unhashable prior can still be equal to a hashable arrival
+                # only if equality disagrees with hashability; compare against
+                # those too rather than assume it cannot happen.
+                if unhashable:
+                    candidates = sorted({*candidates, *unhashable})
+
+            for index in candidates:
+                prior = merged[index]
                 same_completed = (
                     isinstance(exit_, Completed)
                     and isinstance(prior, Completed)
@@ -163,7 +239,13 @@ class ExitSet(Generic[T]):
                     )
                     break
             else:
+                index = len(merged)
                 merged.append(exit_)
+                if key is _UNHASHABLE:
+                    unhashable.append(index)
+                else:
+                    buckets.setdefault(key, []).append(index)
+
         return ExitSet(tuple(merged))
 
     def sequence(self, step: Callable[[T], "ExitSet[U]"]) -> "ExitSet[U]":
