@@ -12,6 +12,7 @@ from sugar_lift_py_tests.sugar.binding_projection import (
     LoopGuardedProjection,
     UnboundProjection,
 )
+from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import _loop_exit_faces
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -52,11 +53,17 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
         # `del` is the other verb over the SAME projection, and it simply had no
         # arm for this constructor -- which is what
         # `TypeError: LoopGuardedProjection` was.
+        partition_faces = _loop_exit_faces(state)
         exits = ExitSet(())
         for face in state.completed_faces:
             exits = exits.union(
                 delete_binding(face.state, name=name, site=site, ctx=ctx).guarded(
-                    face.guard_formula
+                    face.guard_formula,
+                    (
+                        None
+                        if partition_faces is None
+                        else partition_faces[face.completion_kind]
+                    ),
                 )
             )
         return exits.normalize()

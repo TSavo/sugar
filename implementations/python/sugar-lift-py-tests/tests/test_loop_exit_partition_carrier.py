@@ -54,7 +54,9 @@ from sugar_lift_py_tests.outcome.exit_set import (
 from sugar_lift_py_tests.sugar.binding_projection import (
     LoopGuardedCompletedFace,
     LoopGuardedProjection,
+    UnboundProjection,
 )
+from sugar_lift_py_tests.sugar.delete_name_sugar import delete_binding
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import _loop_exit_faces
 
 # The shape of `pandas/core/methods/selectn.py:224`: a name carried across a
@@ -150,6 +152,57 @@ def test_the_carrier_is_the_loop_projection_read(tmp_path):
         assert {face.partition for face in faces.values()} == {
             ("sugar.exit_set.partition", ("loop.exit", projection.target_cid))
         }
+
+
+def test_delete_uses_the_same_authenticated_loop_exit_family():
+    """The delete verb stamps the same producer-owned faces as the read verb."""
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+    @dataclass(frozen=True)
+    class _Site:
+        filename: str = "loop-delete-twin.py"
+        line: int = 1
+        col: int = 0
+
+    class _BoundState(Sugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            raise AssertionError("delete_binding must not reduce a bound face")
+
+    site = _Site()
+    projection = _projection(
+        [
+            LoopGuardedCompletedFace(
+                "BreakExit", atomic("b", []), _BoundState(), 2
+            ),
+            LoopGuardedCompletedFace(
+                "NormalExhaustion",
+                atomic("n", []),
+                UnboundProjection("value", site),
+                2,
+            ),
+        ]
+    )
+
+    exits = delete_binding(projection, name="value", site=site, ctx=None)
+
+    assert {type(exit_).__name__ for exit_ in exits.exits} == {
+        "Completed",
+        "Halted",
+    }
+    assert {next(iter(exit_.faces)).side for exit_ in exits.exits} == {
+        "BreakExit",
+        "NormalExhaustion",
+    }
+    assert {next(iter(exit_.faces)).partition for exit_ in exits.exits} == {
+        ("sugar.exit_set.partition", ("loop.exit", projection.target_cid))
+    }
 
 
 # --------------------------------------------------------------------------
