@@ -265,3 +265,116 @@ def test_effect_without_occurrence_is_an_instrument_gap_not_a_fabricated_key() -
         "no-occurrence-coordinate:SourceOracleEffect"
     }
     assert axis.red is True
+
+
+# -- 10. a defect row carries the classification its exception already holds --
+#
+# The pandas board reported thirteen `ExitSetFactoringGap` occurrences as
+# undifferentiated `desugar-exception` rows, while the exception itself carried
+# the two refusing arms and a classifier that splits them into closable work and
+# correct output. Both twins below assert EXACT cardinality and that the row
+# stays on the defect axis: reading testimony must not move a row anywhere.
+
+
+def _factoring_gap(*, stamped: bool):
+    """One `ExitSetFactoringGap` carrying two arms, silent or testifying."""
+    from sugar_lift_py_tests.ir import atomic, make_var, not_
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSetFactoringGap,
+        partition,
+    )
+
+    guard = atomic("g", [make_var("state")])
+    if stamped:
+        # Both arms testify to the SAME side of one producer's split — which is
+        # why the split does not separate them, and why wiring a producer
+        # cannot close this occurrence.
+        face, _other_side = partition("twin-producer")
+        left = Completed(guard, "A", frozenset({face}))
+        right = Completed(not_(guard), "B", frozenset({face}))
+    else:
+        left = Completed(guard, "A", frozenset())
+        right = Completed(not_(guard), "B", frozenset())
+    return ExitSetFactoringGap("arms are not provably exclusive", left, right)
+
+
+def test_twin_10_factoring_gap_defect_carries_its_classification() -> None:
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=_factoring_gap(stamped=False)), where="gen.py:1:0")
+    row = axis.row()
+    # Still exactly one DEFECT: reading testimony moves nothing off this axis.
+    assert row["R_desugar"] == 0
+    assert row["desugarFamilies"] == {}
+    assert row["desugarConstructionPanics"] == []
+    assert len(row["desugarDefects"]) == 1
+    defect = row["desugarDefects"][0]
+    assert defect["kind"] == "desugar-exception"
+    assert defect["detail"].startswith("ExitSetFactoringGap")
+    assert defect["classification"]["kind"] == "unstamped"
+    assert defect["classification"]["isRemainingWork"] is True
+    assert axis.red is True
+
+
+def test_twin_10_discriminator_stamped_arms_are_not_reported_as_owed_work() -> None:
+    """The same row shape, the other verdict.
+
+    A classifier that answered one constant would satisfy the positive twin
+    above. Two producers that already testified and still do not separate are
+    NOT closable by wiring a producer, and the row must say so.
+    """
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=_factoring_gap(stamped=True)), where="gen.py:1:0")
+    defects = axis.row()["desugarDefects"]
+    assert len(defects) == 1
+    assert defects[0]["classification"]["kind"] == "stamped-not-separating"
+    assert defects[0]["classification"]["isRemainingWork"] is False
+
+
+def test_twin_10_discriminator_an_exception_with_no_testimony_gets_no_key() -> None:
+    """No placeholder. An ordinary exception carries no classification, and the
+    row must OMIT the key rather than carry an "unknown" a reader could read as
+    a verdict."""
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=KeyError("boom")), where="gen.py:1:0")
+    defects = axis.row()["desugarDefects"]
+    assert len(defects) == 1
+    assert "classification" not in defects[0]
+
+    # ...and neither does a factoring gap that carries no arms at all.
+    from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
+
+    bare = _axis()
+    bare.measure(_FakeSugar(raises=ExitSetFactoringGap("bare")), where="gen.py:2:0")
+    bare_defects = bare.row()["desugarDefects"]
+    assert len(bare_defects) == 1
+    assert "classification" not in bare_defects[0]
+
+
+def test_twin_10_discriminator_a_merged_arm_is_not_reported_as_owed_work() -> None:
+    """Silent arms are not automatically owed work.
+
+    An equal-destination merge puts a disjunction at conjunct level, and #6336's
+    composition rule intersects faces on such a merge — so minting the producer's
+    face would only see it intersected away again (#6361 measured exactly that).
+    An `UNSTAMPED` row with a merged arm must therefore read `isRemainingWork:
+    False`, and this twin is the one that fails when the merged-arm condition is
+    dropped from `is_remaining_work`.
+    """
+    from sugar_lift_py_tests.ir import atomic, make_var, not_, or_
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSetFactoringGap
+
+    guard = atomic("g", [make_var("state")])
+    merged = or_([guard, atomic("h", [make_var("state")])])
+    gap = ExitSetFactoringGap(
+        "arms are not provably exclusive",
+        Completed(merged, "A", frozenset()),
+        Completed(not_(guard), "B", frozenset()),
+    )
+    axis = _axis()
+    axis.measure(_FakeSugar(raises=gap), where="gen.py:1:0")
+    defects = axis.row()["desugarDefects"]
+    assert len(defects) == 1
+    assert defects[0]["classification"]["kind"] == "unstamped"
+    assert defects[0]["classification"]["mergedArm"] is True
+    assert defects[0]["classification"]["isRemainingWork"] is False
