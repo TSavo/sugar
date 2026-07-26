@@ -170,15 +170,35 @@ def test_arity_mismatch_stays_loud():
         _fn("def A():\n    a, b = (1, 2, 3)\n    return a\n").sugar()
 
 
-def test_non_display_rhs_constructs_but_stays_typed_loud_when_reached():
+def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     # Construction must be total enough for an unreachable branch to coexist
     # with a closed guard. If execution reaches the dynamic unpack, its unknown
     # iteration/cardinality semantics remain loud rather than fabricating binds.
+    #
+    # "Loud" used to mean SugarNotWritten -- a refusal that banked as measured
+    # while saying nothing about WHAT was owed. #6316 drained it: the demand is
+    # now a typed effect naming the exact obligation
+    # `python:unpack.destructure(term, arity)`. Same law, one rung up, and the
+    # assertion is correspondingly stronger.
+    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+
     function = _fn("def A(p):\n    a, b = p\n    return a\n")
     sugar = function.sugar()
 
+    out = sugar.desugar()
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
+    assert "exactly 2 members" in out.effect.reason
+    assert "(a, b)" in out.effect.reason
+
+
+def test_display_rhs_arity_mismatch_is_still_a_refusal_not_an_effect():
+    # DISCRIMINATING against the change above: a DISPLAY right-hand side has
+    # lift-time cardinality, so `a, b = (1, 2, 3)` is decidably wrong and must
+    # NOT be softened into the runtime-cardinality effect. Only the undecidable
+    # count becomes an obligation.
     with pytest.raises(SugarNotWritten):
-        sugar.desugar()
+        _fn("def A():\n    a, b = (1, 2, 3)\n    return a\n").sugar()
 
 
 def test_mixed_chained_targets_stay_loud():
