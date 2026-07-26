@@ -1316,3 +1316,68 @@ def test_guarded_literal_exit_without_type_coordinate_stays_gap(tmp_path):
         ),
     )
     assert isinstance(summary, DerivedManagerSummaryGapV1)
+
+
+# --- Effect boundary consumes an ANCESTOR match, not only exact identity -----
+#
+# `matches_raise_effect` is the one matcher for With and Try, and it walks the
+# raised effect's ancestry. Builtin ancestry is Python's own testimony, so a
+# boundary written against `Exception` consumes a `ValueError` halt and does
+# NOT consume a `KeyboardInterrupt` one. Both faces, because an ancestry table
+# that says yes to everything is as wrong as one that says no to everything.
+
+
+@pytest.mark.parametrize(
+    ("expected_type", "body", "expected_face"),
+    [
+        ("Exception", 'raise ValueError("needle")', "completed"),
+        ("ArithmeticError", 'raise ZeroDivisionError("needle")', "completed"),
+        ("BaseException", 'raise KeyboardInterrupt("needle")', "completed"),
+        ("Exception", 'raise KeyboardInterrupt("needle")', "halted"),
+        ("ValueError", 'raise Exception("needle")', "halted"),
+        ("ArithmeticError", 'raise OSError("needle")', "halted"),
+    ],
+)
+def test_boundary_consumes_authenticated_builtin_ancestry_only_in_one_direction(
+    tmp_path, expected_type, body, expected_face
+):
+    implementation = (
+        "class Boundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n\n"
+        "def boundary(expected):\n"
+        "    return Boundary(expected)\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="boundary")
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        f"    with arbitrary.boundary({expected_type}):\n"
+        f"        {body}\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+    face = outcome_to_exitset(boundary.desugar()).exits[0]
+    assert type(face).__name__.lower() == expected_face

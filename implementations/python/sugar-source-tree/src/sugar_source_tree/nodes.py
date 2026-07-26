@@ -525,16 +525,56 @@ class SourceUnit:
             )
         return None
 
+    def _builtin_exception_ancestry(self, identity):
+        """Python's own ancestry for a ``builtins`` exception identity.
+
+        ``None`` when the identity is not a builtin one — a source class owns
+        its own base graph and is resolved lexically below. The previous
+        behaviour returned the singleton ``(identity,)`` for every non-local
+        class, which is not "ancestry unknown" but the positive claim that the
+        class has no ancestors, and it silently made ``except Exception`` fail
+        to match ``raise ValueError``.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_BASES,
+        )
+
+        args = getattr(identity, "args", ())
+        if len(args) != 2 or getattr(args[0], "value", None) != "builtins":
+            return None
+        root = getattr(args[1], "value", None)
+        if root not in BUILTIN_EXCEPTION_BASES:
+            return None
+        ancestry = []
+        pending = [root]
+        while pending:
+            name = pending.pop(0)
+            coordinate = ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const(name)],
+            )
+            if coordinate in ancestry:
+                continue
+            ancestry.append(coordinate)
+            pending.extend(BUILTIN_EXCEPTION_BASES[name])
+        return tuple(ancestry)
+
     def exception_type_mro(self, node: "Name"):
         """Return the source-authenticated ancestry known for ``node``.
 
-        Builtin/imported identities authenticate the exact class. Source class
-        identities additionally carry every lexically resolved base coordinate.
-        A computed base or cycle leaves the testimony unavailable, never guessed.
+        Builtin identities carry Python's OWN hierarchy, transported from
+        ``BUILTIN_EXCEPTION_BASES`` — the language states that ``ValueError``
+        is an ``Exception``, so the ancestry is cited, never assumed. Source
+        class identities carry every lexically resolved base coordinate. A
+        computed base or cycle leaves the testimony unavailable, never guessed.
         """
         identity = self.exception_type_identity(node)
         if identity is None:
             return None
+        builtin_ancestry = self._builtin_exception_ancestry(identity)
+        if builtin_ancestry is not None:
+            return builtin_ancestry
         module = self._require_typed_module("SourceUnit.exception_type_mro")
         definitions = [
             statement
