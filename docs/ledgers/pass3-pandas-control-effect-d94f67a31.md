@@ -1,6 +1,26 @@
 # Pass 3 board — pandas control-effect census @ `d94f67a31`
 
-**Authority:** provisional checkpoint reconstruction  
+> ## ARCHIVED — NOT COMPARABLE TO THE CURRENT BOARD
+>
+> **Do not quote any number in this file against a current measurement, and in
+> particular do not quote its With-R.** Two things make it non-comparable, and
+> either alone would be enough:
+>
+> 1. **Different corpus.** This ran over a 1,415-file pandas. The current board
+>    is pinned to pandas 3.0.3, 1,421 files, identified by an aggregate content
+>    hash (`sugar_lift_py_tests.corpus_pin`). A delta between the two is a
+>    different pandas, not motion.
+> 2. **Understated by construction.** 780 of its 1,415 files aborted at
+>    `ValueError: 'dynamic-export' is not a valid WithConstructionGapKind`
+>    before their gaps could be tallied. Its construction With mass is a floor
+>    over 635 files, not a measurement over 1,415. That decode defect is fixed
+>    (`WithConstructionGapKind.parse`), which is exactly why the numbers below
+>    cannot be differenced against anything measured after it.
+>
+> Kept as testimony of what was observed and when. The authority is
+> `implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py`.
+
+**Authority:** ARCHIVED — superseded, non-comparable. Was: provisional checkpoint reconstruction  
 **Source:** `.sugar/pandas-four-axis-census-d94f67a31/control-effect/checkpoint.jsonl`  
 **Rows:** 1415 / 1415 (full manifest)  
 **Lease:** completed/findings; `measuredCommit=d94f67a3149ea2aceee4f9a8cff0397b6f6d374a`  

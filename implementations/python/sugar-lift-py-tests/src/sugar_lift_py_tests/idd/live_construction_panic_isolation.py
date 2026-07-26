@@ -12,6 +12,11 @@ recensus and floor drain share one owner map.
 
 from __future__ import annotations
 
+# Not the board. This module measures its own named denominator; the sole
+# authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
+# See tests/test_one_authoritative_scoreboard.py.
+SCOREBOARD_AUTHORITY = False
+
 import ast
 import json
 import os
