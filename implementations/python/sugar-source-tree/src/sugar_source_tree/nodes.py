@@ -2362,9 +2362,13 @@ class FunctionDef(Statement):
                     relative = Path(self.unit.filename)
                     if relative.is_absolute():
                         raise SugarNotWritten(
-                            f"module-level bridge symbol needs a workspace-relative "
-                            f"locus; `{self.unit.filename}` is absolute -- route the "
-                            f"source through the workspace-relative lift door"
+                            owner="FunctionDef.bridge_source_symbol",
+                            observed=f"absolute source locus `{self.unit.filename}`",
+                            requested="workspace-relative source locus",
+                            fix=(
+                                "route the source through the workspace-relative "
+                                "lift door (`workspace_path_source`)"
+                            ),
                         )
                     module_parts = list(relative.with_suffix("").parts)
                     if module_parts and module_parts[-1] == "__init__":
