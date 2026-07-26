@@ -3,100 +3,17 @@
  "n_functions": 223,
  "statuses": {
   "ExitSetFactoringGap": 1,
-  "clean": 221,
-  "raised:TypeError": 1
+  "clean": 222
  },
  "R(timeout)": 0,
  "R(construction_panics)": 0,
  "R(factoring_gaps)": 1,
- "R(unnamed_exceptions)": 1,
+ "R(unnamed_exceptions)": 0,
  "completed_denominator": 223,
  "stableZero": false,
- "desugar_s": 53.77,
- "wall_s": 57.33,
+ "desugar_s": 35.12,
+ "wall_s": 37.85,
  "residuals": [
-  {
-   "name": null,
-   "line": 9596,
-   "status": "raised:TypeError",
-   "testimony": {
-    "type": "TypeError",
-    "message": "<class 'sugar_lift_py_tests.caller_parameter_contract.ContractConditionalConstructionV1'>",
-    "frames": [
-     {
-      "module": "__main__",
-      "qualname": "classify",
-      "line": 148
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
-      "qualname": "FunctionUniverseSugar.desugar",
-      "line": 369
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
-      "qualname": "reduce_body",
-      "line": 303
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
-      "qualname": "reduce_block_to_exitset",
-      "line": 275
-     },
-     {
-      "module": "sugar_lift_py_tests.outcome.exit_set",
-      "qualname": "ExitSet.sequence",
-      "line": 522
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
-      "qualname": "reduce_block_to_exitset.<locals>.reduce_next",
-      "line": 84
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.store_effect_sugar",
-      "qualname": "AttributeStoreEffectSugar.desugar",
-      "line": 48
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.subscript_sugar",
-      "qualname": "SubscriptSugar.desugar",
-      "line": 43
-     },
-     {
-      "module": "sugar_lift_py_tests.caller_parameter_contract",
-      "qualname": "ContractConditionalConstructionV1.and_then",
-      "line": 159
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.subscript_sugar",
-      "qualname": "SubscriptSugar.desugar.<locals>.<lambda>",
-      "line": 44
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.spread_sugar",
-      "qualname": "SpreadCollectionSugar.desugar",
-      "line": 119
-     },
-     {
-      "module": "sugar_lift_py_tests.sugar.spread_sugar",
-      "qualname": "_collect",
-      "line": 55
-     },
-     {
-      "module": "sugar_lift_py_tests.outcome.exit_set",
-      "qualname": "outcome_to_exitset",
-      "line": 806
-     }
-    ],
-    "innermost": {
-     "module": "sugar_lift_py_tests.outcome.exit_set",
-     "qualname": "outcome_to_exitset",
-     "line": 806
-    }
-   },
-   "seconds": 1.3517
-  },
   {
    "name": null,
    "line": 13403,
@@ -108,7 +25,7 @@
      {
       "module": "__main__",
       "qualname": "classify",
-      "line": 148
+      "line": 149
      },
      {
       "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
@@ -128,7 +45,7 @@
      {
       "module": "sugar_lift_py_tests.outcome.exit_set",
       "qualname": "ExitSet.sequence",
-      "line": 522
+      "line": 567
      },
      {
       "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
@@ -143,49 +60,49 @@
      {
       "module": "sugar_lift_py_tests.sugar.spread_sugar",
       "qualname": "SpreadCallSugar.desugar",
-      "line": 197
+      "line": 233
      },
      {
       "module": "sugar_lift_py_tests.outcome.exit_set",
       "qualname": "ExitSet.and_then",
-      "line": 535
+      "line": 580
      },
      {
       "module": "sugar_lift_py_tests.outcome.exit_set",
       "qualname": "ExitSet.sequence",
-      "line": 522
+      "line": 567
      },
      {
       "module": "sugar_lift_py_tests.outcome.exit_set",
       "qualname": "ExitSet.and_then.<locals>.<lambda>",
-      "line": 535
+      "line": 580
      },
      {
       "module": "sugar_lift_py_tests.sugar.spread_sugar",
       "qualname": "SpreadCallSugar.desugar.<locals>.after_callee",
-      "line": 188
+      "line": 224
      },
      {
       "module": "sugar_lift_py_tests.sugar.spread_sugar",
       "qualname": "_collect",
-      "line": 55
+      "line": 81
      },
      {
       "module": "sugar_lift_py_tests.outcome.exit_set",
       "qualname": "ExitSet.factor_completed",
-      "line": 367
+      "line": 404
      }
     ],
     "innermost": {
      "module": "sugar_lift_py_tests.outcome.exit_set",
      "qualname": "ExitSet.factor_completed",
-     "line": 367
+     "line": 404
     }
    },
-   "seconds": 0.7857
+   "seconds": 0.9488
   }
  ],
  "file": "/usr/local/lib/python3.14/site-packages/pandas/core/generic.py",
- "label": "fix-6351",
+ "label": "fix-6352-v3",
  "deadline_seconds": 120.0
 }
