@@ -16,10 +16,9 @@ class ExceptionValue(FloorValue):
     site: object = dataclass_field(compare=False)
 
     def argument_terms(self) -> tuple[Term, ...]:
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         return tuple(
-            floor_to_term(argument, owner=f"{self.exception_name} argument")
+            argument.to_term(owner=f"{self.exception_name} argument")
             for argument in self.arguments
         )
 

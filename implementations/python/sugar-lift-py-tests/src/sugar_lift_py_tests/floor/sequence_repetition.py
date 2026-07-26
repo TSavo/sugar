@@ -6,7 +6,7 @@ from __future__ import annotations
 EAGER_MATERIALIZATION_BUDGET = 128
 
 
-def repeat_sequence(sequence, count, site, *, rebuild):
+def repeat_sequence(sequence, count, site, *, elements, rebuild):
     """``sequence * count`` for one concrete sequence, at any cardinality.
 
     Cardinality does not change WHAT a repetition is. A concrete sequence
@@ -23,9 +23,11 @@ def repeat_sequence(sequence, count, site, *, rebuild):
     a private copy of this arm that PANICKED above 128, reporting 19 perfectly
     ordinary pandas repetitions as construction gaps.)
 
-    ``rebuild`` is the receiver's own constructor over a materialized element
-    tuple, so each sequence category rebuilds itself and no category learns
-    another's shape.
+    ``elements`` and ``rebuild`` are the receiver's own element tuple and its
+    own constructor over one, so each sequence category names and rebuilds its
+    own shape and no category learns another's. (``ArrayLiteral`` spells its
+    elements ``items``; reading ``.elements`` off the receiver was this law
+    knowing one category's field name, which is why the array never joined.)
     """
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.floor.term_value import TermValue
@@ -33,8 +35,8 @@ def repeat_sequence(sequence, count, site, *, rebuild):
 
     if type(count) is TermValue and type(count.value) in (int, bool):
         n = count.value
-        if len(sequence.elements) * max(n, 0) <= EAGER_MATERIALIZATION_BUDGET:
-            return Complete(rebuild(sequence.elements * n))
+        if len(elements) * max(n, 0) <= EAGER_MATERIALIZATION_BUDGET:
+            return Complete(rebuild(elements * n))
         return Complete(SymbolicValue(repetition_term(sequence, count, site)))
     if is_known_invalid_repetition_count(count):
         return known_invalid_repetition_type_error(sequence, count, site)

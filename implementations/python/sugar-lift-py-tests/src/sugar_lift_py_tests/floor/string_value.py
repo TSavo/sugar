@@ -656,18 +656,11 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
         iterable = args[0]
         parts = _static_str_parts(iterable)
         if parts is not None:
-            from sugar_lift_py_tests.sugar.for_sugar import (
-                STATIC_UNFOLD_LIMIT,
-                finite_unfold_cap_panic,
-            )
-
-            if len(parts) > STATIC_UNFOLD_LIMIT:
-                finite_unfold_cap_panic(
-                    construction="StringValue.join",
-                    site=operation.blame,
-                    observed=f"join cardinality={len(parts)}",
-                    limit=STATIC_UNFOLD_LIMIT,
-                )
+            # Cardinality does not change WHAT a join is: every part is already
+            # a constructed string, so the fold is exact at any length. This arm
+            # used to PANIC above a static cap from the deleted `sugar.for_sugar`
+            # -- the same abolished cap `floor/sequence_repetition.py` names, and
+            # since that module went the panic was an ImportError, not a refusal.
             return Complete(StringValue(receiver.value.join(parts)))
         # Opaque iterable (vendor columns, symbolic seq): coordinate only.
         return opaque_coordinate()

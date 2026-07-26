@@ -277,7 +277,9 @@ class TupleValue(FloorValue):
         # Python tuple repetition, through the one sequence-repetition law.
         from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-        return repeat_sequence(self, other, site, rebuild=TupleValue)
+        return repeat_sequence(
+            self, other, site, elements=self.elements, rebuild=TupleValue
+        )
 
     def subscript(self, index, site):
         # Concrete tuple + in-range TermValue int folds to the element; out of

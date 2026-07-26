@@ -138,7 +138,6 @@ def collect_dunder_frontier(root: Path) -> DunderFrontierReport:
 
 def _owned_dunder_slots() -> dict[str, str]:
     from sugar_lift_py_tests.floor import object_value
-    from sugar_lift_py_tests.sugar import builtin_dunder_call_sugar
 
     rich_comparison_dunders = {
         "NotEq": "__ne__",
@@ -187,8 +186,13 @@ def _owned_dunder_slots() -> dict[str, str]:
         owners[name] = "ObjectValue._INPLACE_BINARY_DUNDER_METHODS"
     for name in object_value._UNARY_DUNDER_METHODS.values():
         owners[name] = "ObjectValue._UNARY_DUNDER_METHODS"
-    for name in builtin_dunder_call_sugar._METHODS.values():
-        owners[name] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
+    # `sugar/builtin_dunder_call_sugar.py::_METHODS` marked __hash__ __round__
+    # __floor__ __ceil__ __trunc__ __int__ __float__ __complex__ __repr__
+    # __bytes__ __dir__ __reversed__ OWNED. That module was deleted with the
+    # sugar web (f4f2574f0) and nothing replaced the table, so this loop raised
+    # ImportError -- the frontier report could not run at all, which is worse
+    # than reporting the slots honestly. A deleted owner owns nothing: those
+    # slots are UNOWNED and the frontier must say so. Deleted, not repointed.
     owners["__len__"] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
     owners["__abs__"] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
     owners["__index__"] = "BuiltinCallSugar._BUILTIN_DUNDER_METHODS"
