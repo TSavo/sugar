@@ -289,11 +289,35 @@ def _ast_site_prevalence(path: Path) -> Counter[str]:
     return sites
 
 
+def locus_root_for_corpus(corpus_root: Path) -> Path:
+    """The root a corpus's source LOCUS is stated against.
+
+    Distinct from the corpus root, which is the demand-table denominator --
+    WHICH TREE is measured. They were one variable, and that conflation is what
+    made this census mint addresses no other checkout resolves: measuring
+    ``.../site-packages/pandas`` rooted at itself states ``core/frame.py``,
+    one of several addresses for one file.
+
+    For an installed corpus the answer is the install root its distribution
+    recorded seats against, read from the distribution's own manifest by the
+    same walk the seat law uses -- so this driver and that law cannot disagree.
+    Computing it any other way would be a second addressing convention.
+
+    For a first-party tree no distribution states an address, and the corpus
+    root stands unchanged.
+    """
+    from sugar_lift_python_source.source_oracle import install_root_for
+
+    installed = install_root_for(str(corpus_root))
+    return corpus_root if installed is None else Path(installed)
+
+
 def _measure_file(
     path: Path,
     *,
     relative: str,
     workspace_root: Path,
+    locus_root: Path | None = None,
     contract_refs=None,
     on_function: "Callable[[int, int, str, float | None], None] | None" = None,
 ) -> dict[str, Any]:
@@ -324,6 +348,10 @@ def _measure_file(
             "never from the measured file's parent directory"
         )
     root = workspace_root
+    # The demand table comes from the corpus root; the LOCUS is stated against
+    # the root its seats were recorded against. Same value for a first-party
+    # tree, different for an installed one.
+    address_root = locus_root if locus_root is not None else workspace_root
 
     def tally_construction(
         kind: str, node: object | None = None, line: object = "?"
@@ -345,7 +373,7 @@ def _measure_file(
         try:
             source_file = open_source_file_for_construction(
                 path,
-                root=root,
+                root=address_root,
                 reporter=reporter,
                 construction_context=construction_context,
                 populate_derived=True,
@@ -582,6 +610,21 @@ def main() -> int:
         f"{corpus_root.name}/{path.resolve().relative_to(corpus_root).as_posix()}": path
         for path in paths
     }
+    # TWO ROOTS, not one. They were the same variable, and that conflation is
+    # what made the census mint addresses no other checkout resolves.
+    #
+    #   corpus_root  the demand-table denominator -- WHICH TREE is measured.
+    #   locus_root   the address the source locus is stated against.
+    #
+    # For a first-party tree they coincide. For an INSTALLED corpus they must
+    # not: seats are recorded relative to the install root, so measuring
+    # `.../site-packages/pandas` rooted at itself mints `core/frame.py` -- one
+    # of several addresses for one file, resolvable in no other checkout.
+    #
+    # The install root is read from the distribution's own manifest, by the
+    # same walk the seat law uses, so the driver and the law cannot disagree.
+    # Computing it any other way would be a second addressing convention.
+    locus_root = locus_root_for_corpus(corpus_root)
     workspace_root = corpus_root
 
     file_names = sorted(by_file)
@@ -797,6 +840,7 @@ def main() -> int:
                     path,
                     relative=relative,
                     workspace_root=workspace_root,
+                    locus_root=locus_root,
                     contract_refs=contract_refs,
                     on_function=_on_function,
                 )
@@ -1063,10 +1107,7 @@ def main() -> int:
         "desugarDesignedGaps": desugar_designed_gaps,
         "R_desugar_designed_gaps": len(desugar_designed_gaps),
         "desugarDesignedGapOwners": dict(
-            Counter(
-                str(gap.get("owner", "?"))
-                for gap in desugar_designed_gaps
-            )
+            Counter(str(gap.get("owner", "?")) for gap in desugar_designed_gaps)
         ),
         # #6329 -- an arm reaching a dispatch target that does not exist. Its
         # own axis: never semantic R, never quietly a backend defect.
@@ -1093,9 +1134,7 @@ def main() -> int:
                 "R_control_effect": r_construction + len(defects),
                 "R_desugar": r_desugar,
                 "R_backend_defects": r_backend,
-                "R_cm_derived_contract": int(
-                    cm_resolutions.get("derived-contract", 0)
-                ),
+                "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
                 "desugarConstructionPanics": len(desugar_construction_panics),
                 "desugarDefects": len(desugar_defects),
                 "constructionPanics": len(construction_panics),
