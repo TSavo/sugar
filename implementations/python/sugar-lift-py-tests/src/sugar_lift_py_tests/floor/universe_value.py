@@ -80,7 +80,11 @@ class UniverseValue(FloorValue):
                 blame=self.name,
                 observed=(
                     "pending parameter contract demands "
-                    + ",".join(entry.demand.demand_cid for entry in pending)
+                    + ",".join(
+                        demand.demand_cid
+                        for entry in pending
+                        for demand in entry.demands
+                    )
                 ),
                 requested="authenticated ParameterContractResolutionV1 rows",
                 fix=(
@@ -221,11 +225,17 @@ class UniverseValue(FloorValue):
         owner_cid = coords[0].owner_source_identity_cid
         owner_locus = coords[0].owner_definition_locus
         coord_cids = {coordinate.coordinate_cid for coordinate in coords}
+        # Flatten over the entry's demand SET (#6352). `contribution` already
+        # split it into one row per demand on the way into the record, so this
+        # normally sees singletons; iterating the set keeps the reader correct
+        # for any producer that reaches the record without splitting, instead of
+        # silently owning only the first.
         owned_demands = [
-            entry.demand.demand_cid
+            demand.demand_cid
             for entry in pending
-            if entry.demand.formal_coordinate_cid in coord_cids
-            and entry.demand.owner_source_identity_cid == owner_cid
+            for demand in entry.demands
+            if demand.formal_coordinate_cid in coord_cids
+            and demand.owner_source_identity_cid == owner_cid
         ]
         owned = ParameterOwnedContractV1.mint(
             name=self.name,

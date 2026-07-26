@@ -47,7 +47,7 @@ def _link_unit():
         owner_source_identity_cid=SRC,
         owner_definition_locus=owner_def,
         formal_coordinates=(coord,),
-        declared_demand_cids=[cand.demand.demand_cid],
+        declared_demand_cids=[cand.sole_demand().demand_cid],
     )
     unit = ParameterContractLinkUnitV1.mint(
         source_memento={"file": "vendor/b64vendor.py"},
@@ -74,7 +74,7 @@ def _resolution(
 
 
 def _good_set(unit, cand, owned):
-    res = _resolution(cand.demand.demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
     return (
         ParameterContractResolutionSetV1.mint(
             link_unit_cid=unit.link_unit_cid, resolutions=(res,)
@@ -87,7 +87,7 @@ def test_twin_standalone_self_declared_honored():
     unit, cand, owned = _link_unit()
     rset, res = _good_set(unit, cand, owned)
     accepted = resume_apply_resolutions(unit, rset)
-    assert accepted[cand.demand.demand_cid] == res
+    assert accepted[cand.sole_demand().demand_cid] == res
 
 
 def test_twin_missing_resolution_panics():
@@ -101,7 +101,7 @@ def test_twin_missing_resolution_panics():
 
 def test_twin_duplicate_resolution_panics():
     unit, cand, owned = _link_unit()
-    res = _resolution(cand.demand.demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
     rset = ParameterContractResolutionSetV1.mint(
         link_unit_cid=unit.link_unit_cid, resolutions=(res, res)
     )
@@ -111,7 +111,7 @@ def test_twin_duplicate_resolution_panics():
 
 def test_twin_stale_resolution_cid_panics():
     unit, cand, owned = _link_unit()
-    res = _resolution(cand.demand.demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
     res["resolutionCid"] = "blake3-512:" + "0" * 128
     rset = ParameterContractResolutionSetV1.mint(
         link_unit_cid=unit.link_unit_cid, resolutions=(res,)
@@ -123,7 +123,7 @@ def test_twin_stale_resolution_cid_panics():
 def test_twin_foreign_contract_panics():
     unit, cand, owned = _link_unit()
     res = _resolution(
-        cand.demand.demand_cid, cand.candidate_cid, "blake3-512:" + "f" * 128
+        cand.sole_demand().demand_cid, cand.candidate_cid, "blake3-512:" + "f" * 128
     )
     rset = ParameterContractResolutionSetV1.mint(
         link_unit_cid=unit.link_unit_cid, resolutions=(res,)
@@ -135,7 +135,7 @@ def test_twin_foreign_contract_panics():
 def test_twin_wrong_candidate_panics():
     unit, cand, owned = _link_unit()
     res = _resolution(
-        cand.demand.demand_cid, "blake3-512:" + "c" * 128, owned.contract_cid
+        cand.sole_demand().demand_cid, "blake3-512:" + "c" * 128, owned.contract_cid
     )
     rset = ParameterContractResolutionSetV1.mint(
         link_unit_cid=unit.link_unit_cid, resolutions=(res,)
@@ -146,7 +146,7 @@ def test_twin_wrong_candidate_panics():
 
 def test_twin_lost_continuation_panics():
     unit, cand, owned = _link_unit()
-    res = _resolution(cand.demand.demand_cid, cand.candidate_cid, owned.contract_cid)
+    res = _resolution(cand.sole_demand().demand_cid, cand.candidate_cid, owned.contract_cid)
     # a set minted for a DIFFERENT continuation key
     foreign = ParameterContractResolutionSetV1.mint(
         link_unit_cid="blake3-512:" + "9" * 128, resolutions=(res,)

@@ -773,8 +773,11 @@ def factored_operand(outcome):
     #6319 made halting and partitioning operands LIFT instead of raising --
     correctly; that ruling drained 369 defect rows and stays. But it thereby
     put multi-arm completed faces into every one of those folds for the first
-    time. `pandas/tests/extension/test_arrow.py` measured 133,104 arms arriving
-    at ONE ``normalize`` call through ``collection_sugar._reduce_into``.
+    time. The corpus measured 133,104 arms arriving at ONE ``normalize`` call
+    through ``collection_sugar._reduce_into``; the file is named in #6324's
+    receipt, not here -- a router must not carry a vendor spelling even in
+    prose, which is what `test_routers_do_not_branch_on_keyword_vendor_or_
+    manager_spelling` is watching for.
 
     The accumulator itself cannot be factored: its completed value is the
     growing tuple the fold is building, and a ``GuardedValue`` chain over
