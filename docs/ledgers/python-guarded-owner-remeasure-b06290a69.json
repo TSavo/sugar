@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "1",
+  "issue": 6382,
+  "lane": "L3",
+  "owner": "guarded",
+  "historicalBoard": "docs/ledgers/pandas-3.0.3-control-effect-9a78828ee.json",
+  "historicalBoardCommit": "9a78828ee",
+  "historicalR": 25,
+  "historicalUniqueFiles": 18,
+  "corpus": {
+    "distribution": "pandas",
+    "version": "3.0.3",
+    "root": "/home/tsavo/pandas303-audit/pandas",
+    "pin": "docs/ledgers/pins/pandas-3.0.3.pin.json"
+  },
+  "measurement": {
+    "door": "control_effect_recensus._measure_file",
+    "context": "one provisional contract-ref table derived from the full corpus root; one fresh construction context per measured file",
+    "selection": "unique files containing the historical guarded occurrences",
+    "files": [
+      "_testing/asserters.py",
+      "core/array_algos/masked_reductions.py",
+      "core/array_algos/replace.py",
+      "core/arrays/_ranges.py",
+      "core/arrays/arrow/extension_types.py",
+      "core/dtypes/dtypes.py",
+      "core/internals/construction.py",
+      "core/reshape/concat.py",
+      "core/strings/object_array.py",
+      "io/formats/style_render.py",
+      "io/parsers/base_parser.py",
+      "io/stata.py",
+      "plotting/_matplotlib/core.py",
+      "tests/frame/methods/test_quantile.py",
+      "tests/groupby/methods/test_value_counts.py",
+      "tests/groupby/test_groupby.py",
+      "tests/indexes/multi/test_integrity.py",
+      "tests/indexes/test_old_base.py"
+    ]
+  },
+  "before": {
+    "commit": "fb853d301",
+    "R_guarded": 28,
+    "note": "Live whole-file owner rows over the 18 unique historical-candidate files; three additional live occurrences were present beyond the stale 25-row board."
+  },
+  "intermediate": {
+    "commit": "2cb33f88a",
+    "R_guarded": 1,
+    "survivor": {
+      "where": "tests/groupby/methods/test_value_counts.py:283:0",
+      "observed": "GuardedValue"
+    }
+  },
+  "after": {
+    "commit": "b06290a69",
+    "R_guarded": 0,
+    "liveRows": [],
+    "allOwnerCountsInCandidateFiles": {
+      "add": 2,
+      "attribute": 2,
+      "bitwise_or": 1,
+      "RaiseValue.to_term": 1,
+      "multiply": 3,
+      "subtract": 1,
+      "truth": 1
+    },
+    "reattributedHistoricalCoordinates": [
+      {
+        "where": "core/arrays/_ranges.py:31:0",
+        "owner": "add",
+        "observed": "NoneValue",
+        "requested": "stand on the addition floor for a CallSiteValue right operand"
+      }
+    ]
+  },
+  "deltaR_guarded": -28,
+  "epsilonR_guarded": 0,
+  "constructionFloors": {
+    "sideDoor": {
+      "R": 0,
+      "auditorErrors": 0
+    },
+    "panicCatch": {
+      "originMainR": 4,
+      "headR": 4,
+      "deltaR": 0,
+      "auditorErrors": 0,
+      "inheritedLoci": [
+        "scripts/desugar_repro.py:44",
+        "scripts/exit_set_arm_census.py:348",
+        "scripts/stablezero_classify.py:168",
+        "scripts/stablezero_classify.py:171"
+      ]
+    }
+  },
+  "residualPinned": false
+}
