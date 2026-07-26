@@ -250,6 +250,9 @@ struct Totals {
     refused: usize,
     unclassified: usize,
     inactive: usize,
+    // Files whose lift panicked and were binned whole by the per-file panic
+    // boundary. Non-zero means the ledger below is a floor, not a full reading.
+    panicked_files: usize,
 }
 
 fn main() {
@@ -472,14 +475,61 @@ fn main() {
                 census_rows.push((rel.clone(), row));
             }
         }
-        let out = lift_file_with_all_source_imports(
-            &file,
-            &rel,
-            &options,
-            &registry,
-            &const_registry,
-            &fn_registry,
-        );
+        // Per-file panic boundary. A lifter gap (`iter_terminal_gap` and friends) is a
+        // deliberate `-> !` loud refusal, but without a boundary here the FIRST such file
+        // aborts the process and no accounting is ever written -- one gap costs the whole
+        // ledger, and every file after it goes unobserved. Bin the panicking file as a
+        // named refusal instead: its assertions are refused with the panic string as the
+        // reason, so they stay accounted for and `silent` still cannot hide anything.
+        let lifted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lift_file_with_all_source_imports(
+                &file,
+                &rel,
+                &options,
+                &registry,
+                &const_registry,
+                &fn_registry,
+            )
+        }));
+        let out = match lifted {
+            Ok(out) => out,
+            Err(payload) => {
+                let panic_msg = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("<non-string panic payload>")
+                    .replace('\n', " ");
+                let reason = format!("lifter panic: {panic_msg}");
+                warn!(
+                    file = %rel,
+                    panic = %panic_msg,
+                    asserts = census.total,
+                    "coretests sweep file panicked; binning its assertions as unclassified"
+                );
+                // UNCLASSIFIED, not `refused`. `refused` is reserved for a terminal
+                // close with a source-property reason, and the sweep cannot show that
+                // here: the panic unwound before any per-assert disposition existed, so
+                // we do not know which of this file's assertions the gap actually hit.
+                // Unclassified is the honest bucket -- it says "work", it keeps the gap
+                // loud in the gate rather than parked in an earned-refusal bucket, and
+                // it holds the `silent = 0` identity because the assertions stay counted.
+                totals.assert_macros += census.total;
+                totals.unclassified += census.total;
+                totals.panicked_files += 1;
+                let b = format!("[unclassified] {}", bucket(&reason));
+                *reasons.entry(b.clone()).or_insert(0) += census.total;
+                let samples = reason_samples.entry(b).or_default();
+                if samples.len() < 12 {
+                    samples.push(format!("{}: {}", rel, reason));
+                }
+                for _ in 0..census.total {
+                    all_reasons.push(reason.clone());
+                }
+                rows.push((rel, census.total, 0, census.total, 0, false));
+                continue;
+            }
+        };
         let discharged = out.assertions_lifted;
         let refused_total = out.assertions_refused;
 
@@ -643,6 +693,15 @@ fn main() {
         "  inactive (cfg-disabled):     {:>6}  ({:.1}%)   <-- not in this target's universe",
         totals.inactive,
         pct(totals.inactive)
+    );
+    println!(
+        "  panicked files (LIFTER GAP): {:>6}           <-- {}",
+        totals.panicked_files,
+        if totals.panicked_files == 0 {
+            "0 = every file's lift ran to a disposition"
+        } else {
+            "the buckets above are a FLOOR: these files were binned whole, unclassified"
+        }
     );
     println!(
         "  missing assertions (SILENT): {:>6}  ({:.1}%)   <-- delta target = 0",
@@ -906,6 +965,9 @@ fn build_ledger_json(
     obj.insert("refused".into(), totals.refused.into());
     obj.insert("unclassified".into(), totals.unclassified.into());
     obj.insert("inactive".into(), totals.inactive.into());
+    // Non-zero => the buckets above are a FLOOR. Emitted unconditionally so a
+    // reader of the ledger alone can tell a full reading from a floored one.
+    obj.insert("panicked_files".into(), totals.panicked_files.into());
     obj.insert("missing_assertions".into(), missing_assertions.into());
     obj.insert("callsite_expansion".into(), callsite_expansion.into());
     obj.insert(
@@ -991,6 +1053,7 @@ mod tests {
             refused: 1,
             unclassified: 1,
             inactive: 0,
+            panicked_files: 0,
         };
         let reasons = BTreeMap::from([("closure argument".to_string(), 2usize)]);
         let samples = BTreeMap::from([(
@@ -1046,6 +1109,20 @@ mod tests {
             Some(3)
         );
         assert!(v.get("unaccounted").is_none());
+    }
+
+    // A ledger that floored some files must SAY so on its face. Without this
+    // field a reader cannot tell "every lift ran" from "seven lifts panicked
+    // and their whole surface was binned", and the two ledgers otherwise look
+    // alike -- the counts just sit lower.
+    #[test]
+    fn ledger_json_always_carries_panicked_files() {
+        let (mut totals, reasons, samples, all, rows) = fixture();
+        let v = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, "x");
+        assert_eq!(v.get("panicked_files").and_then(|n| n.as_u64()), Some(0));
+        totals.panicked_files = 7;
+        let v = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, "x");
+        assert_eq!(v.get("panicked_files").and_then(|n| n.as_u64()), Some(7));
     }
 
     #[test]
