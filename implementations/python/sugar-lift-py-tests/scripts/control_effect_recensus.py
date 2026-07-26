@@ -614,6 +614,8 @@ def main() -> int:
     floor_rows: list[dict[str, Any]] = []
     families: Counter[str] = Counter()
     desugar_families: Counter[str] = Counter()
+    desugar_categories: Counter[str] = Counter()
+    desugar_by_category_owner: Counter[str] = Counter()
     backend_defects: Counter[str] = Counter()
     cm_resolutions: Counter[str] = Counter()
     ast_sites: Counter[str] = Counter()
@@ -892,6 +894,8 @@ def main() -> int:
         functions_clean += int(row.get("functionsClean") or 0)
         families.update(row.get("families") or {})
         desugar_families.update(row.get("desugarFamilies") or {})
+        desugar_categories.update(row.get("desugarCategories") or {})
+        desugar_by_category_owner.update(row.get("desugarByCategoryOwner") or {})
         backend_defects.update(row.get("backendDefects") or {})
         cm_resolutions.update(row.get("cmResolutions") or {})
         ast_sites.update(row.get("astSites") or {})
@@ -999,7 +1003,24 @@ def main() -> int:
             sorted(families.items(), key=lambda item: (-item[1], item[0]))
         ),
         # Axis 2 — desugar refusals + typed red (#6243). Separate quantity.
+        # R_desugar is MIXED. Read the split, never the total: a typed refusal
+        # owes work, a constructed effect IS the correct output of a reduction
+        # that succeeded. Publishing the sum as work remaining overstated the
+        # earlier board 7.6x.
         "R_desugar": r_desugar,
+        "desugarCategories": dict(
+            sorted(desugar_categories.items(), key=lambda item: (-item[1], item[0]))
+        ),
+        "R_desugar_owed_work": int(desugar_categories.get("typed-refusal", 0)),
+        "R_desugar_accounted_semantics": int(
+            desugar_categories.get("constructed-effect", 0)
+        ),
+        "desugarByCategoryOwner": dict(
+            sorted(
+                desugar_by_category_owner.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ),
         "desugarFamilies": dict(
             sorted(desugar_families.items(), key=lambda item: (-item[1], item[0]))
         ),
