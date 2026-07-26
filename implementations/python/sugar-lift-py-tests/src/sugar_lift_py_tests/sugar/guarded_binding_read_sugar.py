@@ -32,7 +32,9 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
             )
         return exits.normalize()
     if not isinstance(state, GuardedProjection):
-        raise TypeError(type(state))
+        from sugar_lift_py_tests.sugar.delete_name_sugar import _unhandled_projection
+
+        _unhandled_projection(state, verb="read", name=read_name, site=read_site)
 
     guard = branch_result_guard(state.slot, read_site)
     return (
