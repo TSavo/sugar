@@ -976,6 +976,44 @@ class CallSiteValue(FloorValue):
             operation, ctx, owner_suffix="callsite subscript receiver"
         )
 
+    def project_sequence_with(self, operation, ctx):
+        """`a, b = <call>` -- the same dig-or-symbolic totalizer, live-dispatched.
+
+        This is the whole of the `DynamicUnpackAssignSugar` panic family: of the
+        828 unpack sites measured over 295 installed-pandas modules, 574 reach
+        this receiver (561 `Call` + 13 `Subscript`, since `a, b = d[k]` reduces
+        here too) and every one of them panicked with "no
+        `project_sequence_with` arm". Nothing else was even close.
+
+        Dig the callsite floor when the callee's body projects, and the answer is
+        the dug value's: a literal has authenticated finite members, so the names
+        bind to members already in hand and a genuine arity mismatch stays the
+        loud decidable-`ValueError` gap it is today. When the body is opaque,
+        re-dispatch on the EUF receiver term, which retains
+        `python:unpack.destructure(term, arity)` as a typed effect. Nothing
+        binds on that arm, no count is assumed, and no member is invented.
+
+        NOT routed through `_dig_or_symbolic_redispatch`, though the dig half is
+        identical: that helper's tail calls `perform_operation`, which
+        `b0aadef50` deleted along with the operations layer, so its three callers
+        would raise `ImportError` rather than a typed gap if they were ever
+        reached. Reported separately; this arm dispatches through
+        `operation.submit`, the live door every other receiver already answers.
+        """
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        floor = self._dig_floor_or_none(
+            ctx,
+            owner=f"{operation.owner} callsite unpack right-hand side",
+        )
+        receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
+        if receiver is self:
+            # A dig that answers with this same callsite has made no progress;
+            # take the honest uninterpreted receiver rather than re-submitting
+            # into the arm we are standing in.
+            receiver = SymbolicValue(self.term)
+        return operation.submit(receiver, ctx)
+
     def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.operations import perform_operation
