@@ -109,6 +109,33 @@ def test_no_heavy_workflow_cancels_a_superseded_run():
         )
 
 
+def test_no_workflow_shares_a_concurrency_group_across_commits():
+    """The eviction hole is not exclusive to the heavy classes.
+
+    `ci.yml` grouped by `github.ref`, so a merge train into main replaced each
+    queued run with the next push's. Four merged commits (329576c3d,
+    ef19b8175, c11767c5e, df408100e) ended up with no CI vector at all, and
+    `cancel-in-progress: false` did nothing about it -- that flag governs
+    STARTED runs, not the pending slot.
+
+    A group is only safe if its key is immutable per commit, i.e. keyed by
+    `github.sha`. Anything else lets a later commit inherit an earlier
+    commit's slot and throw the earlier measurement away.
+    """
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        text = path.read_text()
+        match = re.search(r"^concurrency:\n(?:[ \t]+.*\n?)+", text, re.MULTILINE)
+        if match is None:
+            continue
+        assert "github.sha" in match.group(0), (
+            f"{path.name} declares a concurrency group that is not keyed by "
+            f"github.sha. GitHub keeps ONE pending run per group, so a newer "
+            f"commit evicts the queued run of an older one and that commit "
+            f"never gets a CI vector. Drop the block, or key it "
+            f"`ci-${{{{ github.sha }}}}` with cancel-in-progress: false."
+        )
+
+
 def test_attendance_roster_matches_the_heavy_workflows():
     """A heavy workflow missing from the roster is an instrument that can go
     quiet without the roll call noticing -- the exact defect that let eight
