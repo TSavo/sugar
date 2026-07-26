@@ -1516,9 +1516,20 @@ class TermTableBuilder:
 
 
 def _rpc_canonical_bytes(canonical: str) -> bytes:
-    """Hash the same Unicode scalar sequence that the RPC boundary transmits."""
-    if not any(0xD800 <= ord(char) <= 0xDFFF for char in canonical):
+    """Hash the same Unicode scalar sequence that the RPC boundary transmits.
+
+    The surrogate check is delegated to `str.encode("utf-8")` itself: strict
+    UTF-8 encoding raises `UnicodeEncodeError` on exactly the lone surrogates
+    U+D800..U+DFFF and on nothing else, so the try/except decides the identical
+    branch the per-character `any(...)` scan decided -- at C speed, and without
+    walking the string once per enclosing node. Canonical strings nest (a
+    parent's canonical JSON contains every descendant's), so the Python-level
+    scan cost O(subtree) per node, i.e. O(nodes x depth) across a term table.
+    """
+    try:
         return canonical.encode("utf-8")
+    except UnicodeEncodeError:
+        pass
     safe = "".join(
         "\ufffd" if 0xD800 <= ord(char) <= 0xDFFF else char for char in canonical
     )

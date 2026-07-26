@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re as _re
 from typing import List, Tuple, Union
 
 import blake3 as _blake3
@@ -148,23 +149,34 @@ def _encode(v: Value, out: List[str]) -> None:
         raise TypeError(f"unknown Value variant: {type(v)!r}")
 
 
+# The JCS string escape set for this canonicalizer: only `"`, `\`, and the C0
+# controls (as lowercase `\u00XX`) are escaped. `/` is NOT escaped, non-ASCII is
+# emitted verbatim (including astral characters and lone surrogates, whose
+# encoding error surfaces later at `.encode("utf-8")`). Python str -> UTF-8 at
+# encode() time produces the same bytes the Rust impl would.
+_ESCAPE_SEARCH = _re.compile(r'["\\\x00-\x1f]').search
+
+_ESCAPE_TABLE: dict[int, str] = {
+    0x22: '\\"',
+    0x5C: "\\\\",
+    **{
+        codepoint: "\\u00"
+        + "0123456789abcdef"[codepoint >> 4]
+        + "0123456789abcdef"[codepoint & 0xF]
+        for codepoint in range(0x20)
+    },
+}
+
+
 def _encode_string(s: str, out: List[str]) -> None:
-    out.append('"')
-    for c in s:
-        cp = ord(c)
-        if c == '"':
-            out.append('\\"')
-        elif c == "\\":
-            out.append("\\\\")
-        elif cp < 0x20:
-            out.append("\\u00")
-            out.append("0123456789abcdef"[(cp >> 4) & 0xF])
-            out.append("0123456789abcdef"[cp & 0xF])
-        else:
-            # U+0080..U+10FFFF: emit verbatim. Python str -> UTF-8 at
-            # encode() time produces the same bytes the Rust impl would.
-            out.append(c)
-    out.append('"')
+    # Fast path: nothing to escape (the overwhelming majority of corpus strings
+    # are identifiers and CIDs). Byte-identical to the per-character loop, which
+    # is kept verbatim as the oracle in
+    # tests/test_py_tests_canonicalizer_string_encoder_differential.py.
+    if _ESCAPE_SEARCH(s) is None:
+        out.append('"' + s + '"')
+        return
+    out.append('"' + s.translate(_ESCAPE_TABLE) + '"')
 
 
 # Hash helpers --------------------------------------------------------------
