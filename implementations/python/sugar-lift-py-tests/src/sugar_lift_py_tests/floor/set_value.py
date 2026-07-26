@@ -132,7 +132,30 @@ def _closed_member_equal(left, right):
     supported = (TermValue, StringValue, BytesValue, NoneValue, *bool_types)
     if type(left) in supported and type(right) in supported:
         return False
+    if stands_on_the_term_floor(left) and stands_on_the_term_floor(right):
+        # Neither side is a closed ground value, but BOTH state a coordinate in
+        # the theory, so equality is UNDECIDED here -- not unrepresentable.
+        # Undecided is what ``None`` means to every membership owner above: it
+        # emits the typed ``python.*.contains`` obligation over the operands'
+        # own terms. Falling to NotImplemented instead reported an ordinary
+        # `call() in [...]` as a construction gap even though the obligation was
+        # exactly constructible (the residual CallSiteValue membership panics
+        # left after #6293).
+        return None
     return NotImplemented
+
+
+def stands_on_the_term_floor(value) -> bool:
+    """Whether this value states its OWN coordinate in the theory.
+
+    Read from the value's construction -- it overrides ``to_term`` -- never from
+    a table of category names. ``FloorValue.to_term`` is the loud default: a
+    value that has not overridden it cannot testify about itself, so membership
+    against it stays a named gap.
+    """
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    return type(value).to_term is not FloorValue.to_term
 
 
 def _finite_union(left, right):

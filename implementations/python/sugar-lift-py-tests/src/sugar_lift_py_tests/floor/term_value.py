@@ -204,6 +204,14 @@ class TermValue(FloorValue):
             SymbolicValue,
         ):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        # A number plus a complex literal is a complex: the numeric tower's own
+        # closed law, not a per-operand special case. `1 + 1j` was the largest
+        # remaining pandas add panic.
+        from sugar_lift_py_tests.floor.complex_arithmetic import complex_add
+
+        folded = complex_add(self, other, site)
+        if folded is not None:
+            return folded
         return super().add(other, site)
 
     def subtract(self, other, site):
@@ -221,6 +229,11 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.effect import runtime_subtract
 
             return runtime_subtract(self, other, site)
+        from sugar_lift_py_tests.floor.complex_arithmetic import complex_subtract
+
+        folded = complex_subtract(self, other, site)
+        if folded is not None:
+            return folded
         return super().subtract(other, site)
 
     def multiply(self, other, site):
@@ -248,6 +261,11 @@ class TermValue(FloorValue):
         if type(other) in (ListValue, StringValue, TupleValue):
             if type(self.value) is int:
                 return other.multiply(self, site)
+        from sugar_lift_py_tests.floor.complex_arithmetic import complex_multiply
+
+        folded = complex_multiply(self, other, site)
+        if folded is not None:
+            return folded
         return super().multiply(other, site)
 
     def power(self, other, site):
