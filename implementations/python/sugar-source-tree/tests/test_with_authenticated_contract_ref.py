@@ -462,6 +462,41 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         next(source.functions()).sugar()
 
 
+def test_selected_with_defers_resolution_validation_until_construction(tmp_path):
+    """As-name substitution does not adjudicate whether this With is reached."""
+    path = tmp_path / "selected_missing_row.py"
+    path.write_text(
+        "from dependency import manager\n"
+        "def f():\n"
+        "    with manager() as entered:\n"
+        "        return entered\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.panic import BackendDefect
+
+    table = ResolvedContractRefsV1(
+        catalog_cid=_cid("c"),
+        table_cid=_cid("t"),
+        by_use_site=MappingProxyType({}),
+    )
+    source = SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1(table),
+    )
+    with_node = next(node for node in source.nodes() if node.kind == "With")
+
+    substituted = with_node.substitute({})
+    assert substituted.body[0].value.projection == "enter-result"
+
+    with pytest.raises(BackendDefect) as caught:
+        substituted.sugar()
+    assert caught.value.owner == "With._construct_sugar"
+    assert (
+        caught.value.observed
+        == "BackendDefect: enrolled context-manager demand missing from resolution table"
+    )
+
+
 def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):
     """Multi-item With is no longer a gap: it nests into single-item Withs.
 

@@ -5107,19 +5107,6 @@ class With(Statement):
                 if bound is not current:
                     return bound.substitute(scope)
             if item.optional_vars is not None and item.optional_vars.kind == "Name":
-                if self._generator_manager_frame(item) is None:
-                    context = self.unit.construction_context
-                    if getattr(context, "frame_projection", False):
-                        # Authenticated dual-mode factories may nest With only
-                        # on the non-CM branch. Soft projection skips closed-row
-                        # enrollment for those sites so the CM return path can
-                        # still project a call frame.
-                        try:
-                            self._require_narrow_cm_ref(item)
-                        except Exception:  # noqa: BLE001 — soft projection only
-                            pass
-                    else:
-                        self._require_narrow_cm_ref(item)
                 enter_slot = f"{item._manager_slot_id()}#enter_result"
                 body_scope[item.optional_vars.id] = item._make_observation_ref(
                     enter_slot, ENTER_RESULT
@@ -7195,6 +7182,42 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
+        context = self.unit.construction_context
+        coordinate = None
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if isinstance(context, TreeConstructionContextV1):
+            span = self.line_col_span()
+            coordinate = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            obligation = context.opaque_source_call_obligations.get(coordinate)
+            if obligation is not None:
+                from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+                return CallSiteSugar(
+                    target_name="python:unresolved-source-call",
+                    args=tuple(a.sugar() for a in self.args),
+                    site=self.fragment,
+                    keywords=tuple(
+                        (
+                            kw.arg if kw.arg is not None else "**",
+                            kw.value.sugar(),
+                        )
+                        for kw in self.keywords
+                    ),
+                    contract_resolution_gap=(
+                        f"{obligation.resolution_kind}:{obligation.target_name}"
+                    ),
+                )
+
         # Either spread form selects the reference call coordinate. In
         # particular, a lone ``**d`` must not fall through to the legacy
         # keyword bridge as ``py.kwarg("**", d)``.
@@ -7242,37 +7265,18 @@ class Call(Expression):
             (kw.arg if kw.arg is not None else "**", kw.value.sugar())
             for kw in self.keywords
         )
-        context = self.unit.construction_context
         source_call_frame = None
         source_call_resolution = None
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
-        )
 
         if (
             isinstance(context, TreeConstructionContextV1)
             and context.source_call_frames
         ):
-            span = self.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
+            assert coordinate is not None
             source_call_frame = context.source_call_frames.get(coordinate)
             source_call_resolution = context.source_call_resolutions.get(coordinate)
         elif isinstance(context, TreeConstructionContextV1):
-            span = self.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
+            assert coordinate is not None
             source_call_resolution = context.source_call_resolutions.get(coordinate)
         if source_call_resolution is not None:
             from sugar_lift_py_tests.source_call_resolution import (

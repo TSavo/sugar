@@ -283,13 +283,74 @@ existing `SourceFile`/Sugar construction and manager-summary derivation.
     --trailer "Signed-off-by: WOPR <evilgenius@nefariousplan.com>"
   ```
 
-## Task 5: Close the Real Assertion-With Milestone
+## Task 5: Defer Discarded With Validation to Construction
+
+**Files:**
+
+- Modify: `implementations/python/sugar-source-tree/src/sugar_source_tree/nodes.py`
+- Modify: `implementations/python/sugar-source-tree/tests/test_with_authenticated_contract_ref.py`
+- Verify:
+  `implementations/python/sugar-lift-py-tests/tests/test_exit_disposition_proof.py`
+
+- [ ] **Step 1: Add a selected-With deferral/refusal tooth**
+
+  Build a function containing `with manager() as entered:` under an enrolled
+  but empty context-manager resolution table. Assert that
+  `with_node.substitute({})` succeeds and exports the enter-result observation,
+  then assert that `with_node.sugar()` raises `BackendDefect` with owner
+  `With._construct_sugar` and observed text
+  `BackendDefect: enrolled context-manager demand missing from resolution table`.
+
+- [ ] **Step 2: Run the tooth red**
+
+  ```bash
+  python -m pytest -q \
+    implementations/python/sugar-source-tree/tests/test_with_authenticated_contract_ref.py \
+    -k selected_with_defers_resolution_validation_until_construction
+  ```
+
+  Expected: FAIL during `substitute({})`, proving the discarded-return demand
+  still adjudicates reachability before construction.
+
+- [ ] **Step 3: Remove only the two discarded-return demands**
+
+  Delete the `_require_narrow_cm_ref(item)` call in `With.substitute` and the
+  matching call in `With.substitution_binding`. Keep the call in
+  `With._construct_sugar` byte-for-byte: it is the producer consumed by
+  `WithResourceSugar` / `ContextManagerEdgeDtoV1`.
+
+- [ ] **Step 4: Run the tooth green**
+
+  Run the Step 2 command. Expected: PASS, with substitution completing and
+  construction preserving the exact typed refusal.
+
+- [ ] **Step 5: Verify the existing authority law**
+
+  ```bash
+  python -m pytest -q \
+    implementations/python/sugar-lift-py-tests/tests/test_exit_disposition_proof.py \
+    -k with_only_admits_never_suppresses_via_authenticated_disposition_type
+  ```
+
+  Expected: PASS. Its `_require_narrow_cm_ref` spelling assertion witnesses the
+  surviving construction demand, not either discarded substitution call.
+
+- [ ] **Step 6: Commit the deferral**
+
+  ```bash
+  git add \
+    implementations/python/sugar-source-tree/src/sugar_source_tree/nodes.py \
+    implementations/python/sugar-source-tree/tests/test_with_authenticated_contract_ref.py
+  git commit -m "fix: defer With resolution validation to construction"
+  ```
+
+## Task 6: Close the Real Assertion-With Milestone
 
 **Files:**
 
 - Modify:
   `implementations/python/sugar-lift-python-source/tests/test_sole_path_manager_construction.py`
-- Verify only: all files changed in Tasks 1-4
+- Verify only: all files changed in Tasks 1-5
 
 - [ ] **Step 1: Run truthful and lying twins together**
 
