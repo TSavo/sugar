@@ -935,7 +935,7 @@ class CallSiteValue(FloorValue):
         )
 
     def unary_operator_with(self, operation, ctx):
-        from sugar_lift_py_tests.operations import perform_operation
+        from sugar_lift_py_tests.operations.perform_operation import perform_operation
 
         # No-recognizer force_floor panics (process-terminal). Do not catch.
         floor = force_floor(
@@ -1016,23 +1016,34 @@ class CallSiteValue(FloorValue):
 
     def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.operations import perform_operation
 
         # Dig when the body floors; opaque residual re-dispatches on the EUF
-        # receiver term (SymbolicValue(self.term)) — honest uninterpreted join,
-        # not a catchable gap / dig-boundary third state.
+        # receiver term (SymbolicValue(self.term)) — honest uninterpreted join.
         floor = self._dig_floor_or_none(
             ctx,
             owner=f"{operation.owner} {owner_suffix}",
         )
         receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
-        return perform_operation(
-            owner=operation.owner,
-            blame=operation.blame,
-            receiver=receiver,
-            operation=operation,
-            ctx=ctx,
-        )
+        method = getattr(receiver, operation.method_name, None)
+        if method is None:
+            from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+            from sugar_lift_py_tests.gap.panic import construction_panic
+
+            construction_panic(
+                ConstructionGap(
+                    owner=operation.owner,
+                    blame=operation.blame,
+                    observed=type(receiver).__name__,
+                    requested=operation.method_name,
+                    fix=(
+                        f"write more Floor: implement "
+                        f"{type(receiver).__name__}.{operation.method_name}"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                    gap_locus=GapLocus.CONSTRUCTION,
+                )
+            )
+        return method(operation, ctx)
 
     def call_method_with(self, operation: Any, ctx: Any):
         """Compose a method on a callsite receiver.
@@ -1045,7 +1056,7 @@ class CallSiteValue(FloorValue):
         a numeric value; never soft-catch a panic into Incomplete.
         """
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-        from sugar_lift_py_tests.operations import perform_operation
+        from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.outcome import Complete
 
         floor = self._dig_floor_or_none(
