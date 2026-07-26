@@ -5,11 +5,42 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.ir import Formula
 
 from .floor_value import FloorValue
-from .guard_stable_value import GuardStableValue
+
+
+def _require_rebind_roster(value, *, owner: str, blame, arm: str):
+    """An arm's unpack answer as a rebind roster, or a NAMED construction gap.
+
+    ``require_single_value`` proves the arm answered with ONE value; it does not
+    prove that value is a ``ScopeRebinds``. Reading ``.bindings`` off whatever
+    came back would be a bare ``AttributeError`` -- the unnamed-assertion shape
+    ``single_outcome_law`` exists to eliminate, and it would name neither the
+    law nor the arm that broke it.
+    """
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+
+    if isinstance(value, ScopeRebinds):
+        return value.bindings
+    from sugar_lift_py_tests.gap.info import GapKind
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner=owner,
+        blame=blame,
+        observed=(
+            f"the {arm} arm's unpack answered with {type(value).__name__}, "
+            "which carries no target rebinds to join"
+        ),
+        requested="a ScopeRebinds roster from every arm of a guarded unpack",
+        fix=(
+            "give that floor's project_sequence_with a ScopeRebinds answer, or "
+            "leave it a loud gap; never join a roster that is not one"
+        ),
+        gap_kind=GapKind.FLOOR,
+    )
 
 
 @dataclass(frozen=True)
-class GuardedValue(GuardStableValue):
+class GuardedValue(FloorValue):
     """A definitely-bound value selected by an existing branch guard.
 
     This is not an ite term. Operations distribute into both arms, and boolean
@@ -244,31 +275,6 @@ class GuardedValue(GuardStableValue):
         outcome = rewrap_pending(true_pending, outcome, owner=owner, blame=site)
         return rewrap_pending(false_pending, outcome, owner=owner, blame=site)
 
-    def project_sequence_with(self, operation, ctx):
-        """`a, b = (p if c else q)` -- the unpack distributes into both faces.
-
-        Not `_map`. `_map` re-fuses two ANSWERS into one `GuardedValue`, and the
-        answers here are not values: each face independently either binds a
-        `ScopeRebinds` or halts with its arity obligation, and those two do not
-        fuse into a conditional value. The lawful join is the partition -- each
-        face's answer restricted to its own polarity, then unioned -- which is
-        the same exit algebra `IfSugar` builds and keeps a halt on one face
-        coexisting with a completed exit on the other.
-
-        `collapse()` hands back a plain outcome when the union has one
-        unconditional exit, so an unguarded caller is unaffected.
-        """
-        from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
-
-        def face(value, guard):
-            return outcome_to_exitset(
-                value.project_sequence_with(operation, ctx)
-            ).guarded(guard)
-
-        exits = face(self.when_true, self.guard)
-        return exits.union(face(self.when_false, not_(self.guard))).collapse()
-
     def subscript(self, index, site):
         return self._map("subscript", index, site)
 
@@ -285,6 +291,70 @@ class GuardedValue(GuardStableValue):
     def contains(self, item, site):
         """Distribute membership over both branch faces as a joined predicate."""
         return self._predicate("contains", item, site)
+
+    def project_sequence_with(self, operation, ctx):
+        """Unpack a guarded right-hand side: distribute, rejoin PER TARGET NAME.
+
+        ``a, b = (x if c else y)`` binds ``a`` to the join of the two arms'
+        FIRST members and ``b`` to the join of their seconds. It does not
+        produce one ``GuardedValue`` wrapping two whole ``ScopeRebinds``: that
+        shape stops the panic but binds nothing a later statement can read,
+        because scope threading walks ``ScopeRebinds.bindings``.
+
+        ``_map`` cannot carry this. Every other distribution here rejoins two
+        VALUES, and this operation's arms answer with a rebind roster, so the
+        join has to happen one layer in. What is shared with ``_map`` is the
+        conventions, and they are kept: an arm answering with an effect keeps
+        its own guard polarity, an arm's pending contract demand is hoisted
+        under that arm's face, and an arm's own decidable arity mismatch stays
+        loud rather than being laundered by distributing.
+
+        Both rosters come from ``operation.target_names``, so they agree by
+        construction; ``strict=True`` states that rather than assuming it.
+        """
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.floor.single_outcome_law import (
+            pending_demand,
+            require_single_value,
+            rewrap_pending,
+        )
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        owner = "GuardedValue.project_sequence_with"
+        blame = operation.blame
+        true_outcome = self.when_true.project_sequence_with(operation, ctx)
+        if isinstance(true_outcome, Incomplete):
+            return true_outcome.guarded(self.guard)
+        false_outcome = self.when_false.project_sequence_with(operation, ctx)
+        if isinstance(false_outcome, Incomplete):
+            return false_outcome.guarded(not_(self.guard))
+        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
+        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
+        true_outcome = require_single_value(
+            true_outcome, owner=owner, blame=blame, arm="when_true"
+        )
+        false_outcome = require_single_value(
+            false_outcome, owner=owner, blame=blame, arm="when_false"
+        )
+        true_bindings = _require_rebind_roster(
+            true_outcome.value, owner=owner, blame=blame, arm="when_true"
+        )
+        false_bindings = _require_rebind_roster(
+            false_outcome.value, owner=owner, blame=blame, arm="when_false"
+        )
+        joined = Complete(
+            ScopeRebinds(
+                tuple(
+                    (name, GuardedValue(self.guard, true_member, false_member))
+                    for (name, true_member), (_, false_member) in zip(
+                        true_bindings, false_bindings, strict=True
+                    )
+                )
+            )
+        )
+        joined = rewrap_pending(true_pending, joined, owner=owner, blame=blame)
+        return rewrap_pending(false_pending, joined, owner=owner, blame=blame)
 
     def setitem(self, index, value, site):
         """Rebind both statically known receiver faces after a subscript store."""

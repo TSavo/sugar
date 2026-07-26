@@ -16,19 +16,6 @@ class SetValue(FloorValue):
 
     elements: tuple
 
-    def denotes_value(self) -> bool:
-        """This floor value denotes a ``set``."""
-        return True
-
-    def attribute(self, name, site):
-        # Bound methods and fields on a constructed set (``set().add``, ``s.union``) stay the
-        # py.getattr coordinate -- one law, shared with StringValue and the
-        # other constructed containers. Never invent a method body or a field.
-        del site
-        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
-
-        return getattr_coordinate(self, name, owner="SetValue.attribute")
-
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
@@ -62,15 +49,6 @@ class SetValue(FloorValue):
         return Complete(TermValue(len(self.elements)))
 
     def contains(self, item, site):
-        # A guarded needle is not one needle: distribute into its faces and
-        # rejoin under the same guard before this receiver's own law runs.
-        from sugar_lift_py_tests.floor.guarded_operand import (
-            distribute_guarded_predicate,
-        )
-
-        distributed = distribute_guarded_predicate(self, item, "contains", site)
-        if distributed is not None:
-            return distributed
         decisions = tuple(
             _closed_member_equal(item, element) for element in self.elements
         )
@@ -140,12 +118,6 @@ def _closed_member_equal(left, right):
 
     if type(left) is SymbolicValue or type(right) is SymbolicValue:
         return None
-    # A callsite result is a value of undecided identity — same as SymbolicValue
-    # for membership: emit typed python.*.contains, never a floor gap.
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-
-    if type(left) is CallSiteValue or type(right) is CallSiteValue:
-        return None
     if type(left) is TermValue and type(right) is TermValue:
         return left.value == right.value
     if type(left) is StringValue and type(right) is StringValue:
@@ -161,14 +133,30 @@ def _closed_member_equal(left, right):
     if type(left) in supported and type(right) in supported:
         return False
     # A residual pair measured on the installed pandas tree lands here:
-    # `{List,Tuple}Value.contains x CallSiteValue`. A call's result IS a value of
-    # undecided identity, so the honest answer is ``None`` (emit the typed
-    # python.*.contains obligation), not NotImplemented (a gap). What it is NOT
-    # is "any value carrying a term": FunctionCallable carries one and is a
-    # callable, never a member -- two tests pin that refusal deliberately. The
-    # discriminator has to be the value's own testimony about whether it DENOTES
-    # a value, which no floor states yet. Left loud until it does.
+    # `{List,Tuple,Set}Value.contains x CallSiteValue`. A call's result IS a
+    # value of undecided identity, so the honest answer is ``None`` (emit the
+    # typed python.*.contains obligation), not NotImplemented (a gap). What it
+    # is NOT is "any value carrying a term": FunctionCallable carries one and is
+    # a callable, never a member -- two tests pin that refusal deliberately. So
+    # the discriminator is ``FloorValue.denotes_a_value``, testimony each floor
+    # states about ITSELF and which defaults to no, never a property a caller
+    # reads off the carrier's shape.
+    if _denotes_a_value(left, supported) and _denotes_a_value(right, supported):
+        return None
     return NotImplemented
+
+
+def _denotes_a_value(value, supported: tuple) -> bool:
+    """Whether one side of a membership test denotes a value at all.
+
+    The decidable literal carriers denote values by construction -- they were
+    already answered above, and only appear here as the OTHER side of an
+    undecided pair. Everything else has to say so itself.
+    """
+    if type(value) in supported:
+        return True
+    testimony = getattr(type(value), "denotes_a_value", None)
+    return bool(testimony(value)) if testimony is not None else False
 
 
 def _finite_union(left, right):

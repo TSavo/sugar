@@ -98,28 +98,6 @@ BASE_CONSTRUCTION_GAP_METHOD_NAMES = tuple(
 )
 
 
-# The term coordinate each binary-operation floor constructs when the pair is
-# undecided. These are the SAME constructor names SymbolicValue already emits;
-# the map exists so one law covers all thirteen operators instead of thirteen
-# copies of it. It is keyed by floor method name -- the dispatch surface's own
-# vocabulary -- never by a lexical spelling read off a source node.
-_BINARY_OPERATOR_COORDINATE = {
-    "add": "+",
-    "subtract": "-",
-    "multiply": "*",
-    "divide": "/",
-    "floor_divide": "//",
-    "modulo": "%",
-    "power": "**",
-    "matrix_multiply": "@",
-    "bitwise_and": "&",
-    "bitwise_or": "|",
-    "bitwise_xor": "^",
-    "left_shift": "<<",
-    "right_shift": ">>",
-}
-
-
 class FloorValue:
     def _floor_gap(
         self,
@@ -220,6 +198,22 @@ class FloorValue:
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
         return FollowStep.continue_with()
+
+    def denotes_a_value(self) -> bool:
+        """Does this floor testify that it DENOTES a value?
+
+        A membership test needs to know the difference between "I am a value
+        whose identity is not decidable yet" and "I am not a member at all".
+        The first is an obligation (emit the typed ``python.*.contains`` atom);
+        the second is a gap. Nothing about the carrier's SHAPE separates them
+        -- ``FunctionCallable`` carries a term exactly like ``SymbolicValue``
+        does, and is a callable, never a member -- so this is testimony the
+        floor states about itself, not something a caller infers.
+
+        Default: no. A floor that denotes a value says so by overriding, which
+        keeps every unwritten floor loud rather than quietly admitted.
+        """
+        return False
 
     def guarded(self, formula):
         # Default: this value cannot ride under a guard. The record entries
@@ -829,78 +823,6 @@ class FloorValue:
             )
         )
 
-    def denotes_value(self) -> bool:
-        """Testimony: does this floor value DENOTE a Python runtime value?
-
-        The default is the honest "no". A floor value is not automatically a
-        value: ``LambdaCallable`` and ``FunctionCallable`` denote callables,
-        ``EffectCoordinate`` denotes a pending effect, exit values denote a
-        halt. Carrying a term is NOT the discriminator -- ``FunctionCallable``
-        carries one and is never an operand. Only the class itself can say,
-        and a class that has not said stays loud.
-        """
-        return False
-
-    def runtime_type_is_decided(self) -> bool:
-        """Testimony: is this value's Python runtime TYPE known at lift time?
-
-        ``StringValue`` knows it is a ``str``; ``ComprehensionValue`` knows it
-        is the sequence its own fold constructor names. ``SymbolicValue`` and
-        ``CallSiteValue`` do not know -- an unexecuted call's result type is
-        undecided, so which ``__op__``/``__rop__`` Python would select is
-        undecided too.
-
-        The default is ``True`` (decided), which keeps a class that has not
-        spoken on the LOUD side of :meth:`_undecided_binary_law`.
-        """
-        return True
-
-    def _undecided_binary_law(self, other, site, operator):
-        """The ONE law for a binary operation with an undecided operand.
-
-        Every binary-operation floor gap measured on pandas came in the same
-        shape wearing eight operator names: a left value with no arm named for
-        THIS right operand, falling through to the pair gap. Most of those
-        pairs are not eight separate arms to write. They are one law: when at
-        least one operand's runtime TYPE is undecided, Python's own operator
-        dispatch for the pair is undecided, so the exact denotation of the
-        operation is the symbolic coordinate ``operator(left, right)`` -- the
-        same coordinate ``SymbolicValue`` already constructs, hoisted off that
-        one class and onto the law it was always stating.
-
-        Two refusals are deliberate and stay loud:
-
-        * An operand that does not DENOTE a value (a callable, a class, an
-          exit) is not an operand at all. No coordinate is invented for it.
-        * Two operands of DECIDED type are a ground question -- ``list + bool``
-          is Python's ``TypeError``, not an unknown. Constructing a coordinate
-          there would launder a ground exit into a value. That pair belongs to
-          the ground field laws, and absence there is still a gap.
-
-        Returns ``None`` when the law does not apply, so the caller falls
-        through to its own pair gap.
-        """
-        if not (self.denotes_value() and other.denotes_value()):
-            return None
-        if self.runtime_type_is_decided() and other.runtime_type_is_decided():
-            return None
-
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
-
     def _binary_floor_gap(self, other, site, owner, floor):
         """The ONE None arm for every binary-operation floor.
 
@@ -915,16 +837,7 @@ class FloorValue:
 
         The category is read from the operand's own type, which is its
         authenticated construction coordinate -- never from a lexical name.
-
-        Before the gap, :meth:`_undecided_binary_law` gets to answer: a pair
-        with an undecided operand is one law, not one arm per (owner x pair).
         """
-        constructed = self._undecided_binary_law(
-            other, site, _BINARY_OPERATOR_COORDINATE[owner]
-        )
-        if constructed is not None:
-            return constructed
-
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         observed = type(self).__name__
@@ -941,40 +854,40 @@ class FloorValue:
         # Default: this value does not stand on the addition floor -- it cannot answer
         # what it is to add another value. The None arm: a value that CAN implements
         # add and gives back the sum (or concat); absence here is the honest "no".
-        return self._binary_floor_gap(other, site, "add", "addition")
+        self._binary_floor_gap(other, site, "add", "addition")
 
     def subtract(self, other, site):
         # Default: this value does not stand on the subtraction floor -- it cannot
         # answer what it is minus another value. The None arm: a value that CAN
         # implements subtract and gives back a term; absence here is the honest "no".
-        return self._binary_floor_gap(other, site, "subtract", "subtraction")
+        self._binary_floor_gap(other, site, "subtract", "subtraction")
 
     def multiply(self, other, site):
         # Default: this value does not stand on the multiplication floor -- it cannot
         # answer what it multiplies by another value to. The None arm: a value that CAN
         # implements multiply and gives back a product; absence here is the honest "no".
-        return self._binary_floor_gap(other, site, "multiply", "multiplication")
+        self._binary_floor_gap(other, site, "multiply", "multiplication")
 
     def power(self, other, site):
-        return self._binary_floor_gap(other, site, "power", "power")
+        self._binary_floor_gap(other, site, "power", "power")
 
     def divide(self, other, site):
         # Default: this value does not stand on the division floor -- it cannot answer
         # what it divides by another value to. The None arm: a value that CAN
         # implements divide and gives back a quotient; absence here is the honest "no".
-        return self._binary_floor_gap(other, site, "divide", "division")
+        self._binary_floor_gap(other, site, "divide", "division")
 
     def modulo(self, other, site):
         # Default: this value does not stand on the modulo floor -- it cannot answer
         # what remainder it leaves by another value. The None arm: a value that CAN
         # implements modulo and gives back a remainder; absence here is the honest "no".
-        return self._binary_floor_gap(other, site, "modulo", "modulo")
+        self._binary_floor_gap(other, site, "modulo", "modulo")
 
     def floor_divide(self, other, site):
-        return self._binary_floor_gap(other, site, "floor_divide", "floor-division")
+        self._binary_floor_gap(other, site, "floor_divide", "floor-division")
 
     def right_shift(self, other, site):
-        return self._binary_floor_gap(other, site, "right_shift", "right-shift")
+        self._binary_floor_gap(other, site, "right_shift", "right-shift")
 
     def bitwise_and(self, other, site):
         return self._runtime_bitwise_gap(other, site, "bitwise_and", "and")
@@ -989,36 +902,21 @@ class FloorValue:
         return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
 
     def matrix_multiply(self, other, site):
-        return self._binary_floor_gap(
+        self._binary_floor_gap(
             other, site, "matrix_multiply", "matrix-multiplication"
         )
 
     def _runtime_bitwise_gap(self, other, site, owner, label):
-        return self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
+        self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
 
     def to_term(self, *, owner: str) -> "Term":
-        """The ONE None arm for floor-value projection.
-
-        ``owner`` names the REQUESTER — and nearly every caller in the lift
-        spells it ``str(site)``, which is a ``SourceFragment``'s ``__repr__``
-        (``<SourceFragment 'x.py' [12, 34) node=Call>``: the fragment defines
-        no ``__str__``). Passing that straight into ``ConstructionGap.owner``
-        made the panic board's dispatch key an ADDRESS, so one projection law
-        with no arm scattered into one undispatchable row per call site.
-
-        The owner of this gap is the law that has no arm: this value's own
-        projection, ``<Value>.to_term``. The requester's coordinate is what
-        ``blame`` is for, so it moves there — nothing is discarded, and the
-        board buckets by (value category × to_term) as every other floor gap
-        buckets by (value category × operation).
-        """
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
         observed = type(self).__name__
         info = ConstructionGap(
-            owner=f"{observed}.to_term",
-            blame=owner,
+            owner=owner,
+            blame=observed,
             observed=observed,
             requested="project this floor value to a term",
             fix=f"write more Floor: implement {observed}.to_term",

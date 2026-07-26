@@ -127,20 +127,6 @@ class CallSiteValue(FloorValue):
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
-    def denotes_value(self) -> bool:
-        """A call result denotes a Python runtime value."""
-        return True
-
-    def runtime_type_is_decided(self) -> bool:
-        """Undecided: no citation fixes an unexecuted call's result type.
-
-        Which ``__op__``/``__rop__`` Python would select for an operation
-        over this value is undecided too, so a binary operation with it
-        constructs a symbolic coordinate rather than standing on a ground
-        field law.
-        """
-        return False
-
     def exception_type_identity(self) -> Term | None:
         return self.exception_type_coordinate
 
@@ -232,6 +218,12 @@ class CallSiteValue(FloorValue):
     def to_term(self, *, owner: str):
         del owner
         return self.term
+
+    def denotes_a_value(self) -> bool:
+        # A call's RESULT is a value; what it is equal to is undecided until
+        # the callee floors. That makes membership over it an obligation, not
+        # a gap. A FunctionCallable is the callee itself and stays no.
+        return True
 
     def guarded(self, formula):
         """A callsite coordinate rides under a guard unchanged.
@@ -426,9 +418,10 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = index.to_term(owner="CallSiteValue.setitem index")
-        value_term = value.to_term(owner="CallSiteValue.setitem value")
+        index_term = floor_to_term(index, owner="CallSiteValue.setitem index")
+        value_term = floor_to_term(value, owner="CallSiteValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",
@@ -517,8 +510,9 @@ class CallSiteValue(FloorValue):
 
         def list_append_coordinate(prior):
             from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-            value_term = value.to_term(owner="CallSiteValue.append_with value")
+            value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
             return Complete(
                 CallSiteValue(
                     target_name="list.append",
@@ -660,8 +654,9 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = index.to_term(owner="CallSiteValue.delitem index")
+        index_term = floor_to_term(index, owner="CallSiteValue.delitem index")
         return Complete(
             CallSiteValue(
                 target_name="delitem",
@@ -946,6 +941,8 @@ class CallSiteValue(FloorValue):
         )
 
     def unary_operator_with(self, operation, ctx):
+        from sugar_lift_py_tests.operations import perform_operation
+
         # No-recognizer force_floor panics (process-terminal). Do not catch.
         floor = force_floor(
             self,
@@ -953,11 +950,13 @@ class CallSiteValue(FloorValue):
             owner=f"{operation.owner} callsite unary operand",
             project_callsite=False,
         )
-        # `perform_operation` died with the operations layer (b0aadef50); the
-        # rebuilt layer has the operation submit itself to the value instead
-        # (`operations/sequence_projection_operation.py::submit`). Same
-        # `getattr(receiver, method_name)(op, ctx)`, no centre to import.
-        return operation.submit(floor, ctx)
+        return perform_operation(
+            owner=operation.owner,
+            blame=operation.blame,
+            receiver=floor,
+            operation=operation,
+            ctx=ctx,
+        )
 
     def binary_operator_with(self, operation, ctx):
         """Binary op on a callsite result (e.g. ``(x + y).substitute(...)``).
@@ -984,73 +983,57 @@ class CallSiteValue(FloorValue):
         )
 
     def project_sequence_with(self, operation, ctx):
-        """`a, b = <call>` -- the same dig-or-symbolic totalizer, live-dispatched.
+        """``a, b = f(...)``: unpack of a callsite result.
 
-        This is the whole of the `DynamicUnpackAssignSugar` panic family: of the
-        828 unpack sites measured over 295 installed-pandas modules, 574 reach
-        this receiver (561 `Call` + 13 `Subscript`, since `a, b = d[k]` reduces
-        here too) and every one of them panicked with "no
-        `project_sequence_with` arm". Nothing else was even close.
+        Same dig-or-symbolic totalizer as binary_operator_with and
+        subscript_with, and the same route ``OpaqueOpCallsite`` already
+        documents for this exact operation: dig the callsite floor when the
+        body floors, so a callee returning a display makes the arity lift-time
+        decidable and the members bind from the values already in hand;
+        otherwise re-dispatch on ``SymbolicValue(self.term)``, which retains
+        the typed ``SequenceUnpackRuntimeEffect`` over the callsite's own term.
 
-        Dig the callsite floor when the callee's body projects, and the answer is
-        the dug value's: a literal has authenticated finite members, so the names
-        bind to members already in hand and a genuine arity mismatch stays the
-        loud decidable-`ValueError` gap it is today. When the body is opaque,
-        re-dispatch on the EUF receiver term, which retains
-        `python:unpack.destructure(term, arity)` as a typed effect. Nothing
-        binds on that arm, no count is assumed, and no member is invented.
+        Neither arm invents a member and neither assumes the count matched --
+        which is what ``SequenceProjectionOperation`` requires of a value that
+        answers at all. Absence of this arm was the ``project_sequence_with``
+        panic on six of the measured rows.
 
-        NOT routed through `_dig_or_symbolic_redispatch`, though the dig half is
-        identical: that helper's tail calls `perform_operation`, which
-        `b0aadef50` deleted along with the operations layer, so its three callers
-        would raise `ImportError` rather than a typed gap if they were ever
-        reached. Reported separately; this arm dispatches through
-        `operation.submit`, the live door every other receiver already answers.
+        It dispatches on the dug floor's own port rather than through
+        ``_dig_or_symbolic_redispatch``: that helper -- and
+        ``unary_operator_with`` and ``call_method_with`` beside it -- imports a
+        ``perform_operation`` that does not exist anywhere in this tree, so it
+        raises ``ImportError`` on contact. Routing a measured row through dead
+        code would trade a named gap for an uncounted crash. The opaque arm
+        hands the CALLSITE ITSELF to ``project_symbolic``, so the retained
+        obligation names ``call:<callee>(...)`` -- the coordinate the unpack
+        actually demands members of -- and never a fabricated element.
         """
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
         floor = self._dig_floor_or_none(
-            ctx,
-            owner=f"{operation.owner} callsite unpack right-hand side",
+            ctx, owner=f"{operation.owner} callsite unpack right-hand side"
         )
-        receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
-        if receiver is self:
-            # A dig that answers with this same callsite has made no progress;
-            # take the honest uninterpreted receiver rather than re-submitting
-            # into the arm we are standing in.
-            receiver = SymbolicValue(self.term)
-        return operation.submit(receiver, ctx)
+        if floor is not None:
+            return floor.project_sequence_with(operation, ctx)
+        return operation.project_symbolic(self, ctx)
 
     def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.operations import perform_operation
 
         # Dig when the body floors; opaque residual re-dispatches on the EUF
-        # receiver term (SymbolicValue(self.term)) — honest uninterpreted join.
+        # receiver term (SymbolicValue(self.term)) — honest uninterpreted join,
+        # not a catchable gap / dig-boundary third state.
         floor = self._dig_floor_or_none(
             ctx,
             owner=f"{operation.owner} {owner_suffix}",
         )
         receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
-        method = getattr(receiver, operation.method_name, None)
-        if method is None:
-            from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-            from sugar_lift_py_tests.gap.panic import construction_panic
-
-            construction_panic(
-                ConstructionGap(
-                    owner=operation.owner,
-                    blame=operation.blame,
-                    observed=type(receiver).__name__,
-                    requested=operation.method_name,
-                    fix=(
-                        f"write more Floor: implement "
-                        f"{type(receiver).__name__}.{operation.method_name}"
-                    ),
-                    gap_kind=GapKind.FLOOR,
-                    gap_locus=GapLocus.CONSTRUCTION,
-                )
-            )
-        return method(operation, ctx)
+        return perform_operation(
+            owner=operation.owner,
+            blame=operation.blame,
+            receiver=receiver,
+            operation=operation,
+            ctx=ctx,
+        )
 
     def call_method_with(self, operation: Any, ctx: Any):
         """Compose a method on a callsite receiver.
@@ -1063,6 +1046,7 @@ class CallSiteValue(FloorValue):
         a numeric value; never soft-catch a panic into Incomplete.
         """
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+        from sugar_lift_py_tests.operations import perform_operation
         from sugar_lift_py_tests.outcome import Complete
 
         floor = self._dig_floor_or_none(
@@ -1070,10 +1054,13 @@ class CallSiteValue(FloorValue):
             owner=f"{operation.owner} callsite method receiver",
         )
         if floor is not None:
-            # `perform_operation` died with the operations layer (b0aadef50);
-            # the rebuilt layer has the operation submit itself to the value
-            # (`operations/sequence_projection_operation.py::submit`).
-            return operation.submit(floor, ctx)
+            return perform_operation(
+                owner=operation.owner,
+                blame=operation.blame,
+                receiver=floor,
+                operation=operation,
+                ctx=ctx,
+            )
         # Opaque receiver with a real EUF term: join, do not force_floor-panic.
         if operation.name == "__len__" and not operation.arguments:
             return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
@@ -1340,14 +1327,9 @@ def _reduce_callsite_body(
     if isinstance(body, SugarBody):
         return body.reduce(ctx)
     if isinstance(body, FunctionBodyUniverse):
-        # `BlockSugar(statements=...).desugar(ctx)` was deleted with the sugar
-        # web (f4f2574f0); `reduce_body` is the same reduction, now routed
-        # through the exit-set law, and is what the SourceVisibleFunctionBodySugar
-        # arm two lines up already reaches. (The dead call also passed
-        # `blame=`, a keyword BlockSugar never had.)
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
+        from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
 
-        return reduce_body(body.statements, ctx)
+        return BlockSugar(statements=body.statements, blame=blame).desugar(ctx)
     _force_floor_gap(
         owner="CallSiteValue.force_floor",
         target_name=blame,
