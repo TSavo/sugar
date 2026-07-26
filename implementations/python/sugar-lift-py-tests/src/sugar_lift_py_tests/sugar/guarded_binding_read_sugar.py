@@ -6,6 +6,7 @@ from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 from sugar_lift_py_tests.ir import not_
 from sugar_lift_py_tests.outcome import ExitSet, Outcome, outcome_to_exitset
+from sugar_lift_py_tests.outcome.exit_set import partition as _partition
 from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
     LoopGuardedProjection,
@@ -89,6 +90,23 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         _unhandled_projection(state, verb="read", name=read_name, site=read_site)
 
     guard = branch_result_guard(state.slot, read_site)
+    # THE READ OWNS THIS SPLIT, AND NOW SAYS SO.
+    #
+    # A conditionally-bound name is one value under the branch result and
+    # another under its negation. That is a two-way partition this producer
+    # decides, and it used to guard both arms with no face at all -- so every
+    # downstream `factor_completed` had nothing but guard SHAPE to go on, and
+    # any rewrite or merge that moved the shape made a real partition
+    # unprovable. Same shape as the loop before #6375: the producer already
+    # named its routes (`when_true` / `when_false` over an authenticated slot)
+    # and simply never minted the testimony.
+    #
+    # The owner is `state.slot`, the branch-result identity itself, NOT the
+    # read site: two reads of the same conditional binding are governed by the
+    # SAME branch outcome, so they must mint the same partition or arms that
+    # genuinely exclude each other would look unrelated. `partition` addresses
+    # by content, so this is reproducible rather than allocation-based.
+    then_face, else_face = _partition(("binding.read", state.slot))
     return (
         read_binding(
             state.when_true,
@@ -96,14 +114,14 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
             read_site=read_site,
             ctx=ctx,
         )
-        .guarded(guard)
+        .guarded(guard, then_face)
         .union(
             read_binding(
                 state.when_false,
                 read_name=read_name,
                 read_site=read_site,
                 ctx=ctx,
-            ).guarded(not_(guard))
+            ).guarded(not_(guard), else_face)
         )
     )
 
