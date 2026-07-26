@@ -60,21 +60,26 @@ def _classify_factoring(row: dict[str, Any]) -> str:
     When the run that produced this ledger carried that classifier, its verdict
     is in the detail; when it did not, say so rather than guessing a split.
     """
-    detail = str(row.get("detail", ""))
-    match = re.search(r"isRemainingWork[\"']?\s*[:=]\s*(True|true|False|false)", detail)
-    if match:
-        return (
-            "remaining-work"
-            if match.group(1).lower() == "true"
-            else "correct-refusal"
+    # Structured verdict, carried on the row by the census. Never parse the
+    # prose message: a repr is not an interface, and the classifier already
+    # produced a typed answer.
+    verdict = row.get("classification")
+    if isinstance(verdict, dict):
+        kind = verdict.get("kind", "?")
+        merged = " merged-arm" if verdict.get("mergedArm") else ""
+        head = (
+            "remaining-work" if verdict.get("isRemainingWork") else "correct-refusal"
         )
-    match = re.search(r"\b(unstamped|stamped-not-separating|stamped-disjoint|partly-stamped)\b", detail)
-    if match:
-        return f"kind:{match.group(1)}"
+        return f"{head} ({kind}{merged})"
     return "UNCLASSIFIED (ledger predates #6364 classifier)"
 
 
 def _owner_from_detail(row: dict[str, Any]) -> str:
+    verdict = row.get("classification")
+    if isinstance(verdict, dict):
+        left, right = verdict.get("leftOwner"), verdict.get("rightOwner")
+        if left or right:
+            return f"{left} / {right}"
     detail = str(row.get("detail", ""))
     match = re.search(r"owner:\s*([^\n]+)", detail)
     return match.group(1).strip() if match else "unnamed"

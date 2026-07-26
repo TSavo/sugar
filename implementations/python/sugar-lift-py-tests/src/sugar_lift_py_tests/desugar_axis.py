@@ -262,8 +262,25 @@ class DesugarAxis:
         self.categories[category] += 1
         self.by_category_owner[f"{category}/{owner}"] += 1
 
-    def _defect(self, kind: str, where: str, detail: str) -> None:
-        self.defects.append({"kind": kind, "where": where, "detail": detail})
+    def _defect(
+        self, kind: str, where: str, detail: str, *, exc: object | None = None
+    ) -> None:
+        row: dict[str, Any] = {"kind": kind, "where": where, "detail": detail}
+        # If the exception carries a classifier verdict, RECORD IT. #6364 built
+        # the remaining-work vs correct-refusal split as data on the exception
+        # (ExitSetFactoringGap.classification), and this census was
+        # stringifying the message and throwing that data away -- so every
+        # factoring gap reached the ledger UNCLASSIFIED and the split could not
+        # be read at corpus scale. Never re-derive it by parsing a repr.
+        classify = getattr(exc, "classification", None)
+        if callable(classify):
+            try:
+                verdict = classify()
+            except Exception:  # noqa: BLE001 -- a classifier defect is not R
+                verdict = None
+            if verdict is not None and hasattr(verdict, "row"):
+                row["classification"] = verdict.row()
+        self.defects.append(row)
 
     # -- the one door -------------------------------------------------------
 
@@ -311,7 +328,9 @@ class DesugarAxis:
             return
         if isinstance(outcome, tuple) and len(outcome) == 2 and outcome[0] == "defect":
             exc = outcome[1]
-            self._defect("desugar-exception", where, f"{type(exc).__name__}: {exc}")
+            self._defect(
+                "desugar-exception", where, f"{type(exc).__name__}: {exc}", exc=exc
+            )
             return
 
         walk = OutcomeWalk().walk(outcome)
