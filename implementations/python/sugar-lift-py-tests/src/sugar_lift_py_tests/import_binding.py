@@ -270,6 +270,8 @@ class _Pass:
         self.module_identities = module_identities
         self.rows: list[dict[str, Any]] = []
         self.outcomes: dict[tuple[int, int, int, int], str] = {}
+        # Per-occurrence import targets for NAME uses, from this same pass.
+        self.name_targets: dict[tuple[int, int, int, int], str] = {}
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
@@ -310,6 +312,20 @@ class _Pass:
 
     def expression(self, node: Node | None, state: State, scope: Node) -> None:
         if node is None:
+            return
+        if node.kind == "Name":
+            # A name USE whose sole reaching definition is an import statement
+            # is lexically bound to that import's target coordinate.  Recorded
+            # here, by the same reaching-definition state the call rows use --
+            # never by a second resolver and never by spelling.
+            reaching = state.get(node.id, frozenset({_UNBOUND}))
+            if len(reaching) == 1:
+                definition = next(iter(reaching))
+                if isinstance(definition, _ImportDef):
+                    span = node.line_col_span()
+                    self.name_targets[
+                        (span.start_line, span.start_col, span.end_line, span.end_col)
+                    ] = definition.target_symbol
             return
         if node.kind == "Call":
             self.expression(node.func, state, scope)
@@ -775,6 +791,36 @@ def authenticated_import_uses(
     )
     runner.statements(module.body, {}, module)
     return runner.rows, runner.outcomes
+
+
+def import_bound_name_targets(
+    module: Module,
+    source_cid: str,
+    module_name: str = "",
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> dict[tuple[int, int, int, int], str]:
+    """Import targets per NAME occurrence, from the one lexical pass.
+
+    Same reaching-definition transfer that authenticates imported call uses --
+    read here at every name use so construction can close an import-bound head
+    into its target coordinate instead of minting an undeclared universe Var.
+    Takes the already-materialized typed Module: never a second parse.
+    """
+    identities = module_identities or {}
+    module_state = _final_module_state(
+        module=module,
+        source_cid=source_cid,
+        module_name=module_name,
+        module_identities=identities,
+    )
+    runner = _Pass(
+        source_cid=source_cid,
+        module_name=module_name,
+        module_identities=identities,
+        module_state=module_state,
+    )
+    runner.statements(module.body, {}, module)
+    return dict(runner.name_targets)
 
 
 def authenticated_import_use_receipts(
