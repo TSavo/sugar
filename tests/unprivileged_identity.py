@@ -77,6 +77,10 @@ def reachable_by_unprivileged(path):
     better than one that never ran.
     """
     path = Path(path).resolve()
+    if unprivileged_identity() is None:
+        # Nothing will be dropped to, so nothing needs opening. Loosening modes
+        # anyway would weaken a developer's private temp tree for no reason.
+        return path
     for ancestor in [path, *path.parents]:
         try:
             mode = ancestor.stat().st_mode
@@ -100,6 +104,8 @@ def writable_by_unprivileged(directory):
     proves nothing about the law.
     """
     directory = reachable_by_unprivileged(directory)
+    if unprivileged_identity() is None:
+        return directory
     try:
         mode = directory.stat().st_mode
         directory.chmod(mode | stat.S_IRWXO)

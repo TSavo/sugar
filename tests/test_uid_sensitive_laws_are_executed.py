@@ -126,7 +126,9 @@ def test_the_dropped_identity_is_not_root():
 def test_an_unavailable_identity_refuses_by_name_rather_than_skipping():
     """The refusal is named and is an error, never a silently smaller suite."""
     assert issubclass(UnprivilegedIdentityUnavailable, Exception)
-    assert not issubclass(UnprivilegedIdentityUnavailable, type(pytest.skip.Exception))
+    assert not issubclass(UnprivilegedIdentityUnavailable, pytest.skip.Exception), (
+        "an unavailable identity must fail, never register as a skip"
+    )
 
     identity = unprivileged_identity()
     if identity is not None:
