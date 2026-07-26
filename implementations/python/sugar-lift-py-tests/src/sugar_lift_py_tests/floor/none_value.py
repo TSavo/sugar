@@ -23,6 +23,24 @@ class NoneValue(FloorValue):
 
         return Complete(FalseBoolLiteralSugar(site=site))
 
+    def attribute(self, name, site):
+        # ``None.foo`` stands where every other constructed value stands: the
+        # py.getattr coordinate. None owns no field the lift knows and its
+        # methods have no body here, which is exactly the position
+        # StringValue and the constructed containers already occupy.
+        #
+        # NOT a ground AttributeError. `None.foo` raises, but `None.__class__`
+        # and `None.__doc__` do not, so a blanket exit here would be wrong for
+        # every real member -- and deciding which is which would need a
+        # NoneType member table, i.e. a name table read off spelling. The
+        # coordinate is not a claim that the attribute EXISTS; it is an opaque
+        # symbol over the receiver's term and the name, so it stays exact for
+        # both cases and invents neither a field nor an exit.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="NoneValue.attribute")
+
     def subscript(self, index, site):
         """Construct Python's exact ground ``None[...]`` exceptional exit."""
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
