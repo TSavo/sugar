@@ -20,6 +20,14 @@ These are the teeth against that class:
        unfalsifiability it was written to remove -- so it is tested by
        provoking a real EACCES, not by inspection.
 
+    4. Every package under test must PIN this checkout, and prove it. A
+       package resolving to an editable install elsewhere does not fail -- it
+       passes, reports coverage, and describes a tree nobody is editing. That
+       is worse than the other two: they omit work, this fabricates
+       attribution. So the assertion is a POSITIVE (this module resolved
+       under this root), because absence of an error proves nothing when the
+       defect IS success about the wrong thing.
+
     3. No law may be left unrun by an unnamed skip, anywhere in the Python
        corpus. This is the same predicate one level more general, and it
        covers the worse case: a missing corpus is a ROUTINE condition, so
@@ -57,6 +65,12 @@ CORPUS_ROOTS = (TESTS, ROOT / "implementations" / "python")
 # routes through its named categories, so a raw pytest.skip anywhere else is a
 # law somebody left unrun without deciding to.
 SANCTIONED_SKIP_MODULE = "declared_corpus.py"
+
+# A package that ships sources AND tests must pin those sources to this
+# checkout. sugar-lift-python-source lacked the conftest its sibling had and
+# silently measured /Users/tsavo/provekit-wt/fresh-main-20260701 instead.
+PACKAGES_DIR = ROOT / "implementations" / "python"
+PIN_CALL = "pin_checkout("
 
 
 def _uid_guarded_skips():
@@ -249,4 +263,73 @@ def test_the_sanctioned_skip_module_is_identical_in_every_package():
         + "\n".join(_rel(path) for path in copies)
         + "\nreplacement: keep the copies byte-identical; a category "
         "sanctioned in one package and rejected in the other is a hole"
+    )
+
+
+def _packages_under_test():
+    """Every package that ships both sources and tests of its own."""
+    if not PACKAGES_DIR.is_dir():
+        return []
+    return [
+        path
+        for path in sorted(PACKAGES_DIR.iterdir())
+        if (path / "src").is_dir() and (path / "tests").is_dir()
+    ]
+
+
+def test_every_package_pins_its_own_checkout():
+    """An unpinned package measures whatever install the machine happens to have.
+
+    This is the defect that fabricates attribution rather than omitting work:
+    it does not fail, it succeeds about the wrong code. The tell was an
+    asymmetry -- one package had a conftest pinning its src and its sibling did
+    not -- so the guard is structural over every package, not a spot check.
+    """
+    packages = _packages_under_test()
+    assert packages, "found no packages under test; the guard would be vacuous"
+
+    offenders = []
+    for package in packages:
+        conftest = package / "tests" / "conftest.py"
+        if not conftest.is_file():
+            offenders.append(f"{_rel(package)}: no tests/conftest.py to pin src")
+            continue
+        if PIN_CALL not in conftest.read_text(encoding="utf-8"):
+            offenders.append(
+                f"{_rel(conftest)}: does not call {PIN_CALL}...) to pin this checkout"
+            )
+
+    assert not offenders, (
+        f"R={len(offenders)} packages do not pin their sources to this "
+        f"checkout (of {len(packages)} under test):\n"
+        + "\n".join(offenders)
+        + "\nreplacement: call checkout_resolution.pin_checkout(__file__) from "
+        "the package's tests/conftest.py. An unpinned package resolves "
+        "whatever editable install exists on the machine -- it passes, "
+        "reports coverage, and describes a tree nobody is editing"
+    )
+
+
+def test_the_resolution_guard_can_actually_fail():
+    """The positive control. Absence of an error proves nothing here.
+
+    The defect is a SUCCESSFUL import of the wrong tree, so a guard that only
+    caught ImportError would pass on every instance of it. This proves the
+    guard rejects a module resolving outside the root, and accepts one inside.
+    """
+    from checkout_resolution import CheckoutResolutionEscaped, require_local_resolution
+
+    # Positive: a module that genuinely lives under this root is accepted.
+    resolved = require_local_resolution("unprivileged_identity", str(ROOT))
+    assert resolved.startswith(str(ROOT))
+
+    # Negative: a stdlib module lives outside the checkout and must be refused.
+    with pytest.raises(CheckoutResolutionEscaped) as caught:
+        require_local_resolution("json", str(ROOT))
+
+    message = str(caught.value)
+    assert "resolved OUTSIDE this checkout" in message
+    assert "fabricates" in message
+    assert not isinstance(caught.value, pytest.skip.Exception), (
+        "escaping the checkout must FAIL, never skip"
     )

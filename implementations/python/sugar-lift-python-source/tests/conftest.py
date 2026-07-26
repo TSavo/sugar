@@ -1,21 +1,24 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Put this tests directory on the path, as the sibling package already does.
+"""Pin this package's sources to THIS checkout before anything imports them.
 
-Helpers that live next to test modules (``declared_corpus``) are only
-importable if the directory holding them is importable. ``sugar-lift-py-tests``
-does exactly this in its own conftest; without it here, a shared helper in this
-package resolves as a collection error -- which shrinks the denominator instead
-of turning anything red, the very failure mode the helper exists to close.
+Without the pin these tests resolve whatever editable install happens to be on
+the machine -- which in practice pointed at another worktree entirely. That
+does not fail; it passes about the wrong code. See tests/checkout_resolution.py.
 """
 
 import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# This checkout's own sources, ahead of any editable install pointing at
-# another worktree. Without it these tests measure a tree nobody is editing.
-_SRC = os.path.normpath(os.path.join(_HERE, "..", "src"))
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+_ROOT = _HERE
+while _ROOT != os.path.dirname(_ROOT) and not (
+    os.path.isdir(os.path.join(_ROOT, "implementations"))
+    and os.path.isdir(os.path.join(_ROOT, "tests"))
+):
+    _ROOT = os.path.dirname(_ROOT)
+if os.path.join(_ROOT, "tests") not in sys.path:
+    sys.path.insert(0, os.path.join(_ROOT, "tests"))
+
+from checkout_resolution import pin_checkout  # noqa: E402
+
+pin_checkout(__file__, siblings=())
