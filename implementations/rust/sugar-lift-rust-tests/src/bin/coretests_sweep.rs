@@ -478,9 +478,10 @@ fn main() {
         // Per-file panic boundary. A lifter gap (`iter_terminal_gap` and friends) is a
         // deliberate `-> !` loud refusal, but without a boundary here the FIRST such file
         // aborts the process and no accounting is ever written -- one gap costs the whole
-        // ledger, and every file after it goes unobserved. Bin the panicking file as a
-        // named refusal instead: its assertions are refused with the panic string as the
-        // reason, so they stay accounted for and `silent` still cannot hide anything.
+        // ledger, and every file after it goes unobserved. Bin the panicking file whole as
+        // UNCLASSIFIED with the panic string as the reason (see `bin_panicked_file` for why
+        // that bucket and not `refused`), so its assertions stay accounted for and `silent`
+        // still cannot hide anything.
         let lifted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             lift_file_with_all_source_imports(
                 &file,
@@ -494,39 +495,23 @@ fn main() {
         let out = match lifted {
             Ok(out) => out,
             Err(payload) => {
-                let panic_msg = payload
-                    .downcast_ref::<String>()
-                    .map(String::as_str)
-                    .or_else(|| payload.downcast_ref::<&str>().copied())
-                    .unwrap_or("<non-string panic payload>")
-                    .replace('\n', " ");
-                let reason = format!("lifter panic: {panic_msg}");
+                let panic_msg = panic_payload_message(&payload);
                 warn!(
                     file = %rel,
                     panic = %panic_msg,
                     asserts = census.total,
                     "coretests sweep file panicked; binning its assertions as unclassified"
                 );
-                // UNCLASSIFIED, not `refused`. `refused` is reserved for a terminal
-                // close with a source-property reason, and the sweep cannot show that
-                // here: the panic unwound before any per-assert disposition existed, so
-                // we do not know which of this file's assertions the gap actually hit.
-                // Unclassified is the honest bucket -- it says "work", it keeps the gap
-                // loud in the gate rather than parked in an earned-refusal bucket, and
-                // it holds the `silent = 0` identity because the assertions stay counted.
-                totals.assert_macros += census.total;
-                totals.unclassified += census.total;
-                totals.panicked_files += 1;
-                let b = format!("[unclassified] {}", bucket(&reason));
-                *reasons.entry(b.clone()).or_insert(0) += census.total;
-                let samples = reason_samples.entry(b).or_default();
-                if samples.len() < 12 {
-                    samples.push(format!("{}: {}", rel, reason));
-                }
-                for _ in 0..census.total {
-                    all_reasons.push(reason.clone());
-                }
-                rows.push((rel, census.total, 0, census.total, 0, false));
+                bin_panicked_file(
+                    &rel,
+                    &panic_msg,
+                    census.total,
+                    &mut totals,
+                    &mut reasons,
+                    &mut reason_samples,
+                    &mut all_reasons,
+                    &mut rows,
+                );
                 continue;
             }
         };
@@ -943,6 +928,59 @@ fn report_callsite_census(rows: &[(String, sugar_lift_rust_tests::CallsiteCensus
 /// binned into discharged/refused/missing or expanded through callsites), the
 /// reason histogram, and the per-file rows. Pure so the shape -- and the CID
 /// over it -- is testable.
+/// The panic payload's message, flattened to one line so it survives a reason
+/// histogram row. A non-string payload is NAMED, never dropped silently.
+fn panic_payload_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic payload>")
+        .replace('\n', " ")
+}
+
+/// Bin a file whose lift PANICKED, whole, into the ledger.
+///
+/// UNCLASSIFIED, not `refused`. `refused` is reserved for a terminal close with a
+/// source-property reason, and the sweep cannot show that here: the panic unwound
+/// before any per-assert disposition existed, so we do not know which of this file's
+/// assertions the gap actually hit. Unclassified is the honest bucket -- it says
+/// "work", it keeps the gap loud in the gate rather than parked in an earned-refusal
+/// bucket, and it holds the `silent = 0` identity because the assertions stay counted.
+///
+/// Extracted from the sweep loop so the BINNING is testable, not just the field it
+/// writes: `panic_bins_unclassified_not_refused` below is the tooth on that choice.
+#[allow(clippy::too_many_arguments)]
+fn bin_panicked_file(
+    rel: &str,
+    panic_msg: &str,
+    census_total: usize,
+    totals: &mut Totals,
+    reasons: &mut BTreeMap<String, usize>,
+    reason_samples: &mut BTreeMap<String, Vec<String>>,
+    all_reasons: &mut Vec<String>,
+    rows: &mut Vec<(String, usize, usize, usize, i64, bool)>,
+) {
+    let reason = format!("lifter panic: {panic_msg}");
+    totals.assert_macros += census_total;
+    totals.unclassified += census_total;
+    totals.panicked_files += 1;
+    let b = format!("[unclassified] {}", bucket(&reason));
+    *reasons.entry(b.clone()).or_insert(0) += census_total;
+    let samples = reason_samples.entry(b).or_default();
+    if samples.len() < 12 {
+        samples.push(format!("{rel}: {reason}"));
+    }
+    for _ in 0..census_total {
+        all_reasons.push(reason.clone());
+    }
+    // `parse_ok = true`: this file PARSED and then panicked during the lift. Those are
+    // two different failures and the flag only means the first one -- reporting
+    // `[parse_fail]` here would name the wrong defect in the top-files table.
+    // `raw_delta = 0` keeps `missing_assertions` unmoved: nothing was silently dropped.
+    rows.push((rel.to_string(), census_total, 0, census_total, 0, true));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_ledger_json(
     corpus: &str,
@@ -1109,6 +1147,55 @@ mod tests {
             Some(3)
         );
         assert!(v.get("unaccounted").is_none());
+    }
+
+    // THE TOOTH on the bucket choice. The PR this landed in rests on "unclassified,
+    // not refused", and until this existed nothing enforced it: mutating the bin to
+    // `totals.refused += census_total` left every other test green. Drives a panicking
+    // file through the real binning and asserts the whole counter set, so a silent
+    // re-bin to `refused` -- or a dropped `panicked_files` increment, or a lost
+    // assertion -- goes red here.
+    #[test]
+    fn panic_bins_unclassified_not_refused() {
+        let mut totals = Totals::default();
+        let mut reasons = BTreeMap::new();
+        let mut samples = BTreeMap::new();
+        let mut all = Vec::new();
+        let mut rows = Vec::new();
+
+        bin_panicked_file(
+            "num/ops.rs",
+            "enumerate did not reach a lawful floor: inner reduced to non-sequence",
+            74,
+            &mut totals,
+            &mut reasons,
+            &mut samples,
+            &mut all,
+            &mut rows,
+        );
+
+        // The bucket choice itself.
+        assert_eq!(totals.unclassified, 74, "panic must bin UNCLASSIFIED");
+        assert_eq!(totals.refused, 0, "a panic is NOT an earned refusal");
+        assert_eq!(totals.discharged, 0);
+        assert_eq!(totals.inactive, 0);
+        // The floor marker, and the surface conservation that keeps `silent` at 0.
+        assert_eq!(totals.panicked_files, 1);
+        assert_eq!(totals.assert_macros, 74, "the file's surface stays counted");
+        assert_eq!(all.len(), 74, "one named reason per assertion");
+        assert!(all[0].starts_with("lifter panic: "));
+        // Every reason row is tagged unclassified, never refused.
+        assert!(
+            reasons.keys().all(|k| k.starts_with("[unclassified] ")),
+            "{reasons:?}"
+        );
+        assert_eq!(reasons.values().sum::<usize>(), 74);
+        // The row: parsed fine, panicked in the lift, nothing silently dropped.
+        let (rel, asserts, discharged, refused, raw_delta, parse_ok) = &rows[0];
+        assert_eq!(rel, "num/ops.rs");
+        assert_eq!((*asserts, *discharged, *refused), (74, 0, 74));
+        assert_eq!(*raw_delta, 0, "raw_delta 0 keeps missing_assertions unmoved");
+        assert!(*parse_ok, "the file PARSED; it panicked during the lift");
     }
 
     // A ledger that floored some files must SAY so on its face. Without this
