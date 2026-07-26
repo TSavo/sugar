@@ -19,6 +19,15 @@ class BlockValue(FloorValue):
     fall_through: tuple = ()
     can_fall_through: bool = True
 
+    def guarded(self, formula):
+        """Guard every suite entry through that entry's own Floor law."""
+        from dataclasses import replace
+
+        return replace(
+            self,
+            statements=tuple(entry.guarded(formula) for entry in self.statements),
+        )
+
     def contribution(self):
         # A block inside a record splices: its entries ARE the entries.
         return self.statements

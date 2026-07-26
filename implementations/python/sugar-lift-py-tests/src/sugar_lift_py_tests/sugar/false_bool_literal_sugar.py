@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.block_value import BlockValue
-from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.guard_stable_value import GuardStableValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 @dataclass(frozen=True)
-class FalseBoolLiteralSugar(Sugar, FloorValue):
+class FalseBoolLiteralSugar(Sugar, GuardStableValue):
     """The literal `False`. It holds no value -- the boolean IS the type. It is its own
     floor value and it dispatches the emit to the else-face; with no else it emits
     nothing (an empty block adds no constraint). No fork.

@@ -6,6 +6,7 @@ from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.ir import Term
 
 from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 def _pep604_type_union_leaves(term: Term) -> tuple[Term, ...] | None:
@@ -30,7 +31,7 @@ def _pep604_type_union_leaves(term: Term) -> tuple[Term, ...] | None:
 
 
 @dataclass(frozen=True)
-class SymbolicValue(FloorValue):
+class SymbolicValue(GuardStableValue):
     """A sort-neutral symbolic ProofIR term: a free variable, or a term composed
     from operations over one.
 

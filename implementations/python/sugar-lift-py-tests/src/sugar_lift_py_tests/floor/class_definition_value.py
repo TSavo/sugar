@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from sugar_source_tree.panic import SugarNotWritten
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class ConstructedClassFieldV1:
 
 
 @dataclass(frozen=True)
-class ClassDefinitionValue(FloorValue):
+class ClassDefinitionValue(GuardStableValue):
     class_name: str
     class_definition_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
