@@ -49,6 +49,26 @@ class PredicateValue(FloorValue):
             )
         return super().to_term(owner=owner)
 
+    def attribute(self, name, site):
+        # A boolean formula is not a field-bearing object; attribute projection
+        # stays py.getattr over the predicate term (never invent a field).
+        del site
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "py.getattr",
+                    [
+                        self.to_term(owner="PredicateValue.attribute"),
+                        str_const(name),
+                    ],
+                )
+            )
+        )
+
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
         # the polarity, the carrier stays PredicateValue; operand callsites ride.
