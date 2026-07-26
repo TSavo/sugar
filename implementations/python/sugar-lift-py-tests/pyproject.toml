@@ -36,14 +36,6 @@ test = [
     "itsdangerous==2.2.0",
     "numpy",
     "pandas",
-    # `pydantic` is lifted by a 441-line FIRST-PARTY production module,
-    # src/sugar_lift_py_tests/lift/pydantic.py, and exercised by
-    # tests/test_lift_pydantic.py. It was declared NOWHERE -- not here, not in
-    # [project] dependencies, not in any workflow -- so CI never installed it
-    # and all three lift laws skipped on every run. The authority mechanism was
-    # sound (every job installs only from this table); the table was incomplete,
-    # and `importorskip` hid it. See #6369.
-    "pydantic",
 ]
 
 [project.scripts]

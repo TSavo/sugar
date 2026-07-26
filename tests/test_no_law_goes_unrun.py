@@ -219,7 +219,11 @@ def _unnamed_skips():
             # importorskip is the same defect wearing an import: it answers
             # "is the module present" when the suite is asking "did this law
             # run", and leaves no bucket saying it did not. It hid a 441-line
-            # first-party pydantic lifter whose three laws never ran in CI.
+            # first-party pydantic lifter whose three laws never ran in CI for
+            # the repo's whole history -- and once they were made visible, the
+            # module turned out to have zero reverse-deps and was burned
+            # (#6373). Making the unrun visible is what allowed it to be
+            # judged; deleting it while it was invisible was never an option.
             if func.attr in {"skip", "skipif", "importorskip"}:
                 offenders.append(f"{_rel(path)}:{node.lineno}: {func.attr}(...)")
     return offenders
