@@ -22,6 +22,7 @@ Every twin states its arity exactly. None asserts `!= 1`.
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass
 
 import pytest
 
@@ -66,11 +67,28 @@ def _receivers(source: str) -> tuple[list[str], object]:
         spo.SequenceProjectionOperation.submit = original
 
 
+@dataclass(frozen=True)
+class _TwinLocus:
+    """A genuine runtime locus. `RuntimeEffectSite` is a runtime-checkable
+    Protocol, so structure is the whole requirement -- and a locus STRING is
+    correctly refused, which is why this is a real object and not prose."""
+
+    filename: str = "twin.py"
+    line: int = 1
+    col: int = 0
+
+
 def _operation(*names: str):
+    """One unpack demand, addressed by a genuine runtime locus.
+
+    The blame must be a real `RuntimeEffectSite`: the runtime arm refuses to
+    mint evidence from a locus string, so a twin that passed prose would be
+    testing a path production cannot reach.
+    """
     from sugar_lift_py_tests.operations import SequenceProjectionOperation
 
     return SequenceProjectionOperation(
-        target_names=names, owner="twin", blame="twin.py:1:0"
+        target_names=names, owner="twin", blame=_TwinLocus()
     )
 
 
@@ -284,3 +302,110 @@ def test_a_callsite_that_digs_to_a_display_binds_its_members() -> None:
     )
     assert seen == ["CallSiteValue"]
     assert isinstance(out, Complete)
+
+
+# ==========================================================================
+# Category: comprehension coordinate -- its own iteration owns the count
+# ==========================================================================
+
+
+def test_comprehension_receiver_retains_the_arity_demand() -> None:
+    """POSITIVE. `a, b = (x for x in xs)` used to panic with no arm at all.
+
+    A comprehension over an unknown iterable has no authenticated member
+    testimony, so the count is its own iteration's and the demand is retained.
+    """
+    for source in (
+        "def A(xs):\n a, b = (x for x in xs)\n return a\n",
+        "def A(xs):\n a, b = [x for x in xs]\n return a\n",
+    ):
+        seen, out = _receivers(source)
+        assert seen == ["ComprehensionValue"], seen
+        assert isinstance(out, Incomplete)
+        assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
+        assert "exactly 2 members" in out.effect.reason
+
+
+def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
+    """DISCRIMINATING, and the sharp edge of this category.
+
+    `finite_elements is None` means "no member testimony exists". Reading it as
+    an empty tuple would make every unknown comprehension a DECIDABLE arity
+    mismatch -- "0 members unpacked into 2 targets" -- turning "we do not know"
+    into a confident wrong answer. It must route to the runtime arm instead.
+    """
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.ir import make_var
+
+    absent = ComprehensionValue(make_var("xs"), finite_elements=None)
+    out = _operation("a", "b").submit(absent, None)
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
+
+
+def test_present_finite_testimony_binds_and_a_wrong_count_stays_loud() -> None:
+    """DISCRIMINATING partner. When the comprehension DID project every member,
+    the count is decidable, so it must bind on a match and stay loud on a
+    mismatch -- the same two answers a tuple literal gets, never the runtime
+    obligation."""
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var
+
+    members = (TermValue(1), TermValue(2))
+    present = ComprehensionValue(make_var("xs"), finite_elements=members)
+
+    out = _operation("a", "b").submit(present, None)
+    assert isinstance(out, Complete)
+    assert isinstance(out.value, ScopeRebinds)
+    assert tuple(name for name, _ in out.value.bindings) == ("a", "b")
+
+    with pytest.raises(ConstructionPanic):
+        _operation("a", "b", "c").submit(present, None)
+
+
+# ==========================================================================
+# Category: conditional value -- the unpack distributes into both faces
+# ==========================================================================
+
+
+def test_conditional_receiver_partitions_into_one_face_per_arm() -> None:
+    """POSITIVE. `a, b = (p if c else q)` used to panic with no arm at all.
+
+    Each face answers for itself under its own polarity. They are NOT fused
+    back into a conditional value: an answer here is a binding or a halt, and
+    those do not fuse.
+    """
+    seen, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
+    assert seen == ["GuardedValue"]
+    assert isinstance(out, ExitSet)
+    assert len(out.exits) == 2
+    for exit_ in out.exits:
+        assert isinstance(exit_, Halted)
+        assert isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+
+
+def test_each_conditional_face_owes_its_own_operand_not_a_shared_one() -> None:
+    """DISCRIMINATING. The two faces carry DIFFERENT obligations: under `c` the
+    unpack is owed of `p`, under `not c` of `q`. Distributing but reporting one
+    shared operand would look identical in arity and be wrong about what the
+    caller must satisfy."""
+    _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
+    operands = {
+        str(exit_.effect.runtime_operand.term.args[0]) for exit_ in out.exits
+    }
+    assert len(operands) == 2, operands
+    assert any("p" in operand for operand in operands)
+    assert any("q" in operand for operand in operands)
+
+
+def test_the_two_conditional_faces_carry_complementary_guards() -> None:
+    """DISCRIMINATING. One face rides under the test, the other under its
+    negation -- never both under the same guard, which would claim the unpack
+    is owed of two different values on the same execution."""
+    _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
+    guards = [exit_.guard for exit_ in out.exits]
+    assert len(guards) == 2
+    negated = [guard for guard in guards if getattr(guard, "kind", None) == "not"]
+    assert len(negated) == 1
+    assert negated[0].operands[0] in guards
