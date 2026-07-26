@@ -165,11 +165,14 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
             and isinstance(face.value.statements[-1].value, PredicateValue)
         ):
             predicates.append(face.value.statements[-1].value.formula)
-    if not predicates or any(
-        predicate != predicates[0] for predicate in predicates[1:]
+    if predicates and all(
+        predicate == predicates[0] for predicate in predicates[1:]
     ):
+        formula = predicates[0]
+    else:
+        formula = _guarded_literal_suppression_formula(exit_set)
+    if formula is None:
         return None
-    formula = predicates[0]
     actuals = tuple(behavior.formal_actual_values)
     actual_terms = tuple(
         value.to_term(owner=behavior.resolved_object_cid) for value in actuals
@@ -210,6 +213,153 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         ),
         ExceptionInfoBindingV1(),
     )
+
+
+def _guarded_literal_suppression_formula(exit_set):
+    """The suppression predicate of an exit that routes exact ``True``/``False``.
+
+    A community effect boundary is rarely written as one returned predicate.
+    It is written as a route:
+
+        if <effect absent>:   raise ...
+        if <matched>:         return True
+        return False
+
+    That is the same theorem as ``return <matched>`` with the partition moved
+    from the value level to the GUARD level — the same move
+    ``ExitSet.factor_completed`` makes for sequencing. The predicate is
+    therefore the disjunction of the guards of the exact-``True`` faces.
+
+    It is derived only when the completed face is TOTALLY classified:
+
+    - every completed face is a block ending in ``return`` exact ``True`` or
+      exact ``False`` — one unclassified face and the disjunction would speak
+      for an outcome it does not cover, so the whole derivation refuses;
+    - at least one ``True`` face exists — an empty disjunction is
+      ``never suppresses``, which is a different contract and must not be
+      fabricated here.
+
+    Halted faces are the caller's business: it authenticates them separately
+    and refuses any halt that is not a proven absent-effect halt.
+    """
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        BranchResultAuthentication,
+        GuardedReturn,
+    )
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import (
+        _and_guards,
+        _or_guards,
+        false_guard,
+    )
+
+    authenticated = {}
+    for face in exit_set.exits:
+        block = getattr(face, "value", None)
+        if not isinstance(block, BlockValue):
+            continue
+        for statement in block.statements:
+            if isinstance(statement, BranchResultAuthentication):
+                authenticated[statement.slot.slot_id] = statement.observed_guard
+
+    formula = false_guard()
+    saw_true = False
+    for face in exit_set.exits:
+        if not isinstance(face, Completed):
+            continue
+        block = face.value
+        if not isinstance(block, BlockValue) or not block.statements:
+            return None
+        if block.can_fall_through:
+            # An implicit ``None`` result is a third outcome this partition
+            # does not classify. Refuse rather than let the disjunction speak
+            # for it.
+            return None
+        for statement in block.statements:
+            if isinstance(statement, Incomplete):
+                return None
+            if isinstance(statement, GuardedReturn):
+                literal = _exact_bool_literal(statement.value)
+                if literal is None:
+                    return None
+                if literal:
+                    guards = tuple(statement.guards)
+                    guard = guards[0] if len(guards) == 1 else and_(list(guards))
+                    resolved = _resolve_branch_result_guards(
+                        _and_guards(face.guard, guard), authenticated
+                    )
+                    if resolved is None:
+                        return None
+                    saw_true = True
+                    formula = _or_guards(formula, resolved)
+                continue
+            if isinstance(statement, ReturnValue):
+                literal = _exact_bool_literal(statement.value)
+                if literal is None:
+                    return None
+                if literal:
+                    resolved = _resolve_branch_result_guards(
+                        face.guard, authenticated
+                    )
+                    if resolved is None:
+                        return None
+                    saw_true = True
+                    formula = _or_guards(formula, resolved)
+    return formula if saw_true else None
+
+
+def _resolve_branch_result_guards(formula, authenticated):
+    """Replace each branch-result slot literal by its AUTHENTICATED guard.
+
+    A branch guard is spelled ``py.truthy(python:branch_result(<slot>))`` — an
+    opaque coordinate. The block also carries a ``BranchResultAuthentication``
+    proving that slot equivalent to the real observed comparison. Only that
+    testimony may stand in for the slot; an unauthenticated slot returns
+    ``None`` and the whole boundary stays loud rather than being read from a
+    coordinate nobody proved anything about.
+    """
+    from sugar_lift_py_tests.ir import _Atomic, _Connective, _ConstStr, _Ctor
+
+    if isinstance(formula, _Connective):
+        operands = []
+        for operand in formula.operands:
+            resolved = _resolve_branch_result_guards(operand, authenticated)
+            if resolved is None:
+                return None
+            operands.append(resolved)
+        return type(formula)(formula.kind, tuple(operands))
+    if not isinstance(formula, _Atomic) or formula.name != "py.truthy":
+        return formula
+    if len(formula.args) != 1:
+        return formula
+    term = formula.args[0]
+    if not isinstance(term, _Ctor) or term.name != "python:branch_result":
+        return formula
+    if len(term.args) != 1 or not isinstance(term.args[0], _ConstStr):
+        return None
+    return authenticated.get(term.args[0].value)
+
+
+def _exact_bool_literal(value: object) -> bool | None:
+    """``True``/``False`` iff the value is exactly that literal; else ``None``.
+
+    Never truthiness. A symbolic value, a name, or any non-``bool`` constant
+    is unclassified and keeps the boundary loud.
+    """
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if isinstance(value, TrueBoolLiteralSugar):
+        return True
+    if isinstance(value, FalseBoolLiteralSugar):
+        return False
+    if isinstance(value, TermValue) and type(value.value) is bool:
+        return value.value
+    return None
 
 
 def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):

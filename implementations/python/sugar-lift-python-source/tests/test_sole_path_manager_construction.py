@@ -1169,3 +1169,150 @@ def test_renamed_source_boundary_routes_type_and_message_by_derived_formals(
         assert type(face.effect).__name__ == expected_effect
     else:
         assert isinstance(face, Completed)
+
+
+# --- Guarded-literal exit predicate (#6298 assertion-With drain) --------------
+#
+# The community shape for an effect boundary does NOT return one predicate
+# expression. It routes to `return True` / `return False` under guards:
+#
+#     if effect_type is None:
+#         raise ...
+#     if not <matched>:
+#         return False
+#     return True
+#
+# That is the SAME theorem as `return effect_type is self.expected`, with the
+# partition moved from the value level to the guard level. Deriving it means
+# reading the disjunction of the guards of the exact-True completed faces —
+# never a manager name, never a spelling.
+
+
+def _guarded_literal_boundary(tmp_path, *, exit_body: str):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class ArbitraryBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n" + exit_body +
+        "def make_guard(expected):\n"
+        "    return ArbitraryBoundary(expected)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="guarded-literal-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+    return derive_manager_summary(protocol, behavior=behavior)
+
+
+def test_guarded_literal_exit_derives_expects_raise_boundary(tmp_path):
+    summary = _guarded_literal_boundary(
+        tmp_path,
+        exit_body=(
+            "        if effect_type is None:\n"
+            "            raise RuntimeError()\n"
+            "        if effect_type is self.expected:\n"
+            "            return True\n"
+            "        return False\n"
+        ),
+    )
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(summary.semantics.mode, ExpectsModeV1)
+    assert isinstance(summary.semantics.effect_kind, RaiseEffectKindV1)
+    assert summary.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
+
+
+def test_guarded_literal_exit_without_absent_effect_halt_derives_suppresses(tmp_path):
+    summary = _guarded_literal_boundary(
+        tmp_path,
+        exit_body=(
+            "        if effect_type is self.expected:\n"
+            "            return True\n"
+            "        return False\n"
+        ),
+    )
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        FormalArgumentProjectionV1,
+        SuppressesModeV1,
+    )
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(summary.semantics.mode, SuppressesModeV1)
+    assert summary.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
+
+
+def test_guarded_literal_exit_with_opaque_completed_face_stays_gap(tmp_path):
+    """Discrimination: one non-literal completed face admits NOTHING.
+
+    `return self.expected` is neither exact True nor exact False, so the
+    guard disjunction would silently speak for a face it does not cover.
+    The whole derivation must stay a typed gap.
+    """
+    summary = _guarded_literal_boundary(
+        tmp_path,
+        exit_body=(
+            "        if effect_type is None:\n"
+            "            raise RuntimeError()\n"
+            "        if effect_type is self.expected:\n"
+            "            return True\n"
+            "        return self.expected\n"
+        ),
+    )
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    assert summary.kind == "exit-may-halt"
+
+
+def test_guarded_literal_exit_with_no_true_face_stays_gap(tmp_path):
+    """An all-False exit names no suppression predicate, so nothing is derived.
+
+    Teeth note: perturbing the explicit empty-disjunction refusal in
+    `_guarded_literal_suppression_formula` does NOT turn this red — an empty
+    disjunction is `false_guard()`, which carries no exit-type coordinate, so
+    the operand-resolution arm refuses it anyway. The explicit refusal is
+    defence in depth, not the arm this case exercises. This test pins the
+    CLASS (all-False exit is never a boundary), and its independent teeth are
+    the operand arm's.
+    """
+    summary = _guarded_literal_boundary(
+        tmp_path,
+        exit_body=(
+            "        if effect_type is None:\n"
+            "            raise RuntimeError()\n"
+            "        return False\n"
+        ),
+    )
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    assert summary.kind == "exit-may-halt"
+
+
+def test_guarded_literal_exit_without_type_coordinate_stays_gap(tmp_path):
+    """Discrimination: a guard that never tests the exit-type coordinate.
+
+    No formal index is resolvable, so no expected-type operand exists and
+    the boundary must not be constructed from the True face alone.
+    """
+    summary = _guarded_literal_boundary(
+        tmp_path,
+        exit_body=(
+            "        if effect_type is None:\n"
+            "            raise RuntimeError()\n"
+            "        if effect is self.expected:\n"
+            "            return True\n"
+            "        return False\n"
+        ),
+    )
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
