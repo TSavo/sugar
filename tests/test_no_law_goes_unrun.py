@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import ast
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -437,10 +439,31 @@ def test_every_package_proves_its_derived_siblings_resolve_locally():
     packages = _packages_under_test()
     assert packages, "no packages under test; this guard would be vacuous"
 
-    source = (TESTS / "checkout_resolution.py").read_text(encoding="utf-8")
-    assert "derive_required_siblings(package_dir, packages_dir)" in source, (
-        "pin_checkout no longer derives its siblings; an empty declaration "
-        "would silently stop pinning them again"
+    # BEHAVIOURAL, not a text match. An earlier version of this control
+    # asserted the source contained "derive_required_siblings(package_dir,
+    # packages_dir)" -- which also matches the function DEFINITION, so deleting
+    # the CALL left it green. Mutation caught it. Text presence is not evidence
+    # that a thing runs; run it.
+    package = packages_dir / "sugar-lift-py-tests"
+    sibling_src = str((packages_dir / "sugar-source-tree" / "src").resolve())
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, runpy;"
+            f"runpy.run_path({str(package / 'tests' / 'conftest.py')!r});"
+            "print(chr(10).join(sys.path))",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, "PYTHONPATH": ""},
+    )
+    assert probe.returncode == 0, f"conftest failed to load:\n{probe.stderr}"
+    assert sibling_src in probe.stdout.splitlines(), (
+        "loading a conftest that declares `siblings=()` did NOT put its derived "
+        f"sibling {sibling_src} on sys.path, so those imports resolve whatever "
+        f"install the machine has.\nsys.path was:\n{probe.stdout}"
     )
 
     covered = 0
