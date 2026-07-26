@@ -164,6 +164,32 @@ def path_source(path: str) -> tuple[str, str, str]:
     return (source, str(path), blake3_512_of(source.encode("utf-8")))
 
 
+def workspace_path_source(path: str, *, root: str) -> tuple[str, str, str]:
+    """The workspace-relative half of `path_source` — the construction door.
+
+    `path_source` mints the locus from the read path, so a corpus opened by
+    absolute path carries an absolute locus. Every ground exceptional exit
+    (`ground_index_error` and its siblings) refuses an absolute locus, because
+    a `SourceMemento` addresses `{file, span}` workspace-relative and
+    `resolve_span_memento` re-reads it as `project_root / file`. An absolute
+    locus is therefore not a longer spelling of the same address: it is an
+    address that cannot be resolved against any other checkout.
+
+    This door reads through the same minting path — one read, one CID — and
+    states the locus relative to the workspace `root`. A path outside `root`
+    has no workspace-relative name at all; that is a LOUD `SourceUnavailable`,
+    never a silent fall back to the absolute spelling.
+    """
+    source, _absolute, source_cid = path_source(path)
+    try:
+        relative = Path(path).resolve().relative_to(Path(root).resolve())
+    except ValueError as exc:
+        raise SourceUnavailable(
+            f"source `{path}` lies outside workspace root `{root}`: {exc}"
+        ) from exc
+    return (source, relative.as_posix(), source_cid)
+
+
 def dependency_artifact_file(path: str) -> tuple[bytes, str, str]:
     """Mint one recorded dependency file as ``(bytes, seat, content CID)``.
 

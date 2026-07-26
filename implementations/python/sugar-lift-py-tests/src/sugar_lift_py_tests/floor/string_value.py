@@ -218,24 +218,12 @@ class StringValue(FloorValue):
             # Python raises TypeError for non-str needles in a str. Both sides
             # are lift-time decidable, so construct the exact exceptional exit —
             # never mint RuntimeEffect authority over ground operands.
-            import hashlib
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-            from sugar_lift_py_tests.effect import RaiseEffect
-            from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
-            from sugar_lift_py_tests.outcome import Complete
-
-            source = getattr(site, "source", None)
-            source_sha256 = (
-                hashlib.sha256(source.encode()).hexdigest()
-                if source is not None
-                else None
-            )
-            exception = ExceptionValue("TypeError", (), site)
-            return Complete(
-                RaiseValue(
-                    RaiseEffect("TypeError", str(site), source_sha256),
-                    exception=exception,
-                )
+            return ground_exceptional_exit(
+                exception_name="TypeError",
+                site=site,
+                owner="StringValue.contains",
             )
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 

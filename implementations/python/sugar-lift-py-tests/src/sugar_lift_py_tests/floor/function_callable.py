@@ -426,22 +426,14 @@ class FunctionCallable(FloorValue):
                 )
             )
             if static_type_error:
-                import hashlib
-
-                from sugar_lift_py_tests.effect import RaiseEffect
-                from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
-
-                source_sha256 = (
-                    hashlib.sha256(site.source.encode()).hexdigest()
-                    if site.source is not None
-                    else None
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
                 )
-                exception = ExceptionValue("TypeError", (), site)
-                return Complete(
-                    RaiseValue(
-                        RaiseEffect("TypeError", str(site), source_sha256),
-                        exception=exception,
-                    )
+
+                return ground_exceptional_exit(
+                    exception_name="TypeError",
+                    site=site,
+                    owner="FunctionCallable.call",
                 )
             construction_panic_gap(
                 owner="FunctionCallable",
