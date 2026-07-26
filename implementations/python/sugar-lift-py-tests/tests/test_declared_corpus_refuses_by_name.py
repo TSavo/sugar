@@ -14,8 +14,10 @@ import pytest
 from declared_corpus import (
     HEAVY_OPT_IN,
     HOST_GRAMMAR,
+    OPTIONAL_PROVIDER,
     OPTIONAL_LAW_CATEGORIES,
     DeclaredCorpusMissing,
+    optional_law_import,
     optional_law_skip,
     optional_law_skipif,
     require_declared_corpus,
@@ -101,5 +103,64 @@ def test_a_sanctioned_skip_carries_its_named_category():
 
 
 def test_the_category_set_is_closed_and_small():
-    """A category set that grows freely is an unnamed skip with extra steps."""
-    assert OPTIONAL_LAW_CATEGORIES == {HEAVY_OPT_IN, HOST_GRAMMAR}
+    """A category set that grows freely is an unnamed skip with extra steps.
+
+    Each member is a deliberate ruling, recorded here so adding one cannot be
+    a side effect:
+
+    heavy-opt-in     -- the law is real but costly, and opt-in by design.
+    host-grammar     -- an older host genuinely cannot parse the input.
+    optional-provider -- a pluggable backend the architecture states must
+                        never be required. sugar-source-tree's pyproject:
+                        "A PROVIDER is an optional extra: installing one must
+                        never be a condition of the membrane working."
+    """
+    assert OPTIONAL_LAW_CATEGORIES == {
+        HEAVY_OPT_IN,
+        HOST_GRAMMAR,
+        OPTIONAL_PROVIDER,
+    }
+
+
+def test_an_absent_provider_is_a_counted_skip_not_a_collection_error():
+    """importorskip's replacement must skip, not error, at module scope.
+
+    Without allow_module_level pytest converts a module-scope skip into a
+    COLLECTION ERROR -- which shrinks the denominator instead of counting the
+    skip. That is the defect one layer down, and it is why this is tested
+    rather than assumed.
+    """
+    with pytest.raises(pytest.skip.Exception) as caught:
+        optional_law_import(
+            "a_provider_that_is_not_installed", OPTIONAL_PROVIDER, "absent backend"
+        )
+
+    assert f"[{OPTIONAL_PROVIDER}]" in str(caught.value)
+    assert "absent backend" in str(caught.value)
+    assert getattr(caught.value, "allow_module_level", False), (
+        "a provider gate is evaluated at module scope; without "
+        "allow_module_level the skip becomes a collection error"
+    )
+
+
+def test_a_present_provider_is_imported_and_returned():
+    """The positive arm: a provider that IS installed must not skip.
+
+    The skip has to be caught explicitly. A gate that skipped unconditionally
+    would leave this test SKIPPED -- green, proving nothing -- because a
+    Skipped raised in the body simply skips the test. Fourth instance of that
+    shape today, so it is written out rather than trusted.
+    """
+    try:
+        module = optional_law_import("json", OPTIONAL_PROVIDER, "stdlib stand-in")
+    except pytest.skip.Exception as skipped:
+        raise AssertionError(
+            f"the provider gate skipped a provider that IS installed "
+            f"({skipped!r}); every law behind it would then be silently unrun"
+        ) from None
+    assert module.loads("[1]") == [1]
+
+
+def test_an_unsanctioned_provider_category_is_refused():
+    with pytest.raises(DeclaredCorpusMissing):
+        optional_law_import("json", "because-i-said-so", "no reason")

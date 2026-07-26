@@ -17,11 +17,16 @@ this checkout. So every one of those absences means the environment is broken,
 and the honest report is a failure that names what is missing and why it was
 expected -- never a smaller suite.
 
-Two categories, and only two:
+Three categories, and only three:
 
     require_declared_corpus  -- it was declared, so its absence is a FAILURE.
     optional_law_skip        -- genuinely conditional, so the skip is NAMED
                                 and COUNTED, never silent.
+    optional_law_import      -- the same, for a law whose condition IS an
+                                importable provider. ``pytest.importorskip``
+                                is this shape done anonymously: it answers
+                                "is it present" and leaves no bucket saying
+                                the law did not run.
 
 ``tests/test_no_law_goes_unrun.py`` at the repo root enforces
 that no other skip shape enters the corpus.
@@ -35,8 +40,18 @@ import pytest
 # decided to leave unrun -- which is the defect, not the exception.
 HEAVY_OPT_IN = "heavy-opt-in"
 HOST_GRAMMAR = "host-grammar"
+# A pluggable backend the architecture declares must never be required.
+# sugar-source-tree's pyproject states it outright: "The core membrane stays
+# stdlib-only. A PROVIDER is an optional extra: installing one must never be a
+# condition of the membrane working, and the membrane must never depend on any
+# single parser." A law about ONE provider is therefore genuinely conditional
+# -- but it is still counted, so nobody mistakes an absent provider for a
+# passing backend.
+OPTIONAL_PROVIDER = "optional-provider"
 
-OPTIONAL_LAW_CATEGORIES = frozenset({HEAVY_OPT_IN, HOST_GRAMMAR})
+OPTIONAL_LAW_CATEGORIES = frozenset(
+    {HEAVY_OPT_IN, HOST_GRAMMAR, OPTIONAL_PROVIDER}
+)
 
 
 class DeclaredCorpusMissing(AssertionError):
@@ -90,3 +105,30 @@ def optional_law_skipif(condition, category, reason):
             f"unrun under a named category from {sorted(OPTIONAL_LAW_CATEGORIES)}."
         )
     return pytest.mark.skipif(condition, reason=f"[{category}] {reason}")
+
+
+def optional_law_import(module_name, category, reason=None):
+    """Import a provider, or skip under a NAMED, COUNTED category.
+
+    ``pytest.importorskip`` is exactly this without the name: the law stops
+    running and the report carries no bucket saying so. Returns the module, so
+    it substitutes directly at a call site.
+    """
+    import importlib
+
+    if category not in OPTIONAL_LAW_CATEGORIES:
+        raise DeclaredCorpusMissing(
+            f"unsanctioned skip category {category!r}; a law may only be left "
+            f"unrun under a named category from {sorted(OPTIONAL_LAW_CATEGORIES)}."
+        )
+    try:
+        return importlib.import_module(module_name)
+    except ImportError:
+        # allow_module_level, because a provider gate is normally evaluated at
+        # module scope -- that is what importorskip did, and without the flag
+        # pytest turns the skip into a COLLECTION ERROR, which shrinks the
+        # denominator instead of reporting a counted skip.
+        pytest.skip(
+            f"[{category}] {reason or f'{module_name} not installed'}",
+            allow_module_level=True,
+        )
