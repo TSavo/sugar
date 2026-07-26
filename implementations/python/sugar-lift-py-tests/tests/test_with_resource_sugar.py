@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_contract import (
     NeverSuppresses,
     NeverSuppressesDispositionV1,
@@ -281,6 +283,63 @@ def test_completed_body_survives_never_suppresses():
         and getattr(getattr(e, "effect", None), "exception_name", None)
     ]
     assert reds == []
+
+
+def test_resource_cleanup_uses_and_finally_on_completed_and_halted_faces(
+    monkeypatch,
+):
+    """A resource close is shared cleanup, not a normal-path-only exit."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    original = ExitSet.and_finally
+    incoming_kinds = []
+
+    def observe(incoming, cleanup, *, cleanup_restores=None):
+        incoming_kinds.append(type(incoming.exits[0]))
+        return original(
+            incoming,
+            cleanup,
+            cleanup_restores=cleanup_restores,
+        )
+
+    monkeypatch.setattr(ExitSet, "and_finally", observe)
+
+    completed = _resource(body=(_Pass(),)).desugar()
+    halted = _resource(body=(_Raise("ValueError"),)).desugar()
+
+    assert incoming_kinds == [Completed, Halted]
+    assert completed.value.can_fall_through
+    assert any(
+        isinstance(entry, Incomplete)
+        and getattr(entry.effect, "exception_name", None) == "ValueError"
+        for entry in halted.value.contribution()
+    )
+
+
+def test_lying_resource_cleanup_cannot_skip_the_halted_face(monkeypatch):
+    """BITE: a completion-only cleanup implementation changes the result."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    original = ExitSet.and_finally
+
+    def completion_only(incoming, cleanup, *, cleanup_restores=None):
+        if isinstance(incoming.exits[0], Halted):
+            return ExitSet.completed("cleanup-skipped")
+        return original(
+            incoming,
+            cleanup,
+            cleanup_restores=cleanup_restores,
+        )
+
+    monkeypatch.setattr(ExitSet, "and_finally", completion_only)
+    out = _resource(body=(_Raise("ValueError"),)).desugar()
+
+    with pytest.raises(AssertionError):
+        assert any(
+            isinstance(entry, Incomplete)
+            and getattr(entry.effect, "exception_name", None) == "ValueError"
+            for entry in out.value.contribution()
+        )
 
 
 def test_exit_face_binding_completed_is_none_triple():
