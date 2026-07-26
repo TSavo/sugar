@@ -758,6 +758,27 @@ execution. `bcargo`, `brun`, and `bpytest` are compatibility adapters. A binary
 cache hit may skip compilation, never command or test execution. See
 `docs/build-execution.md` for task, capability, artifact, and recovery details.
 
+**Never pipe a measurement command and then read `$?`.** After a pipeline the
+shell reports the *last stage's* status, so `bpytest ... | tail -20` gives you
+`tail`'s exit code and **a red run reads green**. This is not a quirk of `tail`;
+`| head`, `| grep`, and `| tee` discard the verdict identically. Three test runs
+were banked as passing this way before anyone noticed. Capture the status before
+piping, or set `-o pipefail`:
+
+```bash
+bin/bpytest -q tests/... > /tmp/out.log 2>&1; echo "EXIT=$?"; tail -20 /tmp/out.log
+```
+
+The adapters propagate correctly — `bpytest` returns 2 on a failing run. The
+channel carrying the red is what replaces it, which is the same shape as every
+other false green: the signal is fine, the wire is not.
+
+Two more that cost real time. Python tests need `PYTHONPATH` set explicitly —
+`implementations/python/pytest.ini` sets only `--import-mode=importlib`, so every
+runner supplies the path itself. And an import error at **collection** makes a
+whole file vanish rather than fail: the suite does not go red, it goes
+*smaller*. Check the collected count, not just the colour.
+
 - `make help`: list supported build and test targets.
 - `make build-rust`: build the Rust workspace in release mode.
 - `make test-rust`: run Rust workspace and Rust-driven RPC tests.
