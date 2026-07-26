@@ -74,22 +74,39 @@ def rewrap_pending(pending, outcome, *, owner, blame):
         return outcome
     if isinstance(outcome, Complete):
         return replace(pending, value=outcome.value)
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        ContractConditionalConstructionV1,
+    )
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
+    # Two different next architectures, named apart rather than blurred: a second
+    # PENDING entry wants the entry to carry a demand SET; a PARTITION wants the
+    # exit algebra to have an arm for a pending demand at all.
+    if isinstance(outcome, ContractConditionalConstructionV1):
+        observed = (
+            f"two pending contract demands ({pending.demand.demand_cid} and "
+            f"{outcome.demand.demand_cid}) joined onto one constructed value"
+        )
+        fix = (
+            "widen ContractConditionalConstructionV1 to carry a demand SET; "
+            "never drop the obligation"
+        )
+    else:
+        observed = (
+            f"a hoisted parameter contract demand ({pending.demand.demand_cid}) "
+            f"joined onto a {type(outcome).__name__}, which carries no single value"
+        )
+        fix = (
+            "give the exit algebra an arm for a pending contract demand so a "
+            "partition can carry it; never drop the obligation"
+        )
     construction_panic_gap(
         owner=owner,
         blame=blame,
-        observed=(
-            "a hoisted parameter contract demand "
-            f"({pending.demand.demand_cid}) joined onto a "
-            f"{type(outcome).__name__}, which carries no single value"
-        ),
-        requested="a joined Complete that can carry the pending demand",
-        fix=(
-            "give the exit algebra an arm for a pending contract demand so a "
-            "partition can carry it; never drop the obligation"
-        ),
+        observed=observed,
+        requested="one joined value that can carry every pending demand",
+        fix=fix,
         gap_kind=GapKind.FLOOR,
     )
 

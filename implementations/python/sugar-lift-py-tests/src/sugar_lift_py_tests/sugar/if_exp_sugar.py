@@ -110,7 +110,6 @@ class IfExpSugar(Sugar):
     def _join_arms(self, formula, then_out, else_out) -> Outcome:
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import Completed, ExitSet
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
         not_formula = not_(formula)
@@ -139,20 +138,10 @@ class IfExpSugar(Sugar):
 
         # A partition with a single completed face and no halt is a plain value
         # again (normalize may have merged the faces): collapse rather than hand
-        # callers a one-arm ExitSet they would have to unwrap.
-        collapsed = exits.collapse()
-        if isinstance(collapsed, Complete):
-            return collapsed
-        if isinstance(collapsed, ExitSet) and len(collapsed.exits) == 2:
-            left, right = collapsed.exits
-            if isinstance(left, Completed) and isinstance(right, Completed):
-                # Both faces completed with distinct values: fuse them back into
-                # the conditional floor value under the test's own polarity.
-                if left.guard == formula and right.guard == not_formula:
-                    return Complete(GuardedValue(formula, left.value, right.value))
-                if left.guard == not_formula and right.guard == formula:
-                    return Complete(GuardedValue(formula, right.value, left.value))
-        return collapsed
+        # callers a one-arm ExitSet they would have to unwrap. Anything still
+        # partitioned stays partitioned -- a caller threads it with `and_then`,
+        # which is how every other partition in the lift is consumed.
+        return exits.collapse()
 
 
 def _pending(outcome):

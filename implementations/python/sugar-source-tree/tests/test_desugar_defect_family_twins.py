@@ -17,6 +17,7 @@ The families, by the census kind string they used to produce:
 
 from __future__ import annotations
 
+import json
 import tempfile
 
 import pytest
@@ -26,6 +27,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
+from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import path_source
@@ -55,7 +57,7 @@ def _pending(out):
 
 def _demand_shape(entry):
     """The demanded formula's outermost connective, as wire vocabulary."""
-    return formula_to_value(entry.demand.demanded_formula)
+    return json.loads(encode_jcs(formula_to_value(entry.demand.demanded_formula)))
 
 
 # --------------------------------------------------------------------------
@@ -118,11 +120,16 @@ def test_conditional_expression_of_two_values_stays_one_guarded_value() -> None:
     """
     out = _out("def f(c):\n x = 1 if c else 2\n return x\n")
     guarded = [
-        row
+        row.value
         for row in _statements(out)
         if isinstance(getattr(row, "value", None), GuardedValue)
     ]
     assert len(guarded) == 1
+    # And the arms keep the test's OWN polarity: `then` under the guard, `else`
+    # under its negation. Rebuilding the fusion from an exit-set union is only
+    # correct while it re-fuses the faces the right way round.
+    assert guarded[0].when_true.value == 1
+    assert guarded[0].when_false.value == 2
 
 
 # --------------------------------------------------------------------------
@@ -196,24 +203,15 @@ def test_dotted_expr_name_is_structural_not_a_name_table() -> None:
     """DISCRIMINATING. Only a Name or an Attribute chain of Names is a PLACE.
 
     A call or subscript anywhere in the chain names nothing stable, so it must
-    answer None and refine no binding.
+    answer None and refine no binding. Structural: no table of names.
     """
     from sugar_source_tree.nodes import Attribute, Call, Name, Subscript
 
-    def one_expression(source: str):
-        out = next(SourceFile(path_source(_write(source))).functions())
-        return out
-
-    def _write(source: str) -> str:
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".py", delete=False, dir="/tmp"
-        ) as handle:
-            handle.write(source)
-            return handle.name
-
-    fn = one_expression("def f(a, d, k):\n return (a, a.b.c, a.b(), d[k].b)\n")
-    tuple_node = fn.body[0].value
-    named, dotted, called, subscripted = tuple_node.elements
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as h:
+        h.write("def f(a, d, k):\n return (a, a.b.c, a.b(), d[k].b)\n")
+        path = h.name
+    fn = next(SourceFile(path_source(path)).functions())
+    named, dotted, called, subscripted = fn.body[0].value.elts
     assert isinstance(named, Name)
     assert named.dotted_expr_name() == "a"
     assert isinstance(dotted, Attribute)
@@ -281,18 +279,40 @@ def test_single_outcome_law_names_the_violated_law() -> None:
     assert "when_true" in str(raised.value)
 
 
-def test_conditional_receiver_with_a_pending_contract_arm_lifts() -> None:
+def test_conditional_receiver_with_one_pending_contract_arm_lifts() -> None:
     """POSITIVE. The live bare-assert offender: an operation distributed into a
-    conditional arm whose answer carries a pending parameter contract."""
+    conditional arm whose answer carries a pending parameter contract. The demand
+    is hoisted under that arm's guard and re-attached to the joined value."""
     out = _out(
-        "def f(c, p, q):\n"
+        "def f(c, p):\n"
         " if c:\n"
         "  x = p\n"
         " else:\n"
-        "  x = q\n"
+        "  x = (1, 2)\n"
         " return x[0]\n"
     )
-    assert _statements(out)
+    pending = _pending(out)
+    assert len(pending) == 1
+
+
+def test_two_pending_contract_arms_are_loud_and_named() -> None:
+    """DISCRIMINATING. One entry carries exactly one demand, so a join of TWO
+    pending arms has no representation. It must panic NAMING the next
+    architecture -- never silently drop one of the two obligations."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as raised:
+        _out(
+            "def f(c, p, q):\n"
+            " if c:\n"
+            "  x = p\n"
+            " else:\n"
+            "  x = q\n"
+            " return x[0]\n"
+        )
+    message = str(raised.value)
+    assert "never drop the obligation" in message
+    assert "demand SET" in message or "carry a pending contract demand" in message
 
 
 # --------------------------------------------------------------------------
@@ -309,16 +329,19 @@ def test_walrus_condition_guards_on_the_presented_face() -> None:
 
 def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
     """DISCRIMINATING. Projecting through the presented face must not invent a
-    guard where there is none: a condition that folds to a non-boolean ground
-    value stays loud, and now names the PRESENTED type."""
-    from sugar_lift_py_tests.floor.int_value import IntValue
+    guard where there is none: a condition whose presented face carries no
+    formula and is no boolean literal stays loud, and now names the PRESENTED
+    type rather than the wrapper that merely carried it."""
+    from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.floor.named_expression_value import NamedExpressionValue
     from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
-    class _Opaque(IntValue):
+    carried = TermValue(5)
+
+    class _Walrus:
         def truth(self, site):
             del site
-            return Complete(NamedExpressionValue("n", self))
+            return Complete(NamedExpressionValue("n", carried))
 
-    with pytest.raises(NotImplementedError, match="condition folded"):
-        predicate_formula(_Opaque(5), site="twin")
+    with pytest.raises(NotImplementedError, match="TermValue"):
+        predicate_formula(_Walrus(), site="twin")
