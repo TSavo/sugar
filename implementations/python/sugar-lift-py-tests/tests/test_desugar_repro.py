@@ -71,3 +71,12 @@ def test_report_names_timeout_residual_and_requires_nonempty_denominator():
     )
     assert empty["R(timeout)"] == 0
     assert empty["stableZero"] is False
+
+
+def test_open_source_file_binds_construction_context(tmp_path):
+    source = tmp_path / "fixture.py"
+    source.write_text("def f(cm):\n    with cm:\n        pass\n")
+
+    source_file = _MOD._open_source_file(source, root=tmp_path)
+
+    assert source_file.unit.construction_context is not None

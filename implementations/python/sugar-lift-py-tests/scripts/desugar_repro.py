@@ -78,16 +78,23 @@ def _report(
     }
 
 
+def _open_source_file(path: Path, *, root: Path):
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_source_tree.reporter import CollectingReporter
+
+    return open_source_file_for_construction(
+        path,
+        root=root,
+        reporter=CollectingReporter(),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", required=True)
     parser.add_argument("--corpus", type=Path)
     parser.add_argument("--deadline", type=float, default=180)
     args = parser.parse_args()
-
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
 
     corpus = args.corpus
     if corpus is None:
@@ -99,10 +106,7 @@ def main() -> int:
         parser.error(f"missing file: {path}")
 
     started = time.perf_counter()
-    source_file = SourceFile(
-        path_source(str(path)),
-        reporter=CollectingReporter(),
-    )
+    source_file = _open_source_file(path, root=corpus)
     rows = []
     for index, function in enumerate(source_file.functions()):
         rows.append(
