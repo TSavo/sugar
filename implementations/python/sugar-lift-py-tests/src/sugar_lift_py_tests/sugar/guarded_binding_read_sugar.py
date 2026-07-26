@@ -14,6 +14,13 @@ from sugar_lift_py_tests.sugar.binding_projection import (
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
+def _guarded_projection_faces(state: GuardedProjection):
+    """The two faces owned by this authenticated branch-result projection."""
+    from sugar_lift_py_tests.outcome.exit_set import partition
+
+    return partition(("binding.projection", state.slot.slot_id))
+
+
 def _loop_exit_faces(state: LoopGuardedProjection):
     """The producer's own exit-route family for this loop, or ``None``.
 
@@ -89,6 +96,7 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         _unhandled_projection(state, verb="read", name=read_name, site=read_site)
 
     guard = branch_result_guard(state.slot, read_site)
+    true_face, false_face = _guarded_projection_faces(state)
     return (
         read_binding(
             state.when_true,
@@ -96,14 +104,14 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
             read_site=read_site,
             ctx=ctx,
         )
-        .guarded(guard)
+        .guarded(guard, true_face)
         .union(
             read_binding(
                 state.when_false,
                 read_name=read_name,
                 read_site=read_site,
                 ctx=ctx,
-            ).guarded(not_(guard))
+            ).guarded(not_(guard), false_face)
         )
     )
 
