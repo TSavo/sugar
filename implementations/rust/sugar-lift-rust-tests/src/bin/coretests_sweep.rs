@@ -253,6 +253,175 @@ struct Totals {
     // Files whose lift panicked and were binned whole by the per-file panic
     // boundary. Non-zero means the ledger below is a floor, not a full reading.
     panicked_files: usize,
+    // Files killed by a per-file budget, split by WHICH budget, because the two
+    // name different defects and have different fixes. Same floor semantics as
+    // `panicked_files`: non-zero means the counts above are a floor. A budget kill
+    // is NOT an unwind -- `catch_unwind` cannot see one -- so these are counted
+    // separately even though all three bin unclassified.
+    //
+    // `cpu_budget_exceeded`: the lift burned its CPU budget. That is unbounded work
+    // in the FILE, and it is load-independent -- a starved process cannot trip it.
+    // `wall_stall_timeout`: the lift sat past a generous wall budget without burning
+    // its CPU budget. That is a deadlock, blocked I/O, or a child doing nothing --
+    // invisible to a CPU budget precisely because it consumes no CPU.
+    cpu_budget_exceeded: usize,
+    wall_stall_timeout: usize,
+}
+
+/// Every counter in `Totals`, as (wire name, reader, writer). ONE list, so a field
+/// added to `Totals` is serialized, parsed and merged by construction -- a new
+/// counter cannot silently fail to cross the child/parent boundary.
+///
+/// This is the whole child/parent protocol for the scalar half of a contribution.
+#[allow(clippy::type_complexity)]
+const TOTALS_WIRE: &[(&str, fn(&Totals) -> usize, fn(&mut Totals, usize))] = &[
+    ("files", |t| t.files, |t, v| t.files += v),
+    ("parse_ok", |t| t.parse_ok, |t, v| t.parse_ok += v),
+    ("parse_fail", |t| t.parse_fail, |t, v| t.parse_fail += v),
+    (
+        "assert_macros",
+        |t| t.assert_macros,
+        |t, v| t.assert_macros += v,
+    ),
+    (
+        "test_fns_seen",
+        |t| t.test_fns_seen,
+        |t, v| t.test_fns_seen += v,
+    ),
+    (
+        "test_fns_lifted",
+        |t| t.test_fns_lifted,
+        |t, v| t.test_fns_lifted += v,
+    ),
+    ("discharged", |t| t.discharged, |t, v| t.discharged += v),
+    ("refused", |t| t.refused, |t, v| t.refused += v),
+    (
+        "unclassified",
+        |t| t.unclassified,
+        |t, v| t.unclassified += v,
+    ),
+    ("inactive", |t| t.inactive, |t, v| t.inactive += v),
+    (
+        "panicked_files",
+        |t| t.panicked_files,
+        |t, v| t.panicked_files += v,
+    ),
+    (
+        "cpu_budget_exceeded",
+        |t| t.cpu_budget_exceeded,
+        |t, v| t.cpu_budget_exceeded += v,
+    ),
+    (
+        "wall_stall_timeout",
+        |t| t.wall_stall_timeout,
+        |t, v| t.wall_stall_timeout += v,
+    ),
+];
+
+/// One file's contribution to the sweep, as produced by a `--only <rel>` child and
+/// merged by the driver. Every accumulator the per-file loop mutates appears here;
+/// merging is addition for the counters and extension for the collections, so a
+/// driver run and an in-process run over the same file set produce the same ledger.
+#[derive(Default)]
+struct FileContribution {
+    totals: Totals,
+    site_cids: Vec<String>,
+    reasons: BTreeMap<String, usize>,
+    reason_samples: BTreeMap<String, Vec<String>>,
+    all_reasons: Vec<String>,
+    rows: Vec<(String, usize, usize, usize, i64, bool)>,
+    dissolved: usize,
+}
+
+impl FileContribution {
+    fn to_json(&self) -> serde_json::Value {
+        let mut totals = serde_json::Map::new();
+        for (name, get, _) in TOTALS_WIRE {
+            totals.insert((*name).into(), get(&self.totals).into());
+        }
+        let rows: Vec<serde_json::Value> = self
+            .rows
+            .iter()
+            .map(|(rel, a, d, r, delta, ok)| {
+                serde_json::json!([rel, a, d, r, delta, ok])
+            })
+            .collect();
+        serde_json::json!({
+            "totals": serde_json::Value::Object(totals),
+            "site_cids": self.site_cids,
+            "reasons": self.reasons,
+            "reason_samples": self.reason_samples,
+            "all_reasons": self.all_reasons,
+            "rows": rows,
+            "dissolved": self.dissolved,
+        })
+    }
+
+    fn from_json(v: &serde_json::Value) -> Result<Self, String> {
+        let mut c = FileContribution::default();
+        let t = v.get("totals").ok_or("contribution has no `totals`")?;
+        for (name, _, add) in TOTALS_WIRE {
+            let n = t
+                .get(*name)
+                .and_then(|n| n.as_u64())
+                .ok_or_else(|| format!("contribution totals missing `{name}`"))?;
+            add(&mut c.totals, n as usize);
+        }
+        let arr = |k: &str| -> Result<&Vec<serde_json::Value>, String> {
+            v.get(k)
+                .and_then(|x| x.as_array())
+                .ok_or_else(|| format!("contribution missing array `{k}`"))
+        };
+        c.site_cids = arr("site_cids")?
+            .iter()
+            .filter_map(|s| s.as_str().map(str::to_string))
+            .collect();
+        c.all_reasons = arr("all_reasons")?
+            .iter()
+            .filter_map(|s| s.as_str().map(str::to_string))
+            .collect();
+        for (k, n) in v
+            .get("reasons")
+            .and_then(|x| x.as_object())
+            .ok_or("contribution missing `reasons`")?
+        {
+            c.reasons
+                .insert(k.clone(), n.as_u64().unwrap_or(0) as usize);
+        }
+        for (k, samples) in v
+            .get("reason_samples")
+            .and_then(|x| x.as_object())
+            .ok_or("contribution missing `reason_samples`")?
+        {
+            c.reason_samples.insert(
+                k.clone(),
+                samples
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
+        }
+        for row in arr("rows")? {
+            let r = row.as_array().ok_or("contribution row is not an array")?;
+            if r.len() != 6 {
+                return Err(format!("contribution row has {} fields, want 6", r.len()));
+            }
+            c.rows.push((
+                r[0].as_str().unwrap_or_default().to_string(),
+                r[1].as_u64().unwrap_or(0) as usize,
+                r[2].as_u64().unwrap_or(0) as usize,
+                r[3].as_u64().unwrap_or(0) as usize,
+                r[4].as_i64().unwrap_or(0),
+                r[5].as_bool().unwrap_or(false),
+            ));
+        }
+        c.dissolved = v.get("dissolved").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+        Ok(c)
+    }
 }
 
 fn main() {
@@ -278,6 +447,47 @@ fn main() {
     // blocked. Pure stderr observation through the real CallsiteSugar engine; does
     // NOT touch the headline counts / ledger JSON / CID.
     let callsite_census = args.iter().any(|a| a == "--callsite-census");
+    // `--per-file-timeout <secs>`: DRIVER mode. Lift each file in a CHILD PROCESS
+    // bounded by a wall clock, and merge the children's contributions. A hang is not
+    // an unwind -- `catch_unwind` cannot see one -- and a thread cannot be killed in
+    // Rust, so an in-process cap would leave the wedged lift burning a core and
+    // contaminating every timing measured after it. A child can actually be killed.
+    // Off by default: without this flag the sweep runs exactly as it always has.
+    let whole_secs = |flag: &str| -> Option<u64> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .map(|s| {
+                s.parse().unwrap_or_else(|_| {
+                    eprintln!("{flag} wants whole seconds, got {s:?}");
+                    std::process::exit(2);
+                })
+            })
+    };
+    // `--cpu-budget <secs>` turns the driver on. `--wall-stall <secs>` is the stall
+    // detector and defaults to 8x the CPU budget: generous on purpose, so a merely
+    // slow file under contention trips NEITHER budget, and only a lift that is not
+    // burning CPU at all trips this one.
+    let cpu_budget_secs = whole_secs("--cpu-budget");
+    let wall_stall_secs = whole_secs("--wall-stall");
+    let per_file_timeout = cpu_budget_secs;
+    // `--only <rel>`: lift ONLY this corpus-relative file. Everything else is
+    // unchanged -- the macro registry is still built over the whole corpus -- so a
+    // child's lift sees exactly what the in-process lift would see.
+    let only: Option<String> = args
+        .iter()
+        .position(|a| a == "--only")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    // `--contribution-out <path>`: write this run's contribution as JSON instead of
+    // the human report. A FILE, not stdout: the driver polls the child rather than
+    // draining a pipe, and a pipe that fills would deadlock the very lift we are
+    // trying to bound.
+    let contribution_out: Option<String> = args
+        .iter()
+        .position(|a| a == "--contribution-out")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     let dissolve_dir = std::env::temp_dir().join("sugar_dissolve_sweep");
     if dissolve {
         let _ = std::fs::create_dir_all(&dissolve_dir);
@@ -394,6 +604,13 @@ fn main() {
             Default::default()
         }
     };
+    // Sampled before any lifting, so the receipt can state the contention the run
+    // started under alongside the one it ended under.
+    let load_at_start = if per_file_timeout.is_some() {
+        load_average_1m()
+    } else {
+        None
+    };
     let mut totals = Totals::default();
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
     let mut reason_samples: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -421,6 +638,15 @@ fn main() {
             .unwrap_or(path)
             .to_string_lossy()
             .to_string();
+        // `--only`: this run lifts exactly one file. The corpus walk still happens so
+        // the registry and the file numbering match a full run; every other file is
+        // skipped before it contributes anything.
+        if let Some(target) = &only {
+            if &rel != target {
+                totals.files -= 1;
+                continue;
+            }
+        }
         if totals.files == 1 || totals.files % 100 == 0 {
             info!(
                 files = totals.files,
@@ -431,6 +657,29 @@ fn main() {
                 file = %rel,
                 "coretests sweep progress"
             );
+        }
+        // DRIVER mode: hand this file to a bounded child and merge what comes back.
+        // Placed here, before any of this file's own work, so the in-process path
+        // below is reached only when we are the child (or when the flag is off) --
+        // one code path produces a contribution, never two.
+        if let Some(cpu_secs) = cpu_budget_secs {
+            let wall_secs = wall_stall_secs.unwrap_or(cpu_secs.saturating_mul(8));
+            let mut contribution =
+                lift_file_in_child(&rel, corpus, &args, cpu_secs, wall_secs, &mut totals);
+            // The parent already counted this file in `totals.files` above; the child
+            // counted it too. Drop the child's count rather than double it.
+            contribution.totals.files = 0;
+            merge_contribution(
+                contribution,
+                &mut totals,
+                &mut all_site_cids,
+                &mut reasons,
+                &mut reason_samples,
+                &mut all_reasons,
+                &mut rows,
+                &mut dissolved_total,
+            );
+            continue;
         }
         debug!(file = %rel, "coretests sweep lifting file");
 
@@ -456,6 +705,29 @@ fn main() {
 
         let census = assertion_surface_census(&file, &registry);
         all_site_cids.extend(census.site_cids.iter().cloned());
+        // CHECKPOINT the pre-lift census before the lift can hang.
+        //
+        // The census is recomputable from source and is what the corpus identity is
+        // built from. If this child is killed mid-lift and has written nothing, that
+        // file's assertion sites vanish from the multiset CID and the sweep silently
+        // reports the identity of "what finished" while calling it the identity of the
+        // corpus. Measured, not hypothetical: before this checkpoint a 3-file run with
+        // one timed-out file produced byte-identical CID to the 2-file run without it.
+        //
+        // So the surface goes to disk first and the full contribution overwrites it on
+        // success. A killed child still leaves its census behind.
+        if let Some(path) = &contribution_out {
+            let mut partial = FileContribution::default();
+            partial.totals.files = 1;
+            partial.totals.parse_ok = 1;
+            partial.totals.assert_macros = census.total;
+            partial.site_cids = census.site_cids.clone();
+            let json = serde_json::to_string(&partial.to_json()).expect("partial serializes");
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("coretests sweep: could not checkpoint census to {path}: {e}");
+                std::process::exit(4);
+            }
+        }
 
         let mut legacy_prefix = LegacyPrefixCounter::default();
         legacy_prefix.visit_file(&file);
@@ -624,6 +896,27 @@ fn main() {
         "coretests sweep lift complete"
     );
 
+    // CHILD mode: this run exists to produce one file's contribution. Write it and
+    // stop -- the human report and the corpus CID belong to the driver, which is the
+    // only run that has seen the whole corpus.
+    if let Some(path) = &contribution_out {
+        let contribution = FileContribution {
+            totals,
+            site_cids: all_site_cids,
+            reasons,
+            reason_samples,
+            all_reasons,
+            rows,
+            dissolved: dissolved_total,
+        };
+        let json = serde_json::to_string(&contribution.to_json()).expect("contribution serializes");
+        if let Err(e) = std::fs::write(path, json) {
+            eprintln!("coretests sweep: could not write contribution to {path}: {e}");
+            std::process::exit(4);
+        }
+        return;
+    }
+
     // Headline reconciliation at assertion-surface granularity. `refused + unclassified` is the
     // full named non-discharged set; only their sum reconciles against the textual
     // macro count.
@@ -688,6 +981,39 @@ fn main() {
             "the buckets above are a FLOOR: these files were binned whole, unclassified"
         }
     );
+    println!(
+        "  cpu budget exceeded (SPIN):  {:>6}           <-- {}",
+        totals.cpu_budget_exceeded,
+        if totals.cpu_budget_exceeded == 0 {
+            "0 = no file's lift burned its cpu budget"
+        } else {
+            "the buckets above are a FLOOR: unbounded work, load-independent"
+        }
+    );
+    println!(
+        "  wall stall (NO CPU BURNED):  {:>6}           <-- {}",
+        totals.wall_stall_timeout,
+        if totals.wall_stall_timeout == 0 {
+            "0 = no file's lift stalled without burning cpu"
+        } else {
+            "the buckets above are a FLOOR: deadlock or blocked, not spinning"
+        }
+    );
+    // The conditions the run was measured under, stated rather than implied. A
+    // timeout row means different things at load 1 and at load 12, and the reader
+    // cannot recover that afterwards.
+    if let Some(secs) = per_file_timeout {
+        println!(
+            "  per-file budgets: cpu {secs}s / wall-stall {}s   load avg 1m: start {}  end {}",
+            wall_stall_secs.unwrap_or(secs.saturating_mul(8)),
+            load_at_start
+                .map(|l| format!("{l:.2}"))
+                .unwrap_or_else(|| "unknown".into()),
+            load_average_1m()
+                .map(|l| format!("{l:.2}"))
+                .unwrap_or_else(|| "unknown".into()),
+        );
+    }
     println!(
         "  missing assertions (SILENT): {:>6}  ({:.1}%)   <-- delta target = 0",
         missing_assertions,
@@ -924,6 +1250,349 @@ fn report_callsite_census(rows: &[(String, sugar_lift_rust_tests::CallsiteCensus
     eprintln!("==== end census ====");
 }
 
+/// Which budget killed a child. The two are separate axes in the ledger because
+/// they name different defects: unbounded work in the file versus a lift that is
+/// not running at all.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KillCause {
+    CpuBudget,
+    WallStall,
+}
+
+impl KillCause {
+    fn axis(self) -> &'static str {
+        match self {
+            KillCause::CpuBudget => "cpu_budget_exceeded",
+            KillCause::WallStall => "wall_stall_timeout",
+        }
+    }
+}
+
+/// CPU seconds a live process has burned, via `ps`. Used to classify a timeout.
+///
+/// A wall clock cannot tell a hang from starvation; CPU time can, and the kernel
+/// already tracks it. A file that burns its bound in CPU is spinning no matter what
+/// else is on the box. A file that sat starved accrues CPU slowly and its row says
+/// so. This is read just before the kill, while the process still exists.
+///
+/// `ps` rather than `getrusage`: `libc` is not a dependency of this crate and one
+/// spawn on the timeout path -- which is rare and already expensive -- is not worth
+/// adding one for. `None` if `ps` is unavailable or its output does not parse; the
+/// timeout is still recorded, just without the classifying evidence.
+fn process_cpu_seconds(pid: u32) -> Option<f64> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "time=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let field = raw.trim();
+    if field.is_empty() {
+        return None;
+    }
+    // `[[dd-]hh:]mm:ss[.ff]`, most-significant first once split on ':' and '-'.
+    let (days, rest) = match field.split_once('-') {
+        Some((d, r)) => (d.parse::<f64>().ok()?, r),
+        None => (0.0, field),
+    };
+    let mut secs = 0.0;
+    for part in rest.split(':') {
+        secs = secs * 60.0 + part.parse::<f64>().ok()?;
+    }
+    Some(days * 86_400.0 + secs)
+}
+
+/// Classify a timeout from CPU-vs-wall, so the row carries the evidence instead of
+/// a caveat.
+///
+/// A wall clock alone cannot tell a hang from starvation, and on a shared box that
+/// ambiguity lands in the published number: at load ~12 a file that never had the
+/// CPU looks identical to one spinning. CPU time separates them, because a process
+/// burning a core is burning it regardless of what else is running.
+///
+/// The 0.5 threshold is a deliberate policy choice, not a measurement: at or above
+/// half a core sustained across the whole bound, the lift is doing real work and the
+/// bound is a statement about the FILE. Below it, the bound is a statement about the
+/// BOX, and the row says so rather than quietly counting as a hang.
+fn classify_timeout(cpu_secs: Option<f64>, wall_secs: f64) -> String {
+    match cpu_secs {
+        // `wall <= 0` cannot classify anything; fall through to "unavailable" rather
+        // than divide by it.
+        Some(cpu) if wall_secs > 0.0 && cpu / wall_secs >= 0.5 => {
+            format!("SPINNING (cpu {cpu:.0}s of {wall_secs:.0}s wall)")
+        }
+        Some(cpu) if wall_secs > 0.0 => format!(
+            "STARVED, bound not attributable to this file (cpu {cpu:.0}s of {wall_secs:.0}s wall)"
+        ),
+        _ => "cpu time unavailable".to_string(),
+    }
+}
+
+/// The 1-minute load average, for the sweep receipt. A timeout row is only
+/// interpretable against the contention it was measured under, so the run states
+/// the conditions rather than implying them.
+fn load_average_1m() -> Option<f64> {
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .ok()?;
+    // `{ 12.41 11.58 13.91 }`
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+}
+
+/// Merge one file's contribution into the sweep accumulators. Addition for the
+/// counters, extension for the collections -- the same mutations the in-process
+/// loop makes, applied from the wire instead of from local state.
+#[allow(clippy::too_many_arguments)]
+fn merge_contribution(
+    c: FileContribution,
+    totals: &mut Totals,
+    all_site_cids: &mut Vec<String>,
+    reasons: &mut BTreeMap<String, usize>,
+    reason_samples: &mut BTreeMap<String, Vec<String>>,
+    all_reasons: &mut Vec<String>,
+    rows: &mut Vec<(String, usize, usize, usize, i64, bool)>,
+    dissolved_total: &mut usize,
+) {
+    for (_, get, add) in TOTALS_WIRE {
+        add(totals, get(&c.totals));
+    }
+    all_site_cids.extend(c.site_cids);
+    for (k, n) in c.reasons {
+        *reasons.entry(k).or_insert(0) += n;
+    }
+    for (k, samples) in c.reason_samples {
+        let dst = reason_samples.entry(k).or_default();
+        for s in samples {
+            // Same cap the in-process path applies, so the sample set does not
+            // depend on whether the run was driven or in-process.
+            if dst.len() < 12 {
+                dst.push(s);
+            }
+        }
+    }
+    all_reasons.extend(c.all_reasons);
+    rows.extend(c.rows);
+    *dissolved_total += c.dissolved;
+}
+
+/// Lift one file in a CHILD PROCESS bounded by a wall clock, and return its
+/// contribution.
+///
+/// The bound is the whole point: `num/int_sqrt.rs` ran 28m30s at ~90% CPU without
+/// reaching a verdict, so this is live computation, not a deadlock, and nothing
+/// cooperative will stop it. A killed child stops.
+///
+/// On timeout the file is binned like a panic -- whole, UNCLASSIFIED, reason named --
+/// following `discharge_sweep`'s rule that a timeout is counted UNDECIDED and never
+/// as "cannot be checked" (`solver_timeout_is_counted_undecided_not_uncheckable`).
+/// It is counted in `timed_out_files` rather than `panicked_files` because the two
+/// have different mechanisms and different fixes.
+fn lift_file_in_child(
+    rel: &str,
+    corpus: &str,
+    args: &[String],
+    cpu_budget_secs: u64,
+    wall_stall_secs: u64,
+    totals: &mut Totals,
+) -> FileContribution {
+    let out_path = std::env::temp_dir().join(format!(
+        "coretests_sweep_contribution_{}_{}.json",
+        std::process::id(),
+        rel.replace(['/', '\\', '.'], "_")
+    ));
+    let _ = std::fs::remove_file(&out_path);
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            // Cannot find ourselves to re-exec: that is a broken run, not a result.
+            eprintln!("coretests sweep: cannot resolve current exe for --only child: {e}");
+            std::process::exit(4);
+        }
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg(corpus)
+        .arg("--only")
+        .arg(rel)
+        .arg("--contribution-out")
+        .arg(&out_path);
+    // Carry through the flags that change what a lift MEANS, so a child measures the
+    // same thing the parent would have. `--per-file-timeout` is deliberately NOT
+    // carried: the child is the bounded unit, and passing it on would recurse.
+    for flag in ["--rustc-cfg", "--dissolve", "--callsite-census"] {
+        if args.iter().any(|a| a == flag) {
+            cmd.arg(flag);
+        }
+    }
+    if let Some(i) = args.iter().position(|a| a == "--deps") {
+        if let Some(v) = args.get(i + 1) {
+            cmd.arg("--deps").arg(v);
+        }
+    }
+    let started = std::time::Instant::now();
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("coretests sweep: cannot spawn --only child for {rel}: {e}");
+            std::process::exit(4);
+        }
+    };
+    // DUAL BUDGETS. Neither alone is sufficient:
+    //
+    //   CPU budget  catches a spinning lift (`num/int_sqrt.rs`) and CANNOT be tripped
+    //               by contention -- a starved process accrues CPU slowly. This is
+    //               what makes the verdict independent of what else is on the box.
+    //   wall stall  catches deadlock, blocked I/O, or a child consuming no CPU at
+    //               all -- which the CPU budget can never see, because the whole
+    //               signature of that failure is that no CPU is burned.
+    //
+    // The wall budget is deliberately generous: it is a stall detector, not a
+    // performance bound, so a merely slow file under load is killed by neither.
+    let cpu_budget = cpu_budget_secs as f64;
+    let wall_deadline = std::time::Duration::from_secs(wall_stall_secs);
+    let mut cpu_at_kill: Option<f64> = None;
+    let mut kill_cause: Option<KillCause> = None;
+    // `ps` is a spawn per sample, so sample on an interval rather than every poll.
+    let mut last_cpu_sample = std::time::Instant::now();
+    let mut last_cpu_seen: Option<f64> = None;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if last_cpu_sample.elapsed() >= std::time::Duration::from_secs(2) {
+                    last_cpu_sample = std::time::Instant::now();
+                    last_cpu_seen = process_cpu_seconds(child.id());
+                    if let Some(cpu) = last_cpu_seen {
+                        if cpu >= cpu_budget {
+                            cpu_at_kill = Some(cpu);
+                            kill_cause = Some(KillCause::CpuBudget);
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break None;
+                        }
+                    }
+                }
+                if started.elapsed() >= wall_deadline {
+                    cpu_at_kill = process_cpu_seconds(child.id()).or(last_cpu_seen);
+                    kill_cause = Some(KillCause::WallStall);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                eprintln!("coretests sweep: cannot wait on --only child for {rel}: {e}");
+                let _ = child.kill();
+                break None;
+            }
+        }
+    };
+    let elapsed = started.elapsed();
+
+    if status.is_none() {
+        let wall = elapsed.as_secs_f64();
+        let cause = kill_cause.unwrap_or(KillCause::WallStall);
+        let verdict = classify_timeout(cpu_at_kill, wall);
+        warn!(
+            file = %rel,
+            budget = %cause.axis(),
+            cpu_budget_secs,
+            wall_stall_secs,
+            wall_secs = wall,
+            cpu_secs = cpu_at_kill,
+            verdict = %verdict,
+            load_1m = load_average_1m(),
+            "coretests sweep file exceeded a per-file budget; killed and binned as unclassified"
+        );
+        // Recover the census the child checkpointed BEFORE it started lifting. That
+        // surface is real and recomputable from source; losing it would drop the file's
+        // sites out of the corpus multiset CID and quietly redefine the identity as
+        // "whatever finished in time".
+        let mut c = std::fs::read_to_string(&out_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|v| FileContribution::from_json(&v).ok())
+            .unwrap_or_default();
+        let _ = std::fs::remove_file(&out_path);
+        // The checkpoint carries the surface; the disposition is ours to write. Bin the
+        // whole surface UNCLASSIFIED with the timeout named, exactly as a panic binned
+        // whole -- the kill landed before any per-assert disposition existed, so which
+        // assertions the hang belongs to is not known.
+        let census_total = c.totals.assert_macros;
+        c.totals.files = 1;
+        c.totals.parse_ok = 1;
+        match cause {
+            KillCause::CpuBudget => c.totals.cpu_budget_exceeded = 1,
+            KillCause::WallStall => c.totals.wall_stall_timeout = 1,
+        }
+        c.totals.unclassified += census_total;
+        let reason = match cause {
+            KillCause::CpuBudget => {
+                format!("lift cpu budget exceeded: burned {cpu_budget_secs}s cpu")
+            }
+            KillCause::WallStall => {
+                format!("lift wall stall: {wall_stall_secs}s wall without burning its cpu budget")
+            }
+        };
+        let b = format!("[unclassified] {}", bucket(&reason));
+        // One reason per assertion when the surface is known, so `all_reasons` stays
+        // one-per-assertion and the histogram sums to the bucket.
+        let named = census_total.max(1);
+        *c.reasons.entry(b.clone()).or_insert(0) += named;
+        // The per-file sample carries the classification, so a reader of the ledger
+        // can tell a real hang from a contention artifact without re-running anything.
+        c.reason_samples
+            .entry(b)
+            .or_default()
+            .push(format!("{rel}: {reason} -- {verdict}"));
+        for _ in 0..named {
+            c.all_reasons.push(reason.clone());
+        }
+        // `raw_delta = 0`: nothing was silently dropped, the surface is accounted as
+        // unclassified. `parse_ok = true`: the file parsed, then its lift ran long.
+        c.rows
+            .push((rel.to_string(), census_total, 0, census_total, 0, true));
+        return c;
+    }
+
+    let status = status.expect("checked above");
+    let raw = std::fs::read_to_string(&out_path);
+    let _ = std::fs::remove_file(&out_path);
+    let raw = match raw {
+        Ok(r) => r,
+        Err(e) => {
+            // The child exited without leaving a contribution. That is a broken run,
+            // not a zero: exiting loudly beats folding a silent nothing into the ledger.
+            eprintln!(
+                "coretests sweep: --only child for {rel} exited {status} without a \
+                 contribution ({e}); refusing to fold a silent nothing into the ledger"
+            );
+            std::process::exit(4);
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("coretests sweep: --only child for {rel} wrote unparseable contribution: {e}");
+            std::process::exit(4);
+        }
+    };
+    match FileContribution::from_json(&value) {
+        Ok(c) => {
+            debug!(file = %rel, secs = elapsed.as_secs_f64(), "coretests sweep child finished");
+            let _ = totals;
+            c
+        }
+        Err(e) => {
+            eprintln!("coretests sweep: --only child for {rel} wrote a contribution we cannot merge: {e}");
+            std::process::exit(4);
+        }
+    }
+}
+
 /// The panic payload's message, flattened to one line so it survives a reason
 /// histogram row. A non-string payload is NAMED, never dropped silently.
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -1006,6 +1675,16 @@ fn build_ledger_json(
     // Non-zero => the buckets above are a FLOOR. Emitted unconditionally so a
     // reader of the ledger alone can tell a full reading from a floored one.
     obj.insert("panicked_files".into(), totals.panicked_files.into());
+    // Same floor semantics as `panicked_files`, different mechanism: a killed lift,
+    // not an unwind. Emitted unconditionally for the same reason.
+    obj.insert(
+        "cpu_budget_exceeded".into(),
+        totals.cpu_budget_exceeded.into(),
+    );
+    obj.insert(
+        "wall_stall_timeout".into(),
+        totals.wall_stall_timeout.into(),
+    );
     obj.insert("missing_assertions".into(), missing_assertions.into());
     obj.insert("callsite_expansion".into(), callsite_expansion.into());
     obj.insert(
@@ -1092,6 +1771,8 @@ mod tests {
             unclassified: 1,
             inactive: 0,
             panicked_files: 0,
+            cpu_budget_exceeded: 0,
+            wall_stall_timeout: 0,
         };
         let reasons = BTreeMap::from([("closure argument".to_string(), 2usize)]);
         let samples = BTreeMap::from([(
@@ -1147,6 +1828,28 @@ mod tests {
             Some(3)
         );
         assert!(v.get("unaccounted").is_none());
+    }
+
+    // THE TOOTH on the timeout classification. The SPINNING branch is exercised by
+    // the real corpus (`num/int_sqrt.rs` reports `cpu 20s of 20s wall`); the STARVED
+    // branch is the one that only fires on a loaded box, which is exactly the
+    // condition you cannot summon on demand -- so it gets tested here rather than
+    // shipped on the strength of the branch next to it having worked once.
+    #[test]
+    fn timeout_verdict_separates_a_hang_from_a_starved_run() {
+        // Burning a full core for the whole bound: the file is the problem.
+        assert!(classify_timeout(Some(300.0), 300.0).starts_with("SPINNING"));
+        // Half a core sustained is still real work -- the threshold is inclusive.
+        assert!(classify_timeout(Some(150.0), 300.0).starts_with("SPINNING"));
+        // Barely scheduled: the bound describes the BOX, and the row must say so
+        // rather than let contention be published as a hang.
+        let starved = classify_timeout(Some(12.0), 300.0);
+        assert!(starved.starts_with("STARVED"), "{starved}");
+        assert!(starved.contains("not attributable to this file"), "{starved}");
+        // No evidence is its own answer, never a silent "spinning".
+        assert_eq!(classify_timeout(None, 300.0), "cpu time unavailable");
+        // A zero/negative wall cannot classify and must not divide.
+        assert_eq!(classify_timeout(Some(1.0), 0.0), "cpu time unavailable");
     }
 
     // THE TOOTH on the bucket choice. The PR this landed in rests on "unclassified,
