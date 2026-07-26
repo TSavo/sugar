@@ -3,12 +3,24 @@
 Diagnosis only. No detector weakened, no panic suppressed, no key restructured.
 `WithConstructionGapKind.parse` keeps preserving unrecognised wire kinds.
 
-Baseline read (conserved 1,421/1,421, pinned pandas 3.0.3):
+Baseline: `docs/ledgers/pandas-3.0.3-control-effect-9a78828ee.json` on
+`origin/main`, corpus pin `docs/ledgers/pins/pandas-3.0.3.pin.json`, 1,421
+enrolled / 1,416 completed, `R = 4`.
 
 ```
-gap:unrecognized:opaque-call-target:func    5737
-gap:unrecognized:opaque-call-target:cast     709
+.cmResolutions["gap:unrecognized:opaque-call-target:func"]  = 5737   (79.0% of the board)
+.cmResolutions["gap:unrecognized:opaque-call-target:cast"]  =  709
 ```
+
+## The finding in one sentence
+
+**`cmResolutions` is the field that REPLACED `cmMembranes` in the scoreboard
+repair (#6332) precisely to stop bucketing With residual by pandas leaf-name
+spelling — and 89.3% of its mass is now keyed by a pandas spelling.** The
+replacement inherited the disease one layer down. And the largest term in it,
+`opaque-call-target:func` at 79.0% of the whole board, is not a pandas symbol
+at all: `func` is the conventional spelling of a **callable parameter**, so the
+biggest number on the board is a missing capability wearing a vendor name.
 
 ## 1. The full provenance of one board term
 
@@ -65,8 +77,10 @@ Mechanism O splits again on what actually binds the name. The predicate at
 consults the enclosing function's parameters or locals**, so a called
 *parameter* is classified identically to a missing import.
 
-Measured over pinned pandas 3.0.3 (`ast`, mirroring the production predicate;
-20,437 source-opaque `Name`-callee occurrences):
+Population context — every source-opaque `Name`-callee occurrence in pinned
+pandas 3.0.3 (`ast`, mirroring the production predicate; 20,437 occurrences).
+This is *not* the board's distribution, which is per `with` site; the board's
+own six-symbol alphabet is attributed individually in section 2b:
 
 | Class | Count | Share | What the name is |
 |---|---|---|---|
@@ -98,50 +112,121 @@ across thousands of `with` sites. The largest term on the board is a
 higher-order-dispatch capability gap that has been wearing a vendor-looking
 name.
 
+A fourth mechanism shows up only once the board's own symbols are attributed
+(section 2b): `get_handle` is defined **inside** the artifact at
+`pandas/io/common.py:660`, yet `_resolve_external_call_frame` returned `None`
+for it. That is an export-door defect, not a coverage gap — and it is currently
+invisible because it shares a bucket with the other three.
+
 **Second defect in mechanism O:** `opaque[0]` is first-hit-wins over a *set*.
 When a definition has several unresolvable callees the key names one
 arbitrarily and discards the rest, so the term is both symbol-carrying and
 lossy — the count under `:func` is not "5,737 sites blocked on `func`", it is
 "5,737 sites whose blocking set happened to sort `func` first".
 
-## 2b. The kind vocabulary census — structural vs symbol-carrying
+## 2b. The full kind census — from the authenticated ledger
 
-**The per-kind count board is not reproducible on the Mac under this brief**
-(no lease, no census, no full sweep), and no file in the tree carries the
-`gap:unrecognized:*` counts — `grep -rl "gap:unrecognized"` over the worktree
-is empty, and `docs/ledgers/recensus-1032-live` predates the term. The counts
-in the header are the coordinator's read of the battleaxe baseline. The
-**vocabulary**, however, is fully derivable from the producers, and that is the
-part that decides the fix.
+Source: `git show origin/main:docs/ledgers/pandas-3.0.3-control-effect-9a78828ee.json`,
+field `.cmResolutions`. Corpus pin `docs/ledgers/pins/pandas-3.0.3.pin.json`,
+manifest `sha256:c267d971…`, 1,421 enrolled / 1,416 completed, `R = 4`,
+`R_construction = 4`, `R_cm_derived_contract = 17`.
 
-Everything that can reach `_cm_resolution_bucket` comes from exactly five
-producers:
+**Thirteen distinct keys, 7,264 rows.** The complete distribution:
 
-| Producer | Kinds | Fused with a symbol? |
+| Count | Share | Class | Key |
+|---:|---:|---|---|
+| 5737 | 79.0% | **symbol-carrying** | `gap:unrecognized:opaque-call-target:func` |
+| 715 | 9.8% | structural | `gap:dynamic-export` |
+| 709 | 9.8% | **symbol-carrying** | `gap:unrecognized:opaque-call-target:cast` |
+| 24 | 0.3% | structural | `gap:unrecognized:target-outside-binding` |
+| 17 | 0.2% | structural | `derived-contract` *(the successes)* |
+| 17 | 0.2% | **symbol-carrying** | `gap:unrecognized:non-manager-result:BlockValue` |
+| 14 | 0.2% | structural | `gap:unrecognized:artifact-module-absent` |
+| 9 | 0.1% | **symbol-carrying** | `gap:unrecognized:opaque-call-target:setTZ` |
+| 8 | 0.1% | **symbol-carrying** | `gap:unrecognized:opaque-call-target:get_handle` |
+| 7 | 0.1% | structural | `gap:no-derived-contract` |
+| 5 | 0.1% | **symbol-carrying** | `gap:unrecognized:opaque-call-target:nullcontext` |
+| 1 | 0.0% | **symbol-carrying** | `gap:unrecognized:force-floor:attribute:ObjectValue` |
+| 1 | 0.0% | **symbol-carrying** | `gap:unrecognized:opaque-call-target:available_protocols` |
+
+**Split: 777 structural (10.7%) / 6,487 symbol-carrying (89.3%).**
+
+Only 17 rows out of 7,264 — 0.23% — are `derived-contract`, an actual success.
+
+### The observed alphabet is SIX symbols, not forty
+
+`opaque-call-target` accounts for 6,479 rows and carries exactly **six distinct
+spellings**: `func`, `cast`, `setTZ`, `get_handle`, `nullcontext`,
+`available_protocols`. `func` alone is **79.0% of the entire `cmResolutions`
+board**.
+
+This is the coordinator's point made numerically. The key is not exploding —
+it is *concentrated*, and that concentration is exactly why it looks stable.
+Rename `func` in six pandas helpers and 79% of the board changes spelling
+overnight. A measurement that a vendor rename can move is not a measurement.
+
+Two of the thirteen keys carry a **Sugar internal type name**, not a vendor
+spelling: `non-manager-result:BlockValue` and `force-floor:attribute:ObjectValue`.
+Those are a milder version of the same defect — an implementation detail
+promoted to identity — but they are not vendor exposure. **The vendor exposure
+is exactly the `opaque-call-target` family: 6,479 of 6,487 symbol-carrying rows.**
+
+### Per-symbol mechanism attribution
+
+Each of the six, classified by *what binds the name* at the definitions where
+it is `opaque[0]` (`ast` over pinned pandas 3.0.3):
+
+| Symbol | Rows | Binding | Mechanism |
+|---|---:|---|---|
+| `func` | 5737 | **parameter (13 defs) / local (7 defs)** | **callee is a VALUE** — no export lookup can ever resolve it |
+| `setTZ` | 9 | **local** (`_testing/contexts.py::set_timezone`) | same — callee is a value |
+| `cast` | 709 | import — `typing.cast` | **artifact coverage**: stdlib outside the distribution |
+| `nullcontext` | 5 | import — `contextlib.nullcontext` | same |
+| `get_handle` | 8 | import — **defined in-artifact** at `pandas/io/common.py:660` | **export-door defect**: `_resolve_external_call_frame` returned `None` for a symbol that IS in the artifact |
+| `available_protocols` | 1 | not present in pandas at all | from another distribution in the graph; unclassified |
+
+By row count, the three mechanisms behind `opaque-call-target`:
+
+- **callee-is-a-value — 5,746 rows (79.1% of the board).** A *missing
+  capability*. `_named_call_is_source_opaque` (`manager_construction.py:549`)
+  takes only `(name, definition_names, builtin_floor)` and never consults the
+  enclosing frame's binders, so calling a parameter is reported identically to
+  calling a missing import.
+- **artifact coverage — 714 rows (9.8%).** stdlib source not in the
+  distribution artifact.
+- **export-door defect — 8 rows.** An in-artifact symbol the export door
+  failed to resolve. Small, but it is a *bug*, and today it is invisible
+  because it shares a bucket with the other two.
+
+**Mechanism R (recursion / no-progress) contributes ZERO rows on this corpus.**
+It has never fired on pandas. So the conflation is not currently costing
+measurement through R — the entire cost is that the two large symbol-carrying
+mechanisms are indistinguishable, and 79% of the board is a capability gap
+that reads as a vendor name.
+
+### Why extending the enum is not the fix
+
+Observed cardinality is six, but *declared* cardinality is unbounded: the fused
+key set has the cardinality of the detail strings. `force-floor` composes a
+**three**-segment key `f"{kind}:{owner}:{observed}"`, and `_construction_gap_kind`
+truncates detail to 80 chars at `manager_summary_derivation.py:745`. A key that
+can be truncated is not an identity, and a vocabulary that must enumerate
+callee spellings is the `cmMembranes` name table rebuilt one layer down.
+
+### The producers
+
+Five sites reach `_cm_resolution_bucket`; three fuse, two do not:
+
+| Producer | Kinds | Fused? |
 |---|---|---|
-| `_install_derivation_gap` literals (`manager_summary_derivation.py:626, 680`) | `no-derived-contract`, `incomplete-call-actuals` | **no** — bare structural |
-| import-binding resolution gap (`manager_summary_derivation.py:632-633`) | whatever `resolve_import_binding` returned, passed as bare `str(kind)` | **no** — **this site already does it right** |
-| `ManagerConstructionGapV1` (`manager_construction.py:96-104`) via `_construction_gap_kind` (`:737`) | `artifact-mismatch`, `definition-missing`, `opaque-call-target`, `non-manager-result`, `call-binding`, `force-floor` | **yes** — all six get `:detail` appended |
-| `ManagerProtocolConstructionGapV1` (`manager_protocol_construction.py:53-56`) via `:712` | `enter-missing`, `exit-missing`, `method-construction` | **yes** |
-| `DerivedManagerSummaryGapV1` (`manager_summary_derivation.py:72-79`) via `:723` | `enter-may-halt`, `exit-may-halt`, `opaque-exit-truthiness` | **yes** |
+| `_install_derivation_gap` literals (`:626, :680`) | `no-derived-contract`, `incomplete-call-actuals` | no |
+| import-binding gap (`:632-633`) | passthrough `str(kind)` | **no — this site already does it right** |
+| `ManagerConstructionGapV1` via `_construction_gap_kind` (`:737`) | 6 kinds | **yes** |
+| `ManagerProtocolConstructionGapV1` via `:712` | 3 kinds | **yes** |
+| `DerivedManagerSummaryGapV1` via `:723` | 3 kinds | **yes** |
 
-**Split: 3 structural producers, 12 symbol-carrying kinds across 3 fused
-producers.** The bare-`str(kind)` site at `:633` is the existing proof that
-the unfused shape already works in this exact function — it is what the other
-three sites should look like. Every kind that
-carries a non-empty `detail` becomes a fused key, and every fused key falls
-through `WithConstructionGapKind.parse` into `gap:unrecognized:*`. That is why
-~6,500 of ~7,250 rows carry a kind the closed enum does not name: **not one
-missing enum member, but twelve kinds × unbounded detail strings.** The
-declared vocabulary can never catch up, because the cardinality of the fused
-key set is the cardinality of the detail strings, which is unbounded by
-construction.
-
-Note the fusion is not uniform across `detail` shapes. `force-floor` composes
-`f"{owner}:{observed}"` (`manager_construction.py`, `ConstructionPanic`
-membrane), so `gap:unrecognized:force-floor:<owner>:<observed>` is a
-**three**-segment fusion, and `detail` is truncated to 80 chars at `:745`. A
-key that can be truncated is not an identity.
+The bare-`str(kind)` site at `:633` is the existing proof that the unfused
+shape already works inside this exact function.
 
 ## 3. Relation to the `With` residual — **these are not With construction failures**
 
@@ -175,13 +260,20 @@ Carry what the mint already knows, and stop re-deriving it from a string.
    mint in `manager_construction.py`, by *authenticated structural condition*
    — never by a name table:
    - `call-graph-cycle` — lines 214, 314, 472. Already symbol-free.
-   - `unresolved-call-target` — line 423/452 where
-     `_resolve_external_call_frame` returned `None` for a name that is not
-     bound in the enclosing frame.
-   - `non-name-call-target` — the same site where the callee name **is** bound
-     as a parameter or local of the enclosing definition. This is decided by
-     the frame's own binder set, which the construction already holds; it
-     requires no vendor list and no spelling.
+   - `value-call-target` — line 423/452 where the callee name **is** bound as
+     a parameter or local of the enclosing definition. Decided by the frame's
+     own binder set, which construction already holds; no vendor list, no
+     spelling. **Predicted 5,746 rows (79.1%).**
+   - `call-target-source-absent` — the callee resolves to a module the
+     distribution artifact does not contain. **Predicted 714 rows.**
+   - `call-target-export-unresolved` — the defining source **is** in the
+     artifact but `_resolve_external_call_frame` returned `None`. The
+     `get_handle` case; a real bug, currently invisible.
+     **Predicted 8 rows.**
+
+   The three are distinguished by conditions already evaluated at the mint:
+   *is the name bound in this frame*, and *did artifact lookup find the module*.
+   Neither reads a spelling.
 3. **Carry the whole blocking set, not `opaque[0]`.** `detail` becomes the
    sorted tuple of unresolved callee names, so the term stops being
    order-dependent. The census buckets on the kind; the symbols ride as data
@@ -219,11 +311,30 @@ bytes actually present and no producer emits the new kinds over the wire today.
 
 ### What this costs on the board
 
-Splitting a bucket does not lower `R`. Expect the ~6,500 `gap:unrecognized:*`
-rows to redistribute into named structural kinds with the total conserved:
-that is the point. `Epsilon R = 0` on the total; the deliverable is that the
-mass acquires a mechanism, and O-param becomes a capability the board can
-track to zero instead of a spelling it cannot act on.
+Splitting a bucket does not lower `R`. `Epsilon R = 0` on the total: 7,264 rows
+in, 7,264 rows out, redistributed from 13 keys (89.3% symbol-carrying) to a
+closed structural vocabulary with **zero** symbol-carrying keys.
+
+Predicted post-change `cmResolutions`, total conserved:
+
+```
+value-call-target                5746   (was opaque-call-target:{func,setTZ})
+dynamic-export                    715   unchanged
+call-target-source-absent         714   (was opaque-call-target:{cast,nullcontext})
+target-outside-binding             24   unchanged
+derived-contract                   17   unchanged
+non-manager-result                 17   (was non-manager-result:BlockValue)
+artifact-module-absent             14   unchanged
+call-target-export-unresolved       8   (was opaque-call-target:get_handle)
+no-derived-contract                 7   unchanged
+force-floor                         1   (was force-floor:attribute:ObjectValue)
+call-target-source-absent (+1)      1   available_protocols, pending attribution
+                                 ----
+                                 7264
+```
+
+The deliverable is that 79.1% of the board stops being a pandas spelling and
+becomes `value-call-target`: a named capability the board can track to zero.
 
 ## Prior art this follows
 
@@ -240,3 +351,13 @@ symbol set is carried as row data for human reading and is never a bucket key.
 `opaque[0]` first-hit projection (`:423`). Scripts are diagnostic only and are
 not checked in; both are reproducible from the description above in a few
 lines.
+
+Counts are read from the committed ledger, **not from disk**:
+`git show origin/main:docs/ledgers/pandas-3.0.3-control-effect-9a78828ee.json`.
+An earlier pass of this diagnosis reported the counts as absent from the tree.
+That was a false negative from grepping a working checkout at `4730cbd3a`
+while `origin/main` was `74d7bb1d3` — the stale-checkout defect class. Read
+census artifacts from the ref.
+
+No sweep, no census, and no lease were run for this diagnosis. `Delta R` is
+unmeasured and unchanged: no executable path is touched.
