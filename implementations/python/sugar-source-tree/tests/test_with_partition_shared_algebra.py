@@ -916,9 +916,7 @@ def test_undecidable_message_predicate_is_retained_as_an_obligation(tmp_path):
     consumed = _on_guard(routed, and_([body_halt.guard, obligation]))
     assert isinstance(consumed, Completed)
     # Never dropped: the other face restores the EXACT incoming effect.
-    retained = _on_guard(
-        routed, and_([body_halt.guard, complement_guard(obligation)])
-    )
+    retained = _on_guard(routed, and_([body_halt.guard, complement_guard(obligation)]))
     assert isinstance(retained, Halted)
     assert retained.effect == body_halt.effect
     assert retained.effect.occurrence == body_halt.effect.occurrence
