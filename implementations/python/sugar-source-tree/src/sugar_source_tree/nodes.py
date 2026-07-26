@@ -4494,12 +4494,19 @@ class With(Statement):
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
 
+        # `kind` is the structural key and stays alone; `detail` rides the
+        # OBSERVED line so the panic still names the blocking callee(s) that the
+        # fused `kind:detail` key used to smuggle into the key itself.
+        detail = getattr(resolution, "detail", None)
         panic = ContextManagerResolutionConstructionGap(
             kind=resolution.kind,
             demand_cid=resolution.demand_cid,
             candidate_member_cids=resolution.candidate_member_cids,
             owner="With._construct_sugar",
-            observed=f"authenticated preconstruction resolution gap: {resolution.kind}",
+            observed=(
+                f"authenticated preconstruction resolution gap: {resolution.kind}"
+                + (f" [{detail}]" if detail else "")
+            ),
             requested="one resolved authenticated ContextManagerContractRefV1",
             fix="publish or resolve the exact typed CM contract before construction",
         )

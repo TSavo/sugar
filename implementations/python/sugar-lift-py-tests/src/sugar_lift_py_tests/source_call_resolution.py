@@ -47,7 +47,13 @@ class SourceCallPreconstructionGapV1:
         "artifact-mismatch",
         "definition-missing",
         "source-body-gap",
-        "opaque-call-target",
+        # The four conditions `opaque-call-target` used to fuse; these ride
+        # straight off `ManagerConstructionGapV1.kind`, which owns their
+        # definitions.
+        "call-graph-cycle",
+        "value-call-target",
+        "call-target-source-absent",
+        "call-target-export-unresolved",
         "non-manager-result",
         "call-binding",
         "dynamic-call-target",

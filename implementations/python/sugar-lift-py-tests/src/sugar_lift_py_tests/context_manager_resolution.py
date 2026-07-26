@@ -84,11 +84,28 @@ class ContextManagerContractRefV1:
 
 @dataclass(frozen=True)
 class ContextManagerResolutionGapV1:
+    """One unresolved context-manager demand: a structural kind beside its data.
+
+    ``kind`` is the STRUCTURAL key and nothing else -- a member of the closed
+    vocabulary in :func:`_gap_kinds`.  It never contains a symbol.  The
+    derivation layer used to fuse ``f"{kind}:{detail}"`` into this field, which
+    put most of the pinned-pandas resolution board's mass under a vendor spelling
+    (#6371) and produced, in process, a gap this module's own decoder would
+    refuse.
+
+    ``target_symbol`` and ``detail`` are DATA: they ride the row for a human
+    reading one row, and are never a bucket key.  A measurement a vendor rename
+    can move is not a measurement.
+    """
+
     demand_cid: str
     use_site: SourceFragmentCoordinateV1
     target_symbol: str | None
     kind: str
     candidate_member_cids: tuple[str, ...]
+    # In-process only.  Not read from or written to the wire, so no preimage
+    # and no CID changes: the authenticated table hashes the bytes present.
+    detail: str | None = None
 
 
 ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolutionGapV1
@@ -181,20 +198,27 @@ class TreeConstructionContextV1:
         )
 
 
-_GAP_KINDS = frozenset(
-    {
-        "runtime-selected",
-        "unresolved-symbol",
-        "ambiguous-symbol",
-        "wrong-contract-kind",
-        "signature-mismatch",
-        "unauthenticated-member",
-        "payload-cid-mismatch",
-        "unsupported-cm-schema",
-        "no-derived-contract",
-        "stale-derived-contract",
-    }
-)
+def _gap_kinds() -> frozenset[str]:
+    """The closed resolution-gap vocabulary, read from its ONE owner.
+
+    This used to be a second hand-maintained copy of ten members, and it drifted:
+    the source-derived path minted fused ``kind:detail`` strings that this very
+    decoder would have refused as ``malformed context-manager resolution gap``.
+    Two lists cannot disagree if there is only one list, so the members come
+    from :class:`WithConstructionGapKind`, which the producers' own typed
+    ``Literal``s are declared against.
+
+    Imported lazily: ``sugar_source_tree`` depends on this module.
+    """
+    from sugar_source_tree.panic import WithConstructionGapKind
+
+    return frozenset(
+        member.value
+        for member in WithConstructionGapKind
+        # The catch-all is a READER's fallback for a kind this build does not
+        # name; no producer may emit it as a gap kind of its own.
+        if member is not WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND
+    )
 
 
 def _cid(value: Any, field: str) -> str:
@@ -343,7 +367,7 @@ def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
             "gap",
         }:
             gap = resolution["gap"]
-            if not isinstance(gap, dict) or gap.get("kind") not in _GAP_KINDS:
+            if not isinstance(gap, dict) or gap.get("kind") not in _gap_kinds():
                 raise ContractRefProtocolError(
                     "malformed context-manager resolution gap"
                 )
