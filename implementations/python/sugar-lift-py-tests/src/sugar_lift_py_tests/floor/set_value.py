@@ -136,6 +136,12 @@ def _closed_member_equal(left, right):
 
     if type(left) is SymbolicValue or type(right) is SymbolicValue:
         return None
+    # A callsite result is a value of undecided identity — same as SymbolicValue
+    # for membership: emit typed python.*.contains, never a floor gap.
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    if type(left) is CallSiteValue or type(right) is CallSiteValue:
+        return None
     if type(left) is TermValue and type(right) is TermValue:
         return left.value == right.value
     if type(left) is StringValue and type(right) is StringValue:

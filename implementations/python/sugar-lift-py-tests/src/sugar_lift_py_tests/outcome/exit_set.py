@@ -130,6 +130,30 @@ def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
     return (guard,)
 
 
+def _partition_exclusive(
+    left: frozenset[tuple[str, int]] | None,
+    right: frozenset[tuple[str, int]] | None,
+) -> bool:
+    """Whether two arms carry opposite faces of one authenticated partition."""
+    if not left or not right:
+        return False
+    for partition_id, face in left:
+        for other_id, other_face in right:
+            if partition_id == other_id and face != other_face:
+                return True
+    return False
+
+
+def _union_partition(
+    left: frozenset[tuple[str, int]] | None,
+    right: frozenset[tuple[str, int]] | None,
+) -> frozenset[tuple[str, int]] | None:
+    """Accumulate partition faces through sequencing."""
+    if left is None and right is None:
+        return None
+    return frozenset((*(left or ()), *(right or ())))
+
+
 def _are_exclusive(left: Formula, right: Formula) -> bool:
     """Whether two guards provably cannot hold together, syntactically.
 
@@ -279,6 +303,23 @@ class ExitSet(Generic[T]):
             else:
                 exits.append(Halted(combined, exit_.effect, exit_.state, faces))
         return ExitSet(tuple(exits)).normalize()
+
+    def with_partition_face(self, partition_id: str, face: int) -> "ExitSet[T]":
+        """Stamp every completed arm with one authenticated partition face.
+
+        Face is 0/1 for then/else of one producer-owned branch. Nested joins
+        accumulate faces; two arms are exclusive when they disagree on any
+        shared partition_id.
+        """
+        face_key = (partition_id, face)
+        exits: list[Exit[T]] = []
+        for exit_ in self.exits:
+            if isinstance(exit_, Completed):
+                stamped = frozenset((*((exit_.partition or frozenset())), face_key))
+                exits.append(Completed(exit_.guard, exit_.value, stamped))
+            else:
+                exits.append(exit_)
+        return ExitSet(tuple(exits))
 
     def factor_completed(self) -> "ExitSet[T]":
         """Collapse the completed FACE into one arm carrying a guarded value.
@@ -445,6 +486,8 @@ class ExitSet(Generic[T]):
                 # factor_completed. Intersecting here is what keeps a merged
                 # arm from claiming a face it only held on one side.
                 if same_completed:
+                    # OR of guards is not a partition; clear stamps when merging
+                    # equal destinations so exclusivity cannot be forged.
                     merged[index] = Completed(
                         _or_guards(prior.guard, exit_.guard),
                         prior.value,
