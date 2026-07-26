@@ -258,8 +258,14 @@ def test_real_construction_agrees_bit_for_bit_with_the_unmemoized_answer():
         return out
 
     BS._constructed_preimage = watched
+    from pathlib import Path
+
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
     try:
-        sf = SourceFile.from_path(path, reporter=CollectingReporter())
+        sf = open_source_file_for_construction(
+            Path(path), root=Path(path).parent, reporter=CollectingReporter()
+        )
         fn = [f for f in sf.functions() if getattr(f, "name", None) == "f"][0]
         fn.sugar()
     finally:

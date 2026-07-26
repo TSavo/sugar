@@ -97,6 +97,19 @@ axis "R_construction_side_doors discrimination" \
   python -m pytest --noconftest "$TESTS/tests/test_construction_side_door_law.py" -q
 axis "R_construction_side_doors = 0" python "$SCRIPTS/construction_side_door_law.py"
 
+# The bare construction door. SourceFile.from_path builds a tree with no
+# construction context; constructing through it does not fail, it LIES --
+# every With paints RuntimeSelectedContextManager regardless of resolvability.
+# Three false frontiers came out of that door and the defence was a comment.
+# The discrimination arm feeds the scanner the actual shape of the probe that
+# produced five withdrawn residual pairs -- proved on the incident, not a
+# synthetic stand-in.
+axis "R_bare_construction_door discrimination" \
+  python -m pytest --noconftest \
+  "$TESTS/tests/test_construction_context_door_law.py" -q
+axis "R_bare_construction_door = 0" \
+  python "$SCRIPTS/construction_context_door_law.py"
+
 echo
 echo "sole-construction floors: ${#green_axes[@]} green, ${#red_axes[@]} red"
 if [ ${#red_axes[@]} -gt 0 ]; then

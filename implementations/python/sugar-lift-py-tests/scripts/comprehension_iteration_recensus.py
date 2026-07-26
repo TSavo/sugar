@@ -221,8 +221,14 @@ def main() -> int:
                     syntax[_syntax_coordinate(node, lines)] = _shape(node)
 
             def construct_file():
+                from sugar_lift_py_tests.lift_rpc import (
+                    open_source_file_for_construction,
+                )
+
                 reporter = CollectingReporter()
-                source_file = SourceFile.from_path(str(path), reporter=reporter)
+                source_file = open_source_file_for_construction(
+                    path, root=args.corpus, reporter=reporter
+                )
                 for function in source_file.functions():
                     try:
                         function.sugar()
