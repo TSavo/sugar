@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "leaseClass": "pandas-four-axis-census-bx",
+  "measurementStatus": "completed/zero-findings",
+  "supportsZeroClaim": true,
+  "zeroClaimStatus": "completed/zero-findings",
+  "leaseIdentity": {
+    "path": "/var/tmp/sugar-heavy-measurement.lease",
+    "bootId": "d257d14e-37e9-495a-9879-5b19eade14c3",
+    "hostname": "Battleaxe",
+    "device": 2096,
+    "inode": 56767
+  },
+  "acquired": true,
+  "timedOut": false,
+  "timeoutSeconds": 21600,
+  "requestedAtUnix": 1785072724.676724,
+  "acquiredAtUnix": 1785072724.677143,
+  "releasedAtUnix": 1785072837.568367,
+  "waitSeconds": 0.000419,
+  "heldSeconds": 112.891224,
+  "measuredCommit": "unknown",
+  "owner": {
+    "githubRunId": null,
+    "githubRunAttempt": null,
+    "githubWorkflow": null,
+    "githubJob": null,
+    "githubRef": null,
+    "runnerName": null,
+    "holderPid": 64646
+  },
+  "command": "bash /home/tsavo/census-a02-tree/.receipts/census-four-axis-pandas-a02ebbe3e/measured_bx.sh",
+  "commandExitStatus": 0,
+  "staleOwnerDiagnostics": null
+}

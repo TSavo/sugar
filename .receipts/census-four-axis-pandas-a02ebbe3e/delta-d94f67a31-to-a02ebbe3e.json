@@ -1,0 +1,223 @@
+{
+  "baseline": {
+    "commit": "d94f67a31",
+    "files": 1421,
+    "everyFileTerminalComplete": true
+  },
+  "head": {
+    "commit": "a02ebbe3ed37d6d7cdd6b3108ba1da09504ba0d4",
+    "files": 1421,
+    "completed": 1421
+  },
+  "conservedSet": {
+    "files": 1421,
+    "note": "Both runs reached terminal `completed` on all 1421 files, so the conserved set is the WHOLE corpus and the newly-measurable category is EMPTY. It is non-empty only against a run that carried a per-file deadline.",
+    "newlyMeasurableFiles": []
+  },
+  "axes": [
+    {
+      "axis": "R_construction",
+      "old": 5088,
+      "new": 5088,
+      "delta": 0,
+      "distinctOld": 5088,
+      "distinctNew": 5088,
+      "removed": 0,
+      "added": 0,
+      "unchanged": 5088
+    },
+    {
+      "axis": "R_desugar",
+      "old": 8624,
+      "new": 8596,
+      "delta": -28,
+      "distinctOld": 8624,
+      "distinctNew": 8596,
+      "removed": 1087,
+      "added": 1059,
+      "unchanged": 7537
+    },
+    {
+      "axis": "desugarConstructionPanics",
+      "old": 1074,
+      "new": 960,
+      "delta": -114,
+      "distinctOld": 1074,
+      "distinctNew": 960,
+      "removed": 1004,
+      "added": 890,
+      "unchanged": 70
+    },
+    {
+      "axis": "desugarDefects",
+      "old": 295,
+      "new": 407,
+      "delta": 112,
+      "distinctOld": 295,
+      "distinctNew": 407,
+      "removed": 3,
+      "added": 115,
+      "unchanged": 292
+    }
+  ],
+  "panicOwnersDrained": [
+    [
+      "contains",
+      705
+    ],
+    [
+      "attribute",
+      219
+    ],
+    [
+      "add",
+      34
+    ],
+    [
+      "guarded",
+      26
+    ],
+    [
+      "ListValue.multiply",
+      19
+    ],
+    [
+      "<SourceFragment '/usr/local/lib/python3.14/site-packages/pandas/tests/indexes/period/test_period.py' [3823, 3839) node=Call>",
+      1
+    ]
+  ],
+  "panicOwnersAdded": [
+    [
+      "DynamicUnpackAssignSugar",
+      822
+    ],
+    [
+      "ListValue.contains",
+      26
+    ],
+    [
+      "TupleValue.contains",
+      18
+    ],
+    [
+      "StringValue.contains",
+      10
+    ],
+    [
+      "bitwise_and",
+      3
+    ],
+    [
+      "SetValue.contains",
+      2
+    ],
+    [
+      "subtract",
+      2
+    ],
+    [
+      "bitwise_xor",
+      1
+    ],
+    [
+      "add",
+      1
+    ],
+    [
+      "guarded",
+      1
+    ],
+    [
+      "<SourceFragment '/home/tsavo/census-a02-venv/lib/python3.12/site-packages/pandas/tests/indexes/period/test_period.py' [3823, 3839) node=Call>",
+      1
+    ],
+    [
+      "ground_type_error",
+      1
+    ],
+    [
+      "ground_index_error",
+      1
+    ],
+    [
+      "multiply",
+      1
+    ]
+  ],
+  "defectKindsAdded": [
+    [
+      "AttributeError: 'SourceFragment' object has no attribute 'compare_left'",
+      32
+    ],
+    [
+      "NotImplementedError: a conditional-expression arm that reduces to an effect is not lifted yet: both arms must be values ",
+      22
+    ],
+    [
+      "TypeError: <class 'sugar_lift_py_tests.caller_parameter_contract.ContractConditionalConstructionV1'>",
+      21
+    ],
+    [
+      "AttributeError: 'ContractConditionalConstructionV1' object has no attribute 'guarded'",
+      17
+    ],
+    [
+      "AttributeError: 'ExitSet' object has no attribute 'value'",
+      13
+    ],
+    [
+      "AssertionError: ",
+      9
+    ],
+    [
+      "ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  ow",
+      1
+    ]
+  ],
+  "defectKindsRemoved": [
+    [
+      "AttributeError: 'ContractConditionalConstructionV1' object has no attribute 'guarded'",
+      3
+    ]
+  ],
+  "desugarOwnersAdded": [
+    [
+      "SequenceUnpackRuntimeEffect",
+      270
+    ],
+    [
+      "RaiseEffect",
+      253
+    ],
+    [
+      "AttributeStoreRuntimeEffect",
+      239
+    ],
+    [
+      "SubscriptStoreRuntimeEffect",
+      159
+    ],
+    [
+      "NameErrorEffect",
+      131
+    ],
+    [
+      "SubscriptDeleteRuntimeEffect",
+      6
+    ],
+    [
+      "YieldSuspensionSugar.desugar",
+      1
+    ]
+  ],
+  "desugarOwnersRemoved": [
+    [
+      "DynamicUnpackAssignSugar.desugar",
+      1084
+    ],
+    [
+      "SubscriptStoreRuntimeEffect",
+      3
+    ]
+  ]
+}

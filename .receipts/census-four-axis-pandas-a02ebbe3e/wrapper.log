@@ -12,3 +12,14 @@ githubJob=
 measuredCommit=unknown
 ownerSidecarAgeSeconds=357.179
 ownerPidVisibleAndAlive=True (a False here means the holder is gone from THIS namespace, which across containers proves nothing -- the lock, not the pid, is the authority)
+heavy-measurement-lease: status=cancelled-before-measurement
+heavy-measurement-lease: stop signal received while waiting for the lease; no measurement was taken
+heavy-measurement-lease: status=cancelled-before-measurement: this run supports NO claim. Not zero. None.
+heavy-measurement-lease: released class=pandas-four-axis-census run=local
+Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x00007ff858b34c00 (most recent call first):
+  <no Python frame>
+heavy-measurement-lease: WARNING failed to write receipt /Users/tsavo/census-a02ebbe3e/.receipts/census-four-axis-pandas-a02ebbe3e/lease-record.json: Command '['/usr/local/opt/python@3.14/bin/python3.14', '/Users/tsavo/census-a02ebbe3e/tools/heavy_measurement_lease_record.py', '--output', '/Users/tsavo/census-a02ebbe3e/.receipts/census-four-axis-pandas-a02ebbe3e/lease-record.json']' returned non-zero exit status 1.
