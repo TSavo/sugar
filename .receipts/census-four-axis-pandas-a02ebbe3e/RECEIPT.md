@@ -242,6 +242,78 @@ as its **owner** instead of an owner name. That is an instrument-hygiene defect
 in the panic's own testimony, not a corpus finding: an owner field should name
 an owner.
 
+## The previous `timeouts = 0` was UNMEASURABLE, not measured-zero
+
+This correction belongs in the record. `sugar_lift_py_tests.census` is one
+process over the whole corpus: no slicing, no per-file deadline, no checkpoint.
+**It had no deadline to cross.** So it could honestly print `timeouts = 0`
+while `core/generic.py` hung, and a kill lost every row it had measured.
+
+That is the same structural defect as the `fn.sugar()`-only false zero on the
+desugar axis: **an instrument incapable of seeing the thing it reports as
+zero.** A zero from an instrument with no boundary is not evidence of absence.
+
+`four_axis_resume.py` is landed here as part of the receipt, not as scaffolding,
+so the next census inherits a boundary: per-file child isolation, a hard
+per-file deadline, a JSONL checkpoint keyed by
+`(corpusCid, idx, rel, sha256)`, the desugar door through
+`DesugarAxis.measure`, and the exact `sorted(root.rglob("*.py"))` order so
+indices stay comparable across runs.
+
+## #6320 — reproduced, and it is a DOOR difference, not a file difference
+
+Per-phase probe on `core/generic.py` (index 121) at `a4eade69a`, each phase
+under its own `SIGALRM` bound (`phase_probe.py`):
+
+| phase | door | seconds |
+|---|---|---|
+| open | `SourceFile.from_path` — **what `census.py` calls** | **0.46** |
+| open | `open_source_file_for_construction(..., populate_derived=True)` — the reproducer | **258.46** |
+| construction | `fn.sugar()` × 223 functions | 3.58 |
+| desugar | `DesugarAxis.measure` | 1.97 |
+
+Same file, same commit, same process: **560x between the two open doors.** It
+did not cross 300s at load ~10–14, but 258.46s is within 14% of the bound, so
+whether it exceeds 300s is load-dependent; 258s is the real quantity.
+
+**The census does not pass `populate_derived`.** It occurs in exactly two
+places: `lift_rpc.py:200` (the parameter, defaulting `True`) and
+`scripts/control_effect_recensus.py:271` (the only caller that passes it). So
+#6315's arm-population wall and this open-phase wall are two different walls
+behind two different doors, and the census never enters the slow one —
+`core/generic.py` completes in 4.96s at `a02ebbe3e` and 6.41s at `a4eade69a`,
+223/223 functions, 0 construction gaps.
+
+`control_effect_recensus` calls the slow door **per file**, which is what any
+control/effect census over this corpus is paying.
+
+## Lease: `/var/tmp` did not serialize, and that is a defect in these two runs
+
+`heavy_measurement_lease.py`'s `DEFAULT_LEASE_PATH` is
+`/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease` — correct
+**inside a runner container**. These runs are ssh-direct as `tsavo`, where
+`/home/runner/.cache` does not exist, so they used `/var/tmp`, which the
+module's own comment records as per-container on battleaxe and therefore
+non-serializing.
+
+`docker inspect` gives the host side of the bind mount:
+
+```
+/home/tsavo/.cache/sugar/binaries -> /home/runner/.cache/sugar/binaries
+```
+
+Taking **that** file blocks correctly: the owner at the time was
+`class=python-sole-construction-floors`, `githubRunId=30201463426`. So real
+concurrent heavy work was running that `/var/tmp` was not excluding.
+
+Consequences, stated precisely:
+
+- The three counting axes are **unaffected** — ratios survive contention.
+- `R(timeout) = 3` at `a4eade69a` is **in question** and is being re-measured
+  under the correct lease (`rows-head.jsonl`, `run_census_head.sh`).
+- `R(timeout) = 0` at `a02ebbe3e` **stands**. Contention can only *add* timeout
+  rows, never remove them, so an unserialized zero is conservative.
+
 ## Honesty — what was NOT measured
 
 - **Nothing on this board is a wall-time claim.** Load is recorded per row
