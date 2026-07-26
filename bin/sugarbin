@@ -688,6 +688,58 @@ cache_dir() {
   printf '%s\n' "${SUGAR_BINARY_CACHE_DIR:-$HOME/.cache/sugar/binaries}"
 }
 
+# The cache is ONE host directory reached under two names: HOME is
+# /home/runner inside a runner container, the owning user's home on the host,
+# and the bind mount joins them (#6355 established this for the lease path).
+# Its artifact cells earn that sharing -- content-addressed, written once,
+# world-readable, and never rewritten once complete. Every identity reads the
+# same bytes under a name derived from those bytes.
+#
+# A Cargo target directory is not that shape. Cargo rewrites .rustc_info.json,
+# the build and artifact locks, every fingerprint and .d file, and the
+# executables themselves on each invocation. Those land at 644 under the
+# writer's umask, and every writer we have -- root under bpytest, uid 1001 in
+# a runner container, uid 1000 interactive over ssh -- defaults to umask 022.
+# Measured on battleaxe: .build children are 755 owned by root:root and
+# 1001:docker with 644 contents. So the first identity to touch a build family
+# owns it permanently and every other identity dies inside Cargo on
+# .cargo-build-lock with a bare EACCES.
+#
+# Group-writable plus setgid does not rescue it. setgid governs the group of
+# new entries, not the mode a foreign umask writes; sharing a mutable Cargo
+# tree would require umask 002 from every writer, including writers inside
+# images we do not own. So the scratch tree is partitioned by identity and the
+# artifact cells stay shared. Sharing is kept exactly where sharing is sound.
+build_identity_key() {
+  local uid
+  uid="$(id -u 2>/dev/null)" || uid=""
+  if [[ -z "$uid" ]]; then
+    log "crime=unnameable-build-identity owner=bin/sugarbin illegal shape=id -u yielded no uid so the per-identity build root under $(cache_dir)/.build cannot be named replacement=run where id(1) works, or set SUGAR_BINARY_BUILD_ROOT to a directory this identity owns"
+    return 1
+  fi
+  printf 'uid-%s\n' "$uid"
+}
+
+# An unusable build root refuses by name and states the correct remedy. It must
+# never suggest repointing SUGAR_BINARY_CACHE_DIR: that is the workaround that
+# discards the shared artifact cells the cache exists to serve.
+require_writable_build_root() {
+  local root="$1" probe owner
+  if ! mkdir -p "$root" 2>/dev/null; then
+    log "crime=uncreatable-build-root owner=bin/sugarbin path=$root current-uid=$(id -u) illegal shape=the per-identity Cargo build root under the host-shared cache could not be created replacement=make $(dirname "$root") creatable by this identity, or set SUGAR_BINARY_BUILD_ROOT to a directory this identity owns -- do NOT repoint SUGAR_BINARY_CACHE_DIR, that abandons every shared artifact cell"
+    return 1
+  fi
+  probe="$root/.sugarbin-write-probe.$$"
+  if ! : >"$probe" 2>/dev/null; then
+    owner="$(stat -c '%u:%g mode=%a' "$root" 2>/dev/null \
+      || stat -f '%u:%g mode=%Lp' "$root" 2>/dev/null \
+      || printf 'unknown')"
+    log "crime=foreign-owned-build-root owner=bin/sugarbin path=$root owned=$owner current-uid=$(id -u) illegal shape=a Cargo target directory owned by another identity cannot be rewritten, and Cargo would otherwise die on .cargo-build-lock with a bare EACCES replacement=remove $root, or set SUGAR_BINARY_BUILD_ROOT to a directory this identity owns -- do NOT repoint SUGAR_BINARY_CACHE_DIR, that abandons every shared artifact cell"
+    return 1
+  fi
+  rm -f "$probe"
+}
+
 shelf_tag_for_stamp() {
   local stamp="$1"
   if [[ -n "${SUGAR_BINARY_SHELF_TAG:-}" ]]; then
@@ -986,11 +1038,18 @@ build_from_source() {
     return 1
   }
   local target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
-  local build_base="${SUGAR_BINARY_BUILD_ROOT:-$(cache_dir)/.build}"
+  local build_base
+  if [[ -n "${SUGAR_BINARY_BUILD_ROOT:-}" ]]; then
+    build_base="$SUGAR_BINARY_BUILD_ROOT"
+  else
+    local identity_key
+    identity_key="$(build_identity_key)" || return 1
+    build_base="$(cache_dir)/.build/$identity_key"
+  fi
   local family_identity
   family_identity="$(build_family_identity "$stamp")" || return $?
   local build_root="$build_base/$(stamp_for_filename "$family_identity")"
-  mkdir -p "$build_root"
+  require_writable_build_root "$build_root" || return 1
   local built="$build_root/$profile/$bin_name"
   # SUGAR_BUILD_STAMP is the authenticated sourceStamp (source matter only).
   # SUGAR_BUILD_GIT_HEAD remains a version/attestation label, not a shelf key.
