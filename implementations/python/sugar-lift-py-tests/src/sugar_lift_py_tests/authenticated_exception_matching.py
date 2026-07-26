@@ -9,29 +9,72 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.ir import Formula
 
 
-def matches_raise_effect(effect, expected) -> bool:
+def matches_raise_effect(effect, expected) -> "MessageVerdict":
     """Match by constructed exception coordinates and authenticated ancestry.
 
-    Exact identity is sufficient. When the raised type carries source-derived
-    MRO testimony, a handler coordinate may match an authenticated ancestor.
-    Missing identity is a construction gap; spelling never participates.
+    The codomain is three-valued, exactly like the message predicate below, and
+    for the same reason. Two authenticated identities settle the question here:
+    exact identity is sufficient, and when the raised type carries
+    source-derived MRO testimony a handler coordinate may match an
+    authenticated ancestor -- that is ``MatchDecided``.
+
+    When either operand's identity is NOT authenticated -- ``raise exc`` on a
+    formal, a handler type this compiler could not resolve to a class -- the
+    question is real and undecidable at lift. It is not a construction gap and
+    it is not ``False``: deciding it either way fabricates a fact about a
+    runtime type nobody testified to. It leaves as ``MatchRetained`` carrying
+    ``adt.is_python_type(raised, handler)``, the reserved tester atom the floor
+    already emits for exactly this question, so the router partitions the
+    incoming exit by it and both faces reach the emitted FOL.
+
+    Loud only where there is no question to retain: an operand that cannot even
+    produce a term has nothing to state the predicate over. Spelling never
+    participates on any arm.
     """
+    from sugar_lift_py_tests.ir import atomic
     from sugar_source_tree.panic import SugarNotWritten
 
     identity_reader = getattr(expected, "exception_type_identity", None)
     expected_identity = identity_reader() if identity_reader is not None else None
     raised_identity = getattr(effect, "exception_type_coordinate", None)
-    if expected_identity is None or raised_identity is None:
+    if expected_identity is not None and raised_identity is not None:
+        if expected_identity == raised_identity:
+            return MatchDecided(True)
+        raised_mro = getattr(effect, "exception_type_mro", None)
+        return MatchDecided(raised_mro is not None and expected_identity in raised_mro)
+
+    owner = "matches_raise_effect"
+    handler_term = expected_identity
+    if handler_term is None:
+        handler_term = _operand_term(expected, owner=owner, role="handler type")
+    raised_term = raised_identity
+    if raised_term is None:
+        raised_term = _operand_term(
+            effect.raised_value, owner=owner, role="raised exception"
+        )
+    if handler_term is None or raised_term is None:
         raise SugarNotWritten(
             owner="matches_raise_effect",
-            observed="handler or raised exception lacks authenticated identity",
-            requested="authenticated exception-type identity on both operands",
-            fix="resolve both exception classes through their lexical coordinates",
+            observed="handler or raised exception has no term to state the test over",
+            requested="an authenticated identity or an emittable operand term",
+            fix="resolve both exception operands through their lexical coordinates",
         )
-    if expected_identity == raised_identity:
-        return True
-    raised_mro = getattr(effect, "exception_type_mro", None)
-    return raised_mro is not None and expected_identity in raised_mro
+    return MatchRetained(atomic("adt.is_python_type", [raised_term, handler_term]))
+
+
+def _operand_term(operand, *, owner, role):
+    """The emitted term for a matcher operand, or ``None`` when it has none.
+
+    ``None`` is not a decision: it is the absence of anything to state the
+    predicate over, and the sole caller turns it into a loud refusal.
+    """
+    del role
+    if operand is None:
+        return None
+    to_term = getattr(operand, "to_term", None)
+    if to_term is None:
+        return None
+    return to_term(owner=owner)
 
 
 @dataclass(frozen=True)
@@ -100,25 +143,42 @@ def _message_term(effect, *, owner):
 def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     """Authenticated identity match, then the contract's optional message predicate.
 
-    The identity half is ``matches_raise_effect`` -- the one matcher, and it is
-    total: a missing identity is loud there, never a quiet ``False``.
+    The identity half is ``matches_raise_effect`` -- the one matcher. BOTH
+    halves have THREE outcomes, and this function is their conjunction, so it
+    is the conjunction of two three-valued verdicts and nothing here may
+    collapse one. A contract that states no pattern asserts nothing about the
+    message (``MatchDecided(True)``). Two ground strings settle the message
+    predicate here. Anything else -- a symbolic message, a computed pattern --
+    leaves as ``MatchRetained`` carrying ``py.re_search(pattern, message)``,
+    the vendor's own predicate spelled on the membrane.
 
-    The message half has THREE outcomes, not two. A contract that states no
-    pattern asserts nothing about the message (``MatchDecided(True)``). Two
-    ground strings settle the predicate here. Anything else -- a symbolic
-    message, a computed pattern -- is a predicate this compiler cannot decide,
-    and deciding it either way would be a fabricated fact. It leaves as
-    ``MatchRetained`` carrying ``py.re_search(pattern, message)``, which is the
-    vendor's own predicate spelled on the membrane.
+    A ``False`` on either half is ``False`` outright: a conjunct that is
+    decidably false settles the conjunction without deciding the other half.
+    Two open halves leave as one conjoined obligation.
     """
     import re
 
-    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.ir import and_, atomic
 
-    if not matches_raise_effect(effect, expected):
+    identity = matches_raise_effect(effect, expected)
+    if isinstance(identity, MatchDecided) and not identity.value:
         return MatchDecided(False)
+    retained_identity = (
+        identity.obligation if isinstance(identity, MatchRetained) else None
+    )
+
+    def _conjoin(verdict):
+        """Fold the open identity half, if any, into a settled message half."""
+        if retained_identity is None:
+            return verdict
+        if isinstance(verdict, MatchDecided):
+            if not verdict.value:
+                return MatchDecided(False)
+            return MatchRetained(retained_identity)
+        return MatchRetained(and_([retained_identity, verdict.obligation]))
+
     if pattern is None:
-        return MatchDecided(True)
+        return _conjoin(MatchDecided(True))
 
     owner = "authenticated_exception_matching.raise_effect_message_verdict"
     pattern_term = pattern.to_term(owner=owner)
@@ -127,6 +187,10 @@ def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     ground_pattern = _ground_string(pattern_term)
     ground_message = _ground_string(message_term)
     if ground_pattern is not None and ground_message is not None:
-        return MatchDecided(re.search(ground_pattern, ground_message) is not None)
+        return _conjoin(
+            MatchDecided(re.search(ground_pattern, ground_message) is not None)
+        )
 
-    return MatchRetained(atomic("py.re_search", [pattern_term, message_term]))
+    return _conjoin(
+        MatchRetained(atomic("py.re_search", [pattern_term, message_term]))
+    )

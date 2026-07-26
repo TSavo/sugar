@@ -50,11 +50,18 @@ class EffectBinding:
         The **witness identity is the slot itself** (effect-slot(S) on returns).
         Type is separate testimony. Origin links the slot to a deterministic
         raise-effect occurrence when available — never identity-from-type-alone.
+
+        Each projection is a TERM, not a predicate. ``=`` relates two terms, so
+        ``effect_slot_kind(S)`` must be built with ``ctor``; building it with
+        ``atomic`` put a Formula in a term position, and a fact that cannot be
+        content addressed is a fact that cannot be compared, normalized, or
+        pinned. It stayed latent only because a decided handler scan never
+        emitted two fact-carrying arms that had to normalize together.
         """
         slot = str_const(self.slot_id)
         facts = [
             InvValue(
-                eq(atomic("effect_slot_kind", [slot]), str_const(self.kind)),
+                eq(ctor("effect_slot_kind", [slot]), str_const(self.kind)),
                 site=site,
             ),
         ]
@@ -62,7 +69,7 @@ class EffectBinding:
             facts.append(
                 InvValue(
                     eq(
-                        atomic("effect_slot_type", [slot]),
+                        ctor("effect_slot_type", [slot]),
                         str_const(self.type_name),
                     ),
                     site=site,
@@ -74,7 +81,7 @@ class EffectBinding:
             facts.append(
                 InvValue(
                     eq(
-                        atomic("effect_slot_origin", [slot]),
+                        ctor("effect_slot_origin", [slot]),
                         ctor(
                             "python:raise_effect_occurrence",
                             [str_const(occurrence)],
