@@ -18,12 +18,12 @@ layers. Only the last two fuse a kind with a symbol.
 | # | File:line | What it does |
 |---|---|---|
 | 1 | `implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_construction.py:423` | mints `ManagerConstructionGapV1("opaque-call-target", resolved.cid, opaque[0])` — **kind and symbol are separate fields here.** |
-| 2 | `implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:585` | `_construction_gap_kind()` returns `f"{kind}:{text}"` — **the fusion happens here.** |
-| 3 | `implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:604` | `_install_derivation_gap()` stores that fused string as `ContextManagerResolutionGapV1.kind` |
+| 2 | `implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:737` | `_construction_gap_kind()` returns `f"{kind}:{text}"` — **the fusion happens here.** |
+| 3 | `implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:749-754` | `_install_derivation_gap()` stores that fused string as `ContextManagerResolutionGapV1.kind` |
 | 4 | `implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py:183` | `_cm_resolution_bucket()` sees `parse` fall through to `UNRECOGNIZED_RESOLUTION_KIND` and emits `f"gap:unrecognized:{kind}"` |
 
 Two more copies of the same fusion sit inline at
-`manager_summary_derivation.py:556` and `:570` (protocol-construction and
+`manager_summary_derivation.py:712` and `:723` (protocol-construction and
 summary-derivation gaps), so the pattern is three sites, not one.
 
 **The structural key already exists at every layer except the reporting one.**
@@ -104,6 +104,45 @@ arbitrarily and discards the rest, so the term is both symbol-carrying and
 lossy — the count under `:func` is not "5,737 sites blocked on `func`", it is
 "5,737 sites whose blocking set happened to sort `func` first".
 
+## 2b. The kind vocabulary census — structural vs symbol-carrying
+
+**The per-kind count board is not reproducible on the Mac under this brief**
+(no lease, no census, no full sweep), and no file in the tree carries the
+`gap:unrecognized:*` counts — `grep -rl "gap:unrecognized"` over the worktree
+is empty, and `docs/ledgers/recensus-1032-live` predates the term. The counts
+in the header are the coordinator's read of the battleaxe baseline. The
+**vocabulary**, however, is fully derivable from the producers, and that is the
+part that decides the fix.
+
+Everything that can reach `_cm_resolution_bucket` comes from exactly five
+producers:
+
+| Producer | Kinds | Fused with a symbol? |
+|---|---|---|
+| `_install_derivation_gap` literals (`manager_summary_derivation.py:626, 680`) | `no-derived-contract`, `incomplete-call-actuals` | **no** — bare structural |
+| import-binding resolution gap (`manager_summary_derivation.py:632-633`) | whatever `resolve_import_binding` returned, passed as bare `str(kind)` | **no** — **this site already does it right** |
+| `ManagerConstructionGapV1` (`manager_construction.py:96-104`) via `_construction_gap_kind` (`:737`) | `artifact-mismatch`, `definition-missing`, `opaque-call-target`, `non-manager-result`, `call-binding`, `force-floor` | **yes** — all six get `:detail` appended |
+| `ManagerProtocolConstructionGapV1` (`manager_protocol_construction.py:53-56`) via `:712` | `enter-missing`, `exit-missing`, `method-construction` | **yes** |
+| `DerivedManagerSummaryGapV1` (`manager_summary_derivation.py:72-79`) via `:723` | `enter-may-halt`, `exit-may-halt`, `opaque-exit-truthiness` | **yes** |
+
+**Split: 3 structural producers, 12 symbol-carrying kinds across 3 fused
+producers.** The bare-`str(kind)` site at `:633` is the existing proof that
+the unfused shape already works in this exact function — it is what the other
+three sites should look like. Every kind that
+carries a non-empty `detail` becomes a fused key, and every fused key falls
+through `WithConstructionGapKind.parse` into `gap:unrecognized:*`. That is why
+~6,500 of ~7,250 rows carry a kind the closed enum does not name: **not one
+missing enum member, but twelve kinds × unbounded detail strings.** The
+declared vocabulary can never catch up, because the cardinality of the fused
+key set is the cardinality of the detail strings, which is unbounded by
+construction.
+
+Note the fusion is not uniform across `detail` shapes. `force-floor` composes
+`f"{owner}:{observed}"` (`manager_construction.py`, `ConstructionPanic`
+membrane), so `gap:unrecognized:force-floor:<owner>:<observed>` is a
+**three**-segment fusion, and `detail` is truncated to 80 chars at `:745`. A
+key that can be truncated is not an identity.
+
 ## 3. Relation to the `With` residual — **these are not With construction failures**
 
 The baseline shows 7,663 `with` sites against 2 With-attributable construction
@@ -114,7 +153,7 @@ They are **preconstruction derivation** outcomes: `derive_manager_summaries`
 tried to derive a context-manager contract for a `with` item, could not reach a
 `ConstructedManagerBehaviorV1`, and installed a `ContextManagerResolutionGapV1`
 in place of a derived ref. The `With` node then raises
-`ContextManagerResolutionConstructionGap` at `nodes.py:4375-4388` and reports
+`ContextManagerResolutionConstructionGap` at `nodes.py:4453-4466` and reports
 it. The failure is upstream of `With` entirely: `With` is the *reporter*, not
 the *cause*. Every one of these rows is a manager-body construction failure
 that a `with` statement happened to demand.
@@ -129,9 +168,9 @@ Carry what the mint already knows, and stop re-deriving it from a string.
 
 1. **Add `detail` as a field on `ContextManagerResolutionGapV1`**, beside the
    existing `kind` and `target_symbol`. `_install_derivation_gap` passes the
-   gap's `kind` and `detail` through unfused. Delete `_construction_gap_kind`
+   gap's `kind` and `detail` through unfused. Delete `_construction_gap_kind` (`:737`)
    and the two inline `f"{kind}:{detail}"` copies at
-   `manager_summary_derivation.py:556` and `:570`.
+   `manager_summary_derivation.py:712` and `:723`.
 2. **Split `opaque-call-target` into the mechanisms it is hiding**, at the
    mint in `manager_construction.py`, by *authenticated structural condition*
    — never by a name table:
@@ -161,7 +200,7 @@ Carry what the mint already knows, and stop re-deriving it from a string.
 No repin.**
 
 Verified: the fused string is written into `context.source_derived_contract_refs`
-(`manager_summary_derivation.py:604`), an in-process dict on
+(`manager_summary_derivation.py:754`), an in-process dict on
 `TreeConstructionContextV1` (`context_manager_resolution.py:161`). It has
 exactly three consumers —
 
