@@ -22,34 +22,54 @@ from declared_corpus import (
 )
 
 
+def _refusal_from(*args):
+    """Call the refusal and return it, converting a degraded skip into a FAILURE.
+
+    ``pytest.raises`` cannot do this job. If the mechanism regressed to
+    ``pytest.skip``, the raised Skipped propagates straight through the
+    ``raises`` block and the control SKIPS -- reporting green while proving
+    nothing. That is the defect being policed, reproduced inside its own
+    policeman, so the skip is caught explicitly and re-raised as an assertion.
+    """
+    try:
+        require_declared_corpus(*args)
+    except pytest.skip.Exception as skipped:  # noqa: F841 - degraded mechanism
+        raise AssertionError(
+            "require_declared_corpus degraded into a SKIP "
+            f"({skipped!r}); a missing declared corpus must fail, or every "
+            "law using it passes vacuously again"
+        ) from None
+    except DeclaredCorpusMissing as refusal:
+        return refusal
+    raise AssertionError("require_declared_corpus did not refuse at all")
+
+
 def test_a_missing_declared_corpus_fails_and_is_not_a_skip():
     """The whole point: absence of a promised corpus goes RED, not quiet."""
-    with pytest.raises(DeclaredCorpusMissing) as caught:
-        require_declared_corpus(
-            "numpy is not installed",
-            "/nonexistent/site-packages/numpy",
-            "sugar-build.toml pin",
-            "install the package extra",
-        )
+    refusal = _refusal_from(
+        "numpy is not installed",
+        "/nonexistent/site-packages/numpy",
+        "sugar-build.toml pin",
+        "install the package extra",
+    )
 
-    assert not isinstance(caught.value, pytest.skip.Exception), (
+    assert not isinstance(refusal, pytest.skip.Exception), (
         "a declared corpus that is missing must FAIL; skipping reports the "
         "law as green on every machine that lacks it"
     )
-    assert isinstance(caught.value, AssertionError)
+    assert isinstance(refusal, AssertionError)
 
 
 def test_the_refusal_names_the_corpus_the_contract_and_the_remedy():
     """A refusal that does not name its contract teaches the workaround."""
-    with pytest.raises(DeclaredCorpusMissing) as caught:
-        require_declared_corpus(
-            "pandas is not installed",
-            "/nonexistent/pandas",
-            "sugar-build.toml (pandas = 3.0.3)",
-            "pip install -e '...[test]'",
-        )
+    refusal = _refusal_from(
+        "pandas is not installed",
+        "/nonexistent/pandas",
+        "sugar-build.toml (pandas = 3.0.3)",
+        "pip install -e '...[test]'",
+    )
 
-    message = str(caught.value)
+    message = str(refusal)
     assert "pandas is not installed" in message
     assert "/nonexistent/pandas" in message
     assert "sugar-build.toml (pandas = 3.0.3)" in message
