@@ -158,6 +158,13 @@ def classify(path: Path, deadline: float) -> dict:
         except ExitSetFactoringGap as gap:
             row["status"] = "ExitSetFactoringGap"
             row["testimony"] = _testimony(gap)
+            # #6356: the term is not a scalar. Each refusal says whether a
+            # producer failed to testify (possibly closable) or no exclusion
+            # was available to this prover (correct output). Read off the arms
+            # the refusal carries, never re-derived from its message.
+            classification = gap.classification()
+            if classification is not None:
+                row["factoringGap"] = classification.row()
         except ConstructionPanic as panic:
             row["status"] = "ConstructionPanic"
             row["testimony"] = _testimony(panic)
@@ -177,6 +184,9 @@ def classify(path: Path, deadline: float) -> dict:
     r_unnamed = sum(
         count for status, count in statuses.items() if status.startswith("raised:")
     )
+    gap_rows = [row.get("factoringGap") for row in rows if row.get("factoringGap")]
+    gap_split = Counter(row["kind"] for row in gap_rows)
+    gap_work = sum(1 for row in gap_rows if row["isRemainingWork"])
     completed = len(rows) - r_timeout
 
     return {
@@ -187,6 +197,13 @@ def classify(path: Path, deadline: float) -> dict:
         "R(construction_panics)": r_panics,
         "R(factoring_gaps)": r_gaps,
         "R(unnamed_exceptions)": r_unnamed,
+        # The (a)/(b) split. `R(factoring_gaps)` counts every refusal;
+        # `R(factoring_gaps_remaining_work)` counts only those a producer could
+        # plausibly close by testifying. The rest are the gate working, and a
+        # term that mixes them overstates the board.
+        "R(factoring_gaps_remaining_work)": gap_work,
+        "factoring_gap_split": dict(sorted(gap_split.items())),
+        "factoring_gap_rows": gap_rows,
         "completed_denominator": completed,
         "stableZero": bool(
             completed > 0
@@ -233,6 +250,8 @@ def main() -> int:
         f"timeouts={payload['R(timeout)']} "
         f"construction_panics={payload['R(construction_panics)']} "
         f"factoring_gaps={payload['R(factoring_gaps)']} "
+        f"(remaining_work={payload['R(factoring_gaps_remaining_work)']} "
+        f"split={payload['factoring_gap_split']}) "
         f"unnamed_exceptions={payload['R(unnamed_exceptions)']} "
         f"statuses={payload['statuses']} out={args.out}",
         flush=True,

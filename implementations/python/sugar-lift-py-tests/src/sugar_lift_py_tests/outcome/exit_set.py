@@ -62,7 +62,28 @@ class ExitSetFactoringGap(ValueError):
 
     Loud on contact, in the same shape as ``SourceCallBindingGap``: the message
     names the two guards, why the collapse would lose an outcome, and the fix.
+
+    Carries the two refusing ARMS as well as the prose (#6356). A census that
+    has to re-derive them from the message is parsing a repr, and the split
+    between "a producer failed to testify" and "no exclusion is available"
+    is read off carried testimony -- see `outcome/factoring_gap_kind.py`.
+    This is data on the exception, not a change to when it is raised.
     """
+
+    def __init__(self, message: str, left=None, right=None) -> None:
+        super().__init__(message)
+        self.left = left
+        self.right = right
+
+    def classification(self):
+        """The (a)/(b) split for this occurrence, or None if arms are absent."""
+        if self.left is None or self.right is None:
+            return None
+        from sugar_lift_py_tests.outcome.factoring_gap_kind import (
+            classify_factoring_gap,
+        )
+
+        return classify_factoring_gap(self.left, self.right)
 
 
 @dataclass(frozen=True)
@@ -423,7 +444,9 @@ class ExitSet(Generic[T]):
                         "widen _are_exclusive to guess exclusivity from how the "
                         "formulas are spelled.\n"
                         f"  arm A faces: {sorted(str(f) for f in arm.faces)}\n"
-                        f"  arm B faces: {sorted(str(f) for f in other.faces)}"
+                        f"  arm B faces: {sorted(str(f) for f in other.faces)}",
+                        arm,
+                        other,
                     )
 
         from sugar_lift_py_tests.floor import GuardedValue
