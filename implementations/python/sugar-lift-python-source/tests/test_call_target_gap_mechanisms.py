@@ -1,12 +1,17 @@
 """The four conditions ``opaque-call-target`` used to fuse into one name.
 
 One kind named four structurally different failures, three of them carrying a
-callee spelling in the key.  On the pinned pandas board that made
-``opaque-call-target:func`` 79.0% of every resolution row -- a *capability* gap
-(calling a value) wearing a vendor-looking name, indistinguishable from a
-*coverage* gap (stdlib outside the artifact) and from a *defect* (an in-artifact
-symbol the export door failed on).  A measurement a vendor rename can move is
-not a measurement.
+callee spelling in the key.  ``opaque-call-target:func`` was the largest single
+term on the pinned pandas board (#6371) -- a *capability* gap (calling a value)
+wearing a vendor-looking name, indistinguishable from a *coverage* gap (stdlib
+outside the artifact) and from a *defect* (an in-artifact symbol the export door
+failed on).  A measurement a vendor rename can move is not a measurement.
+
+Splitting these apart REATTRIBUTES rows; it drains none of them.  The capability
+itself is open work (#6409), as is the door defect (#6410).  Corpus row counts
+from the pre-`d10774abc` ledger are deliberately not restated here: that
+collection universe was short by 290 laws and the figures are pending
+re-baseline.
 
 Each mechanism gets both faces here:
 
@@ -242,8 +247,9 @@ def test_in_artifact_callee_whose_frame_fails_is_a_door_defect(tmp_path):
     ``support.build_slot`` is a real definition inside this artifact's own file
     manifest, statically exported and reached through the same door.  Its own
     body is what refuses.  Under the fused key this was indistinguishable from
-    a stdlib symbol the artifact does not contain -- eight rows of real defect
-    hidden inside 714 rows of coverage.
+    a stdlib symbol the artifact does not contain -- a real defect hidden inside
+    a much larger coverage bucket, and therefore never worked.  Tracked at
+    #6410; this test only makes it nameable.
     """
     result = _construct(
         tmp_path,
@@ -317,9 +323,10 @@ def test_the_kind_is_a_structural_key_and_never_carries_a_spelling(
 def test_the_whole_blocking_set_rides_the_row_not_the_first_hit(tmp_path):
     """``detail`` is the SORTED blocking set, not whichever callee sorted first.
 
-    ``opaque[0]`` made the reported symbol depend on statement order, so
-    ``5,737 sites blocked on func`` actually meant ``5,737 sites whose blocking
-    set happened to put func first``.
+    ``opaque[0]`` made the reported symbol depend on statement order, so a term
+    reading ``N sites blocked on <callee>`` actually meant ``N sites whose
+    blocking set happened to put <callee> first``.  Order-dependent, and lossy
+    about every other blocker.
     """
     result = _construct(
         tmp_path,

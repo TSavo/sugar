@@ -89,8 +89,9 @@ class ContextManagerResolutionGapV1:
     ``kind`` is the STRUCTURAL key and nothing else -- a member of the closed
     vocabulary in :func:`_gap_kinds`.  It never contains a symbol.  The
     derivation layer used to fuse ``f"{kind}:{detail}"`` into this field, which
-    made 89.3% of the pinned-pandas resolution board keyed by a vendor spelling
-    and produced, in process, a gap this module's own decoder would refuse.
+    put most of the pinned-pandas resolution board's mass under a vendor spelling
+    (#6371) and produced, in process, a gap this module's own decoder would
+    refuse.
 
     ``target_symbol`` and ``detail`` are DATA: they ride the row for a human
     reading one row, and are never a bucket key.  A measurement a vendor rename
