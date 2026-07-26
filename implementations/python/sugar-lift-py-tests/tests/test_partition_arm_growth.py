@@ -1,4 +1,4 @@
-"""The complexity tooth for #6324: a conditional expression is not an exponent.
+"""The complexity tooth for #6324: a partition is not an exponent.
 
 #6319 taught `IfExpSugar` that an arm which halts is a PARTITION, not a missing
 recognizer. That was right, and it drained 369 desugar-defect rows. It also put
@@ -56,6 +56,7 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
     Halted,
+    factored_operand,
     outcome_to_exitset,
 )
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
@@ -175,6 +176,87 @@ def test_both_faces_values_survive_inside_the_guarded_chain():
     assert isinstance(chain, GuardedValue)
     assert chain.when_true == "then-value"
     assert chain.when_false == "else-value"
+
+
+def test_a_partitioning_operand_enters_a_fold_with_one_completed_arm():
+    """THE BOUND, at the shared door.
+
+    `collection_sugar._reduce_into`, `method_call_sugar._collect`,
+    `bool_op_sugar` and `fstring_sugar` are the same k-step fold. The
+    accumulator cannot be factored (its completed value is the growing tuple),
+    so the OPERAND is, and `factored_operand` is the one door that does it.
+    """
+    assert _completed_arms(factored_operand(_partitioning_arm("element"))) == 1
+
+
+def test_the_operand_door_does_not_touch_a_plain_outcome():
+    """DISCRIMINATING. A `Complete` operand must pass through as itself.
+
+    Widening every operand into the exit algebra would satisfy the bound above
+    and route ordinary values through a partition they do not have.
+    """
+    plain = Complete("value")
+
+    assert factored_operand(plain) is plain
+
+
+def test_a_partitioning_operand_folded_k_times_does_not_multiply():
+    """THE GROWTH LAW at a fold, the shape `_reduce_into` builds.
+
+    Each step appends one factored operand to the accumulated tuple, exactly as
+    a collection display does. `1, 2, 4, 8, ...` here is the `test_arrow.py`
+    regression: 133,104 arms arrived at ONE `normalize` call through this loop.
+    """
+    series = []
+    for element_count in OPERAND_COUNTS:
+        outcome = Complete(())
+        for index in range(element_count):
+            got = factored_operand(_partitioning_arm(f"element{index}"))
+            outcome = outcome.and_then(
+                lambda collected, _got=got: _got.and_then(
+                    lambda value: Complete((*collected, value))
+                )
+            )
+        series.append(_completed_arms(outcome))
+
+    assert series == [1] * len(OPERAND_COUNTS), (
+        f"completed arms by element count {dict(zip(OPERAND_COUNTS, series))}: a "
+        "k-operand fold is multiplying arms again (#6324). Send each operand "
+        "through `factored_operand` before it enters the fold."
+    )
+
+
+def test_a_fold_conserves_every_halted_arm():
+    """DISCRIMINATING. Bounding by dropping halts would pass the law above.
+
+    k partitioning elements halt on k distinct guards, and every one of those
+    guards is the other half of the meaning. They arrive as ONE halted arm --
+    the k elements share a destination (the same effect, the same state), so
+    `normalize` merges them by DISJOINING their guards, which conserves each
+    face rather than discarding it. So the assertion is on the guard, not on
+    the arm count: `not element0 or not element1 or ...` must still mention
+    every element that could halt.
+    """
+    element_count = 4
+    outcome = Complete(())
+    for index in range(element_count):
+        got = factored_operand(_partitioning_arm(f"element{index}"))
+        outcome = outcome.and_then(
+            lambda collected, _got=got: _got.and_then(
+                lambda value: Complete((*collected, value))
+            )
+        )
+
+    exits = outcome_to_exitset(outcome)
+    halted = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert len(halted) == 1
+
+    spelled = repr(halted[0].guard)
+    for index in range(element_count):
+        assert f"element{index}" in spelled, (
+            f"element{index}'s halting face is missing from the halted guard "
+            f"{spelled}: an arm was dropped, not merged (#6324)."
+        )
 
 
 def test_two_value_conditionals_still_fuse_without_entering_the_exit_algebra():

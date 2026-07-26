@@ -42,7 +42,11 @@ class BoolOpSugar(Sugar):
         from functools import reduce
 
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome.exit_set import _and_guards, _or_guards
+        from sugar_lift_py_tests.outcome.exit_set import (
+            _and_guards,
+            _or_guards,
+            factored_operand,
+        )
         from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
         # Operands thread through `and_then`, the one door every Outcome variant
@@ -53,7 +57,10 @@ class BoolOpSugar(Sugar):
         # Reading `.value` off the outcome assumed exactly one arm and was the
         # `'ExitSet' object has no attribute 'value'` defect here.
         def collect(operand, collected):
-            return operand.desugar(ctx).and_then(
+            # One completed arm per operand (#6324): an unfactored partitioning
+            # conjunct multiplies the accumulated formula tuple, and k conjuncts
+            # distribute into m ** k arms.
+            return factored_operand(operand.desugar(ctx)).and_then(
                 # Same truth→formula projection as if/if-exp: symbolic formulas
                 # stand as themselves; ground True/False (including None.truth →
                 # False) fold through true_guard/false_guard. Never raise bare

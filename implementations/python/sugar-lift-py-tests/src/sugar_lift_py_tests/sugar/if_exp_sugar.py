@@ -160,7 +160,7 @@ class IfExpSugar(Sugar):
         # that is first-match-wins carries them exactly. Nothing is capped,
         # nothing is pruned, no arm is dropped, and no halted arm is touched --
         # the halted face already grows linearly at the exit level.
-        exits = exits.factor_completed()
+        exits = exits.factor_completed()  # `factored_operand`'s half that stays an ExitSet
 
         # A partition with a single completed face and no halt is a plain value
         # again (normalize may have merged the faces): collapse rather than hand

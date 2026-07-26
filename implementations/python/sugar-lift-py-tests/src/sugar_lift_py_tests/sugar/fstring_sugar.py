@@ -88,6 +88,7 @@ class JoinedStrSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         if not self.parts:
             return Complete(StringValue(""))
@@ -96,10 +97,13 @@ class JoinedStrSugar(Sugar):
         # PARTITIONS keeps every arm and each arm concatenates under its own
         # guard. `acc.value.add(right.value, ...)` assumed both sides were one
         # unconditional value.
-        outcome = self.parts[0].desugar(ctx)
+        # One completed arm per part (#6324): concatenation is a k-step fold
+        # through `ExitSet.sequence`, so an unfactored partitioning part
+        # multiplies the accumulator at every remaining part.
+        outcome = factored_operand(self.parts[0].desugar(ctx))
         for part in self.parts[1:]:
             outcome = outcome.and_then(
-                lambda left, part=part: part.desugar(ctx).and_then(
+                lambda left, part=part: factored_operand(part.desugar(ctx)).and_then(
                     lambda right: left.add(right, self.site)
                 )
             )
@@ -109,13 +113,14 @@ class JoinedStrSugar(Sugar):
         """Project this JoinedStr as the reference ``python:fstring`` ctor."""
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         # Same law as `desugar`: every part threads through `and_then`, so a
         # halting or partitioning part is conserved rather than read as `.value`.
         outcome = Complete(())
         for part in self.parts:
             outcome = outcome.and_then(
-                lambda terms, part=part: part.desugar(ctx).and_then(
+                lambda terms, part=part: factored_operand(part.desugar(ctx)).and_then(
                     lambda value: Complete(
                         (
                             *terms,
