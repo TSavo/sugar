@@ -428,3 +428,136 @@ def test_frame_bound_names_excludes_names_this_frame_does_not_bind(tmp_path):
     assert "comprehended" not in binders
     assert "nested_param" not in binders
     assert "nested_local" not in binders
+
+
+# --------------------------------------------------------------------------
+# The scan reaches METHODS, not only module-level functions
+#
+# The class arm was absent, and its absence was not a reporting gap: a method
+# calling a name with no authenticated defining source CONSTRUCTED, and the
+# unresolvable call was content-addressed into the manager-construction CID.
+# Whether a body is spelled as a function or as a method is syntax; it must not
+# decide whether construction authenticates its callees.
+# --------------------------------------------------------------------------
+
+
+_ABSENT_FROM_ARTIFACT_METHOD = (
+    "class Slot:\n"
+    "    def __init__(self, label):\n"
+    "        self.label = absent_from_artifact(label)\n"
+    "\n"
+    "def make_guard(expected):\n"
+    "    return Slot(expected)\n"
+)
+
+_CALLED_PARAMETER_METHOD = (
+    "class Slot:\n"
+    "    def __init__(self, helper):\n"
+    "        self.label = helper()\n"
+    "\n"
+    "def make_guard(expected):\n"
+    "    return Slot(expected)\n"
+)
+
+
+def test_method_calling_an_absent_symbol_refuses_instead_of_fabricating(tmp_path):
+    """LYING TWIN, and the reason this arm exists.
+
+    Before the class arm, this exact source produced a
+    ``ConstructedManagerBehaviorV1`` whose receiver field held a
+    ``CallSiteValue`` with ``body=None``, ``source_call_frame_cid=None`` and
+    ``authenticated_target_symbol=None`` -- an unauthenticated call, carried
+    into ``receiver_state.identity`` and from there into
+    ``manager_construction_cid``.  A construction CID asserting an
+    authenticated receiver over a call the system could not see through is a
+    fabricated contract, which ``_resolve_external_call_frame`` explicitly
+    promises never to yield.
+    """
+    result = _construct(tmp_path, _ABSENT_FROM_ARTIFACT_METHOD)
+
+    assert isinstance(result, ManagerConstructionGapV1), result
+    assert result.kind == "call-target-source-absent"
+    assert result.detail == "absent_from_artifact"
+
+
+def test_method_calling_a_parameter_is_a_value_call_target(tmp_path):
+    """A called parameter is higher-order dispatch inside a method too."""
+    result = _construct(tmp_path, _CALLED_PARAMETER_METHOD)
+
+    assert isinstance(result, ManagerConstructionGapV1), result
+    assert result.kind == "value-call-target"
+    assert result.detail == "helper"
+
+
+def test_method_calling_a_module_definition_still_constructs(tmp_path):
+    """TRUTHFUL TWIN: the arm refuses unauthenticated callees, not methods.
+
+    Same class, same call shape, callee authenticated in this artifact.  If
+    this went red the arm would be refusing syntax rather than opacity.
+    """
+    result = _construct(
+        tmp_path,
+        "def picked(value):\n"
+        "    return 7\n"
+        "\n"
+        "class Slot:\n"
+        "    def __init__(self, label):\n"
+        "        self.label = picked(label)\n"
+        "\n"
+        "def make_guard(expected):\n"
+        "    return Slot(expected)\n",
+    )
+
+    assert isinstance(result, ConstructedManagerBehaviorV1), result
+
+
+@pytest.mark.parametrize(
+    "spelling,source",
+    [
+        ("method", _ABSENT_FROM_ARTIFACT_METHOD),
+        (
+            "function",
+            "def make_guard(expected):\n    return absent_from_artifact(expected)\n",
+        ),
+    ],
+)
+def test_both_spellings_of_the_same_opacity_reach_the_same_kind(
+    tmp_path, spelling, source
+):
+    """DISCRIMINATION: the two faces must AGREE.
+
+    Asserting each spelling separately would still pass if one silently
+    constructed -- which is exactly what the method face used to do.  This is
+    the assertion that cannot: same condition, same kind, whichever syntax
+    carries it.
+    """
+    result = _construct(tmp_path, source)
+
+    assert isinstance(result, ManagerConstructionGapV1), (spelling, result)
+    assert result.kind == "call-target-source-absent", spelling
+
+
+def test_scanned_definitions_reaches_methods_and_nothing_else(tmp_path):
+    """The scan universe, read directly off a class and a function."""
+    from sugar_lift_python_source.manager_construction import _scanned_definitions
+    from sugar_source_tree.nodes import ClassDef
+
+    source = (
+        "class Slot:\n"
+        "    field = 1\n"
+        "    def first(self):\n"
+        "        return 1\n"
+        "    def second(self):\n"
+        "        return 2\n"
+        "\n"
+        "def loose():\n"
+        "    return 3\n"
+    )
+    tree = SourceFile((source, "scan.py", blake3_512_of(source.encode())))
+    klass = next(n for n in tree.root.body if isinstance(n, ClassDef))
+    function = next(
+        n for n in tree.root.body if isinstance(n, FunctionDef) and n.name == "loose"
+    )
+
+    assert tuple(d.name for d in _scanned_definitions(klass)) == ("first", "second")
+    assert tuple(d.name for d in _scanned_definitions(function)) == ("loose",)

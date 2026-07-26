@@ -517,11 +517,26 @@ def _resolve_source_visible_frame_uncached(
                 return kind, tuple(sorted(blocked[kind]))
         return None
 
-    if isinstance(target, FunctionDef):
-        blocking = _blocking_call_targets(target)
-        if blocking is not None:
-            kind, names = blocking
-            return ManagerConstructionGapV1(kind, resolved.cid, ",".join(names))
+    # Every reachable definition is scanned, whether it is written as a
+    # module-level function or as a method of a reachable class.
+    #
+    # The class arm used to be absent, and its absence was not a reporting gap:
+    # a method calling a name with no authenticated defining source CONSTRUCTED.
+    # The unresolvable call was carried into the receiver as a `CallSiteValue`
+    # with `body=None`, `source_call_frame_cid=None` and
+    # `authenticated_target_symbol=None`, and that value was then content-addressed
+    # into `receiver_state.identity` and `manager_construction_cid` -- a
+    # manager-construction CID asserting an authenticated receiver over a call
+    # the system could not see through.  `_resolve_external_call_frame` promises
+    # it "never yields a fabricated contract"; that promise held only on the
+    # function path.  The same source written as a module-level function refused
+    # loudly, so the two faces disagreed and the silent one was wrong.
+    for definition in (target,) + tuple(definitions):
+        for scanned in _scanned_definitions(definition):
+            blocking = _blocking_call_targets(scanned)
+            if blocking is not None:
+                kind, names = blocking
+                return ManagerConstructionGapV1(kind, resolved.cid, ",".join(names))
 
     frames: dict[str, object] = {}
     reaching_classes: dict[str, ClassDef] = {}
@@ -705,6 +720,22 @@ def _classify_named_call_target(
     if builtin_floor.value_if_bound(name) is not None:
         return "builtin"
     return "free-name"
+
+
+def _scanned_definitions(definition: Node) -> tuple[FunctionDef, ...]:
+    """The frames a definition contributes to the call-target scan.
+
+    A function contributes itself.  A class contributes its methods -- each is
+    an ordinary frame with its own parameters and locals, and a called name
+    inside one is exactly as opaque as the same call written at module level.
+    Whether a body is spelled as a function or as a method is syntax; it must
+    not decide whether construction authenticates its callees.
+    """
+    if isinstance(definition, FunctionDef):
+        return (definition,)
+    if isinstance(definition, ClassDef):
+        return tuple(item for item in definition.body if isinstance(item, FunctionDef))
+    return ()
 
 
 def _frame_bound_names(function: FunctionDef) -> frozenset[str]:
