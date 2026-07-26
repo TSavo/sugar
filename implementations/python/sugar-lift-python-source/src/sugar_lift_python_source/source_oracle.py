@@ -21,10 +21,12 @@
 from __future__ import annotations
 
 import importlib.machinery
+import importlib.metadata
 import os
 import sys
 from collections import OrderedDict
-from pathlib import Path
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import typed_node_api as typed
@@ -187,7 +189,89 @@ def workspace_path_source(path: str, *, root: str) -> tuple[str, str, str]:
         raise SourceUnavailable(
             f"source `{path}` lies outside workspace root `{root}`: {exc}"
         ) from exc
-    return (source, relative.as_posix(), source_cid)
+    locus = relative.as_posix()
+    require_recorded_seat(path, locus)
+    return (source, locus, source_cid)
+
+
+def require_recorded_seat(path: str, locus: str) -> None:
+    """For an installed file, the locus must BE the seat its distribution recorded.
+
+    ``is_absolute()`` is a string test standing in for a property. The law it
+    serves is "another checkout can resolve this address"; what it checks is
+    "this string starts with a slash". Strip the slash and the two come apart::
+
+        workspace_path_source(".../site-packages/pandas/core/frame.py", root="/")
+          -> "Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/frame.py"
+
+    That locus is exactly as machine-specific and unresolvable as the absolute
+    path it was derived from, and ``is_absolute()`` accepts it. So does every
+    intermediate root: ``root=.../pandas`` yields ``core/frame.py`` and
+    ``root=.../pandas/core`` yields ``frame.py`` -- three different addresses
+    for one file, all accepted, none of them what any other checkout would
+    resolve.
+
+    An installed distribution states the answer itself. Its RECORD lists the
+    seat of every file it installed, relative to the install root, and
+    ``dependency_artifact.py`` rejects an absolute seat structurally rather
+    than by string inspection. So for a file the RECORD covers, the locus is
+    decidable: it must EQUAL that seat, or the door refuses by name.
+
+    Scoped to sources that HAVE a RECORD. A first-party file has no
+    distribution, so the workspace-relative law remains its whole law and this
+    arm never fires -- a refusal is not widened to a population that cannot
+    satisfy it. A file inside an install root that the RECORD does not cover
+    (a stray, a build artifact) has no seat to be checked against, so there is
+    nothing to authenticate and nothing is claimed.
+    """
+    seat = recorded_seat_for(path)
+    if seat is None or locus == seat:
+        return
+    raise SourceUnavailable(
+        f"source `{path}` is installed and its distribution records the seat "
+        f"`{seat}`, but this locus states `{locus}`. An installed file's "
+        "address is the seat its distribution recorded -- a locus derived from "
+        "some other root is not a different spelling of that address, it is an "
+        "address no other checkout resolves. Open it relative to the install "
+        "root, or through the module door."
+    )
+
+
+def recorded_seat_for(path: str) -> str | None:
+    """The seat this file's distribution recorded for it, or ``None``.
+
+    ``None`` means "no distribution states an address for this file" -- a
+    first-party source, or a file no RECORD covers. It never means "the seat
+    is unavailable, carry on with a guess".
+    """
+    resolved = Path(path).resolve()
+    for parent in resolved.parents:
+        seats = _recorded_seats(str(parent))
+        if seats is None:
+            continue
+        candidate = resolved.relative_to(parent).as_posix()
+        return candidate if candidate in seats else None
+    return None
+
+
+@lru_cache(maxsize=16)
+def _recorded_seats(install_root: str) -> frozenset[str] | None:
+    """Every seat recorded by the distributions installed at ``install_root``.
+
+    ``None`` when this directory is not an install root at all. Cached per
+    root: a corpus run asks once per directory, not once per file.
+    """
+    root = Path(install_root)
+    try:
+        if not any(root.glob("*.dist-info")):
+            return None
+    except OSError:
+        return None
+    seats: set[str] = set()
+    for distribution in importlib.metadata.distributions(path=[install_root]):
+        for recorded in distribution.files or ():
+            seats.add(PurePosixPath(str(recorded)).as_posix())
+    return frozenset(seats)
 
 
 def dependency_artifact_file(path: str) -> tuple[bytes, str, str]:
