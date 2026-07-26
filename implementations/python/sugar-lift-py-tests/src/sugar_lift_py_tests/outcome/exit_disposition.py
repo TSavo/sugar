@@ -124,8 +124,11 @@ def _boundary_halted_edge(disposition, incoming):
     if isinstance(verdict, MatchDecided):
         return _consumed(disposition, incoming)
     if isinstance(verdict, MatchRetained):
-        # The identity matched; only the message predicate is open. Under it
-        # the boundary consumes, under its complement the ORIGINAL halt stands.
+        # Some conjunct of the boundary's predicate is open -- the identity
+        # test, the message test, or both conjoined. Under the obligation the
+        # boundary consumes, under its complement the ORIGINAL halt stands.
+        # Which conjunct is open is not this edge's business: the verdict is
+        # one predicate and it is routed as one.
         return RetainedObligation(
             obligation=verdict.obligation,
             held=_consumed(disposition, incoming),
