@@ -31,11 +31,33 @@ use crate::{
     SUGAR_SEQ_CAP,
 };
 
+/// Why the bounded forall core did not produce a formula.
+///
+/// The two arms are the `panic = gap` / `named = fact` discriminator, and they are
+/// NOT interchangeable:
+///
+/// * `Gap` -- the core reached a shape it has no construction for. That is lifter
+///   WORK, it has no name, and it stays a loud construction panic at the caller.
+/// * `BodyTerminal` -- every non-inactive body assertion already closed with a reason
+///   that `refusal_disposition` classifies `TerminalEffect`: a damn good SOURCE
+///   property (a runtime destructure, a runtime slice source, ...). The loop cannot
+///   state more than its body can, so the loop's honest outcome is that same named
+///   effect. Dropping it on the floor and panicking would report a lifter gap where
+///   the lifter had in fact already named the fact.
+enum ForAllDecline {
+    Gap,
+    /// Carries the body's own terminal reason VERBATIM, so `refusal_disposition`
+    /// classifies the propagated effect exactly as it classified the body's, and the
+    /// CID of the emitted reason is conserved. Never synthesized: only ever a string
+    /// that already measured `Disposition::TerminalEffect`.
+    BodyTerminal(String),
+}
+
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
 /// loop and a `.for_each` over the SAME constructed domain assert the SAME
 /// universal, so the construction is one piece of code. Returns the quantified
-/// formula and the number of body assert macros it accounts for, or None to
-/// refuse (mutation, body not point-wise, or count mismatch).
+/// formula and the number of body assert macros it accounts for, or a
+/// `ForAllDecline` (mutation, body not point-wise, or count mismatch).
 #[allow(clippy::too_many_arguments)]
 fn lift_bounded_forall(
     binding: &ForAllBinding,
@@ -52,7 +74,7 @@ fn lift_bounded_forall(
     // its concrete element in the LITERAL-INT RANGE unroll. Empty -> no index read is
     // resolved (the reads stay the EUF accessor -- the established sound floor).
     literal_arrays: &BTreeMap<String, Vec<Rc<Term>>>,
-) -> Option<(Rc<Formula>, usize, Vec<String>)> {
+) -> Result<(Rc<Formula>, usize, Vec<String>), ForAllDecline> {
     let var = binding.label();
     // Lift the body through the normal collector. Truth-table-or-gutter: every
     // body assert must lift cleanly (none refused, none missing) or we refuse
@@ -64,7 +86,7 @@ fn lift_bounded_forall(
             var = var.as_str(),
             "forall declined: body has no assertion macros"
         );
-        return None;
+        return Err(ForAllDecline::Gap);
     }
     // Purity gate: the body must not mutate anything. An assignment, a `let mut`,
     // or a `&mut` borrow means a value varies across iterations independently of
@@ -78,7 +100,7 @@ fn lift_bounded_forall(
             n_body,
             "forall declined: body mutates state"
         );
-        return None;
+        return Err(ForAllDecline::Gap);
     }
     let mut body_entries = Vec::new();
     let mut body_skipped = Vec::new();
@@ -125,7 +147,23 @@ fn lift_bounded_forall(
             skipped = ?body_skipped,
             "forall declined: body did not lift point-wise"
         );
-        return None;
+        // Split the decline by the disposition the body ALREADY measured. An
+        // `Unclassified` reason is lifter work with no name -- it must stay a loud
+        // construction gap, so it wins over any terminal sibling. Only when every
+        // non-inactive reason is a named `TerminalEffect` does the loop have a fact to
+        // report instead of a gap, and then it reports the body's own reason verbatim.
+        let unclassified_first = body_skipped
+            .iter()
+            .find(|reason| crate::refusal_disposition(reason) == Disposition::Unclassified);
+        if unclassified_first.is_none() {
+            if let Some(terminal) = body_skipped
+                .iter()
+                .find(|reason| crate::refusal_disposition(reason) == Disposition::TerminalEffect)
+            {
+                return Err(ForAllDecline::BodyTerminal(terminal.clone()));
+            }
+        }
+        return Err(ForAllDecline::Gap);
     }
     let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
 
@@ -187,7 +225,7 @@ fn lift_bounded_forall(
                 // Empty literal range (`hi <= lo`): the loop never runs -> vacuous;
                 // refuse rather than emit a vacuous `true` (mirrors the empty-array
                 // bail in `bounded_domain_from_expr`).
-                Some((lo, hi)) if hi <= lo => return None,
+                Some((lo, hi)) if hi <= lo => return Err(ForAllDecline::Gap),
                 // Runtime endpoint, or a literal range too large to unroll: the
                 // guarded universal it states, body free in `var`.
                 // forall x:Int. ( start <= x (< | <=) end ) => body[var := x]
@@ -242,7 +280,7 @@ fn lift_bounded_forall(
                 .collect(),
         ),
     };
-    Some((quantified, warranted_assertions, inactive_reasons))
+    Ok((quantified, warranted_assertions, inactive_reasons))
 }
 
 fn fold_literal_int_terms_in_formula(formula: &Rc<Formula>) -> Rc<Formula> {
@@ -487,7 +525,7 @@ impl ForAllSugar {
                 forall_gap("runtime forall domain should have returned a runtime effect")
             }
         };
-        let Some((quantified, n_body, inactive_reasons)) = lift_bounded_forall(
+        let (quantified, n_body, inactive_reasons) = match lift_bounded_forall(
             &self.binding,
             domain,
             &self.body_stmts,
@@ -498,11 +536,29 @@ impl ForAllSugar {
             ctx.macro_depth,
             ctx.factory_audits,
             &array_terms,
-        ) else {
-            if let Some(effect) = runtime_domain_effect {
-                return Err(Outcome::Incomplete(effect));
+        ) {
+            Ok(lifted) => lifted,
+            Err(decline) => {
+                if let Some(effect) = runtime_domain_effect {
+                    return Err(Outcome::Incomplete(effect));
+                }
+                match decline {
+                    // The body already NAMED why it cannot be stated, and that name
+                    // measured terminal. The loop reports that same fact rather than
+                    // discarding it and claiming an unnamed construction gap.
+                    ForAllDecline::BodyTerminal(reason) => {
+                        debug!(
+                            target: "sugar_lift_rust_tests::sugar::forall",
+                            binding = self.binding.label(),
+                            reason = reason.as_str(),
+                            "forall body closed terminal; propagating the body's named effect"
+                        );
+                        return Err(Outcome::Incomplete(Effect::ForAllBodyTerminal { reason }));
+                    }
+                    // No name -- lifter work. The floor stays loud.
+                    ForAllDecline::Gap => forall_gap("bounded forall core declined"),
+                }
             }
-            forall_gap("bounded forall core declined");
         };
         let warrant = Warrant {
             name: Some(format!(
