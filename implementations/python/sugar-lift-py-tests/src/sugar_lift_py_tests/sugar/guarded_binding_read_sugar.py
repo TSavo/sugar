@@ -6,6 +6,7 @@ from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 from sugar_lift_py_tests.ir import not_
 from sugar_lift_py_tests.outcome import ExitSet, Outcome, outcome_to_exitset
+from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
     LoopGuardedProjection,
@@ -37,6 +38,9 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         _unhandled_projection(state, verb="read", name=read_name, site=read_site)
 
     guard = branch_result_guard(state.slot, read_site)
+    then_face, else_face = partition(
+        ("GuardedBindingRead", state.slot, read_site, guard)
+    )
     return (
         read_binding(
             state.when_true,
@@ -44,14 +48,14 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
             read_site=read_site,
             ctx=ctx,
         )
-        .guarded(guard)
+        .guarded(guard, then_face)
         .union(
             read_binding(
                 state.when_false,
                 read_name=read_name,
                 read_site=read_site,
                 ctx=ctx,
-            ).guarded(not_(guard))
+            ).guarded(not_(guard), else_face)
         )
     )
 

@@ -26,9 +26,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_py_tests.ir import and_, atomic, not_, or_
 from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.ir import and_, atomic, not_, or_
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -45,6 +44,10 @@ from sugar_source_tree.binding_state import BranchResultSlot
 
 def _pred(name: str):
     return atomic(name, [])
+
+
+def _path(*faces):
+    return frozenset({frozenset(faces)})
 
 
 @dataclass(frozen=True)
@@ -153,8 +156,8 @@ def test_owned_partition_makes_the_factoring_gap_unconstructable():
 
     exits = ExitSet(
         (
-            Completed(left_guard, "then-value", frozenset({left_face})),
-            Completed(right_guard, "else-value", frozenset({right_face})),
+            Completed(left_guard, "then-value", _path(left_face)),
+            Completed(right_guard, "else-value", _path(right_face)),
         )
     )
 
@@ -198,8 +201,8 @@ def test_faces_from_two_different_owners_are_not_complementary():
 
     exits = ExitSet(
         (
-            Completed(left_guard, "then-value", frozenset({left_face})),
-            Completed(right_guard, "else-value", frozenset({right_face})),
+            Completed(left_guard, "then-value", _path(left_face)),
+            Completed(right_guard, "else-value", _path(right_face)),
         )
     )
 
@@ -218,8 +221,8 @@ def test_same_partition_same_side_is_not_an_exclusion():
 
     exits = ExitSet(
         (
-            Completed(left_guard, "a", frozenset({face})),
-            Completed(right_guard, "b", frozenset({face})),
+            Completed(left_guard, "a", _path(face)),
+            Completed(right_guard, "b", _path(face)),
         )
     )
 
@@ -237,10 +240,10 @@ def test_guarded_stamps_the_face_it_is_given_and_nothing_else():
     then_face, else_face = partition(("IfSugarLike", "site", condition))
 
     faced = ExitSet.completed("v").guarded(condition, then_face)
-    assert faced.exits[0].faces == frozenset({then_face})
+    assert faced.exits[0].faces == _path(then_face)
 
     plain = ExitSet.completed("v").guarded(condition)
-    assert plain.exits[0].faces == frozenset()
+    assert plain.exits[0].faces == _path()
 
     joined = faced.union(
         ExitSet.completed("w").guarded(not_(condition), else_face)
@@ -251,25 +254,37 @@ def test_guarded_stamps_the_face_it_is_given_and_nothing_else():
     assert len([e for e in factored.exits if isinstance(e, Completed)]) == 1
 
 
-def test_disjoining_merge_keeps_only_testimony_both_arms_carried():
-    """A merged arm holds under a DISJUNCTION, so faces intersect, never union.
-
-    If the merge unioned faces, an arm reachable on either side of a split would
-    claim to be on one named side of it — an exclusion the producer never gave,
-    and the exact way carried testimony could start lying.
-    """
+def test_disjoining_merge_keeps_faces_as_alternative_paths():
+    """A merged arm preserves alternatives without conjoining their faces."""
     condition = _pred("c")
     left_face, right_face = partition(("merge-owner", condition))
 
     merged = ExitSet(
         (
-            Completed(condition, "same", frozenset({left_face})),
-            Completed(not_(condition), "same", frozenset({right_face})),
+            Completed(condition, "same", _path(left_face)),
+            Completed(not_(condition), "same", _path(right_face)),
         )
     ).normalize()
 
     assert len(merged.exits) == 1
-    assert merged.exits[0].faces == frozenset()
+    assert merged.exits[0].faces == frozenset(
+        {frozenset({left_face}), frozenset({right_face})}
+    )
+
+
+def test_conjoining_a_face_discards_the_contradictory_alternative():
+    condition = _pred("c")
+    left_face, right_face = partition(("merge-owner", condition))
+    merged = ExitSet(
+        (
+            Completed(condition, "same", _path(left_face)),
+            Completed(not_(condition), "same", _path(right_face)),
+        )
+    ).normalize()
+
+    restricted = merged.guarded(condition, left_face)
+
+    assert restricted.exits[0].faces == _path(left_face)
 
 
 def test_conjoining_composition_accumulates_both_arms_testimony():
@@ -284,25 +299,20 @@ def test_conjoining_composition_accumulates_both_arms_testimony():
         lambda value: ExitSet.completed(value + "!").guarded(outer, tail_face)
     )
 
-    assert result.exits[0].faces == frozenset({face, tail_face})
+    assert result.exits[0].faces == _path(face, tail_face)
 
 
-def test_shape_level_exclusion_still_factors_without_testimony():
-    """The sound shape prover is retained, not replaced.
-
-    Arms whose producer never minted a partition but whose guards ARE one
-    literal apart still factor exactly as before this change.
-    """
+def test_shape_level_exclusion_does_not_replace_producer_testimony():
+    """Formula appearance is diagnostic only, never factoring authority."""
     condition = _pred("c")
 
-    factored = ExitSet(
-        (
-            Completed(condition, "a"),
-            Completed(not_(condition), "b"),
-        )
-    ).factor_completed()
-
-    assert len([e for e in factored.exits if isinstance(e, Completed)]) == 1
+    with pytest.raises(ExitSetFactoringGap):
+        ExitSet(
+            (
+                Completed(condition, "a"),
+                Completed(not_(condition), "b"),
+            )
+        ).factor_completed()
 
 
 def test_single_completed_arm_is_returned_untouched():
@@ -323,12 +333,12 @@ def test_testimony_does_not_change_what_an_exit_denotes():
     face, _ = partition(("owner", condition))
 
     bare = Completed(condition, "v")
-    stamped = Completed(condition, "v", frozenset({face}))
+    stamped = Completed(condition, "v", _path(face))
 
     assert bare == stamped
     assert hash(bare) == hash(stamped)
     assert repr(bare) == repr(stamped)
-    assert stamped.faces == frozenset({face})
+    assert stamped.faces == _path(face)
 
     # And the whole set compares equal, which is what collapse/normalize use.
     assert ExitSet((bare,)) == ExitSet((stamped,))

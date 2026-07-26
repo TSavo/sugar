@@ -104,20 +104,57 @@ def partition(owner: object) -> tuple[PartitionFace, PartitionFace]:
     return PartitionFace(token, True), PartitionFace(token, False)
 
 
-_NO_FACES: frozenset[PartitionFace] = frozenset()
+PartitionPath = frozenset[PartitionFace]
+PartitionPaths = frozenset[PartitionPath]
+
+_UNCONSTRAINED_PATHS: PartitionPaths = frozenset({frozenset()})
 
 
-def _faces_exclusive(
-    left: frozenset[PartitionFace], right: frozenset[PartitionFace]
-) -> bool:
-    """Whether carried testimony alone proves the two arms cannot both hold."""
+def _conjoin_paths(left: PartitionPaths, right: PartitionPaths) -> PartitionPaths:
+    """Conjoin two executions: every left/right path combination can occur."""
+    return frozenset(
+        combined
+        for left_path in left
+        for right_path in right
+        if _path_consistent(combined := left_path | right_path)
+    )
+
+
+def _disjoin_paths(left: PartitionPaths, right: PartitionPaths) -> PartitionPaths:
+    """Disjoin executions without weakening either path's testimony."""
+    return left | right
+
+
+def _with_face(paths: PartitionPaths, face: PartitionFace) -> PartitionPaths:
+    return _conjoin_paths(paths, frozenset({frozenset({face})}))
+
+
+def _path_consistent(path: PartitionPath) -> bool:
+    sides: dict[object, object] = {}
+    for face in path:
+        prior = sides.setdefault(face.partition, face.side)
+        if prior != face.side:
+            return False
+    return True
+
+
+def _path_pair_exclusive(left: PartitionPath, right: PartitionPath) -> bool:
+    sides: dict[object, object] = {face.partition: face.side for face in left}
+    return any(
+        face.partition in sides and sides[face.partition] != face.side
+        for face in right
+    )
+
+
+def _paths_exclusive(left: PartitionPaths, right: PartitionPaths) -> bool:
+    """Whether every alternative pair has producer-authenticated exclusion."""
     if not left or not right:
         return False
-    sides: dict[object, object] = {face.partition: face.side for face in left}
-    for face in right:
-        if face.partition in sides and sides[face.partition] != face.side:
-            return True
-    return False
+    return all(
+        _path_pair_exclusive(left_path, right_path)
+        for left_path in left
+        for right_path in right
+    )
 
 
 def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
@@ -130,38 +167,13 @@ def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
     return (guard,)
 
 
-def _partition_exclusive(
-    left: frozenset[tuple[str, int]] | None,
-    right: frozenset[tuple[str, int]] | None,
-) -> bool:
-    """Whether two arms carry opposite faces of one authenticated partition."""
-    if not left or not right:
-        return False
-    for partition_id, face in left:
-        for other_id, other_face in right:
-            if partition_id == other_id and face != other_face:
-                return True
-    return False
-
-
-def _union_partition(
-    left: frozenset[tuple[str, int]] | None,
-    right: frozenset[tuple[str, int]] | None,
-) -> frozenset[tuple[str, int]] | None:
-    """Accumulate partition faces through sequencing."""
-    if left is None and right is None:
-        return None
-    return frozenset((*(left or ()), *(right or ())))
-
-
 def _are_exclusive(left: Formula, right: Formula) -> bool:
     """Whether two guards provably cannot hold together, syntactically.
 
-    Branch joins produce guards that carry a literal and its negation (``g``
-    against ``not g``), which is why one level of literal comparison is enough
-    for the shapes the tower builds. This is a SOUND-ONLY test: a False answer
-    means "not provably exclusive", never "provably overlapping". Factoring
-    refuses on a False answer rather than assuming a partition.
+    This shallow diagnostic sees some complementary spellings, but branch
+    joins can bury a literal inside a disjunction, so it is not authority for
+    factoring. This is a SOUND-ONLY test: a False answer means "not provably
+    exclusive", never "provably overlapping".
     """
     if _is_false(left) or _is_false(right):
         return True
@@ -233,8 +245,8 @@ class Completed(Generic[T]):
     # same guard and destination are the same exit whether or not a producer
     # stamped them. Excluded from compare/repr so carrying testimony cannot
     # perturb exit equality, normalize's merge, collapse, or any golden repr.
-    faces: frozenset[PartitionFace] = _dataclass_field(
-        default=_NO_FACES, compare=False, repr=False
+    faces: PartitionPaths = _dataclass_field(
+        default=_UNCONSTRAINED_PATHS, compare=False, repr=False
     )
 
 
@@ -243,8 +255,8 @@ class Halted:
     guard: Formula
     effect: Effect
     state: object | None = None
-    faces: frozenset[PartitionFace] = _dataclass_field(
-        default=_NO_FACES, compare=False, repr=False
+    faces: PartitionPaths = _dataclass_field(
+        default=_UNCONSTRAINED_PATHS, compare=False, repr=False
     )
 
     def __post_init__(self) -> None:
@@ -277,8 +289,17 @@ class ExitSet(Generic[T]):
         halt_face, pass_face = partition(("conditional_halt", guard))
         return cls(
             (
-                Halted(guard, effect, state, frozenset({halt_face})),
-                Completed(not_(guard), state, frozenset({pass_face})),
+                Halted(
+                    guard,
+                    effect,
+                    state,
+                    _with_face(_UNCONSTRAINED_PATHS, halt_face),
+                ),
+                Completed(
+                    not_(guard),
+                    state,
+                    _with_face(_UNCONSTRAINED_PATHS, pass_face),
+                ),
             )
         ).normalize()
 
@@ -297,29 +318,12 @@ class ExitSet(Generic[T]):
         exits: list[Exit[T]] = []
         for exit_ in self.exits:
             combined = _and_guards(guard, exit_.guard)
-            faces = exit_.faces if face is None else exit_.faces | {face}
+            faces = exit_.faces if face is None else _with_face(exit_.faces, face)
             if isinstance(exit_, Completed):
                 exits.append(Completed(combined, exit_.value, faces))
             else:
                 exits.append(Halted(combined, exit_.effect, exit_.state, faces))
         return ExitSet(tuple(exits)).normalize()
-
-    def with_partition_face(self, partition_id: str, face: int) -> "ExitSet[T]":
-        """Stamp every completed arm with one authenticated partition face.
-
-        Face is 0/1 for then/else of one producer-owned branch. Nested joins
-        accumulate faces; two arms are exclusive when they disagree on any
-        shared partition_id.
-        """
-        face_key = (partition_id, face)
-        exits: list[Exit[T]] = []
-        for exit_ in self.exits:
-            if isinstance(exit_, Completed):
-                stamped = frozenset((*((exit_.partition or frozenset())), face_key))
-                exits.append(Completed(exit_.guard, exit_.value, stamped))
-            else:
-                exits.append(exit_)
-        return ExitSet(tuple(exits))
 
     def factor_completed(self) -> "ExitSet[T]":
         """Collapse the completed FACE into one arm carrying a guarded value.
@@ -356,38 +360,35 @@ class ExitSet(Generic[T]):
 
         for index, arm in enumerate(completed):
             for other in completed[index + 1 :]:
-                # Carried testimony first: a producer that minted these as two
-                # faces of ONE split already answered this, and its answer does
-                # not decay when the guards are merged or rewritten. The
-                # shape-level prover stays as the sound fallback for arms whose
-                # producer never claimed a partition.
-                if _faces_exclusive(arm.faces, other.faces):
+                # A producer that minted partition faces already answered this.
+                # DNF alternatives keep that answer honest through conjunction
+                # and disjunction; formula spelling is never authority.
+                if _paths_exclusive(arm.faces, other.faces):
                     continue
-                if not _are_exclusive(arm.guard, other.guard):
-                    raise ExitSetFactoringGap(
-                        "ExitSet.factor_completed cannot factor a completed face "
-                        "whose arms are not provably exclusive.\n"
-                        f"  owner: {type(arm.value).__name__} / "
-                        f"{type(other.value).__name__}\n"
-                        f"  arm A guard: {arm.guard!r}\n"
-                        f"  arm B guard: {other.guard!r}\n"
-                        "  why this is a gap: a GuardedValue chain selects ONE "
-                        "face, so it can only carry a partition. Overlapping "
-                        "arms with different values are two simultaneously "
-                        "reachable outcomes, and collapsing them would drop one.\n"
-                        "  fix: if the producing sugar OWNS a two-way split "
-                        "here, mint it with outcome.exit_set.partition(owner) "
-                        "and pass each face to .guarded(guard, face) — carried "
-                        "testimony survives merges and rewrites that guard "
-                        "shape does not. If it owns no split, these arms really "
-                        "are simultaneously reachable and this gap is correct: "
-                        "keep both at the exit level. Do NOT re-materialize the "
-                        "product (the m ** k blow-up #6309 removed), and do NOT "
-                        "widen _are_exclusive to guess exclusivity from how the "
-                        "formulas are spelled.\n"
-                        f"  arm A faces: {sorted(str(f) for f in arm.faces)}\n"
-                        f"  arm B faces: {sorted(str(f) for f in other.faces)}"
-                    )
+                raise ExitSetFactoringGap(
+                    "ExitSet.factor_completed cannot factor a completed face "
+                    "whose arms are not provably exclusive.\n"
+                    f"  owner: {type(arm.value).__name__} / "
+                    f"{type(other.value).__name__}\n"
+                    f"  arm A guard: {arm.guard!r}\n"
+                    f"  arm B guard: {other.guard!r}\n"
+                    "  why this is a gap: a GuardedValue chain selects ONE "
+                    "face, so it can only carry a partition. Overlapping "
+                    "arms with different values are two simultaneously "
+                    "reachable outcomes, and collapsing them would drop one.\n"
+                    "  fix: if the producing sugar OWNS a two-way split "
+                    "here, mint it with outcome.exit_set.partition(owner) "
+                    "and pass each face to .guarded(guard, face) — carried "
+                    "testimony survives merges and rewrites that guard "
+                    "shape does not. If it owns no split, these arms really "
+                    "are simultaneously reachable and this gap is correct: "
+                    "keep both at the exit level. Do NOT re-materialize the "
+                    "product (the m ** k blow-up #6309 removed), and do NOT "
+                    "widen _are_exclusive to guess exclusivity from how the "
+                    "formulas are spelled.\n"
+                    f"  arm A paths: {sorted(str(path) for path in arm.faces)}\n"
+                    f"  arm B paths: {sorted(str(path) for path in other.faces)}"
+                )
 
         from sugar_lift_py_tests.floor import GuardedValue
 
@@ -399,12 +400,11 @@ class ExitSet(Generic[T]):
         for arm in completed[1:]:
             face_guard = _or_guards(face_guard, arm.guard)
 
-        # The factored arm holds under the DISJUNCTION of the arms' guards, so
-        # only testimony every arm carried still holds of it. Intersection, not
-        # union: a face true of one arm says nothing about the merged face.
+        # The factored arm holds under the DISJUNCTION of the arms' guards.
+        # Preserve each alternative path rather than weakening them into one.
         factored_faces = completed[0].faces
         for arm in completed[1:]:
-            factored_faces = factored_faces & arm.faces
+            factored_faces = _disjoin_paths(factored_faces, arm.faces)
 
         factored = Completed(face_guard, chain, factored_faces)
         exits: list[Exit[T]] = []
@@ -481,17 +481,14 @@ class ExitSet(Generic[T]):
                     and exit_.effect == prior.effect
                     and exit_.state == prior.state
                 )
-                # Same destination under a DISJOINED guard: only testimony both
-                # arms carried survives the merge, for the same reason as in
-                # factor_completed. Intersecting here is what keeps a merged
-                # arm from claiming a face it only held on one side.
+                # Same destination under a DISJOINED guard: preserve each
+                # alternative path. Combining their faces into one path would
+                # falsely claim that every face held simultaneously.
                 if same_completed:
-                    # OR of guards is not a partition; clear stamps when merging
-                    # equal destinations so exclusivity cannot be forged.
                     merged[index] = Completed(
                         _or_guards(prior.guard, exit_.guard),
                         prior.value,
-                        prior.faces & exit_.faces,
+                        _disjoin_paths(prior.faces, exit_.faces),
                     )
                     break
                 if same_halted:
@@ -499,7 +496,7 @@ class ExitSet(Generic[T]):
                         _or_guards(prior.guard, exit_.guard),
                         prior.effect,
                         prior.state,
-                        prior.faces & exit_.faces,
+                        _disjoin_paths(prior.faces, exit_.faces),
                     )
                     break
             else:
@@ -522,7 +519,7 @@ class ExitSet(Generic[T]):
             for following in step(exit_.value).exits:
                 guard = _and_guards(exit_.guard, following.guard)
                 # Conjoined guard: both sets of testimony hold of the result.
-                faces = exit_.faces | following.faces
+                faces = _conjoin_paths(exit_.faces, following.faces)
                 if isinstance(following, Completed):
                     exits.append(Completed(guard, following.value, faces))
                 else:
@@ -561,7 +558,7 @@ class ExitSet(Generic[T]):
         for incoming in self.exits:
             for clean in cleanup_exits:
                 guard = _and_guards(incoming.guard, clean.guard)
-                faces = incoming.faces | clean.faces
+                faces = _conjoin_paths(incoming.faces, clean.faces)
                 if isinstance(clean, Halted):
                     exits.append(Halted(guard, clean.effect, clean.state, faces))
                     continue
@@ -613,7 +610,7 @@ class ExitSet(Generic[T]):
         for incoming in self.exits:
             for ex in exit_exits:
                 guard = _and_guards(incoming.guard, ex.guard)
-                faces = incoming.faces | ex.faces
+                faces = _conjoin_paths(incoming.faces, ex.faces)
                 if isinstance(ex, Halted):
                     exits.append(Halted(guard, ex.effect, ex.state, faces))
                     continue
@@ -651,7 +648,7 @@ class ExitSet(Generic[T]):
                             failed_face,
                         ),
                     ):
-                        sub_faces = faces | {sub_face}
+                        sub_faces = _with_face(faces, sub_face)
                         if sub_verdict is None:
                             exits.append(Completed(sub_guard, carried, sub_faces))
                         else:
@@ -680,7 +677,7 @@ class ExitSet(Generic[T]):
         for incoming in self.exits:
             for ex in exit_es.exits:
                 guard = _and_guards(incoming.guard, ex.guard)
-                faces = incoming.faces | ex.faces
+                faces = _conjoin_paths(incoming.faces, ex.faces)
                 if isinstance(ex, Halted):
                     exits.append(Halted(guard, ex.effect, ex.state, faces))
                     continue
@@ -708,7 +705,7 @@ class ExitSet(Generic[T]):
                     Completed(
                         _and_guards(guard, truth),
                         incoming.state,
-                        faces | {truth_face},
+                        _with_face(faces, truth_face),
                     )
                 )
                 exits.append(
@@ -716,7 +713,7 @@ class ExitSet(Generic[T]):
                         _and_guards(guard, falsity),
                         incoming.effect,
                         incoming.state,
-                        faces | {falsity_face},
+                        _with_face(faces, falsity_face),
                     )
                 )
         return ExitSet(tuple(exits)).normalize()
