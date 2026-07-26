@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
@@ -47,14 +49,46 @@ def test_classdef_constant_and_method_still_construct(tmp_path: Path) -> None:
     assert any(method.name == "m" for method in sugar.methods)
 
 
-def test_classdef_if_body_stays_loud(tmp_path: Path) -> None:
-    sf = _file(tmp_path, "class C:\n    if True:\n        x = 1\n")
+def test_classdef_ground_true_body_constructs_its_field(tmp_path: Path) -> None:
+    sf = _file(
+        tmp_path,
+        "class C:\n    if True:\n        x = 1\n    else:\n        invented = 2\n",
+    )
     class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
-    try:
-        class_def.sugar()
-        raise AssertionError("expected unsupported If member to stay loud")
-    except SugarNotWritten as gap:
-        assert "If" in str(gap) or "unsupported class member" in str(gap)
+    sugar = class_def.sugar()
+    value = sugar.desugar().value
+    assert [field.name for field in value.class_fields] == ["x"]
+
+
+def test_classdef_ground_false_body_does_not_invent_its_field(tmp_path: Path) -> None:
+    sf = _file(
+        tmp_path,
+        "class C:\n    if False:\n        invented = 1\n    else:\n        y = 2\n",
+    )
+    class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
+    sugar = class_def.sugar()
+    value = sugar.desugar().value
+    assert [field.name for field in value.class_fields] == ["y"]
+
+
+def test_classdef_conditional_fields_preserve_source_override_order(
+    tmp_path: Path,
+) -> None:
+    sf = _file(
+        tmp_path,
+        "class C:\n    if True:\n        x = 1\n    x = 2\n",
+    )
+    class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
+    value = class_def.sugar().desugar().value
+    assert [field.name for field in value.class_fields] == ["x", "x"]
+    assert value.class_fields[-1].value.value == 2
+
+
+def test_classdef_symbolic_body_stays_loud(tmp_path: Path) -> None:
+    sf = _file(tmp_path, "class C:\n    if choose:\n        x = 1\n")
+    class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
+    with pytest.raises(SugarNotWritten, match="class conditional"):
+        class_def.sugar().desugar()
 
 
 # --- NamedExpr ---

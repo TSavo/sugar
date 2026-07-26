@@ -2479,13 +2479,6 @@ class ClassDef(Statement):
         # residual ClassDef mass is non-constant body assigns; Constant-only
         # was an over-narrow partition that left honest source-visible fields
         # as unsupported-member gaps.
-        class_assignments = tuple(
-            (item.targets[0].id, item.value, item.fragment)
-            for item in self.body
-            if isinstance(item, Assign)
-            and len(item.targets) == 1
-            and isinstance(item.targets[0], Name)
-        )
         annotated_assignments = tuple(
             item
             for item in self.body
@@ -2494,7 +2487,7 @@ class ClassDef(Statement):
         unsupported = tuple(
             item
             for index, item in enumerate(self.body)
-            if not isinstance(item, (FunctionDef, ClassDef, Pass))
+            if not isinstance(item, (FunctionDef, ClassDef, If, Pass))
             and not (
                 index == 0
                 and isinstance(item, Expr)
@@ -2523,7 +2516,65 @@ class ClassDef(Statement):
         )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ClassDefinitionSugar,
+            ConstructedClassConditionalFieldsV1,
         )
+
+        def conditional_fields(statements):
+            fields = []
+            for item in statements:
+                if (
+                    isinstance(item, Assign)
+                    and len(item.targets) == 1
+                    and isinstance(item.targets[0], Name)
+                ):
+                    fields.append(
+                        ConstructedClassFieldV1(
+                            item.targets[0].id,
+                            item.fragment.seal().cid,
+                            item.value.sugar(),
+                        )
+                    )
+                    continue
+                if isinstance(item, AnnAssign) and isinstance(item.target, Name):
+                    if item.value is not None:
+                        fields.append(
+                            ConstructedClassFieldV1(
+                                item.target.id,
+                                item.fragment.seal().cid,
+                                item.value.sugar(),
+                            )
+                        )
+                    continue
+                if isinstance(item, ClassDef):
+                    fields.append(
+                        ConstructedClassFieldV1(
+                            item.name,
+                            item.fragment.seal().cid,
+                            item.sugar(),
+                        )
+                    )
+                    continue
+                if isinstance(item, If):
+                    fields.append(
+                        ConstructedClassConditionalFieldsV1(
+                            condition_fragment_cid=item.test.fragment.seal().cid,
+                            condition_sugar=item.test.sugar(),
+                            when_true=conditional_fields(item.body),
+                            when_false=conditional_fields(item.orelse),
+                        )
+                    )
+                    continue
+                if isinstance(item, Pass):
+                    continue
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="ClassDef._construct_sugar",
+                    observed=f"unsupported conditional class member {item.kind}",
+                    requested="a constructed field assignment or pass",
+                    fix="add the member's ordinary class-control arm or keep it loud",
+                )
+            return tuple(fields)
 
         constructed = tuple(
             ConstructedClassMethodV1(
@@ -2534,32 +2585,17 @@ class ClassDef(Statement):
             )
             for method in methods
         )
-        fields = (
+        fields = conditional_fields(
             tuple(
-                ConstructedClassFieldV1(
-                    name,
-                    fragment.seal().cid,
-                    value.sugar(),
+                item
+                for index, item in enumerate(self.body)
+                if not isinstance(item, (FunctionDef, Pass))
+                and not (
+                    index == 0
+                    and isinstance(item, Expr)
+                    and isinstance(item.value, Constant)
+                    and isinstance(item.value.value, str)
                 )
-                for name, value, fragment in class_assignments
-            )
-            + tuple(
-                ConstructedClassFieldV1(
-                    item.target.id,
-                    item.fragment.seal().cid,
-                    item.value.sugar(),
-                )
-                for item in annotated_assignments
-                if item.value is not None
-            )
-            + tuple(
-                ConstructedClassFieldV1(
-                    item.name,
-                    item.fragment.seal().cid,
-                    item.sugar(),
-                )
-                for item in self.body
-                if isinstance(item, ClassDef)
             )
         )
         base_sugars = ()
