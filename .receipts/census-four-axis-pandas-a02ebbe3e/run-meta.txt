@@ -1,0 +1,6 @@
+TREE=/Users/tsavo/census-a02ebbe3e
+PANDAS_ROOT=/usr/local/lib/python3.14/site-packages/pandas
+COMMIT=e2fba84e6f7d463e9f187a39411127d7b4d9dd9a
+PYTHON=Python 3.14.4 (main, Apr  7 2026, 13:13:20) [Clang 21.0.0 (clang-2100.0.123.102)] 
+UPTIME_BEFORE= 6:24  up 2 days, 19:51, 21 users, load averages: 281.35 233.05 200.76
+LEASE_REQUEST_UTC=2026-07-26T13:24:48Z

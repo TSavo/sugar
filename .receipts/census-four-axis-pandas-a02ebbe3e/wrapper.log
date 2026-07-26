@@ -1,0 +1,14 @@
+heavy-measurement-lease: status=lease-waiting
+heavy-measurement-lease: requesting class=pandas-four-axis-census lease=/var/tmp/sugar-heavy-measurement.lease run=local commit=unknown
+heavy-measurement-lease: waiting for the lease; current owner testimony:
+class=pandas-hangsafe-control-effect-a02ebbe3e
+pid=28410
+bootId=unavailable
+acquiredAtUnix=1785071932.019386
+githubRunId=local
+githubRunAttempt=
+githubWorkflow=
+githubJob=
+measuredCommit=unknown
+ownerSidecarAgeSeconds=357.179
+ownerPidVisibleAndAlive=True (a False here means the holder is gone from THIS namespace, which across containers proves nothing -- the lock, not the pid, is the authority)
