@@ -881,11 +881,32 @@ class ExitSet(Generic[T]):
         expression.
         """
         from sugar_lift_py_tests.outcome.exit_disposition import (
+            ConsumedObservation,
             RetainedObligation,
             exit_disposition_effect,
         )
 
         from sugar_lift_py_tests.caller_parameter_contract import merge_pending
+
+        def _place(target: list, guard, verdict, carried, arm_faces, owed):
+            """One outgoing arm per verdict shape. Conserves the incoming arm.
+
+            ``owed`` is the pending caller obligation this arm carries (#6392),
+            threaded unchanged: authenticating an observation slot neither
+            discharges an obligation nor incurs one.
+            """
+            if verdict is None:
+                target.append(Completed(guard, carried, arm_faces, owed))
+            elif isinstance(verdict, ConsumedObservation):
+                # Consumed AND authenticating a slot: the testimony rides the
+                # completed arm it belongs to, never a sibling arm.
+                target.append(
+                    Completed(
+                        guard, _carry_facts(carried, verdict.facts), arm_faces, owed
+                    )
+                )
+            else:
+                target.append(Halted(guard, verdict, carried, arm_faces, owed))
 
         exit_exits = exit_es.exits
         exits: list[Exit[object]] = []
@@ -935,26 +956,21 @@ class ExitSet(Generic[T]):
                             failed_face,
                         ),
                     ):
-                        sub_faces = faces | {sub_face}
                         # The retention narrows this arm's guard; `sub_guard`
                         # IS that narrowing, and the obligation is minted
                         # against it once, at enrolment.
-                        if sub_verdict is None:
-                            exits.append(
-                                Completed(sub_guard, carried, sub_faces, owed)
-                            )
-                        else:
-                            exits.append(
-                                Halted(
-                                    sub_guard, sub_verdict, carried, sub_faces, owed
-                                )
-                            )
+                        _place(
+                            exits,
+                            sub_guard,
+                            sub_verdict,
+                            carried,
+                            faces | {sub_face},
+                            owed,
+                        )
                     continue
-                if verdict is None:
-                    exits.append(Completed(guard, carried, faces, owed))
-                else:
-                    exits.append(Halted(guard, verdict, carried, faces, owed))
+                _place(exits, guard, verdict, carried, faces, owed)
         return ExitSet(tuple(exits)).normalize()
+
 
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
         """Run a source-constructed ``__exit__`` and retain both truth faces.
@@ -1231,3 +1247,25 @@ __all__ = [
     "true_guard",
     "outcome_to_exitset",
 ]
+
+
+def _carry_facts(carried, facts: tuple):
+    """Splice authenticated facts into the state the outgoing arm carries.
+
+    Same shape as the Try handler's binding deposit: a reduced block gets the
+    facts spliced into its entries, anything else is wrapped once so the
+    testimony has somewhere to live. No arm is added and none is dropped.
+    """
+    from dataclasses import replace as _replace
+
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    if not facts:
+        return carried
+    if isinstance(carried, _ReducedBlock):
+        return _replace(carried, entries=(*facts, *carried.entries))
+    return _ReducedBlock(
+        entries=(*facts, carried) if carried is not None else facts,
+        can_fall_through=True,
+        fall_through=(),
+    )

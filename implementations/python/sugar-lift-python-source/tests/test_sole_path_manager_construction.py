@@ -1381,3 +1381,163 @@ def test_boundary_consumes_authenticated_builtin_ancestry_only_in_one_direction(
 
     face = outcome_to_exitset(boundary.desugar()).exits[0]
     assert type(face).__name__.lower() == expected_face
+
+
+# --- bind-observed-effect: `with <boundary> as info:` -------------------------
+#
+# The binding projects the ROUTED OCCURRENCE COORDINATE and never fabricates
+# `E()`. So the slot is authenticated on exactly one arm -- the one whose halt
+# this boundary actually consumed. On a restored halt there is an occurrence
+# but it is not this boundary's, and on a completed body there is no occurrence
+# at all; both must carry zero binding facts.
+
+
+_BOUNDARY_IMPLEMENTATION = (
+    "class Boundary:\n"
+    "    def __init__(self, expected):\n"
+    "        self.expected = expected\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "    def __exit__(self, effect_type, effect, traceback):\n"
+    "        if effect_type is None:\n"
+    "            raise RuntimeError()\n"
+    "        return effect_type is self.expected\n\n"
+    "def boundary(expected):\n"
+    "    return Boundary(expected)\n"
+)
+
+
+def _route_boundary_with_binding(tmp_path, *, body: str, as_clause: str = " as info"):
+    distribution = _distribution(tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary")
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        f"    with arbitrary.boundary(ValueError){as_clause}:\n"
+        f"        {body}\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+    return outcome_to_exitset(
+        next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
+    )
+
+
+def _effect_slot_facts(face) -> tuple:
+    """Every `effect_slot_*` row this arm carries. Exact, not `>= 1`."""
+    from sugar_lift_py_tests.floor.inv_value import InvValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    state = face.value if isinstance(face, Completed) else face.state
+    return tuple(
+        entry
+        for entry in (getattr(state, "entries", ()) or ())
+        if isinstance(entry, InvValue) and "effect_slot" in str(entry.formula)
+    )
+
+
+def test_boundary_as_binding_authenticates_the_slot_it_consumed(tmp_path):
+    """Truthful twin: the consumed halt authenticates the observation slot."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    exits = _route_boundary_with_binding(tmp_path, body='raise ValueError("boom")')
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Completed)
+    # kind, type, origin -- exactly the three rows EffectBinding.to_facts owes.
+    assert len(_effect_slot_facts(face)) == 3
+
+
+def test_boundary_as_binding_is_absent_when_the_halt_was_restored(tmp_path):
+    """Lying twin: a nonmatching halt stays halted AND authenticates nothing."""
+    from sugar_lift_py_tests.outcome import Halted
+
+    exits = _route_boundary_with_binding(tmp_path, body='raise TypeError("boom")')
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Halted)
+    assert _effect_slot_facts(face) == ()
+
+
+def test_boundary_as_binding_is_absent_when_the_body_completed(tmp_path):
+    """Lying twin: no occurrence exists, so no `E()` may be invented for it."""
+    from sugar_lift_py_tests.outcome import Halted
+
+    exits = _route_boundary_with_binding(tmp_path, body="pass")
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Halted)
+    assert type(face.effect).__name__ == "ExpectationNotMetEffect"
+    assert _effect_slot_facts(face) == ()
+
+
+def test_boundary_without_as_clause_authenticates_no_slot(tmp_path):
+    """No `as` name, no slot: the consumed arm carries no binding testimony."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    exits = _route_boundary_with_binding(
+        tmp_path, body='raise ValueError("boom")', as_clause=""
+    )
+    face = exits.exits[0]
+    assert isinstance(face, Completed)
+    assert _effect_slot_facts(face) == ()
+
+
+def test_as_binding_requires_a_contract_that_declares_one(tmp_path):
+    """A slot is granted by the CONTRACT, never by the `as` spelling.
+
+    The same source with the same name stays loud when the authenticated
+    semantics carry `NoBindingV1` -- otherwise syntax would be handing the
+    body a projection the manager never agreed to provide.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.context_manager_contract import NoBindingV1
+    from sugar_source_tree.panic import UnsupportedWithBindingTarget
+
+    distribution = _distribution(
+        tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary"
+    )
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        "    with arbitrary.boundary(ValueError) as info:\n"
+        '        raise ValueError("boom")\n'
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    refs = context.source_derived_contract_refs
+    coordinate, reference = next(iter(refs.items()))
+    refs[coordinate] = replace(
+        reference, semantics=replace(reference.semantics, binding=NoBindingV1())
+    )
+
+    with pytest.raises(UnsupportedWithBindingTarget):
+        next(node for node in tree.nodes() if node.kind == "With").sugar()

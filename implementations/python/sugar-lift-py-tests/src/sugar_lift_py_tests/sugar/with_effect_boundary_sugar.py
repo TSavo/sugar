@@ -15,6 +15,7 @@ class WithEffectBoundarySugar(Sugar):
     semantics: object
     contract_ref: object
     context_manager_edge: object
+    observation_slot_id: str | None = None
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
@@ -109,6 +110,7 @@ class WithEffectBoundarySugar(Sugar):
                 matcher=AuthenticatedRaiseMatcher(
                     expected=expected, message_pattern=pattern
                 ),
+                observation_slot_id=self.observation_slot_id,
                 unmet=(
                     ExpectationNotMetEffect("raise", self.site)
                     if isinstance(semantics.mode, ExpectsModeV1)
