@@ -320,18 +320,17 @@ def test_real_resource_reproducer_closes_every_exitset_face(
         for statement in _function_sugar(path_source(str(path)), _resolved).statements
         if isinstance(statement, WithResourceSugar)
     )
-    original = ExitSet.and_finally
+    # Observed through `and_exit` -- the ONE algebra the resource contract
+    # routes through. Pinning `and_finally` here would pin a mechanism; the law
+    # is that every body face reaches the contract.
+    original = ExitSet.and_exit
     seen = []
 
-    def observe(incoming, cleanup, *, cleanup_restores=None):
+    def observe(incoming, exit_es, *, disposition):
         seen.append(type(incoming.exits[0]))
-        return original(
-            incoming,
-            cleanup,
-            cleanup_restores=cleanup_restores,
-        )
+        return original(incoming, exit_es, disposition=disposition)
 
-    monkeypatch.setattr(ExitSet, "and_finally", observe)
+    monkeypatch.setattr(ExitSet, "and_exit", observe)
     resource.desugar()
 
     assert seen == [incoming_kind]

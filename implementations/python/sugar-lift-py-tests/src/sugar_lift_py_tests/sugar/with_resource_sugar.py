@@ -137,12 +137,7 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
-                    if _is_never_suppressing_resource(self.disposition):
-                        after = face.and_finally(lambda: exit_es)
-                    else:
-                        after = face.and_exit(
-                            exit_es, disposition=self.disposition
-                        )
+                    after = face.and_exit(exit_es, disposition=self.disposition)
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )
@@ -171,14 +166,3 @@ def _and_guards(left, right):
     if left == right:
         return left
     return and_([left, right])
-
-
-def _is_never_suppressing_resource(disposition) -> bool:
-    from sugar_lift_py_tests.context_manager_contract import (
-        NeverSuppresses,
-        NeverSuppressesDispositionV1,
-    )
-
-    return isinstance(
-        disposition, (NeverSuppresses, NeverSuppressesDispositionV1)
-    )

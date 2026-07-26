@@ -285,24 +285,26 @@ def test_completed_body_survives_never_suppresses():
     assert reds == []
 
 
-def test_resource_cleanup_uses_and_finally_on_completed_and_halted_faces(
-    monkeypatch,
-):
-    """A resource close is shared cleanup, not a normal-path-only exit."""
+def test_resource_exit_runs_on_the_completed_and_the_halted_face(monkeypatch):
+    """LAW (E1): `__exit__` runs on EVERY outgoing body edge, not the happy one.
+
+    Pinned through `and_exit`, which is the ONE algebra that carries the
+    contract: it hands each incoming face -- completed or halted -- to the
+    disposition, and the disposition decides only whether that face leaves as a
+    completion or a halt. Observing WHICH method the router calls would pin the
+    mechanism instead of the law, so this asserts the faces that reach the
+    contract and the verdicts that come back.
+    """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    original = ExitSet.and_finally
+    original = ExitSet.and_exit
     incoming_kinds = []
 
-    def observe(incoming, cleanup, *, cleanup_restores=None):
+    def observe(incoming, exit_es, *, disposition):
         incoming_kinds.append(type(incoming.exits[0]))
-        return original(
-            incoming,
-            cleanup,
-            cleanup_restores=cleanup_restores,
-        )
+        return original(incoming, exit_es, disposition=disposition)
 
-    monkeypatch.setattr(ExitSet, "and_finally", observe)
+    monkeypatch.setattr(ExitSet, "and_exit", observe)
 
     completed = _resource(body=(_Pass(),)).desugar()
     halted = _resource(body=(_Raise("ValueError"),)).desugar()
@@ -316,22 +318,18 @@ def test_resource_cleanup_uses_and_finally_on_completed_and_halted_faces(
     )
 
 
-def test_lying_resource_cleanup_cannot_skip_the_halted_face(monkeypatch):
-    """BITE: a completion-only cleanup implementation changes the result."""
+def test_lying_resource_exit_cannot_skip_the_halted_face(monkeypatch):
+    """BITE: a completion-only exit implementation changes the result."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    original = ExitSet.and_finally
+    original = ExitSet.and_exit
 
-    def completion_only(incoming, cleanup, *, cleanup_restores=None):
+    def completion_only(incoming, exit_es, *, disposition):
         if isinstance(incoming.exits[0], Halted):
-            return ExitSet.completed("cleanup-skipped")
-        return original(
-            incoming,
-            cleanup,
-            cleanup_restores=cleanup_restores,
-        )
+            return ExitSet.completed("exit-skipped")
+        return original(incoming, exit_es, disposition=disposition)
 
-    monkeypatch.setattr(ExitSet, "and_finally", completion_only)
+    monkeypatch.setattr(ExitSet, "and_exit", completion_only)
     out = _resource(body=(_Raise("ValueError"),)).desugar()
 
     with pytest.raises(AssertionError):
@@ -340,6 +338,56 @@ def test_lying_resource_cleanup_cannot_skip_the_halted_face(monkeypatch):
             and getattr(entry.effect, "exception_name", None) == "ValueError"
             for entry in out.value.contribution()
         )
+
+
+def test_never_suppresses_needs_no_second_cleanup_algebra():
+    """LAW: `and_exit` under NeverSuppresses IS `and_finally`, face for face.
+
+    #6401 proposed routing NeverSuppresses through `and_finally` so cleanup ran
+    on both edges. It already does: for both spellings of the contract, on a
+    completed AND a halted body face, the two produce identical exits. Routing
+    one disposition through a different algebra would therefore have changed
+    nothing except adding an asker -- a branch on WHAT KIND the disposition is,
+    which is the shape the floor exists to delete.
+
+    This twin is why that branch is not in the tree.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
+    faces = (
+        Completed(true_guard(), _FloorValue("body")),
+        Halted(true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")),
+    )
+    for disposition in (NeverSuppresses(), NeverSuppressesDispositionV1()):
+        for face in faces:
+            through_exit = ExitSet((face,)).and_exit(exit_es, disposition=disposition)
+            through_finally = ExitSet((face,)).and_finally(lambda: exit_es)
+            assert through_exit.exits == through_finally.exits, (
+                f"{type(disposition).__name__} / {type(face).__name__} diverged"
+            )
+
+
+def test_lying_the_equivalence_is_specific_to_never_suppresses():
+    """BITE: `and_finally` is NOT a general substitute for `and_exit`.
+
+    A suppressing contract consumes the halt; shared cleanup restores it. If
+    the equivalence above held for every disposition, routing everything
+    through `and_finally` would be safe -- it is not, and that is exactly why
+    the rejected branch needed a kind test to stay correct.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
+    halted = Halted(
+        true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")
+    )
+    suppressing = ExitSuppressionContract(frozenset({"ValueError"}))
+
+    through_exit = ExitSet((halted,)).and_exit(exit_es, disposition=suppressing)
+    through_finally = ExitSet((halted,)).and_finally(lambda: exit_es)
+
+    assert through_exit.exits != through_finally.exits
 
 
 def test_exit_face_binding_completed_is_none_triple():
