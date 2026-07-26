@@ -189,3 +189,112 @@ def test_authenticated_ancestor_match_states_no_obligation():
     )
     assert _residual_raises(source) == ()
     assert _tester_atom_count(source) == 0
+
+
+# --- the shared matcher's other consumer: the conjunction at a With boundary --
+
+def _matcher_operands(source: str):
+    """The (effect, expected) pair the router hands the shared matcher."""
+    import sugar_lift_py_tests.authenticated_exception_matching as matching
+
+    captured: list = []
+    real = matching.matches_raise_effect
+
+    def spy(effect, expected):
+        captured.append((effect, expected))
+        return real(effect, expected)
+
+    matching.matches_raise_effect = spy
+    try:
+        outcome_to_exitset(_universe(source))
+    finally:
+        matching.matches_raise_effect = real
+    return captured[0]
+
+
+_AUTHENTICATED_GROUND = (
+    "def f():\n"
+    "    try:\n"
+    "        raise ValueError('boom')\n"
+    "    except ValueError:\n"
+    "        return 1\n"
+    "    return 3\n"
+)
+
+_AUTHENTICATED_SYMBOLIC_MESSAGE = (
+    "def f(msg):\n"
+    "    try:\n"
+    "        raise ValueError(msg)\n"
+    "    except ValueError:\n"
+    "        return 1\n"
+    "    return 3\n"
+)
+
+_UNAUTHENTICATED_CALLEE = (
+    "def f(cls, msg):\n"
+    "    try:\n"
+    "        raise cls(msg)\n"
+    "    except ValueError:\n"
+    "        return 1\n"
+    "    return 3\n"
+)
+
+
+def test_ground_message_still_decides_both_ways():
+    # The message half is untouched where it could always answer.
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
+        raise_effect_message_verdict,
+    )
+    from sugar_lift_py_tests.floor.string_value import StringValue
+
+    effect, expected = _matcher_operands(_AUTHENTICATED_GROUND)
+    assert raise_effect_message_verdict(
+        effect, expected, StringValue("boom")
+    ) == MatchDecided(True)
+    assert raise_effect_message_verdict(
+        effect, expected, StringValue("nope")
+    ) == MatchDecided(False)
+
+
+def test_open_identity_and_open_message_leave_as_one_conjunction():
+    # Two open conjuncts leave as one obligation. Neither half may be collapsed:
+    # dropping the identity conjunct would assert the class matched, dropping
+    # the message conjunct would assert the pattern matched.
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchRetained,
+        matches_raise_effect,
+        raise_effect_message_verdict,
+    )
+
+    effect, expected = _matcher_operands(_AUTHENTICATED_SYMBOLIC_MESSAGE)
+    identity = matches_raise_effect(effect, expected)
+    verdict = raise_effect_message_verdict(effect, expected, None)
+    # Identity is settled here, so no pattern means a settled match.
+    assert not isinstance(identity, MatchRetained)
+    assert not isinstance(verdict, MatchRetained)
+
+    effect, expected = _matcher_operands(_UNAUTHENTICATED_CALLEE)
+    retained = raise_effect_message_verdict(effect, expected, None)
+    assert isinstance(retained, MatchRetained)
+    assert TESTER_ATOM in repr(retained.obligation)
+
+
+def test_message_is_never_read_off_an_unauthenticated_operand_position():
+    # `arg_values[0]` is the first ACTUAL only when the exception class was
+    # authenticated. For `raise cls(msg)` the unresolved callee occupies that
+    # position, so reading it as the message would state the vendor's pattern
+    # over the exception CLASS. That is a fabricated fact, and it is loud.
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        raise_effect_message_verdict,
+    )
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_source_tree.panic import SugarNotWritten
+
+    effect, expected = _matcher_operands(_UNAUTHENTICATED_CALLEE)
+    try:
+        raise_effect_message_verdict(effect, expected, StringValue("boom"))
+    except SugarNotWritten as refusal:
+        assert "not authenticated" in str(refusal)
+    else:  # pragma: no cover - the refusal is the assertion
+        raise AssertionError("a message read off an unauthenticated position")

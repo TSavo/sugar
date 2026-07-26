@@ -120,6 +120,14 @@ def _message_term(effect, *, owner):
     ``raise E()`` constructs no argument, and the message of such a value is
     exactly ``""`` -- a ground fact, not an absence. Anything that is not a
     constructed call has no authenticated message operand at all and is loud.
+
+    ``arg_values[0]`` is the first ACTUAL only when the call's exception class
+    was authenticated. Where it was not -- ``raise cls(msg)`` on a formal -- the
+    unresolved callee occupies that position, and reading it as the message
+    would state the vendor's predicate over the exception class instead of its
+    message: a fabricated fact, and precisely the shape this module exists to
+    refuse. So the message operand is read off the SAME authenticated identity
+    the matcher decides on, never off a position nobody testified to.
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import str_const
@@ -134,6 +142,17 @@ def _message_term(effect, *, owner):
             fix=(
                 "construct the raised exception through its call site; never "
                 "read a message off an unconstructed value"
+            ),
+        )
+    if raised.exception_type_identity() is None:
+        raise SugarNotWritten(
+            owner="authenticated_exception_matching._message_term",
+            observed="raised call's exception class is not authenticated",
+            requested="an authenticated exception construction whose actuals are known",
+            fix=(
+                "resolve the raised exception class through its lexical "
+                "coordinate; never read a message off an operand position that "
+                "an unresolved callee may occupy"
             ),
         )
     args = raised.arg_values
