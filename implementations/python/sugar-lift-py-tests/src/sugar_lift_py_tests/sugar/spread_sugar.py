@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace as _replace
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -47,12 +47,38 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         true_guard,
     )
 
+    from sugar_lift_py_tests.caller_parameter_contract import merge_demands
+    from sugar_lift_py_tests.floor.single_outcome_law import (
+        pending_demand,
+        rewrap_pending,
+    )
+
     prefix_guard = true_guard()
     values = list(done)
     halted: list = []
+    pending = None
 
     for sugar in sugars:
-        factors = outcome_to_exitset(sugar.desugar(ctx)).factor_completed()
+        # An operand that owes a parameter contract (`[*p[0]]`, `[*xs, p[0]]`
+        # for a formal `p`) WRAPS its value rather than being one, and the exit
+        # algebra has no arm for a value carried together with an undischarged
+        # obligation. Hoisting is the same door `collection_sugar._reduce_into`
+        # uses; without it this reached `outcome_to_exitset` and stopped on a
+        # bare `TypeError` that named no owner and no fix (#6352).
+        #
+        # The operand hoists at `true_guard`: a spread display has no guard of
+        # its own, and the prefix guard already rides on the arms below.
+        entry, operand = pending_demand(sugar.desugar(ctx), true_guard())
+        if entry is not None:
+            pending = (
+                entry
+                if pending is None
+                else _replace(
+                    pending,
+                    demands=merge_demands(pending.demands, entry.demands),
+                )
+            )
+        factors = outcome_to_exitset(operand).factor_completed()
         completed = None
         for exit_ in factors.exits:
             if isinstance(exit_, Halted):
@@ -68,8 +94,14 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         if completed is None:
             # Every path through this operand halts: there is no completed
             # continuation to hand to ``finish``, and the halted face is the
-            # whole meaning.
-            return ExitSet(tuple(halted)).normalize().collapse()
+            # whole meaning. Any obligation already incurred rides on the halted
+            # arms, which `outcome_to_exitset` conserved across the conversion.
+            return rewrap_pending(
+                pending,
+                ExitSet(tuple(halted)).normalize().collapse(),
+                owner="spread operand",
+                blame=str(getattr(sugar, "site", sugar)),
+            )
         prefix_guard = _and_guards(prefix_guard, completed.guard)
         values.append(completed.value)
 
@@ -78,7 +110,11 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         tail = tail.guarded(prefix_guard)
     # ``collapse`` restores the linear ``Outcome`` for the unconditional case, so
     # a spread with no guarded operand desugars to exactly what it did before.
-    return ExitSet((*halted, *tail.exits)).normalize().collapse()
+    built = ExitSet((*halted, *tail.exits)).normalize().collapse()
+    # Re-attach every hoisted obligation to the finished display, or be loud.
+    return rewrap_pending(
+        pending, built, owner="spread display", blame=str(finish)
+    )
 
 
 @dataclass(frozen=True)

@@ -210,6 +210,21 @@ def _unhashable_destination_count() -> int:
     return len(_UNHASHABLE_DESTINATIONS)
 
 
+def _obligations(exit_: "Halted") -> tuple:
+    """A halted arm's obligations by content address, order-free (#6352).
+
+    Keyed by ``demand_cid`` -- the obligation's own content address -- never by
+    hashing the carrier, which holds a floor value and a term.
+    """
+    return tuple(
+        sorted(
+            demand.demand_cid
+            for entry in exit_.pending_contracts
+            for demand in entry.demands
+        )
+    )
+
+
 def _destination_key(exit_: "Exit[T]") -> object:
     """Bucket key for an exit's DESTINATION, ignoring its guard.
 
@@ -220,7 +235,12 @@ def _destination_key(exit_: "Exit[T]") -> object:
     try:
         if isinstance(exit_, Completed):
             return ("completed", hash(exit_.value))
-        return ("halted", hash(exit_.effect), hash(exit_.state))
+        return (
+            "halted",
+            hash(exit_.effect),
+            hash(exit_.state),
+            _obligations(exit_),
+        )
     except TypeError:
         return _UNHASHABLE
 
@@ -240,12 +260,29 @@ class Completed(Generic[T]):
 
 @dataclass(frozen=True)
 class Halted:
+    """Control left with this effect, under this guard, from this state.
+
+    ``pending_contracts`` conserves obligations incurred BEFORE the effect
+    across the ``Incomplete`` -> halted conversion (#6352). Each is already
+    weakened under this arm's own guard by ``outcome_to_exitset``, so the arm
+    carries ``g -> D`` rather than a bare ``D``.
+
+    It is deliberately NOT routed like ``faces``. A merged arm holds under a
+    DISJUNCTION, so partition testimony may only keep what every contributing
+    arm carried -- intersecting is what stops a merged arm claiming a face it
+    held on one side only. Obligations must not be intersected (that drops one)
+    and must not be unioned (that owes one on a face that never runs), so they
+    take neither route: they are part of the DESTINATION, and two arms owing
+    different things are different destinations that never merge at all.
+    """
+
     guard: Formula
     effect: Effect
     state: object | None = None
     faces: frozenset[PartitionFace] = _dataclass_field(
         default=_NO_FACES, compare=False, repr=False
     )
+    pending_contracts: tuple = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
@@ -480,6 +517,10 @@ class ExitSet(Generic[T]):
                     and isinstance(prior, Halted)
                     and exit_.effect == prior.effect
                     and exit_.state == prior.state
+                    # #6352: arms owing different obligations are different
+                    # destinations. Merging them would keep the prior's and
+                    # drop the arrival's, silently.
+                    and _obligations(exit_) == _obligations(prior)
                 )
                 # Same destination under a DISJOINED guard: only testimony both
                 # arms carried survives the merge, for the same reason as in
@@ -500,6 +541,10 @@ class ExitSet(Generic[T]):
                         prior.effect,
                         prior.state,
                         prior.faces & exit_.faces,
+                        # Equal by `same_halted`, so this conserves rather than
+                        # chooses; stated explicitly so the field cannot be
+                        # dropped by a later edit to this constructor.
+                        prior.pending_contracts,
                     )
                     break
             else:
@@ -803,10 +848,89 @@ def outcome_to_exitset(outcome) -> ExitSet:
     if isinstance(outcome, Complete):
         return ExitSet.completed(outcome.value)
     if isinstance(outcome, Incomplete):
+        # CONSERVATION AT THE CONVERSION BOUNDARY (#6352). An `Incomplete` can
+        # carry obligations incurred BEFORE its effect (`o.x = p[k]` evaluates
+        # `p[k]`, then the store answers). This conversion used to build the
+        # halted arm from `effect` alone, so those obligations vanished HERE --
+        # silently, on a boundary, where nothing downstream could report them.
+        # A demand that disappears at an effect -> halted conversion is
+        # unattributable afterward: no caller owes it and no instrument knows.
+        #
+        # They are weakened under the arm's own guard on the way across, so the
+        # arm carries `g -> D` rather than `D`. That weakening is what makes the
+        # later merge sound (see `_destination_key` / `normalize`).
+        contracts = tuple(getattr(outcome, "pending_contracts", ()))
         if outcome.branch_conditions:
-            return ExitSet.halted(outcome.effect, and_(list(outcome.branch_conditions)))
-        return ExitSet.halted(outcome.effect)
-    raise TypeError(type(outcome))
+            guard = and_(list(outcome.branch_conditions))
+            return ExitSet(
+                (
+                    Halted(
+                        guard,
+                        outcome.effect,
+                        None,
+                        pending_contracts=tuple(
+                            entry.demanded_under(guard) for entry in contracts
+                        ),
+                    ),
+                )
+            ).normalize()
+        return ExitSet(
+            (
+                Halted(
+                    true_guard(),
+                    outcome.effect,
+                    None,
+                    pending_contracts=contracts,
+                ),
+            )
+        ).normalize()
+
+    # A PENDING PARAMETER-CONTRACT CARRIER (#6352). This used to be
+    # `raise TypeError(type(outcome))` -- a gap that named no owner, no observed
+    # shape and no fix, which is strictly worse than a panic, not absent.
+    #
+    # The carrier is not a value and not a partition: it WRAPS a value together
+    # with obligations the linker has not discharged. The exit algebra has no
+    # arm for it because an ExitSet's faces each carry their own guard and the
+    # carrier has one value with no seam to split across them. The producer must
+    # hoist the obligations before converting, exactly as
+    # `collection_sugar._reduce_into` and `spread_sugar._collect` do.
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        ContractConditionalConstructionV1,
+    )
+    from sugar_lift_py_tests.gap.info import GapKind
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    if isinstance(outcome, ContractConditionalConstructionV1):
+        construction_panic_gap(
+            owner="outcome_to_exitset",
+            blame=outcome.source_node,
+            observed=(
+                "a pending parameter contract carrier ("
+                + ", ".join(demand.demand_cid for demand in outcome.demands)
+                + ") was converted to an exit set, which has no arm that wraps "
+                "a value together with an undischarged obligation"
+            ),
+            requested="a plain value or a partition",
+            fix=(
+                "hoist the demands with `single_outcome_law.pending_demand` "
+                "before converting, fold the carried value, and re-attach them "
+                "with `rewrap_pending`; never drop the obligation"
+            ),
+            gap_kind=GapKind.FLOOR,
+        )
+
+    construction_panic_gap(
+        owner="outcome_to_exitset",
+        blame=type(outcome).__name__,
+        observed=f"{type(outcome).__name__} is not an Outcome the exit algebra knows",
+        requested="Complete, Incomplete or ExitSet",
+        fix=(
+            "give this outcome variant an arm in `outcome_to_exitset`, or stop "
+            "producing it upstream of the exit algebra"
+        ),
+        gap_kind=GapKind.FLOOR,
+    )
 
 
 __all__ = [
