@@ -295,6 +295,47 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
     assert bound_return.value.projection == "enter-result"
 
 
+@pytest.mark.parametrize(
+    ("body", "incoming_kind"),
+    [
+        ("pass", Completed),
+        ('raise ValueError("boom")', Halted),
+    ],
+)
+def test_real_resource_reproducer_closes_every_exitset_face(
+    tmp_path, monkeypatch, body, incoming_kind
+):
+    """An authenticated provider resource closes after completion and halt."""
+    path = tmp_path / f"resource_{incoming_kind.__name__.lower()}.py"
+    path.write_text(
+        "from arbitrary_provider import acquire\n"
+        "def f():\n"
+        "    with acquire():\n"
+        f"        {body}\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+
+    resource = next(
+        statement
+        for statement in _function_sugar(path_source(str(path)), _resolved).statements
+        if isinstance(statement, WithResourceSugar)
+    )
+    # Observed through `and_exit` -- the ONE algebra the resource contract
+    # routes through. Pinning `and_finally` here would pin a mechanism; the law
+    # is that every body face reaches the contract.
+    original = ExitSet.and_exit
+    seen = []
+
+    def observe(incoming, exit_es, *, disposition):
+        seen.append(type(incoming.exits[0]))
+        return original(incoming, exit_es, disposition=disposition)
+
+    monkeypatch.setattr(ExitSet, "and_exit", observe)
+    resource.desugar()
+
+    assert seen == [incoming_kind]
+
+
 def test_unresolved_ref_stays_typed_loud(tmp_path):
     path = tmp_path / "unresolved.py"
     path.write_text(

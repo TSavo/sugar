@@ -42,25 +42,36 @@ class WithResourceSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
+        prefix = (
+            "class Resource:\n"
+            "    def __init__(self):\n"
+            "        self.closed = False\n"
+            "    def __enter__(self):\n"
+            "        return self\n"
+            "    def __exit__(self, effect_type, effect, traceback):\n"
+            "        self.closed = True\n"
+            "        return False\n\n"
+            "def A(halts):\n"
+            "    resource = Resource()\n"
+            "    try:\n"
+            "        with resource:\n"
+            "            if halts:\n"
+            "                raise ValueError\n"
+            "    except ValueError:\n"
+            "        pass\n"
+            "    return resource.closed\n\n"
+        )
         return _call_pair(
-            name="with_resource_structure",
+            name="with_resource_closes_completed_and_halted",
             owner_sugar="WithResourceSugar",
-            truthful=(
-                "def A(z):\n"
-                "    with contextlib.suppress(KeyError):\n"
-                "        raise KeyError\n"
-                "    return z\n\n"
-                "def test_a():\n"
-                "    assert A(5) == 5\n"
-            ),
-            lying=(
-                "def A(z):\n"
-                "    with contextlib.suppress(KeyError):\n"
-                "        raise KeyError\n"
-                "    return z\n\n"
-                "def test_a():\n"
-                "    assert A(5) == 6\n"
-            ),
+            truthful=prefix
+            + "def test_a():\n"
+            "    assert A(False)\n"
+            "    assert A(True)\n",
+            lying=prefix
+            + "def test_a():\n"
+            "    assert A(False)\n"
+            "    assert not A(True)\n",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
