@@ -2051,10 +2051,21 @@ class FunctionDef(Statement):
 
     @staticmethod
     def _owns_yield(body) -> bool:
+        """Does this body own a suspension boundary of its own?
+
+        `Yield` and `YieldFrom` are the two constructors of that boundary, so
+        ownership tests BOTH. Recognizing only `Yield` made a `yield from`-only
+        function construct an ordinary eager call frame: the call completed as
+        a plain `CallSiteValue` instead of allocating a generator, and the
+        boundary's refusal only surfaced later if the body happened to be
+        forced. One constructor recognized and the other not is what let a
+        suspension escape as an ordinary value.
+        """
+
         def visit(node) -> bool:
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
                 return False
-            if isinstance(node, Yield):
+            if isinstance(node, (Yield, YieldFrom)):
                 return True
             for field in getattr(node, "_child_fields", ()):
                 value = getattr(node, field)
@@ -2067,7 +2078,8 @@ class FunctionDef(Statement):
             return False
 
         return any(
-            isinstance(statement, Yield) or visit(statement) for statement in body
+            isinstance(statement, (Yield, YieldFrom)) or visit(statement)
+            for statement in body
         )
 
     def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
