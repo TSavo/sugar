@@ -32,6 +32,15 @@ class ComprehensionValue(FloorValue):
         del owner
         return self.term
 
+    def project_sequence_with(self, operation, ctx):
+        """`a, b = <comprehension>` -- the comprehension owns the cardinality.
+
+        It answers from `finite_elements` when its owner projected every member
+        of an exact finite iterable, and otherwise retains the arity demand. The
+        operation reads the testimony; this face only routes to it.
+        """
+        return operation.project_comprehension(self, ctx)
+
     def contains(self, item, site):
         # Finite comprehension testimony folds like a list; otherwise membership
         # stays the py.in coordinate over the comprehension term.

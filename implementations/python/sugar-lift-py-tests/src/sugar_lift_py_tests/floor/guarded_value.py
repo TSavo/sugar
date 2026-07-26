@@ -243,6 +243,31 @@ class GuardedValue(FloorValue):
         outcome = rewrap_pending(true_pending, outcome, owner=owner, blame=site)
         return rewrap_pending(false_pending, outcome, owner=owner, blame=site)
 
+    def project_sequence_with(self, operation, ctx):
+        """`a, b = (p if c else q)` -- the unpack distributes into both faces.
+
+        Not `_map`. `_map` re-fuses two ANSWERS into one `GuardedValue`, and the
+        answers here are not values: each face independently either binds a
+        `ScopeRebinds` or halts with its arity obligation, and those two do not
+        fuse into a conditional value. The lawful join is the partition -- each
+        face's answer restricted to its own polarity, then unioned -- which is
+        the same exit algebra `IfSugar` builds and keeps a halt on one face
+        coexisting with a completed exit on the other.
+
+        `collapse()` hands back a plain outcome when the union has one
+        unconditional exit, so an unguarded caller is unaffected.
+        """
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        def face(value, guard):
+            return outcome_to_exitset(
+                value.project_sequence_with(operation, ctx)
+            ).guarded(guard)
+
+        exits = face(self.when_true, self.guard)
+        return exits.union(face(self.when_false, not_(self.guard))).collapse()
+
     def subscript(self, index, site):
         return self._map("subscript", index, site)
 
