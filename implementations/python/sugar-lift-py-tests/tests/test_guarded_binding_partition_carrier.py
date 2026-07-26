@@ -109,9 +109,9 @@ def test_a_merge_spanning_both_outer_sides_claims_NEITHER_of_them():
 
     exits = _read(state)
     same = next(exit_ for exit_ in exits.exits if exit_.value == StringValue("same"))
-    outer_true, outer_false = _guarded_projection_faces(GuardedProjection(
-        outer, _Value("x"), _Value("y")
-    ))
+    outer_true, outer_false = _guarded_projection_faces(
+        GuardedProjection(outer, _Value("x"), _Value("y"))
+    )
 
     assert not _faces_exclusive(same.faces, frozenset({outer_true}))
     assert not _faces_exclusive(same.faces, frozenset({outer_false}))
@@ -157,3 +157,70 @@ def test_delete_stamps_the_same_authenticated_guarded_projection_faces():
         for a in left.faces
         for b in right.faces
     )
+
+
+# -- the partition's identity is the branch result, not the read site --------
+
+
+def test_the_same_slot_read_twice_mints_the_SAME_partition() -> None:
+    """Salvaged from #6403, whose mechanism landed elsewhere (#6393) while this
+    law went unpinned.
+
+    Two reads of one conditional binding are governed by the SAME branch
+    outcome, so they must mint the same partition. If the owner were the read
+    SITE, or anything allocation-based, two reads of one binding would mint
+    unrelated partitions and arms that genuinely exclude each other would look
+    merely unrelated -- `factor_completed` would then decline a split that is
+    real, silently and with every test green.
+
+    ``partition`` addresses by content, so this is reproducible rather than
+    allocation-based. Asserted across two INDEPENDENTLY constructed slot
+    objects carrying the same identity, which is what a second read is.
+    """
+    from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+        _guarded_projection_faces,
+    )
+
+    first = _guarded_projection_faces(
+        GuardedProjection(_slot("shared"), _Value("t"), _Value("f"))
+    )
+    second = _guarded_projection_faces(
+        GuardedProjection(_slot("shared"), _Value("t"), _Value("f"))
+    )
+
+    assert first == second
+
+
+def test_unrelated_conditional_bindings_do_not_share_a_partition() -> None:
+    """The discriminating face: reproducibility must not become collapse.
+
+    A single global partition would satisfy the law above and be worthless --
+    every unrelated binding would claim to exclude every other.
+    """
+    from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+        _guarded_projection_faces,
+    )
+
+    one = _guarded_projection_faces(
+        GuardedProjection(_slot("one"), _Value("t"), _Value("f"))
+    )
+    other = _guarded_projection_faces(
+        GuardedProjection(_slot("other"), _Value("t"), _Value("f"))
+    )
+
+    assert one != other
+    assert {face.partition for face in one} != {face.partition for face in other}
+
+
+def test_the_two_arms_are_opposite_sides_of_one_split() -> None:
+    """Both faces name one partition and differ only in side."""
+    from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+        _guarded_projection_faces,
+    )
+
+    true_face, false_face = _guarded_projection_faces(
+        GuardedProjection(_slot("split"), _Value("t"), _Value("f"))
+    )
+
+    assert true_face.partition == false_face.partition
+    assert true_face.side != false_face.side
