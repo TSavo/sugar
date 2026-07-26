@@ -209,3 +209,58 @@ def test_the_outside_root_refusal_still_fires_first(tmp_path) -> None:
         workspace_path_source(str(source), root=str(elsewhere))
 
     assert "lies outside workspace root" in str(raised.value)
+
+
+# -- the driver must root where the seats were recorded -----------------------
+
+
+def _driver():
+    """The authoritative scoreboard's own rooting decision."""
+    import importlib.util
+    import sys
+
+    path = (
+        Path(__file__).resolve().parents[1] / "scripts" / "control_effect_recensus.py"
+    )
+    spec = importlib.util.spec_from_file_location("_recensus_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_driver_roots_an_installed_corpus_at_the_install_root() -> None:
+    """The break this law would otherwise cause, pinned at its source.
+
+    The scoreboard is invoked with the package directory as its corpus, so
+    before this split it rooted the locus at `.../site-packages/pandas` and
+    minted `core/frame.py`. A driver that never runs is not obviously broken,
+    so the rooting is pinned here rather than left to the law's refusal.
+    """
+    path, seat = _installed_file()
+    install_root = _install_root(path, seat)
+    package_directory = install_root / Path(seat).parts[0]
+
+    assert _driver().locus_root_for_corpus(package_directory) == install_root
+    assert package_directory != install_root, "the two roots must actually differ"
+
+
+def test_the_rooted_corpus_then_mints_a_seat() -> None:
+    """The composition, end to end: root the driver's way, get a recorded seat."""
+    path, seat = _installed_file()
+    install_root = _install_root(path, seat)
+    package_directory = install_root / Path(seat).parts[0]
+
+    locus_root = _driver().locus_root_for_corpus(package_directory)
+    _source, locus, _cid = workspace_path_source(str(path), root=str(locus_root))
+
+    assert locus == seat
+
+
+def test_the_driver_leaves_a_first_party_corpus_root_alone(tmp_path) -> None:
+    """No distribution states an address for it, so the corpus root stands."""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "module.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert _driver().locus_root_for_corpus(package) == package

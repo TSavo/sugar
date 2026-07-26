@@ -237,6 +237,41 @@ def require_recorded_seat(path: str, locus: str) -> None:
     )
 
 
+def install_root_for(path: str) -> str | None:
+    """The directory this file's seat is stated relative to, or ``None``.
+
+    A driver measuring an installed corpus needs the SAME root the RECORD
+    states seats against, or it mints an address the seat law refuses. Deriving
+    it here -- from the distribution's own manifest, by the same walk
+    ``recorded_seat_for`` uses -- means the driver and the law cannot disagree.
+    A driver that computed the root some other way would be a second addressing
+    convention, which is the thing we are avoiding.
+
+    Accepts a file or a directory, because a corpus driver is handed a package
+    directory (``.../site-packages/pandas``) and must root at the install root
+    (``.../site-packages``) that its seats are stated against.
+
+    ``None`` means no distribution states an address for anything here, so the
+    caller's own root stands.
+    """
+    resolved = Path(path).resolve()
+    for parent in resolved.parents:
+        seats = _recorded_seats(str(parent))
+        if seats is None:
+            continue
+        candidate = resolved.relative_to(parent).as_posix()
+        if candidate in seats:
+            return str(parent)
+        # A directory is inside the distribution when it is the stated parent
+        # of at least one recorded seat. Checked against the manifest, never
+        # inferred from the directory's name or position.
+        prefix = candidate + "/"
+        if any(seat.startswith(prefix) for seat in seats):
+            return str(parent)
+        return None
+    return None
+
+
 def recorded_seat_for(path: str) -> str | None:
     """The seat this file's distribution recorded for it, or ``None``.
 
