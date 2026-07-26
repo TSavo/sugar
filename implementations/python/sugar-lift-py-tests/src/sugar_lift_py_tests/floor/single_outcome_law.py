@@ -143,7 +143,50 @@ def rewrap_pending(pending, outcome, *, owner, blame):
                         exit_.guard, exit_.effect, exit_.state, exit_.faces, owed
                     )
                 )
-        return ExitSet(tuple(exits)).normalize()
+        joined = ExitSet(tuple(exits)).normalize()
+
+        # "On EVERY face" carries the obligation only while there IS a face.
+        # Over ZERO faces the same loop puts it nowhere, and the caller would
+        # discharge nothing while looking resolved -- the exact silent drop
+        # this whole module exists to make loud.
+        #
+        # Two ways to arrive with nothing left to carry, and this states the
+        # property rather than either symptom: an ExitSet that was already
+        # empty, and one whose faces `normalize` dropped as provably false.
+        # Checked AFTER normalize so it is the surviving faces that answer.
+        carried = {
+            demand.demand_cid
+            for exit_ in joined.exits
+            for contract in exit_.pending_contracts
+            for demand in contract.demands
+        }
+        dropped = tuple(
+            demand.demand_cid
+            for demand in pending.demands
+            if demand.demand_cid not in carried
+        )
+        if not dropped:
+            return joined
+
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap as _gap
+
+        _gap(
+            owner=owner,
+            blame=blame,
+            observed=(
+                "pending parameter contract demands ("
+                + ", ".join(dropped)
+                + ") joined onto a partition with no surviving face to carry "
+                "them, so the obligation cannot share one carried value"
+            ),
+            requested="one joined outcome that can carry every pending demand",
+            fix=(
+                "a partition with no face owes the demand nowhere: give the "
+                "obligation a face to be owed on, or refuse the join at the "
+                "construction that emptied it -- never let it resolve carrying "
+                "nothing"
+            ),
+        )
 
     # ANYTHING ELSE stays LOUD: an outcome kind this law has never seen has no
     # arm here by construction, and inventing one would be a guess about where
