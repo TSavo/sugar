@@ -42,11 +42,24 @@ def main() -> int:
 
     corpus = Path(os.path.dirname(pandas.__file__))
     files = sorted(corpus.rglob("*.py"))
-    # One hash over the whole corpus: relpath + content, in sorted order.
+    # One hash over the whole corpus, in sorted-rglob order.
+    #
+    # THE CONVENTION IS PART OF THE RECEIPT. A bare digest is not checkable by
+    # anyone who hashed the same bytes a different way -- timeout-bisect and I
+    # produced different digests over a provably IDENTICAL corpus purely from
+    # convention drift, and chased it until both were computed side by side.
+    # Both are recorded so either can be reproduced without guessing.
+    #
+    #   pathBound  : for each file, sha256(relpath_utf8 || hex_digest_ascii)
+    #                Binds paths, so a pure rename changes the digest.
+    #   contentOnly: for each file, raw bytes concatenated.
+    #                Path-blind; a rename is invisible to it.
     agg = hashlib.sha256()
+    content_only = hashlib.sha256()
     for f in files:
         agg.update(str(f.relative_to(corpus)).encode())
         agg.update(sha256(f).encode())
+        content_only.update(f.read_bytes())
 
     def pipfreeze() -> dict:
         out = {}
@@ -90,6 +103,25 @@ def main() -> int:
             "root": str(corpus),
             "pyFiles": len(files),
             "aggregateSha256": agg.hexdigest(),
+            "aggregateSha256Convention": (
+                "pathBound: sorted(rglob('*.py')); per file "
+                "sha256(relpath_utf8 || sha256_hex_ascii)"
+            ),
+            "aggregateSha256ContentOnly": content_only.hexdigest(),
+            "aggregateSha256ContentOnlyConvention": (
+                "contentOnly: sorted(rglob('*.py')); raw file bytes "
+                "concatenated. Path-blind."
+            ),
+            "crossAgentCorpusAgreement": (
+                "timeout-bisect independently reported "
+                "a1155ae27c10a1828ac6a02b890a8b1ee23881a5f78c3d6265f02a63065ca77d, "
+                "which equals aggregateSha256ContentOnly here. Same 1421 files, "
+                "byte-identical; the digests differed only by convention."
+            ),
+            "fileIndexBase": (
+                "1-based. The census prints [i+1/N] over sorted(rglob('*.py')), "
+                "so census index 100 is timeout-bisect's 0-based index 99."
+            ),
         },
         "environment": {
             "python": sys.version,

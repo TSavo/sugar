@@ -16,7 +16,12 @@
     "version": "3.0.3",
     "root": "/usr/local/lib/python3.14/site-packages/pandas",
     "pyFiles": 1421,
-    "aggregateSha256": "04b67544e3628d25d1b20653558fb2c702a870ae3f97bc8492a9f70f854a9c31"
+    "aggregateSha256": "04b67544e3628d25d1b20653558fb2c702a870ae3f97bc8492a9f70f854a9c31",
+    "aggregateSha256Convention": "pathBound: sorted(rglob('*.py')); per file sha256(relpath_utf8 || sha256_hex_ascii)",
+    "aggregateSha256ContentOnly": "a1155ae27c10a1828ac6a02b890a8b1ee23881a5f78c3d6265f02a63065ca77d",
+    "aggregateSha256ContentOnlyConvention": "contentOnly: sorted(rglob('*.py')); raw file bytes concatenated. Path-blind.",
+    "crossAgentCorpusAgreement": "timeout-bisect independently reported a1155ae27c10a1828ac6a02b890a8b1ee23881a5f78c3d6265f02a63065ca77d, which equals aggregateSha256ContentOnly here. Same 1421 files, byte-identical; the digests differed only by convention.",
+    "fileIndexBase": "1-based. The census prints [i+1/N] over sorted(rglob('*.py')), so census index 100 is timeout-bisect's 0-based index 99."
   },
   "environment": {
     "python": "3.14.4 (main, Apr  7 2026, 13:13:20) [Clang 21.0.0 (clang-2100.0.123.102)]",
@@ -108,8 +113,8 @@
       "bytes": 6557
     },
     "make_manifest.py": {
-      "sha256": "9ffab0b1d59344bd6d91ddf0181eb569b87bf060b12026a0aca0f3147009c301",
-      "bytes": 6448
+      "sha256": "d4619dee01b6f59d2c0fd687c641f48925cd7647c63726cab5319261edcbd8ba",
+      "bytes": 8171
     },
     "measured.sh": {
       "sha256": "635b0a959735c0b6fbdad9ec50605b8f5bc6fc3a7086250a5668f99f83947ddf",
