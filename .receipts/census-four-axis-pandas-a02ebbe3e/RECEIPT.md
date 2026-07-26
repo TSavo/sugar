@@ -178,7 +178,42 @@ implementation defects, not frontier:
 
 `a4eade69a` (#6319, *An arm that halts is not an arm that is missing: ten
 desugar defect families*) landed on main **after** this pin and targets exactly
-this axis. See `board-a4eade69a.json` for the head measurement.
+this axis. It works — see below.
+
+## Head measurement — a4eade69a (#6319)
+
+A second full-corpus census at current main, same corpus CID, same harness,
+1421/1421 rows, conserved. **It was not lease-wrapped** — it is a supporting
+attribution measurement, not the primary board. Box load ~10 on 32 cores.
+
+| axis | a02ebbe3e | a4eade69a | Δ |
+|---|---|---|---|
+| `R_construction` | 5088 | 5040 | −48 |
+| `R_desugar` | 8596 | 8962 | +366 |
+| `desugarConstructionPanics` | 960 | 1184 | +224 |
+| `desugarDefects` | **407** | **38** | **−369** |
+| `R(timeout)` | **0** | **3** | **+3** |
+
+#6319 did what it says: **defects 407 → 38, a 91% drain**, and the drained
+defects reappear as loud typed panics (+224: `guarded` 77, `IfExpSugar._join`
+53, `collection ListValue` 50, `collection build` 32). An arm that halts is now
+recorded as halting rather than as an `AttributeError`. `R_desugar`'s +366 is
+entirely accounted semantics (8538 → 8904); the owed bucket is **58 at both
+commits**, unmoved.
+
+### Head regressed `R(timeout)` 0 → 3
+
+Three files complete at `a02ebbe3e` and exceed the 300s bound at `a4eade69a`:
+
+- idx 69 `core/arrays/arrow/array.py`
+- idx 184 `core/reshape/pivot.py`
+- idx 509 `tests/extension/test_arrow.py`
+
+The box was at load ~10 on 32 cores, so this is not the contention artifact
+that would appear on a loaded machine. Each timeout row is an **unmeasured
+file** that also absorbs every panic and defect row it would have produced — so
+the head figures for the other three axes are, strictly, lower bounds over
+1418/1421 files, while the `a02ebbe3e` board is complete over 1421/1421.
 
 ## Fresh With partition
 
