@@ -384,13 +384,22 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         next(source.functions()).sugar()
 
 
-def test_multiple_items_nest_and_non_name_binding_stays_typed_loud(tmp_path):
+def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):
     """Multi-item With is no longer a gap: it nests into single-item Withs.
 
     ``MultipleContextManagerItems`` was the shell that watched this; it is
     deleted, because the illegal shape (a multi-manager With reaching the
     resource router) is now unconstructable — construction rewrites it into
-    Python's own nested spelling first. Non-Name binding targets stay loud.
+    Python's own nested spelling first.
+
+    The non-Name binding half of this test used to assert
+    ``UnsupportedWithBindingTarget``. That refusal is retired for authenticated
+    ProtocolResource sites: the as-clause is Python's own assignment, so
+    ``With._bind_store_target`` rewrites a store target into
+    ``<target> = ObservationRef(enter_slot)`` as the first body statement and
+    inherits ``Assign``'s target totality. The law is now owned in full by
+    ``test_with_store_binding_target.py``; this arm keeps the nesting law and
+    pins that the two rewrites compose.
     """
     from sugar_lift_python_source.source_oracle import path_source
 
@@ -428,13 +437,30 @@ def test_multiple_items_nest_and_non_name_binding_stays_typed_loud(tmp_path):
     assert len(chain) == 2
     assert chain[1] in chain[0].body
 
+    # Both rewrites compose: two managers nest, and the inner one's store
+    # target becomes an ordinary assignment at the head of its body.
     target = tmp_path / "target.py"
     target.write_text(
         "from dependency import manager\n"
         "def f():\n"
-        "    with manager() as (left, right):\n"
+        "    with manager(), manager() as (left, right):\n"
         "        pass\n"
     )
-    with pytest.raises(SugarNotWritten) as caught:
-        _function_sugar(path_source(str(target)), _resolved)
-    assert type(caught.value).__name__ == "UnsupportedWithBindingTarget"
+    probe = SourceFile(path_source(str(target)))
+    node = next(n for n in probe.nodes() if n.kind == "With")
+    rows = {
+        _coordinate(item.context_expr): _resolved(_coordinate(item.context_expr))
+        for item in node.items
+    }
+    composed = SourceFile(
+        path_source(str(target)),
+        construction_context=TreeConstructionContextV1(
+            ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+        ),
+    )
+    chain = []
+    _walk(next(composed.functions()).sugar())
+    outer, inner = chain[0], chain[1]
+    assert inner in outer.body
+    assert outer.enter_slot_id is None, "the outer manager names no target"
+    assert inner.enter_slot_id == f"{inner.manager_slot_id}#enter_result"
