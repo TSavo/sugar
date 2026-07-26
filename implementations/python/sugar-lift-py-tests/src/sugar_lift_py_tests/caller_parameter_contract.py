@@ -104,6 +104,60 @@ class ContractConditionalConstructionV1:
             else following
         )
 
+    def demanded_under(self, formula):
+        """Weaken the pending obligation to a guarded face; carried value untouched.
+
+        The demand is owed only where the branch runs. `python:indexable(p)` for
+        `if c: return p[0]` is `c -> python:indexable(p)`, never the
+        unconditional obligation: a caller that never takes the branch owes
+        nothing. Re-minting changes `demand_cid`, which is correct -- it IS a
+        different obligation.
+
+        This is the half a caller wants when the caller is guarding the VALUE
+        itself (an `IfExp` that fuses both arms into one `GuardedValue`), so
+        guarding the value here too would guard it twice. `guarded` is the other
+        door, for a caller that hands the whole entry under a branch.
+        """
+        from sugar_lift_py_tests.ir import implies
+
+        return replace(
+            self,
+            demand=ParameterContractDemandV1.mint(
+                owner_source_identity_cid=self.demand.owner_source_identity_cid,
+                formal_coordinate_cid=self.demand.formal_coordinate_cid,
+                operation_site=self.demand.operation_site,
+                demanded_formula=implies(formula, self.demand.demanded_formula),
+                candidate_cid=self.demand.candidate_cid,
+            ),
+        )
+
+    def guarded(self, formula):
+        """Ride under a branch: the CARRIED value guards, the DEMAND weakens.
+
+        This entry is a wrapper -- `and_then` threads the branch's real floor
+        value through `self.value`, and `resume_project` substitutes exactly
+        that value once the linker discharges the demand. So a guard reaching
+        this entry has two distinct arms to conserve, and neither may be
+        dropped:
+
+        1. The carried value guards the way it would have if no demand were
+           pending (ReturnValue -> GuardedReturn, InvValue -> implication, ...).
+           Guarding the wrapper without guarding the value would let the
+           resumed record project an UNGUARDED return for a branch that only
+           runs under `formula`.
+        2. The demand is owed only on the guarded face. `python:indexable(p)`
+           for `if c: return p[0]` is `c -> python:indexable(p)`, never the
+           unconditional obligation -- a caller that never takes the branch
+           owes nothing. Weakening re-mints the demand, so `demand_cid`
+           changes: it IS a different obligation.
+
+        Nested guards compose by repeated application, innermost first, which
+        is the same accumulation `Incomplete.guarded` records positionally.
+        """
+        return replace(
+            self.demanded_under(formula), value=self.value.guarded(formula)
+        )
+
     def contribution(self):
         return (self,)
 

@@ -51,17 +51,36 @@ class GuardedValue(FloorValue):
                 GuardedValue(other.guard, true_outcome.value, false_outcome.value)
             )
 
+        from sugar_lift_py_tests.floor.single_outcome_law import (
+            pending_demand,
+            require_single_value,
+            rewrap_pending,
+        )
+
+        owner = f"GuardedValue._map({method})"
+        blame = args[-1] if args else method
         true_outcome = getattr(self.when_true, method)(*args)
         if isinstance(true_outcome, Incomplete):
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(self.when_false, method)(*args)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
-        assert isinstance(true_outcome, Complete)
-        assert isinstance(false_outcome, Complete)
-        return Complete(
+        # An arm may answer with a value that still owes a parameter contract
+        # (`(a if c else p)[i]` for a formal `p`). The demand is owed only on that
+        # arm's face; hoist it, join the carried values, then re-attach it.
+        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
+        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
+        true_outcome = require_single_value(
+            true_outcome, owner=owner, blame=blame, arm="when_true"
+        )
+        false_outcome = require_single_value(
+            false_outcome, owner=owner, blame=blame, arm="when_false"
+        )
+        joined = Complete(
             GuardedValue(self.guard, true_outcome.value, false_outcome.value)
         )
+        joined = rewrap_pending(true_pending, joined, owner=owner, blame=blame)
+        return rewrap_pending(false_pending, joined, owner=owner, blame=blame)
 
     def _predicate(self, method: str, *args):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -74,14 +93,33 @@ class GuardedValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
+        from sugar_lift_py_tests.floor.single_outcome_law import (
+            pending_demand,
+            require_single_value,
+            rewrap_pending,
+        )
+
+        owner = f"GuardedValue._predicate({method})"
+        blame = args[-1] if args else method
         true_outcome = getattr(self.when_true, method)(*args)
         if isinstance(true_outcome, Incomplete):
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(self.when_false, method)(*args)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
-        assert isinstance(true_outcome, Complete)
-        assert isinstance(false_outcome, Complete)
+        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
+        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
+        true_outcome = require_single_value(
+            true_outcome, owner=owner, blame=blame, arm="when_true"
+        )
+        false_outcome = require_single_value(
+            false_outcome, owner=owner, blame=blame, arm="when_false"
+        )
+
+        def _rejoin(outcome):
+            outcome = rewrap_pending(true_pending, outcome, owner=owner, blame=blame)
+            return rewrap_pending(false_pending, outcome, owner=owner, blame=blame)
+
         true_value = true_outcome.value
         false_value = false_outcome.value
 
@@ -97,7 +135,7 @@ class GuardedValue(FloorValue):
         true_formula = formula(true_value)
         false_formula = formula(false_value)
         if true_formula is None or false_formula is None:
-            return super().equals(args[0], args[-1])
+            return _rejoin(super().equals(args[0], args[-1]))
         if (
             type(true_value) is TrueBoolLiteralSugar
             and type(false_value) is FalseBoolLiteralSugar
@@ -115,7 +153,7 @@ class GuardedValue(FloorValue):
                     implies(not_(self.guard), false_formula),
                 ]
             )
-        return Complete(
+        joined = Complete(
             PredicateValue(
                 joined_formula,
                 args[-1],
@@ -133,6 +171,7 @@ class GuardedValue(FloorValue):
                 ),
             )
         )
+        return _rejoin(joined)
 
     def predicate_from_left(self, method: str, left, site):
         """Distribute a binary predicate whose guarded value is the RHS."""
@@ -145,15 +184,32 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
+        from sugar_lift_py_tests.floor.single_outcome_law import (
+            pending_demand,
+            require_single_value,
+            rewrap_pending,
+        )
+
+        owner = f"GuardedValue.map_from_left({method})"
         true_outcome = getattr(left, method)(self.when_true, site)
         if isinstance(true_outcome, Incomplete):
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(left, method)(self.when_false, site)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
-        return Complete(
+        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
+        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
+        true_outcome = require_single_value(
+            true_outcome, owner=owner, blame=site, arm="when_true"
+        )
+        false_outcome = require_single_value(
+            false_outcome, owner=owner, blame=site, arm="when_false"
+        )
+        joined = Complete(
             GuardedValue(self.guard, true_outcome.value, false_outcome.value)
         )
+        joined = rewrap_pending(true_pending, joined, owner=owner, blame=site)
+        return rewrap_pending(false_pending, joined, owner=owner, blame=site)
 
     def _predicate_from_left(self, method: str, left, site):
         from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -166,10 +222,26 @@ class GuardedValue(FloorValue):
             from sugar_lift_py_tests.ir import not_
 
             return false_outcome.guarded(not_(self.guard))
-        assert isinstance(true_outcome, Complete)
-        assert isinstance(false_outcome, Complete)
+        from sugar_lift_py_tests.floor.single_outcome_law import (
+            pending_demand,
+            require_single_value,
+            rewrap_pending,
+        )
+        from sugar_lift_py_tests.ir import not_
+
+        owner = f"GuardedValue._predicate_from_left({method})"
+        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
+        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
+        true_outcome = require_single_value(
+            true_outcome, owner=owner, blame=site, arm="when_true"
+        )
+        false_outcome = require_single_value(
+            false_outcome, owner=owner, blame=site, arm="when_false"
+        )
         joined = GuardedValue(self.guard, true_outcome.value, false_outcome.value)
-        return joined._predicate("truth", site)
+        outcome = joined._predicate("truth", site)
+        outcome = rewrap_pending(true_pending, outcome, owner=owner, blame=site)
+        return rewrap_pending(false_pending, outcome, owner=owner, blame=site)
 
     def subscript(self, index, site):
         return self._map("subscript", index, site)

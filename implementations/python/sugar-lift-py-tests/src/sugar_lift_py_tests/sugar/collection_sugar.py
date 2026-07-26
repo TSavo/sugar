@@ -18,18 +18,68 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
-def _reduce_all(element_sugars, ctx):
-    """Reduce each element sugar to its floor value, in order. Returns
-    ``(values, None)`` or ``(None, effect)`` if an element reduced to an effect."""
-    from sugar_lift_py_tests.outcome import Incomplete
+def _reduce_into(element_sugars, ctx, build):
+    """Reduce elements in source order, then hand the tuple of values to ``build``.
 
-    values = []
-    for element in element_sugars:
-        out = element.desugar(ctx)
-        if isinstance(out, Incomplete):
-            return None, out
-        values.append(out.value)
-    return tuple(values), None
+    LAW: an element's outcome is not one unconditional value. ``and_then`` is the
+    one door every ``Outcome`` variant implements, and each variant states its own
+    law through it -- ``Complete`` continues (a constructed raise keeps the
+    control-flow value and evaluates no enclosing step), ``Incomplete`` propagates
+    the effect and never runs the tail, ``ExitSet`` threads every completed arm
+    while halted arms bypass, and a pending parameter-contract candidate keeps its
+    demand attached while its carried value continues.
+
+    Reading ``.value`` off the outcome instead assumed exactly one arm, which is
+    false the moment an element can halt: `[a, d[k] := f()]`, an element whose
+    store partitions, a comparison chain that raises on one face. That assumption
+    was the `'ExitSet' object has no attribute 'value'` defect, and it also
+    dropped a pending contract demand on the floor.
+    """
+    from sugar_lift_py_tests.floor.single_outcome_law import (
+        pending_demand,
+        rewrap_pending,
+    )
+    from sugar_lift_py_tests.outcome import true_guard
+
+    owner = f"collection {build.__name__}"
+    reduced = tuple(element.desugar(ctx) for element in element_sugars)
+
+    # An element that owes a parameter contract (`[p[0], 1]` for a formal `p`)
+    # wraps its value rather than being one; the exit algebra has no arm for it,
+    # so hoist the demand out of the fold and re-attach it to the built
+    # collection. The element's demand is unconditional here -- a collection
+    # display has no guard of its own -- so it hoists at `true_guard`.
+    pending = None
+    stripped = []
+    for outcome in reduced:
+        entry, plain = pending_demand(outcome, true_guard())
+        if entry is not None and pending is not None:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner=owner,
+                blame=str(entry.source_node),
+                observed="two collection elements enrolled a contract demand",
+                requested="one pending demand per constructed value",
+                fix=(
+                    "widen ContractConditionalConstructionV1 to carry a demand SET "
+                    "before building a collection from two pending elements"
+                ),
+                gap_kind=GapKind.FLOOR,
+            )
+        pending = entry if entry is not None else pending
+        stripped.append(plain)
+
+    outcome = Complete(())
+    for element_outcome in stripped:
+        outcome = outcome.and_then(
+            lambda collected, got=element_outcome: got.and_then(
+                lambda value: Complete((*collected, value))
+            )
+        )
+    built = outcome.and_then(lambda values: Complete(build(values)))
+    return rewrap_pending(pending, built, owner=owner, blame=owner)
 
 
 @dataclass(frozen=True)
@@ -50,8 +100,7 @@ class ListSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.list_value import ListValue
 
-        values, effect = _reduce_all(self.elements, ctx)
-        return effect if effect is not None else Complete(ListValue(values))
+        return _reduce_into(self.elements, ctx, ListValue)
 
 
 @dataclass(frozen=True)
@@ -72,8 +121,7 @@ class TupleSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-        values, effect = _reduce_all(self.elements, ctx)
-        return effect if effect is not None else Complete(TupleValue(values))
+        return _reduce_into(self.elements, ctx, TupleValue)
 
 
 @dataclass(frozen=True)
@@ -94,8 +142,7 @@ class SetSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.set_value import SetValue
 
-        values, effect = _reduce_all(self.elements, ctx)
-        return effect if effect is not None else Complete(SetValue(values))
+        return _reduce_into(self.elements, ctx, SetValue)
 
 
 @dataclass(frozen=True)
@@ -117,11 +164,14 @@ class DictSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.dict_value import DictValue
 
-        key_values, effect = _reduce_all(self.keys, ctx)
-        if effect is not None:
-            return effect
-        val_values, effect = _reduce_all(self.values, ctx)
-        if effect is not None:
-            return effect
-        entries = tuple(zip(key_values, val_values))
-        return Complete(DictValue(entries))
+        # Keys and values interleave in source order (`{k1: v1, k2: v2}`), so
+        # they reduce as ONE element sequence and are re-paired afterwards. A
+        # halt in `v1` must not be reported after `k2` was evaluated.
+        interleaved = tuple(
+            sugar for pair in zip(self.keys, self.values) for sugar in pair
+        )
+
+        def build(flat):
+            return DictValue(tuple(zip(flat[0::2], flat[1::2])))
+
+        return _reduce_into(interleaved, ctx, build)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
+
 from dataclasses import field as dataclass_field, dataclass
 
 from sugar_lift_py_tests.ir import Formula
@@ -310,7 +312,12 @@ class PredicateValue(FloorValue):
                 if isinstance(branch_answer, Incomplete):
                     effects.append(branch_answer.guarded(guard))
                     continue
-                assert isinstance(branch_answer, Complete)
+                branch_answer = require_single_value(
+                    branch_answer,
+                    owner="PredicateValue branch binding join",
+                    blame=name,
+                    arm="branch",
+                )
                 guarded.append((guard, name, branch_answer.value))
                 continue
             prior_answer = prior.answer(before_scope)
@@ -323,8 +330,18 @@ class PredicateValue(FloorValue):
             ):
                 joined.append((name, GuardedValue(guard, binding, prior)))
                 continue
-            assert isinstance(branch_answer, Complete)
-            assert isinstance(prior_answer, Complete)
+            branch_answer = require_single_value(
+                branch_answer,
+                owner="PredicateValue branch binding join",
+                blame=name,
+                arm="branch",
+            )
+            prior_answer = require_single_value(
+                prior_answer,
+                owner="PredicateValue branch binding join",
+                blame=name,
+                arm="prior",
+            )
             joined.append(
                 (
                     name,
@@ -377,8 +394,18 @@ class PredicateValue(FloorValue):
                     )
                 )
                 continue
-            assert isinstance(then_answer, Complete)
-            assert isinstance(else_answer, Complete)
+            then_answer = require_single_value(
+                then_answer,
+                owner="PredicateValue then/else binding join",
+                blame=name,
+                arm="then",
+            )
+            else_answer = require_single_value(
+                else_answer,
+                owner="PredicateValue then/else binding join",
+                blame=name,
+                arm="else",
+            )
             joined.append(
                 (
                     name,
@@ -401,7 +428,12 @@ class PredicateValue(FloorValue):
                 if isinstance(answer, Incomplete):
                     effects.append(answer.guarded(branch_guard))
                     continue
-                assert isinstance(answer, Complete)
+                answer = require_single_value(
+                    answer,
+                    owner="PredicateValue one-sided binding join",
+                    blame=name,
+                    arm="branch",
+                )
                 guarded.append((branch_guard, name, answer.value))
         return tuple(joined), tuple(guarded), tuple(effects)
 
@@ -421,7 +453,12 @@ class PredicateValue(FloorValue):
             if isinstance(answer, Incomplete):
                 effects.append(answer)
                 continue
-            assert isinstance(answer, Complete)
+            answer = require_single_value(
+                answer,
+                owner="PredicateValue surviving binding join",
+                blame=name,
+                arm="surviving",
+            )
             bindings.append((name, answer.value))
         return tuple(bindings), tuple(effects)
 
