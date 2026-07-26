@@ -1,0 +1,17 @@
+HOST=Battleaxe
+TREE=/home/tsavo/census-head-tree-6324
+PANDAS_ROOT=/home/tsavo/census-a02-venv/lib/python3.12/site-packages/pandas
+PANDAS_VERSION=3.0.3
+COMMIT=unknown
+NPROC=32
+UPTIME_BEFORE= 08:43:37 up 22:04,  1 user,  load average: 12.91, 16.83, 20.83
+LEASE_REQUEST_UTC=2026-07-26T15:43:37Z
+CENSUS_START_UTC=2026-07-26T15:43:37Z
+CENSUS_EXIT=0
+CENSUS_END_UTC=2026-07-26T15:56:56Z
+UPTIME_AFTER_CENSUS= 08:56:56 up 22:17,  1 user,  load average: 21.71, 19.97, 20.43
+ROWS_DURABLE=1421
+LEASE_WRAPPER_EXIT=0
+END_UTC=2026-07-26T15:56:58Z
+UPTIME_AFTER= 08:56:58 up 22:18,  1 user,  load average: 21.17, 19.89, 20.40
+FINAL_STATUS=completed/zero-findings
