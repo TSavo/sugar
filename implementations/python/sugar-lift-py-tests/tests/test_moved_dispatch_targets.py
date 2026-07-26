@@ -327,50 +327,43 @@ def test_the_dig_body_type_exists_nowhere_so_no_arm_may_claim_it() -> None:
 # -- sugar.builtin_dunder_call_sugar: DEAD owner, claim deleted -------------
 
 
-def test_the_dunder_frontier_reports_deleted_owner_slots_as_unowned() -> None:
+def test_the_dunder_frontier_can_run_and_names_only_live_owners() -> None:
     """A deleted owner owns nothing, and the frontier must be able to say so.
 
-    The claim loop raised ImportError, so the report could not run at all.
+    The claim loop raised ImportError, so the report could not run AT ALL.
+
+    This pins that the frontier runs and that every owner it names is a live
+    one. It deliberately does NOT pin which slots come back unowned: that count
+    is the residual the frontier exists to drive down, and writing a real owner
+    for any of those dunders must turn this test greener, never red.
     """
     from sugar_lift_py_tests.idd.collect_dunder_frontier import _owned_dunder_slots
 
     owners = _owned_dunder_slots()
 
-    # The slots `builtin_dunder_call_sugar._METHODS` used to claim are now
-    # unowned -- reported honestly rather than not reported at all.
-    for name in ("__hash__", "__round__", "__repr__", "__reversed__"):
-        assert name not in owners, name
-    # Discriminating face: the live owner tables still register their slots, so
-    # this is a narrowed claim, not a blanked report.
+    assert owners, "the frontier must produce an owner map, not fail to run"
+    # Live owner tables still register their slots -- the claim narrowed, the
+    # report did not blank.
     assert owners["__iter__"] == "SequenceProjectionOperation"
+    # No slot may be attributed to the deleted sugar. That is the actual law:
+    # ownership is claimed by something that exists.
     assert not _resolves("sugar_lift_py_tests.sugar.builtin_dunder_call_sugar")
+    assert "BuiltinDunderCallSugar" not in set(owners.values())
 
 
-# -- lift_rpc.lift_file_payload: LOST, and loud about it --------------------
-
-
-def test_a_lost_measurement_refuses_by_name_instead_of_import_erroring(tmp_path):
-    from sugar_lift_py_tests.idd import live_construction_panic_isolation as iso
-
-    source = tmp_path / "witness.py"
-    source.write_text("def test_a():\n    assert 1 == 1\n", encoding="utf-8")
-
-    with pytest.raises(iso.MeasurementCapabilityLost) as caught:
-        iso.live_per_file_isolation_conservation(
-            [source], root=tmp_path, package="witness", progress_every=0
-        )
-
-    # It names the deleted path and the commit, so the next reader is oriented.
-    assert "lift_file_payload" in str(caught.value)
-
-
-def test_a_lost_measurement_is_never_absorbed_into_a_residual_row() -> None:
-    """Discriminating face: the failure must not be taxonomized as a per-file
-    'other' failure -- that would hand back a green conservation delta over
-    zero completed files, which is exactly the corrupted count this whole
-    repair is about.
-    """
-    from sugar_lift_py_tests.idd import live_construction_panic_isolation as iso
-
-    assert not issubclass(iso.MeasurementCapabilityLost, AssertionError)
-    assert not _resolves("sugar_lift_py_tests.lift_rpc.lift_file_payload")
+# -- lift_rpc.lift_file_payload: LOST -- deliberately NOT pinned here -------
+#
+# `live_per_file_isolation_conservation` measures the production lift one file
+# at a time through a path deleted in 9d3b5c304. There is no successor, so
+# `R_live_construction_panic_files` has no denominator (#6395).
+#
+# It now refuses by name (`MeasurementCapabilityLost`) instead of raising the
+# ImportError the census cannot bucket, and that refusal is NOT re-raised into
+# a residual row. There is deliberately no twin here asserting it raises.
+#
+# A passing test around a broken instrument would make its brokenness a green,
+# protected fact and hide the work. The loud signal is the real gate going red:
+# `test_lift_coverage_harness.py::
+# test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero` now
+# fails with a named refusal that says what is missing and why. That red belongs
+# to #6395 and stays visible until the axis is rebuilt or retired.
