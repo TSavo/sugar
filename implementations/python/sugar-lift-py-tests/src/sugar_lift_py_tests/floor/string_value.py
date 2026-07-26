@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, NoReturn, cast
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class StringValue(FloorValue):
+class StringValue(GuardStableValue):
     value: str
 
     def python_isinstance(self, type_name: str, type_term, site):

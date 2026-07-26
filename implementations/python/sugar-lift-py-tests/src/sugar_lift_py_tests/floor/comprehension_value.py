@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 def _is_set_coordinate(term) -> bool:
@@ -14,7 +14,7 @@ def _is_set_coordinate(term) -> bool:
 
 
 @dataclass(frozen=True)
-class ComprehensionValue(FloorValue):
+class ComprehensionValue(GuardStableValue):
     """A native comprehension coordinate with no invented cardinality.
 
     Finite literal comprehensions reduce to concrete collection floors. All
