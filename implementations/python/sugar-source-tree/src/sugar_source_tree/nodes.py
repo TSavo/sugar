@@ -892,13 +892,30 @@ class Node(Typed):
                     "_substitute_body (a block), never _substitute_children -- "
                     "give the containing node a block-aware substitute"
                 )
+            if new is not value:
+                value.discharge_by_substitution()
             return new, new is not value
         items = tuple(value)
         new_items = tuple(
             item.substitute(scope) if isinstance(item, Node) else item for item in items
         )
         changed = any(new is not old for new, old in zip(new_items, items))
+        if changed:
+            for new, old in zip(new_items, items):
+                if new is not old and isinstance(old, Node):
+                    old.discharge_by_substitution()
         return (new_items if changed else value), changed
+
+    def discharge_by_substitution(self) -> None:
+        """Answer the roll call for a node the rewrite replaced.
+
+        Substitution IS this node's discharge: it constructs nothing of its own,
+        so it answers ``present_inert`` -- showed up, nothing built -- and the
+        node that replaced it answers separately for what it constructs. Without
+        this the replaced node stays registered with no answer at all, which the
+        minority report reads (correctly) as a silent unaccounted construction.
+        """
+        self.reporter.present_inert(self)
 
     def _substitute_children(self, scope: BindingMap) -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
@@ -2116,6 +2133,10 @@ class FunctionDef(Statement):
         from .shadow import ShadowNode
 
         formal = self._formal_coordinate(parameter, ordinal)
+        # The FormalRef stands in the Param's place for the whole body, so the
+        # Param's discharge is this substitution -- otherwise it registers and
+        # never answers.
+        parameter.discharge_by_substitution()
         return materialize(
             self.unit,
             ShadowNode("FormalRef", parameter.span, (("coordinate", Leaf(formal)),)),
@@ -6722,6 +6743,10 @@ class Call(Expression):
                 )
                 for kw in self.keywords
             )
+            if isinstance(self.func, Name):
+                # Absorbed as a spelling, never constructed -- see the
+                # call-site branch below.
+                self.func.discharge_by_substitution()
             callee_name = self._spread_callee_name(self.func)
             return SpreadCallSugar(
                 callee_name=callee_name,
@@ -6857,6 +6882,11 @@ class Call(Expression):
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+            # The call-site coordinate absorbs the callee's spelling instead of
+            # its sugar, so the callee never constructs. That absorption IS its
+            # discharge; without it the Name registers and never answers.
+            self.func.discharge_by_substitution()
 
             contract_ref = None
             contract_resolution_gap = None

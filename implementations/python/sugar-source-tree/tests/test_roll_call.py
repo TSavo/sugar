@@ -185,3 +185,92 @@ def test_discharge_produces_the_true_minority_written_vs_not() -> None:
     assert "Return" in kinds_present  # a's body desugared
     assert "Delete" in kinds_absent  # the unwritten construct is minority
     assert not report.is_clean  # R > 0 while anything is unwritten
+
+
+_SUBSTITUTED = (
+    "def add(a, b):\n"
+    "    return a + b\n"
+    "\n"
+    "\n"
+    "def use():\n"
+    "    return add(1, 2)\n"
+)
+
+
+def test_substitution_discharges_the_node_it_replaces() -> None:
+    # A node the rewrite replaces constructs nothing of its own, so it used to
+    # sit on the roster with no answer at all -- which the report read, quite
+    # correctly, as a silent unaccounted construction. Substitution IS that
+    # node's discharge: it answers present_inert (showed up, built nothing) and
+    # whatever replaced it answers separately for what it builds.
+    #
+    # This source exercises all three substitution seams: the two Params
+    # replaced by FormalRefs, the two body Names substituted for their bound
+    # values, and the callee Name absorbed as a spelling by the call site.
+    from sugar_source_tree.roll_call import discharge
+
+    r = CollectingReporter()
+    report = discharge(_sf(_SUBSTITUTED, r))
+
+    # Every source construct in this file is written, so the only honest absence
+    # left is Module. This is the presently unwritten, explicitly accounted
+    # frontier -- Module.sugar raises SugarNotWritten by design -- NOT a
+    # permanent truth. When Module.sugar is implemented this expectation should
+    # turn red, and that red is the good kind: it means the frontier moved.
+    assert [(e.kind, e.name) for e in report.minority] == [("Module", "Module")]
+
+    # The discharge is an ANSWER, not a deletion: the replaced nodes are still
+    # enrolled on the roster, they simply answered. A fix that shrank the
+    # minority by shrinking the roster would satisfy a count check and destroy
+    # the accounting, so pin the roster by exact coordinate rather than by
+    # count. A histogram of kinds is not enough -- it is satisfied by dropping
+    # Name(2,11) and gaining a spurious Name(9,99).
+    assert sorted(
+        (e.kind, e.name, e.start_line, e.start_col) for e in report.roster
+    ) == [
+        ("BinOp", "BinOp", 2, 11),
+        ("Call", "Call", 6, 11),
+        ("Constant", "Constant", 6, 15),
+        ("Constant", "Constant", 6, 18),
+        ("FormalRef", "FormalRef", 1, 8),
+        ("FormalRef", "FormalRef", 1, 11),
+        ("FunctionDef", "add", 1, 0),
+        ("FunctionDef", "use", 5, 0),
+        ("Module", "Module", 1, 0),
+        ("Name", "Name", 2, 11),
+        ("Name", "Name", 2, 15),
+        ("Name", "Name", 6, 11),
+        ("Param", "a", 1, 8),
+        ("Param", "b", 1, 11),
+        ("Return", "Return", 2, 4),
+        ("Return", "Return", 6, 4),
+    ]
+
+    # Every roster entry except the Module frontier answered present, by exact
+    # coordinate -- the five substituted nodes among them.
+    assert sorted(
+        (e.kind, e.name, e.start_line, e.start_col) for e in report.present
+    ) == sorted(
+        (e.kind, e.name, e.start_line, e.start_col)
+        for e in report.roster
+        if e.kind != "Module"
+    )
+
+    # The tooth. These five are the ONLY nodes in this file that answer by
+    # substitution rather than by building something: the two Params their
+    # FormalRefs replaced, the two body Names replaced by their bound values,
+    # and the callee Name the call site absorbed as a spelling. Remove the
+    # ``discharge_by_substitution`` call and these five stop answering -- the
+    # minority goes 1 -> 6, and it is exactly this set that comes back. Pinning
+    # the set, not the number, is what makes this test bite on the mechanism:
+    # a 6 that is any OTHER six nodes is a different bug and must not pass here.
+    substituted = {
+        ("Param", 1, 8),
+        ("Param", 1, 11),
+        ("Name", 2, 11),
+        ("Name", 2, 15),
+        ("Name", 6, 11),
+    }
+    present_coordinates = {(e.kind, e.start_line, e.start_col) for e in report.present}
+    assert substituted <= present_coordinates
+    assert report.R == 1
