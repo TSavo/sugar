@@ -36,6 +36,10 @@ class PredicateValue(FloorValue):
         default=(), compare=False
     )
 
+    def denotes_value(self) -> bool:
+        """A carried boolean formula denotes a Python ``bool``."""
+        return True
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
 
