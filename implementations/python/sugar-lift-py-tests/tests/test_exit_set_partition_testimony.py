@@ -30,9 +30,10 @@ from sugar_lift_py_tests.outcome.exit_set import (
     ExitSet,
     ExitSetFactoringGap,
     partition,
+    partition_family,
     true_guard,
 )
-from sugar_lift_py_tests.outcome.exit_set import _are_exclusive
+from sugar_lift_py_tests.outcome.exit_set import _are_exclusive, _faces_exclusive
 
 
 def _pred(name: str):
@@ -159,12 +160,25 @@ def test_guarded_stamps_the_face_it_is_given_and_nothing_else():
     assert len([e for e in factored.exits if isinstance(e, Completed)]) == 1
 
 
-def test_disjoining_merge_keeps_only_testimony_both_arms_carried():
-    """A merged arm holds under a DISJUNCTION, so faces intersect, never union.
+def test_a_disjoining_merge_keeps_every_side_either_contributor_could_be_on():
+    """A merged arm holds under a DISJUNCTION, so its SIDES union.
 
-    If the merge unioned faces, an arm reachable on either side of a split would
-    claim to be on one named side of it — an exclusion the producer never gave,
-    and the exact way carried testimony could start lying.
+    LAW CHANGED ON THE RECORD. This arm used to assert
+    `merged.exits[0].faces == frozenset()`: a merge of two arms on different
+    sides of one split kept nothing. That was a conservative approximation, not
+    the truth. The merged arm holds wherever either contributor did, so what is
+    actually known is "on one of these two sides, and no other" — a weaker
+    statement than either contributor made, and a strictly stronger one than
+    silence.
+
+    Dropping it had a measured cost: it is why wiring a producer could not close
+    a merged-arm refusal. The producer would mint `range` and `single`, the
+    merge would erase both, and the arm would arrive unstamped no matter how
+    well the producer testified. Testimony that cannot survive the wire is not
+    propagation.
+
+    The reason the old assertion existed is preserved exactly, and is pinned by
+    the arm below: a merged arm must never claim to be on ONE named side.
     """
     condition = _pred("c")
     left_face, right_face = partition(("merge-owner", condition))
@@ -177,6 +191,53 @@ def test_disjoining_merge_keeps_only_testimony_both_arms_carried():
     ).normalize()
 
     assert len(merged.exits) == 1
+    assert merged.exits[0].faces == frozenset({left_face, right_face})
+
+
+def test_a_merged_arm_is_not_exclusive_with_either_side_it_came_from():
+    """THE LYING TWIN for the union, and the reason the old rule was written.
+
+    The danger the intersection was guarding against is that an arm reachable on
+    EITHER side of a split ends up claiming one named side, forging an exclusion
+    the producer never gave. Carrying both sides does not forge it, because
+    `_faces_exclusive` asks for DISJOINT side sets: `{c, not c}` overlaps `{c}`
+    and overlaps `{not c}`, so the merged arm is provably apart from neither.
+
+    Without this arm, a union looks like a free upgrade. With it, the union is
+    only sound because the prover reads sets.
+    """
+    condition = _pred("c")
+    left_face, right_face = partition(("merge-owner", condition))
+    both = frozenset({left_face, right_face})
+
+    assert not _faces_exclusive(both, frozenset({left_face}))
+    assert not _faces_exclusive(both, frozenset({right_face}))
+    assert not _faces_exclusive(both, both)
+    # ...and it still separates from a side of the SAME split it cannot be on.
+    a, b, c = partition_family(("three", "way"), ("a", "b", "c"))
+    assert _faces_exclusive(frozenset({a, b}), frozenset({c}))
+    assert not _faces_exclusive(frozenset({a, b}), frozenset({b, c}))
+
+
+def test_a_merge_drops_a_split_only_one_contributor_named():
+    """DISCRIMINATING. Union is per SHARED partition, never across all faces.
+
+    A plain `left | right` would let an arm inherit a face from a split the
+    other contributor never mentioned — the merged arm would claim to lie on a
+    side of a partition it may be entirely outside. Only splits both arms spoke
+    about survive.
+    """
+    condition = _pred("c")
+    mine, _other = partition(("mine", condition))
+    theirs, _ = partition(("theirs", condition))
+
+    merged = ExitSet(
+        (
+            Completed(condition, "same", frozenset({mine})),
+            Completed(not_(condition), "same", frozenset({theirs})),
+        )
+    ).normalize()
+
     assert merged.exits[0].faces == frozenset()
 
 

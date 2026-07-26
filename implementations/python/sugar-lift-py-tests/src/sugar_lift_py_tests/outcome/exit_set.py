@@ -185,13 +185,17 @@ def _complete_family(arms) -> bool:
     for origin in origins:
         sides, arity = [], None
         for arm in arms:
-            member = next(
-                (f for f in arm.faces if f.partition == origin), None
-            )
-            if member is None:
+            members = [f for f in arm.faces if f.partition == origin]
+            # A MERGED arm can carry several sides of one origin (see
+            # `_merge_faces`). It is one arm standing for several members, so
+            # it cannot be counted as the single member the arity test needs;
+            # admitting it would let two arms "cover" a three-way family. The
+            # pairwise rule below still separates it on disjoint side sets --
+            # this door just declines to call the family complete.
+            if len(members) != 1:
                 break
-            sides.append(member.side)
-            arity = member.arity
+            sides.append(members[0].side)
+            arity = members[0].arity
         else:
             if arity == len(arms) == len(set(sides)):
                 return True
@@ -218,15 +222,74 @@ def partition(owner: object) -> tuple[PartitionFace, PartitionFace]:
 _NO_FACES: frozenset[PartitionFace] = frozenset()
 
 
+def _sides_by_partition(
+    faces: frozenset[PartitionFace],
+) -> dict[object, set[object]]:
+    """Every side an arm is known to lie on, grouped by the split that named it.
+
+    An arm usually carries ONE side per partition. A MERGED arm carries several:
+    ``normalize`` disjoins two equal destinations, and the merged arm holds
+    wherever either contributor did, so it lies on one side of ``{range,
+    single}`` without saying which. That is a truthful, weaker statement, and
+    the set is how it is spelled.
+    """
+    sides: dict[object, set[object]] = {}
+    for face in faces:
+        sides.setdefault(face.partition, set()).add(face.side)
+    return sides
+
+
+def _merge_faces(
+    left: frozenset[PartitionFace], right: frozenset[PartitionFace]
+) -> frozenset[PartitionFace]:
+    """Testimony that survives a disjoining merge of two equal destinations.
+
+    THE RULE IS PER PARTITION, and it was previously a plain set intersection.
+    That answered the question "which identical faces did both carry", which is
+    the right answer only when the arms lie on the same side. Two arms on
+    DIFFERENT sides of one split still jointly testify something true and
+    useful about the merged arm -- it is on one of those two sides, and on no
+    other -- and the intersection threw that away, leaving the merged arm
+    unstamped and its refusal unclosable by any producer.
+
+    So: a split only ONE contributor named is dropped (the other claims nothing
+    there, and an unclaimed side is not an exclusion). A split BOTH named keeps
+    every side either of them could be on. That is weaker than each contributor
+    alone, which is correct -- a merged arm knows less -- and it is not nothing.
+
+    This does not let exclusivity be forged. ``_faces_exclusive`` asks for
+    DISJOINT side sets, so a merged arm covering `{range, single}` is provably
+    apart only from arms covering neither, which is exactly what the producer's
+    own mint already asserted.
+    """
+    left_sides = _sides_by_partition(left)
+    right_sides = _sides_by_partition(right)
+    shared = left_sides.keys() & right_sides.keys()
+    return frozenset(
+        face for face in (left | right) if face.partition in shared
+    )
+
+
 def _faces_exclusive(
     left: frozenset[PartitionFace], right: frozenset[PartitionFace]
 ) -> bool:
-    """Whether carried testimony alone proves the two arms cannot both hold."""
+    """Whether carried testimony alone proves the two arms cannot both hold.
+
+    DISJOINT SIDE SETS over a SHARED partition. The producer said its sides are
+    mutually exclusive when it minted them, so if everything the left arm could
+    be is something the right arm cannot be, they cannot both hold. With one
+    side each -- every face a producer mints directly -- this is exactly the
+    ``!=`` it replaces; the sets only ever grow through a merge.
+
+    Sound in the same direction as before: a False answer is "not proven",
+    never "proven to overlap".
+    """
     if not left or not right:
         return False
-    sides: dict[object, object] = {face.partition: face.side for face in left}
-    for face in right:
-        if face.partition in sides and sides[face.partition] != face.side:
+    right_sides = _sides_by_partition(right)
+    for partition_id, sides in _sides_by_partition(left).items():
+        other = right_sides.get(partition_id)
+        if other is not None and not (sides & other):
             return True
     return False
 
@@ -722,17 +785,16 @@ class ExitSet(Generic[T]):
                     # drop the arrival's, silently.
                     and _obligations(exit_) == _obligations(prior)
                 )
-                # Same destination under a DISJOINED guard: only testimony both
-                # arms carried survives the merge, for the same reason as in
-                # factor_completed. Intersecting here is what keeps a merged
-                # arm from claiming a face it only held on one side.
+                # Same destination under a DISJOINED guard. Only a split BOTH
+                # contributors spoke about survives -- a partition one of them
+                # never mentioned tells you nothing about where the merged arm
+                # lies. For a split they both named, the merged arm lies on one
+                # of their sides, so the sides UNION.
                 if same_completed:
-                    # OR of guards is not a partition; clear stamps when merging
-                    # equal destinations so exclusivity cannot be forged.
                     merged[index] = Completed(
                         _or_guards(prior.guard, exit_.guard),
                         prior.value,
-                        prior.faces & exit_.faces,
+                        _merge_faces(prior.faces, exit_.faces),
                         # Equal by `same_completed`; stated explicitly so the
                         # field cannot be dropped by a later edit here.
                         prior.pending_contracts,
@@ -743,7 +805,7 @@ class ExitSet(Generic[T]):
                         _or_guards(prior.guard, exit_.guard),
                         prior.effect,
                         prior.state,
-                        prior.faces & exit_.faces,
+                        _merge_faces(prior.faces, exit_.faces),
                         # Equal by `same_halted`, so this conserves rather than
                         # chooses; stated explicitly so the field cannot be
                         # dropped by a later edit to this constructor.
