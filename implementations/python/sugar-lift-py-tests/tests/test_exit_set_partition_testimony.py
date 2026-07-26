@@ -218,6 +218,30 @@ def test_single_completed_arm_is_returned_untouched():
     assert exits.factor_completed() is exits
 
 
+def test_testimony_does_not_change_what_an_exit_denotes():
+    """Faces are testimony ABOUT an arm, never part of its meaning.
+
+    Two arms with the same guard and destination are the same exit whether or
+    not a producer stamped one of them. Letting faces into ``__eq__`` silently
+    changed ``normalize``'s merge, ``collapse``'s fixpoint check, and every
+    caller that compares an ExitSet against an expected one — carried testimony
+    must be free to ride along without moving denotation.
+    """
+    condition = _pred("c")
+    face, _ = partition(("owner", condition))
+
+    bare = Completed(condition, "v")
+    stamped = Completed(condition, "v", frozenset({face}))
+
+    assert bare == stamped
+    assert hash(bare) == hash(stamped)
+    assert repr(bare) == repr(stamped)
+    assert stamped.faces == frozenset({face})
+
+    # And the whole set compares equal, which is what collapse/normalize use.
+    assert ExitSet((bare,)) == ExitSet((stamped,))
+
+
 def test_partition_owner_identity_is_reproducible_not_allocation_based():
     """Two mints for the SAME owner agree; different owners do not.
 

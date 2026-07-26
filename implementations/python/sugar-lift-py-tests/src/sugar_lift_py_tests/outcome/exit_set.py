@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as _dataclass_field
 from typing import Callable, Generic, TypeVar
 
 from sugar_lift_py_tests.effect import Effect, require_effect
@@ -205,7 +205,13 @@ def _destination_key(exit_: "Exit[T]") -> object:
 class Completed(Generic[T]):
     guard: Formula
     value: T
-    faces: frozenset[PartitionFace] = _NO_FACES
+    # Testimony ABOUT this arm, never part of what it denotes: two arms with the
+    # same guard and destination are the same exit whether or not a producer
+    # stamped them. Excluded from compare/repr so carrying testimony cannot
+    # perturb exit equality, normalize's merge, collapse, or any golden repr.
+    faces: frozenset[PartitionFace] = _dataclass_field(
+        default=_NO_FACES, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True)
@@ -213,7 +219,9 @@ class Halted:
     guard: Formula
     effect: Effect
     state: object | None = None
-    faces: frozenset[PartitionFace] = _NO_FACES
+    faces: frozenset[PartitionFace] = _dataclass_field(
+        default=_NO_FACES, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
