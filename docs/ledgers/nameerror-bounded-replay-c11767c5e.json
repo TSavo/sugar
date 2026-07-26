@@ -1,0 +1,27 @@
+{
+  "kind": "bounded-replay-terminal-v1",
+  "pinnedCommit": "d94f67a3149ea2aceee4f9a8cff0397b6f6d374a",
+  "replayCommit": "c11767c5e48f2e6799d0d4a0d58823ea84486ac6",
+  "targetFamily": "NameErrorEffect",
+  "boundFiles": 305,
+  "notReplayed": 1116,
+  "NameErrorEffect": {
+    "pinned": 940,
+    "replay": 940,
+    "delta": 0
+  },
+  "nonzeroFamilyDeltasInBound": {
+    "SubscriptStoreRuntimeEffect": {
+      "pinned": 1166,
+      "replay": 1161,
+      "delta": -5
+    },
+    "YieldSuspensionSugar.desugar": {
+      "pinned": 20,
+      "replay": 17,
+      "delta": -3
+    }
+  },
+  "verdict": "NameErrorEffect \u0394=0 within bound; #6284 retirement claim NOT measured as reduction at c11767c5e",
+  "measuredDeltaR": "unmeasured for full corpus; bound-only NameErrorEffect \u0394=0"
+}

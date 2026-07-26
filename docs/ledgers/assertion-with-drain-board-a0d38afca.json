@@ -1,0 +1,48 @@
+{
+  "kind": "assertion-with-drain-board-v1",
+  "mainTip": "a0d38afca",
+  "totalWithSites": 5021,
+  "buckets": {
+    "assertion-effect-boundary": 4125,
+    "resource-protocol": 811,
+    "unclassified": 85
+  },
+  "assertionSites": 4125,
+  "resourceSites": 811,
+  "unclassified": 85,
+  "assertionHeadsByMass": [
+    {
+      "bucket": "assertion-effect-boundary",
+      "head": "pytest.raises",
+      "sites": 3555
+    },
+    {
+      "bucket": "assertion-effect-boundary",
+      "head": "tm.assert_produces_warning",
+      "sites": 499
+    },
+    {
+      "bucket": "assertion-effect-boundary",
+      "head": "tm.raises_chained_assignment_error",
+      "sites": 37
+    },
+    {
+      "bucket": "assertion-effect-boundary",
+      "head": "tm.external_error_raised",
+      "sites": 32
+    }
+  ],
+  "sharedAlgebra": "one ExitSet; EffectBoundaryWith retains undecidable message predicates (#6298) \u2014 soundness, \u0394R unmeasured",
+  "drainOrder": [
+    "structural contract requirements per head (pytest.raises first: 3555)",
+    "authenticated preconstruction of manager contracts at use-site",
+    "route every outgoing edge; retain undecidable message/category obligations",
+    "no vendor-name admission arms",
+    "measure \u0394R on assertion-effect-boundary sites only after each head lands"
+  ],
+  "blockedOn": [
+    "Floor remeasure at a0d38afca (post contains/guarded/residual)",
+    "EffectBoundaryWith coverage \u0394R (not claimed from #6298 alone)"
+  ],
+  "nextOwner": "assertion-With structural contracts for pytest.raises mass"
+}
