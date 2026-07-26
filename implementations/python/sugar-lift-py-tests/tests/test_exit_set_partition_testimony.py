@@ -22,9 +22,13 @@ Both faces are pinned here:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from sugar_lift_py_tests.ir import and_, atomic, not_, or_
+from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -33,10 +37,29 @@ from sugar_lift_py_tests.outcome.exit_set import (
     true_guard,
 )
 from sugar_lift_py_tests.outcome.exit_set import _are_exclusive
+from sugar_lift_py_tests.sugar.binding_projection import GuardedProjection
+from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_source_tree.binding_state import BranchResultSlot
 
 
 def _pred(name: str):
     return atomic(name, [])
+
+
+@dataclass(frozen=True)
+class _PartitionedLeaf(Sugar):
+    value: object
+    guard: object
+    face: object
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return ExitSet.completed(self.value).guarded(self.guard, self.face)
 
 
 def _shape_opaque_pair():
@@ -52,6 +75,75 @@ def _shape_opaque_pair():
     assert not _are_exclusive(condition, other)
     assert not _are_exclusive(other, condition)
     return condition, other
+
+
+def test_guarded_projection_equal_value_merge_keeps_alternative_path_testimony():
+    """Truthful twin: the real producer merge must not erase its alternatives.
+
+    The two binding faces read the same value, so ``read_binding`` normalizes
+    them into one destination. Each face already carries a different outer
+    partition. A later sibling is opposite to both outer faces, making every
+    cross-path pair exclusive even though no formula-level complement remains
+    visible.
+    """
+    q_guard = _pred("q")
+    r_guard = _pred("r")
+    q_true, q_false = partition(("outer", "q"))
+    r_true, r_false = partition(("outer", "r"))
+    slot = BranchResultSlot("branch-result:truthful-twin")
+    state = GuardedProjection(
+        slot=slot,
+        when_true=_PartitionedLeaf("same", q_guard, q_true),
+        when_false=_PartitionedLeaf("same", r_guard, r_true),
+    )
+
+    merged = read_binding(
+        state,
+        read_name="value",
+        read_site="truthful-twin-site",
+        ctx=None,
+    )
+
+    assert len(merged.exits) == 1
+    producer_true, producer_false = partition(
+        (
+            "GuardedBindingRead",
+            slot,
+            "truthful-twin-site",
+            branch_result_guard(slot, "truthful-twin-site"),
+        )
+    )
+    assert merged.exits[0].faces == frozenset(
+        {
+            frozenset({producer_true, q_true}),
+            frozenset({producer_false, r_true}),
+        }
+    )
+
+    sibling = (
+        ExitSet.completed("sibling")
+        .guarded(not_(q_guard), q_false)
+        .guarded(not_(r_guard), r_false)
+    )
+    assert not _are_exclusive(merged.exits[0].guard, sibling.exits[0].guard)
+
+    factored = merged.union(sibling).factor_completed()
+
+    assert len(factored.exits) == 1
+
+
+def test_formula_complements_without_producer_testimony_still_refuse():
+    """Lying twin: spelling ``g``/``not g`` is not branch authority."""
+    guard = _pred("looks-complementary")
+    exits = ExitSet(
+        (
+            Completed(guard, "left"),
+            Completed(not_(guard), "right"),
+        )
+    )
+
+    with pytest.raises(ExitSetFactoringGap):
+        exits.factor_completed()
 
 
 def test_owned_partition_makes_the_factoring_gap_unconstructable():
