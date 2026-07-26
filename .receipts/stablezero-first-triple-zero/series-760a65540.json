@@ -1,0 +1,54 @@
+{
+ "schema": "stableZero-classify-isolated-v1",
+ "n_functions": 179,
+ "statuses": {
+  "SugarNotWritten": 5,
+  "clean": 174
+ },
+ "R(timeout)": 0,
+ "R(construction_panics)": 0,
+ "R(factoring_gaps)": 0,
+ "R(unnamed_exceptions)": 0,
+ "R(factoring_gaps_remaining_work)": 0,
+ "factoring_gap_split": {},
+ "factoring_gap_rows": [],
+ "completed_denominator": 179,
+ "stableZero": true,
+ "desugar_s": 19.91,
+ "wall_s": 21.45,
+ "residuals": [
+  {
+   "name": null,
+   "line": 945,
+   "status": "SugarNotWritten",
+   "seconds": 0.2483
+  },
+  {
+   "name": null,
+   "line": 1070,
+   "status": "SugarNotWritten",
+   "seconds": 0.1701
+  },
+  {
+   "name": null,
+   "line": 1487,
+   "status": "SugarNotWritten",
+   "seconds": 0.0838
+  },
+  {
+   "name": null,
+   "line": 3264,
+   "status": "SugarNotWritten",
+   "seconds": 0.1673
+  },
+  {
+   "name": null,
+   "line": 6779,
+   "status": "SugarNotWritten",
+   "seconds": 0.0496
+  }
+ ],
+ "file": "/usr/local/lib/python3.14/site-packages/pandas/core/series.py",
+ "label": "core/series.py",
+ "deadline_seconds": 60.0
+}
