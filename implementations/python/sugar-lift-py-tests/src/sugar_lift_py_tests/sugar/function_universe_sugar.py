@@ -149,20 +149,37 @@ def reduce_block_to_exitset(
                     outcome = outcome.guarded(continuation)
 
                 def project(value):
-                    linear = Complete(value)
-                    contribution = linear.contribution()
+                    if isinstance(value, _ReducedBlock):
+                        # A nested block statement (a `with` whose body is
+                        # itself a routed `with` — the mixed multi-manager
+                        # site) hands back its OWN reduced block as the
+                        # completed value, not a floor value. There is no
+                        # linear `Complete` view to interrogate: the block's
+                        # contribution IS its entries and its continuation IS
+                        # its `can_fall_through`. Asking `Complete(value)` for
+                        # a contribution here is what raised a bare
+                        # AttributeError instead of routing the inner block.
+                        contribution = value.entries
+                        continues = value.can_fall_through
+                        nested_fall_through = value.fall_through
+                        nested_transforms = value.transforms
+                    else:
+                        linear = Complete(value)
+                        contribution = linear.contribution()
+                        continues = linear.follow().continues
+                        nested_fall_through = ()
+                        nested_transforms = ()
                     for transform in reversed(state.transforms):
                         contribution = transform(contribution)
                     entries = (*state.entries, *contribution)
-                    follow = linear.follow()
-                    if not follow.continues:
+                    if not continues:
                         return ExitSet.completed(_ReducedBlock(entries, False, ()))
                     return ExitSet.completed(
                         _ReducedBlock(
                             entries,
                             True,
-                            state.fall_through,
-                            state.transforms,
+                            (*state.fall_through, *nested_fall_through),
+                            (*state.transforms, *nested_transforms),
                         )
                     )
 
