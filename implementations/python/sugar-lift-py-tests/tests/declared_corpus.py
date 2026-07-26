@@ -23,7 +23,7 @@ Two categories, and only two:
     optional_law_skip        -- genuinely conditional, so the skip is NAMED
                                 and COUNTED, never silent.
 
-``tests/test_uid_sensitive_laws_are_executed.py`` at the repo root enforces
+``tests/test_no_law_goes_unrun.py`` at the repo root enforces
 that no other skip shape enters the corpus.
 """
 
