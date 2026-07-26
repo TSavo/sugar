@@ -263,6 +263,48 @@ class ExitSet(Generic[T]):
                     exits.append(Halted(guard, following.effect, following.state))
         return ExitSet(tuple(exits)).normalize()
 
+    def try_rejoin_as_guarded_value(self):
+        """Rejoin a pure complementary completed pair into one ``GuardedValue``.
+
+        ``sequence`` is a Cartesian product: a spread (or any value collect)
+        over *k* elements each yielding *m* arms materialises *m^k* concrete
+        exits. When the arms are exactly the two faces of one partition —
+        ``Completed(g, v_t)`` and ``Completed(complement(g), v_f)``, no
+        halted face — both faces are already represented by one
+        ``GuardedValue(g, v_t, v_f)``. Rejoining keeps the factor form so a
+        later ``and_then`` multiplies by one, not by two (#6309 / residual
+        R(timeout) arm population after #6311).
+
+        Returns ``Complete(GuardedValue(...))`` when the shape matches, else
+        ``None``. Never drops a face, never invents a halt, never rejoins
+        when any arm is halted (control exits stay multi-arm ExitSets).
+        """
+        if len(self.exits) != 2:
+            return None
+        left, right = self.exits
+        if not isinstance(left, Completed) or not isinstance(right, Completed):
+            return None
+        if _is_negation(left.guard, right.guard):
+            # left.guard is not_(right.guard)  →  right is the positive face
+            if getattr(left.guard, "kind", None) == "not":
+                guard, when_true, when_false = right.guard, right.value, left.value
+            else:
+                guard, when_true, when_false = left.guard, left.value, right.value
+        elif left.guard == complement_guard(right.guard):
+            guard, when_true, when_false = right.guard, right.value, left.value
+        elif right.guard == complement_guard(left.guard):
+            guard, when_true, when_false = left.guard, left.value, right.value
+        else:
+            return None
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+        if not isinstance(when_true, FloorValue) or not isinstance(
+            when_false, FloorValue
+        ):
+            return None
+        return Complete(GuardedValue(guard, when_true, when_false))
+
     def and_then(self, step):
         return self.sequence(lambda value: outcome_to_exitset(step(value)))
 

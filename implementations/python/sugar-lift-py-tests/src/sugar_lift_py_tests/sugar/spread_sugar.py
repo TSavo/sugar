@@ -5,15 +5,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome.exit_set import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+
+
+def _factor_value_outcome(outcome):
+    """Keep complementary completed faces as one GuardedValue factor (#6309).
+
+    Spread collect chains ``and_then`` once per element. ``ExitSet.sequence`` is
+    a Cartesian product, so *k* elements each yielding *m* arms produce *m^k*
+    concrete exits. When an element's outcome is exactly the two faces of one
+    partition, rejoin them into ``GuardedValue`` before sequencing so the next
+    element multiplies by one factor, not by two. Both faces stay represented;
+    halted arms are never rejoined (see ``ExitSet.try_rejoin_as_guarded_value``).
+    """
+    if isinstance(outcome, ExitSet):
+        rejoined = outcome.try_rejoin_as_guarded_value()
+        if rejoined is not None:
+            return rejoined
+    return outcome
 
 
 def _collect(sugars: tuple, ctx, done: tuple, finish):
     if not sugars:
         return finish(done)
     head, *tail = sugars
-    return head.desugar(ctx).and_then(
+    return _factor_value_outcome(head.desugar(ctx)).and_then(
         lambda value: _collect(tuple(tail), ctx, (*done, value), finish)
     )
 
