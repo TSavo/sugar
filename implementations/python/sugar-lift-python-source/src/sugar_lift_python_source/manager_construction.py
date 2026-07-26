@@ -226,6 +226,18 @@ def construct_manager_behavior(
         return ManagerConstructionGapV1(
             "force-floor", resolved.cid, f"{owner}:{observed}"
         )
+    except Exception as exc:
+        # BindingCoordinateRefSugar and other SugarNotWritten arms are Exception,
+        # not ConstructionPanic — still stage-keyed residuals for derivation.
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if isinstance(exc, SugarNotWritten):
+            owner = getattr(exc, "owner", None) or type(exc).__name__
+            observed = getattr(exc, "observed", None) or str(exc)
+            return ManagerConstructionGapV1(
+                "force-floor", resolved.cid, f"{owner}:{observed}"
+            )
+        raise
     if not isinstance(result, ObjectValue):
         return ManagerConstructionGapV1(
             "non-manager-result", resolved.cid, type(result).__name__

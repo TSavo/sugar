@@ -1891,7 +1891,7 @@ class FunctionDef(Statement):
             (
                 ()
                 if generator_steps is not None
-                else tuple(statement.sugar() for statement in substituted_body)
+                else self._source_visible_body_statement_sugars(substituted_body)
             ),
             self.fragment,
         )
@@ -1927,6 +1927,49 @@ class FunctionDef(Statement):
             ),
         )
 
+    def _source_visible_body_statement_sugars(self, substituted_body: tuple):
+        """Sugar body statements for sole-path frame projection.
+
+        Nested ``with`` that lacks CM enrollment (empty placeholder table used
+        for manager-factory projection) stays ``InertSugar`` rather than aborting
+        the whole frame. ``pytest.raises`` returns ``RaisesExc(...)`` on the CM
+        path without entering its nested ``with RaisesExc`` branch; that nested
+        arm must not prevent projecting the factory frame. Full consumer
+        enrollment still uses real CM tables and fails closed on missing rows.
+        """
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+        from sugar_source_tree.panic import (
+            ContextManagerResolutionConstructionGap,
+            RuntimeSelectedContextManager,
+            SugarNotWritten,
+            UnsupportedContextManagerSemantics,
+        )
+
+        context = self.unit.construction_context
+        unenrolled = bool(
+            context is not None
+            and getattr(
+                getattr(context, "contract_refs", None),
+                "is_unenrolled_placeholder",
+                lambda: False,
+            )()
+        )
+        soft_cm = (
+            RuntimeSelectedContextManager,
+            ContextManagerResolutionConstructionGap,
+            UnsupportedContextManagerSemantics,
+        )
+        sugars = []
+        for statement in substituted_body:
+            try:
+                sugars.append(statement.sugar())
+            except SugarNotWritten as snw:
+                if unenrolled and isinstance(snw, soft_cm):
+                    sugars.append(InertSugar(site=statement.fragment))
+                    continue
+                raise
+        return tuple(sugars)
+
     def _source_visible_body(self, scope):
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
@@ -1936,7 +1979,7 @@ class FunctionDef(Statement):
         if self._source_visible_generator_steps_from(substituted_body) is not None:
             return SourceVisibleFunctionBodySugar((), self.fragment)
         return SourceVisibleFunctionBodySugar(
-            tuple(statement.sugar() for statement in substituted_body), self.fragment
+            self._source_visible_body_statement_sugars(substituted_body), self.fragment
         )
 
     def _source_visible_generator_steps(self, scope):
