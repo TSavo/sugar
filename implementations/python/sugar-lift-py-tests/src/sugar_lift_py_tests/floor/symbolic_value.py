@@ -122,11 +122,10 @@ class SymbolicValue(GuardStableValue):
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.outcome import Incomplete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         operation = ctor(
             "adt.is_python_type",
-            [floor_to_term(value, owner="isinstance value"), term],
+            [value.to_term(owner="isinstance value"), term],
         )
         return Incomplete(
             DynamicTypeOperandRuntimeEffect(
@@ -623,37 +622,29 @@ class SymbolicValue(GuardStableValue):
     def add_with(self, operation, ctx):
         """``.add(operand)`` on a symbolic receiver.
 
-        Numeric operands (TermValue / SymbolicValue / OpaqueOp coordinate)
-        route through ``BinaryOperatorOperation(+)`` so free ``z.add(1)`` is
-        the joinable term ``+(z, 1)`` — same arithmetic as ``z + 1``, and the
+        Numeric operands (TermValue / SymbolicValue / OpaqueOp coordinate) route
+        through this value's own addition floor so free ``z.add(1)`` is the
+        joinable term ``+(z, 1)`` — same arithmetic as ``z + 1``, and the
         AddSugar witness seed stays proof-bearing.
 
         Vendor/opaque operands (arrays, undiggable callsites) mint
         ``call:add(self, operand)`` with ``computed=None`` — never invent a
         placement/array sum (pandas BlockPlacement residual).
         """
+        # This built `BinaryOperatorOperation(operator="+")` and handed it to
+        # `perform_operation`, which did `getattr(receiver, op.method_name)(op,
+        # ctx)`. Both were deleted with the operations layer (b0aadef50) and
+        # neither came back, so the numeric arm raised ImportError instead of
+        # adding. `SymbolicValue.add` IS the `+` floor that dispatch reached:
+        # it emits the same `+(self, other)` this docstring names.
+        del ctx
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.operations.binary_operator_operation import (
-            BinaryOperatorOperation,
-        )
-        from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.outcome import Complete
 
         operand = operation.operand
         if isinstance(operand, (TermValue, SymbolicValue, OpaqueOpCallsite)):
-            return perform_operation(
-                owner=operation.owner,
-                blame=operation.blame,
-                receiver=self,
-                operation=BinaryOperatorOperation(
-                    operator="+",
-                    right=operand,
-                    owner=operation.owner,
-                    blame=operation.blame,
-                ),
-                ctx=ctx,
-            )
+            return self.add(operand, operation.blame)
         return Complete(
             OpaqueOpCallsite(
                 callee="add",
@@ -802,10 +793,9 @@ class SymbolicValue(GuardStableValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = floor_to_term(index, owner="SymbolicValue.setitem index")
-        value_term = floor_to_term(value, owner="SymbolicValue.setitem value")
+        index_term = index.to_term(owner="SymbolicValue.setitem index")
+        value_term = value.to_term(owner="SymbolicValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",
@@ -831,9 +821,8 @@ class SymbolicValue(GuardStableValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = floor_to_term(index, owner="SymbolicValue.delitem index")
+        index_term = index.to_term(owner="SymbolicValue.delitem index")
         return Complete(
             CallSiteValue(
                 target_name="delitem",

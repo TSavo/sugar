@@ -412,10 +412,9 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = floor_to_term(index, owner="CallSiteValue.setitem index")
-        value_term = floor_to_term(value, owner="CallSiteValue.setitem value")
+        index_term = index.to_term(owner="CallSiteValue.setitem index")
+        value_term = value.to_term(owner="CallSiteValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",
@@ -504,9 +503,8 @@ class CallSiteValue(FloorValue):
 
         def list_append_coordinate(prior):
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-            value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
+            value_term = value.to_term(owner="CallSiteValue.append_with value")
             return Complete(
                 CallSiteValue(
                     target_name="list.append",
@@ -648,9 +646,8 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = floor_to_term(index, owner="CallSiteValue.delitem index")
+        index_term = index.to_term(owner="CallSiteValue.delitem index")
         return Complete(
             CallSiteValue(
                 target_name="delitem",
@@ -935,8 +932,6 @@ class CallSiteValue(FloorValue):
         )
 
     def unary_operator_with(self, operation, ctx):
-        from sugar_lift_py_tests.operations.perform_operation import perform_operation
-
         # No-recognizer force_floor panics (process-terminal). Do not catch.
         floor = force_floor(
             self,
@@ -944,13 +939,11 @@ class CallSiteValue(FloorValue):
             owner=f"{operation.owner} callsite unary operand",
             project_callsite=False,
         )
-        return perform_operation(
-            owner=operation.owner,
-            blame=operation.blame,
-            receiver=floor,
-            operation=operation,
-            ctx=ctx,
-        )
+        # `perform_operation` died with the operations layer (b0aadef50); the
+        # rebuilt layer has the operation submit itself to the value instead
+        # (`operations/sequence_projection_operation.py::submit`). Same
+        # `getattr(receiver, method_name)(op, ctx)`, no centre to import.
+        return operation.submit(floor, ctx)
 
     def binary_operator_with(self, operation, ctx):
         """Binary op on a callsite result (e.g. ``(x + y).substitute(...)``).
@@ -1056,7 +1049,6 @@ class CallSiteValue(FloorValue):
         a numeric value; never soft-catch a panic into Incomplete.
         """
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-        from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.outcome import Complete
 
         floor = self._dig_floor_or_none(
@@ -1064,13 +1056,10 @@ class CallSiteValue(FloorValue):
             owner=f"{operation.owner} callsite method receiver",
         )
         if floor is not None:
-            return perform_operation(
-                owner=operation.owner,
-                blame=operation.blame,
-                receiver=floor,
-                operation=operation,
-                ctx=ctx,
-            )
+            # `perform_operation` died with the operations layer (b0aadef50);
+            # the rebuilt layer has the operation submit itself to the value
+            # (`operations/sequence_projection_operation.py::submit`).
+            return operation.submit(floor, ctx)
         # Opaque receiver with a real EUF term: join, do not force_floor-panic.
         if operation.name == "__len__" and not operation.arguments:
             return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
@@ -1337,9 +1326,14 @@ def _reduce_callsite_body(
     if isinstance(body, SugarBody):
         return body.reduce(ctx)
     if isinstance(body, FunctionBodyUniverse):
-        from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
+        # `BlockSugar(statements=...).desugar(ctx)` was deleted with the sugar
+        # web (f4f2574f0); `reduce_body` is the same reduction, now routed
+        # through the exit-set law, and is what the SourceVisibleFunctionBodySugar
+        # arm two lines up already reaches. (The dead call also passed
+        # `blame=`, a keyword BlockSugar never had.)
+        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 
-        return BlockSugar(statements=body.statements, blame=blame).desugar(ctx)
+        return reduce_body(body.statements, ctx)
     _force_floor_gap(
         owner="CallSiteValue.force_floor",
         target_name=blame,

@@ -162,7 +162,9 @@ class ListValue(FloorValue):
         # Python list repetition, through the one sequence-repetition law.
         from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-        return repeat_sequence(self, other, site, rebuild=ListValue)
+        return repeat_sequence(
+            self, other, site, elements=self.elements, rebuild=ListValue
+        )
 
     def matrix_multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
