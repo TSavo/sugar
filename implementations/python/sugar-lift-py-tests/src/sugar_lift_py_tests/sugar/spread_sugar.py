@@ -10,12 +10,75 @@ from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 def _collect(sugars: tuple, ctx, done: tuple, finish):
-    if not sugars:
-        return finish(done)
-    head, *tail = sugars
-    return head.desugar(ctx).and_then(
-        lambda value: _collect(tuple(tail), ctx, (*done, value), finish)
+    """Sequence spread operands by COMPOSING factors, never distributing them.
+
+    #6309. The previous body chained ``and_then`` once per operand, and
+    ``ExitSet.sequence`` appends every exit of the tail under every completed
+    exit of the prefix. With k operands of m arms each that is m ** k
+    materialized arms — and it is the arm POPULATION, not the per-merge cost,
+    that walled ``pandas/core/generic.py``: an observed 1,317-wide arm set with
+    a heavy tail (63% of normalize calls at one arm, three above 256), at guard
+    nesting depth only 4.
+
+    Each operand keeps its complete ExitSet as a FACTOR:
+
+    - its completed face is factored to one arm carrying a guarded value
+      (``ExitSet.factor_completed``), so k operands contribute k guarded values
+      to ONE arm instead of one arm per tuple in the product;
+    - its halted arms are lifted to the exit level under the prefix's completed
+      guard, where one arm per operand per effect is already linear;
+    - ``finish`` runs ONCE, on the factored value tuple, under the conjunction of
+      the operands' completed guards.
+
+    Both faces are retained in full. Nothing is pruned, no arm is capped, and
+    success is never assumed: an operand whose every path halts ends the fold
+    with only halted arms, which is exactly what the product said.
+
+    ``finish`` is also invoked once rather than once per completed tuple. The old
+    chain re-``desugar``ed each tail operand once per prefix arm; the fold walks
+    the operands in the same source order, once each.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import (
+        ExitSet,
+        Halted,
+        _and_guards,
+        _is_true,
+        outcome_to_exitset,
+        true_guard,
     )
+
+    prefix_guard = true_guard()
+    values = list(done)
+    halted: list = []
+
+    for sugar in sugars:
+        factors = outcome_to_exitset(sugar.desugar(ctx)).factor_completed()
+        completed = None
+        for exit_ in factors.exits:
+            if isinstance(exit_, Halted):
+                halted.append(
+                    Halted(
+                        _and_guards(prefix_guard, exit_.guard),
+                        exit_.effect,
+                        exit_.state,
+                    )
+                )
+            else:
+                completed = exit_
+        if completed is None:
+            # Every path through this operand halts: there is no completed
+            # continuation to hand to ``finish``, and the halted face is the
+            # whole meaning.
+            return ExitSet(tuple(halted)).normalize().collapse()
+        prefix_guard = _and_guards(prefix_guard, completed.guard)
+        values.append(completed.value)
+
+    tail = outcome_to_exitset(finish(tuple(values)))
+    if not _is_true(prefix_guard):
+        tail = tail.guarded(prefix_guard)
+    # ``collapse`` restores the linear ``Outcome`` for the unconditional case, so
+    # a spread with no guarded operand desugars to exactly what it did before.
+    return ExitSet((*halted, *tail.exits)).normalize().collapse()
 
 
 @dataclass(frozen=True)
