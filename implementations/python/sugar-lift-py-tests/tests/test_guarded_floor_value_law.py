@@ -8,6 +8,7 @@ from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -34,8 +35,21 @@ GUARD = atomic("renamed_guard", [])
             None,
         ),
         ComprehensionValue(ctor("renamed-comprehension", [])),
+        GuardedValue(
+            atomic("renamed_inner_guard", []),
+            StringValue("then-value"),
+            StringValue("else-value"),
+        ),
     ),
-    ids=("true", "false", "string", "symbolic", "class", "comprehension"),
+    ids=(
+        "true",
+        "false",
+        "string",
+        "symbolic",
+        "class",
+        "comprehension",
+        "guarded-value",
+    ),
 )
 def test_pure_constructed_value_rides_under_guard_unchanged(value) -> None:
     """Deleting the guard-stable Floor law must fail every enrolled carrier."""
@@ -78,4 +92,3 @@ def test_unknown_floor_value_stays_loud_under_guard() -> None:
         RenamedUnguardableValue().guarded(GUARD)
     assert excinfo.value.info.owner == "guarded"
     assert excinfo.value.info.observed == "RenamedUnguardableValue"
-

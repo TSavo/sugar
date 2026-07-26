@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.ir import Formula
 
 from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
-class GuardedValue(FloorValue):
+class GuardedValue(GuardStableValue):
     """A definitely-bound value selected by an existing branch guard.
 
     This is not an ite term. Operations distribute into both arms, and boolean
