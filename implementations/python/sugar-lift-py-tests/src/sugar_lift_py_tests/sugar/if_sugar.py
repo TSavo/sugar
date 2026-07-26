@@ -115,6 +115,13 @@ class IfSugar(Sugar):
         cond = self.test.desugar(ctx)
         if not isinstance(cond, Complete):
             return cond
+        # Condition expression itself raised: the if never selects a branch.
+        # Do not demand truth of RaiseValue (that was force-floor:truth:RaiseValue).
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        if isinstance(cond.value, RaiseValue):
+            return Incomplete(cond.value.effect)
         observed_formula = predicate_formula(cond.value, self.site)
         formula = branch_result_guard(self.branch_slot, self.site)
         authentication = BranchResultAuthentication(

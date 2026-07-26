@@ -212,8 +212,10 @@ def test_raises_style_if_not_args_factory_substitutes_formals(tmp_path):
     residual was:
       force-floor:BindingCoordinateRefSugar.desugar:unspecialized source-call formal
 
-    Later stages may still refuse (GuardedReturn block unwrap, **kwargs call
-    body attachment) — that is not unspecialized formal substitution.
+    After formal temporal, the then-return is a GuardedReturn under the branch
+    polarity. Factory unwrap must project that face to ObjectValue — residual
+    without unwrap was non-manager-result:BlockValue (or force-floor:truth:RaiseValue
+    when a raise terminal was wrongly truth-demanded on a peer arm).
     """
     implementation = (
         "class RaisesExc:\n"
@@ -225,13 +227,9 @@ def test_raises_style_if_not_args_factory_substitutes_formals(tmp_path):
         "        return self\n"
         "    def __exit__(self, effect_type, effect, traceback):\n"
         "        return effect_type is self.expected_exception\n\n"
-        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "def raises(expected_exception=None, *args):\n"
         "    if not args:\n"
-        "        return RaisesExc(expected_exception, **kwargs)\n"
-        "    func = args[0]\n"
-        "    with RaisesExc(expected_exception) as excinfo:\n"
-        "        func(*args[1:], **kwargs)\n"
-        "    return excinfo\n"
+        "        return RaisesExc(expected_exception)\n"
     )
     graph, resolved, actual, call_site = _resolved(
         tmp_path, implementation, exported="raises"
@@ -244,8 +242,56 @@ def test_raises_style_if_not_args_factory_substitutes_formals(tmp_path):
     detail = getattr(result, "detail", None) or ""
     assert "BindingCoordinateRefSugar" not in detail, result
     assert "unspecialized source-call formal" not in detail, result
-    if isinstance(result, ManagerConstructionGapV1):
-        assert result.kind != "force-floor" or "BindingCoordinateRef" not in detail
+    assert "truth:RaiseValue" not in detail, result
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "force-floor"
+        and "RaiseValue" in detail
+    ), result
+    # GuardedReturn factory face must project the manager receiver — not stall
+    # as non-manager-result:BlockValue solely because the return was guarded.
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert "expected_exception" in fields, result.receiver_state
+
+
+def test_raises_style_guarded_return_is_not_blockvalue_residual(tmp_path):
+    """Discrimination: sole ``if not args: return CM`` must not residual as BlockValue.
+
+    Red without GuardedReturn unwrap; green when factory projection treats
+    GuardedReturn like ReturnValue for manager construction.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "non-manager-result"
+        and result.detail == "BlockValue"
+    ), result
+    assert isinstance(result, ConstructedManagerBehaviorV1), result
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual.value
 
 
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
