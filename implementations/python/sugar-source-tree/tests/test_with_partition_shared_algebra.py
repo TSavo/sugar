@@ -840,6 +840,47 @@ def test_the_assertion_with_routes_through_the_shared_exitset_algebra(
     assert routed == incoming.and_exit(exit_es, disposition=disposition)
 
 
+def test_assertion_with_threads_the_reduction_context_through_manager_and_body(
+    tmp_path, monkeypatch
+):
+    """A real assertion-With is a statement in its enclosing reduction.
+
+    Manager operands and body statements must therefore see the same context
+    as their enclosing block. Dropping it makes the boundary work only for
+    already-ground fixtures, not for general source-derived bindings.
+    """
+    _resource, boundary = _both_arms(tmp_path, stem="context")
+    from sugar_lift_py_tests.claim import SugarCatalog
+    from sugar_lift_py_tests.context import FactoryBuildContext
+
+    marker = FactoryBuildContext("context.py", SugarCatalog())
+    observed = []
+
+    manager_type = type(boundary.manager)
+    manager_desugar = manager_type.desugar
+
+    def manager_probe(self, ctx=None):
+        if self is boundary.manager:
+            observed.append(("manager", ctx))
+        return manager_desugar(self, ctx)
+
+    body_type = type(boundary.body[0])
+    body_desugar = body_type.desugar
+
+    def body_probe(self, ctx=None):
+        if self is boundary.body[0]:
+            observed.append(("body", ctx))
+        return body_desugar(self, ctx)
+
+    monkeypatch.setattr(manager_type, "desugar", manager_probe)
+    monkeypatch.setattr(body_type, "desugar", body_probe)
+
+    boundary.desugar(marker)
+
+    assert ("manager", marker) in observed
+    assert ("body", marker) in observed
+
+
 def test_discrimination_the_routing_probe_observes_a_real_call(tmp_path, monkeypatch):
     """The probe is armed: it sees the resource router too, under a resource contract.
 
