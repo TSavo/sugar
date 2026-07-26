@@ -41,6 +41,7 @@ from sugar_lift_py_tests.outcome.exit_set import (
     ExitSet,
     Halted,
     outcome_to_exitset,
+    partition,
     true_guard,
 )
 from sugar_lift_py_tests.sugar.spread_sugar import (
@@ -74,17 +75,24 @@ class _TwoFacedElement:
     def desugar(self, ctx=None):
         del ctx
         live = not_(self.halt_guard)
-        return ExitSet(
-            (
-                Halted(self.halt_guard, self.effect, None),
-                Completed(
-                    and_([live, self.guard]),
-                    SymbolicValue(ctor(f"true{self.index}", [])),
-                ),
-                Completed(
-                    and_([live, not_(self.guard)]),
-                    SymbolicValue(ctor(f"false{self.index}", [])),
-                ),
+        when_true, when_false = partition(
+            ("SpreadExitFactoringFixture", self.index, self.guard)
+        )
+        return (
+            ExitSet.halted(self.effect, self.halt_guard)
+            .union(
+                ExitSet.completed(
+                    SymbolicValue(ctor(f"true{self.index}", []))
+                )
+                .guarded(live)
+                .guarded(self.guard, when_true)
+            )
+            .union(
+                ExitSet.completed(
+                    SymbolicValue(ctor(f"false{self.index}", []))
+                )
+                .guarded(live)
+                .guarded(not_(self.guard), when_false)
             )
         )
 
