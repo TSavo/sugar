@@ -11,8 +11,8 @@
  "R(unnamed_exceptions)": 0,
  "completed_denominator": 223,
  "stableZero": false,
- "desugar_s": 35.12,
- "wall_s": 37.85,
+ "desugar_s": 35.73,
+ "wall_s": 38.33,
  "residuals": [
   {
    "name": null,
@@ -99,10 +99,10 @@
      "line": 404
     }
    },
-   "seconds": 0.9488
+   "seconds": 0.9549
   }
  ],
  "file": "/usr/local/lib/python3.14/site-packages/pandas/core/generic.py",
- "label": "fix-6352-v3",
+ "label": "rebased-on-d2c2b46c2",
  "deadline_seconds": 120.0
 }
