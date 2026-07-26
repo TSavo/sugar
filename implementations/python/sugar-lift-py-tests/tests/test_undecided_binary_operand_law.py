@@ -215,6 +215,44 @@ def test_a_value_that_has_not_testified_stays_loud() -> None:
     assert raised.value.info.observed == "_Unspoken"
 
 
+def test_a_term_bearing_callable_never_enters_the_law() -> None:
+    """The trap that killed the widening in ``751142009``, pinned on the real
+    artifacts rather than a stand-in.
+
+    ``{List,Tuple}Value.contains x CallSiteValue`` was once implemented by
+    treating any TERM-BEARING operand as undecided, measured, then reverted:
+    ``FunctionCallable`` carries a term too, and two pinned refusals
+    (``test_opaque_list_member_stays_loud``, ``test_opaque_member_stays_loud``)
+    say a callable is never a member. Carrying a term is not the
+    discriminator. Denoting a value is, and these two classes state nothing,
+    so they can never enter the law from either side -- however opaque their
+    operand happens to be.
+    """
+    from sugar_lift_py_tests.floor.function_callable import FunctionCallable
+    from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
+
+    callables = (
+        FunctionCallable("f"),
+        LambdaCallable(parameters=("p",), body=None, construction_identity="lam"),
+    )
+
+    for callable_value in callables:
+        # It carries a term -- and that buys it nothing.
+        assert callable_value.to_term(owner=SITE) is not None
+        assert callable_value.denotes_value() is False
+
+        # Refused from the left...
+        with pytest.raises(ConstructionPanic) as from_left:
+            callable_value.add(_symbolic(), SITE)
+        assert from_left.value.info.observed == type(callable_value).__name__
+
+        # ...and from the right, where an undecided left operand would
+        # otherwise have carried the pair into the law.
+        with pytest.raises(ConstructionPanic) as from_right:
+            BytesValue(b"x").add(callable_value, SITE)
+        assert type(callable_value).__name__ in from_right.value.info.fix
+
+
 def test_a_non_denoting_operand_stays_loud() -> None:
     """A callable is not an operand. The law refuses it from the right too."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
