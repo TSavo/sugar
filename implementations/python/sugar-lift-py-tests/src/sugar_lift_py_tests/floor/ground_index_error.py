@@ -24,7 +24,8 @@ def ground_index_error(
     from sugar_lift_py_tests.outcome import Complete
 
     del owner, operation, index, length
-    if Path(site.filename).is_absolute():
+    filename = getattr(site, "filename", None) or getattr(site, "path", None) or str(site)
+    if Path(filename).is_absolute():
         construction_panic_gap(
             owner="ground_index_error",
             blame=site,
@@ -32,9 +33,15 @@ def ground_index_error(
             requested="workspace-relative source locus",
             fix="route the source through the workspace-relative lift door",
         )
+    # ConstructionSite-like handles expose ``source``; SourceFragment exposes
+    # the pinned file text on ``unit.source`` (``.text`` is the span slice).
+    source_text = getattr(site, "source", None)
+    if source_text is None:
+        unit = getattr(site, "unit", None)
+        source_text = getattr(unit, "source", None) if unit is not None else None
     source_sha256 = (
-        hashlib.sha256(site.source.encode()).hexdigest()
-        if site.source is not None
+        hashlib.sha256(source_text.encode()).hexdigest()
+        if isinstance(source_text, str)
         else None
     )
     exception = ExceptionValue("IndexError", (), site)
