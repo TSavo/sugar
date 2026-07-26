@@ -31,6 +31,12 @@ from pathlib import Path
 
 import pytest
 
+from unprivileged_identity import (
+    reachable_by_unprivileged,
+    run_unprivileged,
+    unprivileged_preexec,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "tools" / "heavy_measurement_lease.py"
 GATE = ROOT / "tools" / "heavy_measurement_lease_gate.py"
@@ -311,15 +317,17 @@ def test_unwritable_lease_directory_refuses_by_name_and_states_the_right_path(tm
     host-shared path AND rule out /var/tmp, because that is the workaround the
     traceback teaches and it is the one that breaks the invariant."""
     module = _lease_module()
-    if os.getuid() == 0:
-        pytest.skip("root can write anywhere; this law is about an ordinary uid")
+    # Root bypasses the mode check this law is about, so under bpytest (which
+    # runs as root) this used to skip -- and a skip is not a pass. It now runs
+    # under a dropped identity instead, so the law is executed everywhere.
+    reachable_by_unprivileged(tmp_path)
     locked = tmp_path / "locked"
     locked.mkdir()
     locked.chmod(0o500)
     lease = module.HeavyMeasurementLease("t", str(locked / "sub" / "x.lease"), 1)
 
     with pytest.raises(module.LeaseDirectoryUnusable) as caught:
-        lease._require_usable_directory()
+        run_unprivileged(lease._require_usable_directory)
 
     message = str(caught.value)
     assert ".cache/sugar/binaries" in message, "the refusal must state the right path"
@@ -330,8 +338,11 @@ def test_unwritable_lease_directory_refuses_by_name_and_states_the_right_path(tm
 def test_an_unusable_lease_directory_never_runs_the_command(tmp_path, record):
     """The whole point: no lease, no measurement. A run that could not take the
     lease must support no claim, exactly like a timeout."""
-    if os.getuid() == 0:
-        pytest.skip("root can write anywhere; this law is about an ordinary uid")
+    # Same reason as above: the wrapper subprocess drops to an unprivileged
+    # identity so the kernel enforces the mode bits, instead of the test
+    # skipping under the root identity bpytest runs as.
+    reachable_by_unprivileged(tmp_path)
+    reachable_by_unprivileged(record.parent)
     locked = tmp_path / "locked"
     locked.mkdir()
     locked.chmod(0o500)
@@ -347,6 +358,7 @@ def test_an_unusable_lease_directory_never_runs_the_command(tmp_path, record):
             "--", sys.executable, "-c", f"open({str(ran)!r}, 'w').write('x')",
         ],
         capture_output=True, text=True,
+        preexec_fn=unprivileged_preexec(),
     )
 
     assert proc.returncode == 75, proc.stderr
