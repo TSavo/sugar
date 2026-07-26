@@ -28,6 +28,11 @@ value and not one effect, and they are different obligations, not one blob:
   face is not a value and the join has no seam to put it on. That is a real
   construction gap, and `require_single_value` panics with it NAMED, so it is
   loud and counted rather than an empty `AssertionError`.
+
+  A pending OBLIGATION meeting a partition is a different question and is no
+  longer a gap: it asks where the demand is owed, not which value the join
+  takes. Every face is downstream of the construction that incurred it, so
+  `rewrap_pending` puts it on every face, weakened under that face's own guard.
 """
 
 from __future__ import annotations
@@ -60,11 +65,12 @@ def pending_demand(outcome, guard):
 def rewrap_pending(pending, outcome, *, owner, blame):
     """Re-attach a hoisted demand to a joined result, or be loud.
 
-    A joined ``Complete`` takes the demand back and the entry rides on into the
-    block record. A joined partition or effect has nowhere to carry it: one entry
-    holds exactly one value, so the demand would have to be dropped. Dropping a
-    pending obligation silently would let a caller discharge nothing and still
-    look resolved, so it panics NAMED instead.
+    Four arms, each conserving the obligation somewhere it is honestly owed: a
+    ``Complete`` takes it back; a second carrier unions demand SETS by content
+    address; an ``Incomplete`` carries it beside the effect it was incurred
+    before; an ``ExitSet`` puts it on every face, weakened under that face's own
+    guard. Any other outcome kind stays LOUD -- dropping a pending obligation
+    silently would let a caller discharge nothing and still look resolved.
     """
     from dataclasses import replace
 
@@ -104,11 +110,44 @@ def rewrap_pending(pending, outcome, *, owner, blame):
             pending_contracts=(*outcome.pending_contracts, pending),
         )
 
-    # A PARTITION stays LOUD. An `ExitSet`'s faces each carry their own guard,
-    # and the entry has one value with no seam to split across them. Inventing
-    # an arm here would either attribute the obligation to every face (owing
-    # more than the source states) or pick one (dropping the rest). Neither is
-    # a smaller answer; both are wrong ones.
+    # A PARTITION. Every face of the partition is downstream of this obligation:
+    # the carried value was constructed, incurring the demand, and only THEN did
+    # the following step split. So the demand is owed on EVERY face -- owing it
+    # on one only would drop it on the others.
+    #
+    # It attaches AS INCURRED. Each arm's own `guard` states the face it is owed
+    # on, and `guard -> D` is minted once, at the block boundary that enrols it
+    # (`function_universe_sugar._enrol_exit_obligations`). Weakening per face
+    # here instead would re-mint a `demand_cid` per arm, and since a re-minted
+    # obligation is a different destination, the same obligation reaching this
+    # join twice through a shared outcome DAG would stop deduping -- `F and F`
+    # would stop being `F`.
+    #
+    # This was the last LOUD category here, and the panic it replaces asked for
+    # precisely this arm. `Completed.pending_contracts` is it (`Halted` has had
+    # its twin since #6352), so the request is answered rather than re-raised.
+    from sugar_lift_py_tests.caller_parameter_contract import merge_pending
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+
+    if isinstance(outcome, ExitSet):
+        exits = []
+        for exit_ in outcome.exits:
+            owed = merge_pending(exit_.pending_contracts, (pending,))
+            if isinstance(exit_, Completed):
+                exits.append(
+                    Completed(exit_.guard, exit_.value, exit_.faces, owed)
+                )
+            else:
+                exits.append(
+                    Halted(
+                        exit_.guard, exit_.effect, exit_.state, exit_.faces, owed
+                    )
+                )
+        return ExitSet(tuple(exits)).normalize()
+
+    # ANYTHING ELSE stays LOUD: an outcome kind this law has never seen has no
+    # arm here by construction, and inventing one would be a guess about where
+    # an obligation belongs.
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -118,15 +157,14 @@ def rewrap_pending(pending, outcome, *, owner, blame):
         observed=(
             "pending parameter contract demands ("
             + ", ".join(demand.demand_cid for demand in pending.demands)
-            + f") joined onto a {type(outcome).__name__}, whose faces each carry "
-            "their own guard and cannot share one carried value"
+            + f") joined onto a {type(outcome).__name__}, which is not a value, "
+            "an effect, a second carrier, or a partition"
         ),
         requested="one joined outcome that can carry every pending demand",
         fix=(
-            "give the exit algebra an arm for a pending contract demand, so each "
-            "completed face carries the demands weakened under its own guard; "
-            "never drop the obligation and never owe it on a face that does not "
-            "run"
+            "give this outcome kind an arm that states where the obligation is "
+            "owed; never drop the obligation and never owe it on a face that "
+            "does not run"
         ),
         gap_kind=GapKind.FLOOR,
     )

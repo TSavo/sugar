@@ -20,9 +20,10 @@ class Incomplete:
     which stays pristine. And it goes on to the block record through
     ``contribution``, which is what enrols it for the linker to discharge.
 
-    A PARTITION is still loud. An ``ExitSet``'s faces carry their own guards
-    and the entry has no seam there, so no arm is invented for it -- see
-    ``floor/single_outcome_law.rewrap_pending``.
+    A PARTITION now has its own arm rather than being loud: every face of an
+    ``ExitSet`` carries the obligation weakened under that face's own guard,
+    on ``Completed.pending_contracts`` and ``Halted.pending_contracts`` alike.
+    See ``floor/single_outcome_law.rewrap_pending``.
     """
 
     effect: Effect

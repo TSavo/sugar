@@ -89,6 +89,49 @@ def merge_demands(*groups) -> tuple[ParameterContractDemandV1, ...]:
     return tuple(by_cid[cid] for cid in sorted(by_cid))
 
 
+def merge_pending(*groups) -> tuple:
+    """Union pending CARRIERS by candidate content address (#6352 family).
+
+    The carrier set is the exit-level counterpart of ``merge_demands``. Two
+    carriers are the same pending construction exactly when their
+    ``candidate_cid`` agrees -- that address is taken over the source node AND
+    the candidate term, so equal addresses are the same construction at the
+    same site, and dedupe is arithmetic rather than a heuristic.
+
+    Same candidate reaching a join twice: ONE carrier, demand sets unioned by
+    ``merge_demands`` -- which is idempotent, so a shared outcome DAG that
+    delivers the same obligation on two faces still owes it once. Different
+    candidates: two carriers, both kept, nothing conjoined.
+
+    Ordering is by ``candidate_cid``, never by arrival, for the reason
+    ``merge_demands`` orders by ``demand_cid``: the universe is content, and
+    two folds that happened to run in a different order must not mint two
+    different rows.
+    """
+    by_candidate: dict[str, "ContractConditionalConstructionV1"] = {}
+    for group in groups:
+        for entry in group:
+            prior = by_candidate.get(entry.candidate_cid)
+            by_candidate[entry.candidate_cid] = (
+                entry
+                if prior is None
+                else replace(
+                    prior, demands=merge_demands(prior.demands, entry.demands)
+                )
+            )
+    return tuple(by_candidate[cid] for cid in sorted(by_candidate))
+
+
+def weaken_pending(entries, formula) -> tuple:
+    """Every carrier in a group weakened to one guarded face.
+
+    Weakening only some of a group would leave the rest owed unconditionally on
+    a face that may never run, which is a STRONGER obligation than the source
+    states -- the same reason ``demanded_under`` weakens every demand in a set.
+    """
+    return merge_pending(tuple(entry.demanded_under(formula) for entry in entries))
+
+
 @dataclass(frozen=True)
 class ContractConditionalConstructionV1:
     """A constructed value together with every caller obligation it incurred.
