@@ -1095,6 +1095,24 @@ class Node(Typed):
             self.unit, ShadowNode("Call", self.span, slots), self.reporter
         )
 
+    def _make_assign(self, target: "Node", value: "Node") -> "Node":
+        """Construct ``<target> = <value>`` as a shadow borrowing this span.
+
+        The one door for synthesizing a store: callers hand over a real target
+        node and a real value node, and ``Assign`` supplies target totality.
+        Nobody synthesizing a binding needs to learn target shapes.
+        """
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("targets", Children((_handle_of(target),))),
+            ("value", Child(_handle_of(value))),
+        )
+        return materialize(
+            self.unit, ShadowNode("Assign", self.span, slots), self.reporter
+        )
+
     def _make_attribute(self, value: "Node", attr: str) -> "Node":
         """Construct ``<value>.<attr>`` as a shadow borrowing this node's span."""
         from .backend import Child, Leaf, materialize
@@ -4605,6 +4623,72 @@ class With(Statement):
         inner = rewrite(self, items=tuple(self.items[1:]), body=tuple(self.body))
         return rewrite(self, items=(self.items[0],), body=(inner,))
 
+    def _bind_store_target(self, item) -> "With":
+        """``with M() as <store target>:`` IS ``<target> = enter_result`` first.
+
+        Python's as-clause is an ASSIGNMENT, not a name declaration. A simple
+        ``as <Name>`` is discharged by substitution (stated, no store effect,
+        the stronger discharge) and is left alone. Every OTHER target -- an
+        attribute, a subscript, a tuple, a nested or starred destructure -- is a
+        real store, and ``Assign`` is already total over exactly that target
+        set. So this node does not grow one arm per target shape: it rewrites
+        into the form ``Assign`` already owns and inherits the totality.
+
+        The store rides as the FIRST body statement, which is where Python runs
+        it: after ``__enter__`` completed, inside the block, so a store that
+        halts is a body edge and the contract's ``__exit__`` still runs over it.
+        Nothing about exit routing is special-cased -- the store is simply the
+        first thing the body does.
+
+        Restricted to ProtocolResource semantics on purpose. The EffectBoundary
+        contract refuses an as-binding outright (its projection is not
+        authenticated), and that refusal stays total; injecting a store there
+        would route a binding its contract has not admitted.
+
+        Idempotent: the rewrite only fires on a target this node did not already
+        rewrite, detected structurally by the injected store's own value being
+        this item's enter-result ObservationRef.
+        """
+        from sugar_lift_py_tests.context_manager_contract import (
+            ENTER_RESULT,
+            ProtocolResourceSemanticsV1,
+        )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            ContextManagerContractRefV1,
+            SourceDerivedContextManagerRefV1,
+        )
+        from .shadow import rewrite
+
+        target = item.optional_vars
+        if target is None or target.kind == "Name":
+            return self
+        if self._generator_manager_frame(item) is not None:
+            return self
+        resolution = self._prebound_manager_resolution(item)
+        if not isinstance(
+            resolution,
+            (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1),
+        ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
+            return self
+
+        enter_slot = f"{item._manager_slot_id()}#enter_result"
+        if self._already_bound_store(enter_slot):
+            return self
+        store = self._make_assign(
+            target, item._make_observation_ref(enter_slot, ENTER_RESULT)
+        )
+        return rewrite(self, body=(store, *self.body))
+
+    def _already_bound_store(self, enter_slot: str) -> bool:
+        """True when this With's body already opens with its own enter store."""
+        if not self.body:
+            return False
+        head = self.body[0]
+        if head.kind != "Assign":
+            return False
+        value = head.value
+        return value.kind == "ObservationRef" and value.slot_id == enter_slot
+
     def _construct_sugar(self):
         """Build only from the pre-resolved authenticated CM contract ref.
 
@@ -4615,21 +4699,21 @@ class With(Statement):
         if len(self.items) != 1:
             return self._nest_items()._construct_sugar()
         item = self.items[0]
+        # The as-clause is Python's own ASSIGNMENT, not a name declaration, so
+        # this node does not enumerate target shapes at all:
+        #
+        # - a simple ``as <Name>`` is discharged by SUBSTITUTION -- `substitute`
+        #   rewrote the body's loads to ObservationRef(slot). Stated, no store
+        #   effect, and that is the stronger discharge, so it stays.
+        # - any other target is a real store, and `_bind_store_target` already
+        #   rewrote it into the body as `<target> = ObservationRef(slot)`, where
+        #   `Assign` supplies attribute/subscript/tuple/nested/starred totality.
+        #
+        # Either way the enter-result slot must be BOUND whenever the site names
+        # a target, which is what `binds_enter_result` (not `as_name`) decides.
         as_name = None
-        if item.optional_vars is not None:
-            # ``as <Name>`` only: substitute already rewrote loads to
-            # ObservationRef(slot). Non-Name targets stay loud.
-            if item.optional_vars.kind != "Name":
-                from .panic import UnsupportedWithBindingTarget
-
-                panic = UnsupportedWithBindingTarget(
-                    owner="With._construct_sugar",
-                    observed=f"unsupported with binding target {item.optional_vars.kind}",
-                    requested="no target or one simple Name target",
-                    fix="leave destructuring and attribute targets loud",
-                )
-                self.reporter.report_gap(self, panic)
-                raise panic
+        binds_enter_result = item.optional_vars is not None
+        if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
 
         generator_manager = self._generator_manager_sugar(item)
@@ -4640,7 +4724,7 @@ class With(Statement):
 
             enter_slot = (
                 f"{item._manager_slot_id()}#enter_result"
-                if as_name is not None
+                if binds_enter_result
                 else None
             )
             return GeneratorWithSugar(
@@ -4672,7 +4756,7 @@ class With(Statement):
 
                 manager_slot = item._manager_slot_id()
                 enter_slot = (
-                    f"{manager_slot}#enter_result" if as_name is not None else None
+                    f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
                 return WithSourceResourceSugar(
                     manager=item.context_expr.sugar(),
@@ -4699,6 +4783,31 @@ class With(Statement):
                     observation_slot = self._effect_boundary_observation_slot(
                         item, resolved_ref
                     )
+                elif binds_enter_result:
+                    # A STORE target on an EffectBoundary. #6391 authenticated an
+                    # observation slot for a NAME; it did not authenticate a
+                    # store, and `_bind_store_target` deliberately declines to
+                    # rewrite this contract. Without this arm the binding would
+                    # silently become `observation_slot = None` -- the site would
+                    # construct while dropping the binding the source wrote.
+                    # Stay loud instead; a dropped binding is the one outcome
+                    # neither contract admits.
+                    from .panic import UnsupportedWithBindingTarget
+
+                    panic = UnsupportedWithBindingTarget(
+                        owner="With._construct_sugar",
+                        observed=(
+                            "EffectBoundary as-binding to a "
+                            f"{item.optional_vars.kind} store target"
+                        ),
+                        requested="an EffectBoundary manager bound to a simple Name, or no target",
+                        fix=(
+                            "authenticate a store projection for this contract, or "
+                            "keep the store target loud -- never drop the binding"
+                        ),
+                    )
+                    self.reporter.report_gap(self, panic)
+                    raise panic
                 manager_sugar = item.context_expr.sugar()
                 manager_sugar = self._authenticate_expected_exception_type(
                     item.context_expr, manager_sugar, resolved_ref
@@ -4728,7 +4837,9 @@ class With(Statement):
                 )
 
             manager_slot = item._manager_slot_id()
-            enter_slot = f"{manager_slot}#enter_result" if as_name is not None else None
+            enter_slot = (
+                f"{manager_slot}#enter_result" if binds_enter_result else None
+            )
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
@@ -4846,6 +4957,17 @@ class With(Statement):
             if len(items) != 1:
                 return self if not changed else rewrite(self, **changed)
             item = items[0]
+            if item.optional_vars is not None and item.optional_vars.kind != "Name":
+                # A store target is normalized into `<target> = enter_result` as
+                # the first body statement BEFORE the body is substituted, so
+                # the store threads its own bindings to the rest of the block
+                # through the ordinary assignment seam. Substituting first and
+                # injecting after would resolve the block's loads against the
+                # OUTER scope and silently shadow the names this site binds.
+                current = self if not changed else rewrite(self, **changed)
+                bound = current._bind_store_target(item)
+                if bound is not current:
+                    return bound.substitute(scope)
             if item.optional_vars is not None and item.optional_vars.kind == "Name":
                 if self._generator_manager_frame(item) is None:
                     self._require_narrow_cm_ref(item)
