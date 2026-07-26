@@ -495,7 +495,7 @@ fn main() {
         let out = match lifted {
             Ok(out) => out,
             Err(payload) => {
-                let panic_msg = panic_payload_message(&payload);
+                let panic_msg = panic_payload_message(&*payload);
                 warn!(
                     file = %rel,
                     panic = %panic_msg,
@@ -924,13 +924,9 @@ fn report_callsite_census(rows: &[(String, sugar_lift_rust_tests::CallsiteCensus
     eprintln!("==== end census ====");
 }
 
-/// The sweep ledger as a JSON value: the total accounting (every assertion
-/// binned into discharged/refused/missing or expanded through callsites), the
-/// reason histogram, and the per-file rows. Pure so the shape -- and the CID
-/// over it -- is testable.
 /// The panic payload's message, flattened to one line so it survives a reason
 /// histogram row. A non-string payload is NAMED, never dropped silently.
-fn panic_payload_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<String>()
         .map(String::as_str)
@@ -981,6 +977,10 @@ fn bin_panicked_file(
     rows.push((rel.to_string(), census_total, 0, census_total, 0, true));
 }
 
+/// The sweep ledger as a JSON value: the total accounting (every assertion
+/// binned into discharged/refused/missing or expanded through callsites), the
+/// reason histogram, and the per-file rows. Pure so the shape -- and the CID
+/// over it -- is testable.
 #[allow(clippy::too_many_arguments)]
 fn build_ledger_json(
     corpus: &str,
