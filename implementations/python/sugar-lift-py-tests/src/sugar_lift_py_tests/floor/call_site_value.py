@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+import weakref
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, NoReturn
 
@@ -16,6 +17,19 @@ _NESTED_DIG_DEMAND_BUDGET = 8
 _ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
     "sugar_callsite_active_dig_demand", default=0
 )
+
+# Authenticated-coordinate memo: id(CallSiteValue) -> (weakref, coordinate).
+# Weakrefs only, so a dead callsite is never pinned for process lifetime and a
+# recycled address cannot inherit its identity (the ``is``-guard rejects it).
+# Not a WeakKeyDictionary: that would call ``CallSiteValue.__hash__``, which is
+# the seat being memoized.
+_CALLSITE_COORDINATE: dict[int, tuple["weakref.ReferenceType", tuple]] = {}
+
+
+def _callsite_coordinate_memo_size() -> int:
+    """Live memo entries (test / diagnostics only)."""
+    return len(_CALLSITE_COORDINATE)
+
 
 
 def _term_cycle_key(term: Term) -> str:
@@ -130,6 +144,51 @@ class CallSiteValue(FloorValue):
 
         return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
 
+    def _identity(self) -> tuple:
+        """Authenticate this immutable callsite's finite coordinate once.
+
+        ``__hash__`` and ``__eq__`` both read this one seat, so they cannot
+        disagree. Before the memo, every comparison rebuilt the coordinate —
+        including ``_term_cycle_key``, a full content CID of the term. The
+        pandas reproducer measured 35,339,381 ``_term_content_cid`` calls
+        arriving through this path on a single file, because ``ExitSet``
+        merging compares the same callsites repeatedly.
+
+        A ``CallSiteValue`` is a frozen dataclass, so a coordinate computed
+        once cannot go stale. The memo carries the same discipline as
+        ``ir._TERM_CONTENT_CID``: identity is the coordinate, ``id()`` only
+        indexes, and a weakref ``is``-guard rejects recycled addresses so a
+        reused id can never inherit a dead callsite's identity.
+        """
+        cid = id(self)
+        entry = _CALLSITE_COORDINATE.get(cid)
+        if entry is not None:
+            ref, coordinate = entry
+            if ref() is self:
+                return coordinate
+            if ref() is None:
+                _CALLSITE_COORDINATE.pop(cid, None)
+
+        coordinate = (
+            type(self),
+            self.target_name,
+            self.parameters,
+            _term_cycle_key(self.term),
+        )
+
+        def _on_die(ref: weakref.ReferenceType, *, _cid: int = cid) -> None:
+            current = _CALLSITE_COORDINATE.get(_cid)
+            if current is not None and current[0] is ref:
+                _CALLSITE_COORDINATE.pop(_cid, None)
+
+        try:
+            _CALLSITE_COORDINATE[cid] = (weakref.ref(self, _on_die), coordinate)
+        except TypeError:
+            # Not weak-referenceable: recompute every time rather than pin the
+            # object for process lifetime.
+            pass
+        return coordinate
+
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
 
@@ -141,14 +200,7 @@ class CallSiteValue(FloorValue):
         recursive payload fields is safe for hash equality (equal values still
         receive the same hash) and makes identity total over cyclic bodies.
         """
-        return hash(
-            (
-                type(self),
-                self.target_name,
-                self.parameters,
-                _term_cycle_key(self.term),
-            )
-        )
+        return hash(self._identity())
 
     def __eq__(self, other: object) -> bool:
         """Compare the same finite authenticated coordinate used by ``__hash__``.
@@ -160,17 +212,9 @@ class CallSiteValue(FloorValue):
         """
         if not isinstance(other, CallSiteValue):
             return NotImplemented
-        return (
-            type(self),
-            self.target_name,
-            self.parameters,
-            _term_cycle_key(self.term),
-        ) == (
-            type(other),
-            other.target_name,
-            other.parameters,
-            _term_cycle_key(other.term),
-        )
+        if self is other:
+            return True
+        return self._identity() == other._identity()
 
     def to_term(self, *, owner: str):
         del owner
