@@ -20,6 +20,12 @@ These are the teeth against that class:
        unfalsifiability it was written to remove -- so it is tested by
        provoking a real EACCES, not by inspection.
 
+    5. A package's SIBLINGS must be derived and proven too. A hand-written
+       sibling list is a declaration that drifts with nothing to notice:
+       ``siblings=()`` sat beside two real sibling imports while the
+       structural guard stayed green and 30 test modules resolved a stale
+       worktree. Derived, or it rots.
+
     4. Every package under test must PIN this checkout, and prove it. A
        package resolving to an editable install elsewhere does not fail -- it
        passes, reports coverage, and describes a tree nobody is editing. That
@@ -363,3 +369,90 @@ def test_the_resolution_guard_can_actually_fail():
 
     assert "resolved OUTSIDE this checkout" in message
     assert "fabricates" in message
+
+
+def test_sibling_requirements_are_derived_not_declared():
+    """A package that declares NO siblings must still have them derived.
+
+    This is the exact case that hid the defect: `pin_checkout(__file__,
+    siblings=())` satisfied the structural guard while two sibling packages
+    resolved ambiently, one of them to another worktree entirely. If derivation
+    ever stops seeing them, an empty declaration hides them again.
+    """
+    from checkout_resolution import derive_required_siblings
+
+    packages_dir = ROOT / "implementations" / "python"
+    package = packages_dir / "sugar-lift-py-tests"
+    conftest = (package / "tests" / "conftest.py").read_text(encoding="utf-8")
+    assert "siblings=()" in conftest, (
+        "this control is pinned to the package that declares NO siblings; if "
+        "that changed, point it at another empty-declaration package or the "
+        "regression it guards becomes invisible again"
+    )
+
+    derived = derive_required_siblings(str(package), str(packages_dir))
+    assert set(derived) >= {"sugar-lift-python-source", "sugar-source-tree"}, (
+        "derivation stopped seeing siblings this package imports; an empty "
+        f"`siblings=()` would hide them again. derived={derived}"
+    )
+
+
+def test_a_sibling_resolving_outside_the_checkout_FAILS(tmp_path):
+    """The positive assertion extended to siblings, and it must FAIL.
+
+    Absence of an ImportError proves nothing when the defect is a SUCCESSFUL
+    import of the wrong tree -- which is what those 30 errors were: one of them
+    named a source_oracle.py in another worktree. So the refusal is provoked,
+    and a degraded skip is caught explicitly rather than trusted.
+    """
+    from checkout_resolution import CheckoutResolutionEscaped, require_local_resolution
+
+    assert issubclass(CheckoutResolutionEscaped, AssertionError)
+    assert not issubclass(CheckoutResolutionEscaped, pytest.skip.Exception)
+
+    try:
+        # `json` stands for any sibling resolving outside the checkout root.
+        require_local_resolution("json", str(tmp_path))
+    except pytest.skip.Exception as skipped:
+        raise AssertionError(
+            f"sibling resolution degraded into a SKIP ({skipped!r}); a package "
+            "measuring another checkout would then report green"
+        ) from None
+    except CheckoutResolutionEscaped as refusal:
+        message = str(refusal)
+    else:
+        raise AssertionError(
+            "a module resolving OUTSIDE the root was accepted; the guard "
+            "cannot catch the defect it exists for"
+        )
+
+    assert "resolved OUTSIDE this checkout" in message
+
+
+def test_every_package_proves_its_derived_siblings_resolve_locally():
+    """Derivation must be wired into the pin, not merely available beside it."""
+    from checkout_resolution import derive_required_siblings
+
+    packages_dir = ROOT / "implementations" / "python"
+    packages = _packages_under_test()
+    assert packages, "no packages under test; this guard would be vacuous"
+
+    source = (TESTS / "checkout_resolution.py").read_text(encoding="utf-8")
+    assert "derive_required_siblings(package_dir, packages_dir)" in source, (
+        "pin_checkout no longer derives its siblings; an empty declaration "
+        "would silently stop pinning them again"
+    )
+
+    covered = 0
+    for package in packages:
+        derived = derive_required_siblings(str(package), str(packages_dir))
+        for sibling in derived:
+            assert (packages_dir / sibling / "src").is_dir(), (
+                f"{_rel(package)} derives sibling {sibling!r}, which has no "
+                "src/ in this checkout -- it could only resolve from elsewhere"
+            )
+            covered += 1
+    assert covered, (
+        "no package derived any sibling; either the repo genuinely has none "
+        "or derivation is broken, and this guard cannot tell the difference"
+    )

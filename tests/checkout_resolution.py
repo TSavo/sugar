@@ -30,7 +30,9 @@ about the wrong thing.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import pathlib
 import os
 import sys
 
@@ -132,6 +134,74 @@ def require_local_resolution(module_name, root):
     return resolved
 
 
+def _imported_roots(path):
+    """Top-level module names imported by one file, at any scope.
+
+    Module scope is where an undeclared import aborts collection for the whole
+    package, but a function-scope import of a sibling escapes to the wrong tree
+    just as silently at runtime. Both are collected.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        return ()
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots.add(node.module.split(".")[0])
+    return tuple(roots)
+
+
+def _module_owners(packages_dir):
+    """Map every top-level module this repo provides to the package shipping it."""
+    owners = {}
+    if not os.path.isdir(packages_dir):
+        return owners
+    for entry in sorted(os.listdir(packages_dir)):
+        src = os.path.join(packages_dir, entry, "src")
+        for module_name in local_modules_under(src):
+            owners.setdefault(module_name, entry)
+    return owners
+
+
+def derive_required_siblings(package_dir, packages_dir):
+    """Which sibling packages this one's code actually imports.
+
+    DERIVED, never declared. A hand-maintained sibling list is a declaration
+    that drifts from reality with nothing to notice -- which is exactly how
+    ``siblings=()`` sat beside two real sibling imports while the guard stayed
+    green and 30 test modules resolved a stale worktree.
+
+    Transitive: a sibling's own sibling must be on the path too, or the import
+    that reaches it escapes just the same.
+    """
+    owners = _module_owners(packages_dir)
+    own_name = os.path.basename(package_dir)
+    required = {}
+    pending = [package_dir]
+    seen = {own_name}
+
+    while pending:
+        current = pending.pop()
+        for sub in ("tests", "src"):
+            root = os.path.join(current, sub)
+            if not os.path.isdir(root):
+                continue
+            for path in pathlib.Path(root).rglob("*.py"):
+                if any(part in {"__pycache__", ".venv", "build"} for part in path.parts):
+                    continue
+                for imported in _imported_roots(path):
+                    owner = owners.get(imported)
+                    if owner is None or owner in seen:
+                        continue
+                    seen.add(owner)
+                    required[owner] = imported
+                    pending.append(os.path.join(packages_dir, owner))
+    return required
+
+
 def pin_checkout(conftest_file, siblings=()):
     """Pin this package's sources (and declared siblings) to THIS checkout.
 
@@ -144,8 +214,12 @@ def pin_checkout(conftest_file, siblings=()):
     root = repo_root_from(conftest_file)
     packages_dir = os.path.dirname(package_dir)
 
+    # Derived first, so nothing depends on a declaration staying true.
+    # `siblings` remains only as an additive escape hatch for an import no
+    # static scan can see; it can no longer HIDE a sibling by being empty.
+    required = derive_required_siblings(package_dir, packages_dir)
     src_dirs = [os.path.join(package_dir, "src")]
-    for sibling in siblings:
+    for sibling in sorted(set(required) | set(siblings)):
         src_dirs.append(os.path.join(packages_dir, sibling, "src"))
 
     for entry in reversed(src_dirs):
@@ -156,4 +230,9 @@ def pin_checkout(conftest_file, siblings=()):
 
     for module_name in local_modules_under(src_dirs[0]):
         require_local_resolution(module_name, root)
+    # The positive assertion applies to siblings too. Importing one without an
+    # ImportError proves nothing when the defect is a SUCCESSFUL import of the
+    # wrong tree -- which is precisely what these 30 collection errors were.
+    for imported in sorted(required.values()):
+        require_local_resolution(imported, root)
     return root
