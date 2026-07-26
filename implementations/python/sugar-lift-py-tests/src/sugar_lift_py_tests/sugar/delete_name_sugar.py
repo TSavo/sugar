@@ -12,7 +12,10 @@ from sugar_lift_py_tests.sugar.binding_projection import (
     LoopGuardedProjection,
     UnboundProjection,
 )
-from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import _loop_exit_faces
+from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+    _guarded_projection_faces,
+    _loop_exit_faces,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -70,12 +73,13 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
     if not isinstance(state, GuardedProjection):
         _unhandled_projection(state, verb="delete", name=name, site=site)
     guard = branch_result_guard(state.slot, site)
+    true_face, false_face = _guarded_projection_faces(state)
     return (
         delete_binding(state.when_true, name=name, site=site, ctx=ctx)
-        .guarded(guard)
+        .guarded(guard, true_face)
         .union(
             delete_binding(state.when_false, name=name, site=site, ctx=ctx).guarded(
-                not_(guard)
+                not_(guard), false_face
             )
         )
     )
