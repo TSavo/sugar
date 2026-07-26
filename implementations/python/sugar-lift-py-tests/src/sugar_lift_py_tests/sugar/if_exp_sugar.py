@@ -110,7 +110,10 @@ class IfExpSugar(Sugar):
     def _join_arms(self, formula, then_out, else_out) -> Outcome:
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+        from sugar_lift_py_tests.outcome.exit_set import (
+            outcome_to_exitset,
+            partition as _partition,
+        )
 
         not_formula = not_(formula)
 
@@ -133,8 +136,17 @@ class IfExpSugar(Sugar):
         # produce a value together with the arm that halts. Nothing here folds an
         # effect into a value; each arm stays on its own face under its own
         # guard, and every input arm is conserved into exactly one output arm.
-        exits = outcome_to_exitset(then_out).guarded(formula)
-        exits = exits.union(outcome_to_exitset(else_out).guarded(not_formula))
+        #
+        # This site OWNS the split, so it mints the partition and stamps each
+        # arm with its face. A conditional expression is exactly what reaches
+        # spread/call operands, where ``factor_completed`` needs the exclusion;
+        # by then the guards have been conjoined with a prefix and their shape
+        # no longer shows it. Testimony carried here does not decay.
+        then_face, else_face = _partition(("IfExpSugar", self.site, formula))
+        exits = outcome_to_exitset(then_out).guarded(formula, then_face)
+        exits = exits.union(
+            outcome_to_exitset(else_out).guarded(not_formula, else_face)
+        )
 
         # A partition with a single completed face and no halt is a plain value
         # again (normalize may have merged the faces): collapse rather than hand
