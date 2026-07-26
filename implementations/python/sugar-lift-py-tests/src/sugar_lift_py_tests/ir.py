@@ -566,6 +566,103 @@ def _formula_cycle_key(formula: "Formula") -> tuple:
     return _formula_content_key(formula)
 
 
+# Content-key memo: id(formula) → (weakref(formula), key, hash).
+#
+# Formulas are frozen dataclasses with tuple children, so a value that has been
+# authenticated once cannot change. Before this memo, every ``__hash__`` and
+# every ``__eq__`` recomputed ``_formula_content_key`` — a full walk of the
+# formula DAG plus one content CID per term argument. The pandas reproducer
+# measured 3,452,624 content-key walks over 377,167 distinct formula objects on
+# a single file: 9.15 re-authentications of each immutable value.
+#
+# Same discipline as ``_TERM_CONTENT_CID`` above, for the same reasons:
+# - identity is the KEY (content), never ``id()``; ``id()`` indexes the memo
+# - the weakref ``is``-guard rejects recycled ids, so a reused address cannot
+#   inherit a dead formula's identity
+# - not a WeakKeyDictionary: that would call ``Formula.__hash__``, which is the
+#   very thing being memoized
+# - the callback drops the slot when the referent dies, so GC reclaims
+#
+# CYCLES ARE NOT MEMOIZED. ``_formula_key`` encodes a back-edge as
+# ``("cycle", id(node))`` — an occurrence-derived coordinate, not a content
+# one. Caching that would let an id-derived identity outlive the object and
+# silently become another formula's identity. A cyclic formula therefore
+# recomputes every time and stays exactly as loud as it is today.
+_FORMULA_CONTENT_KEY: dict[int, tuple[weakref.ReferenceType, tuple, int]] = {}
+
+
+def _formula_content_key_memo_size() -> int:
+    """Live memo entries (test / diagnostics only)."""
+    return len(_FORMULA_CONTENT_KEY)
+
+
+def _evict_formula_content_key(formula: "Formula") -> bool:
+    """Drop any memoized content key for ``formula``.
+
+    Recomputation after eviction is deterministic: the same structural formula
+    yields the same key. Eviction is cache control only — never identity.
+    """
+    fid = id(formula)
+    entry = _FORMULA_CONTENT_KEY.get(fid)
+    if entry is None:
+        return False
+    wr, _key, _hashed = entry
+    if wr() is formula:
+        del _FORMULA_CONTENT_KEY[fid]
+        return True
+    if wr() is None:
+        _FORMULA_CONTENT_KEY.pop(fid, None)
+    return False
+
+
+def _key_contains_cycle(key: object) -> bool:
+    """True when a content key carries an occurrence-derived back-edge marker."""
+    stack = [key]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, tuple):
+            if len(node) == 2 and node[0] == "cycle":
+                return True
+            stack.extend(node)
+    return False
+
+
+def _formula_identity(formula: "Formula") -> tuple[tuple, int]:
+    """Authenticate one immutable formula object once: (content key, hash).
+
+    Both ``__hash__`` and ``__eq__`` read this one seat, so hash and equality
+    can never disagree about what a formula is.
+    """
+    fid = id(formula)
+    entry = _FORMULA_CONTENT_KEY.get(fid)
+    if entry is not None:
+        wr, key, hashed = entry
+        if wr() is formula:
+            return key, hashed
+        if wr() is None:
+            _FORMULA_CONTENT_KEY.pop(fid, None)
+
+    key = _formula_content_key(formula)
+    hashed = hash(key)
+    if _key_contains_cycle(key):
+        # Occurrence-derived identity: correct for this live object, unsafe to
+        # retain. Recompute forever rather than cache a lie.
+        return key, hashed
+
+    def _on_die(wr: weakref.ReferenceType, *, _fid: int = fid) -> None:
+        current = _FORMULA_CONTENT_KEY.get(_fid)
+        if current is not None and current[0] is wr:
+            _FORMULA_CONTENT_KEY.pop(_fid, None)
+
+    try:
+        _FORMULA_CONTENT_KEY[fid] = (weakref.ref(formula, _on_die), key, hashed)
+    except TypeError:
+        # Not weak-referenceable: authenticate every time rather than pin the
+        # object for process lifetime.
+        pass
+    return key, hashed
+
+
 def make_var(name: str) -> Term:
     return _intern_term(_Var(name))
 
@@ -683,12 +780,14 @@ class _Atomic:
     args: Tuple[Term, ...]
 
     def __hash__(self) -> int:
-        return hash(_formula_cycle_key(self))
+        return _formula_identity(self)[1]
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Atomic) and _formula_cycle_key(
-            self
-        ) == _formula_cycle_key(other)
+        if not isinstance(other, _Atomic):
+            return False
+        if self is other:
+            return True
+        return _formula_identity(self)[0] == _formula_identity(other)[0]
 
 
 @dataclass(frozen=True)
@@ -697,12 +796,14 @@ class _Connective:
     operands: Tuple["Formula", ...]
 
     def __hash__(self) -> int:
-        return hash(_formula_cycle_key(self))
+        return _formula_identity(self)[1]
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Connective) and _formula_cycle_key(
-            self
-        ) == _formula_cycle_key(other)
+        if not isinstance(other, _Connective):
+            return False
+        if self is other:
+            return True
+        return _formula_identity(self)[0] == _formula_identity(other)[0]
 
 
 @dataclass(frozen=True)
@@ -713,12 +814,14 @@ class _Quantifier:
     body: "Formula"
 
     def __hash__(self) -> int:
-        return hash(_formula_cycle_key(self))
+        return _formula_identity(self)[1]
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _Quantifier) and _formula_cycle_key(
-            self
-        ) == _formula_cycle_key(other)
+        if not isinstance(other, _Quantifier):
+            return False
+        if self is other:
+            return True
+        return _formula_identity(self)[0] == _formula_identity(other)[0]
 
 
 Formula = Union[_Atomic, _Connective, _Quantifier]
