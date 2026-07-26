@@ -24,7 +24,9 @@ def ground_index_error(
     from sugar_lift_py_tests.outcome import Complete
 
     del owner, operation, index, length
-    filename = getattr(site, "filename", None) or getattr(site, "path", None) or str(site)
+    filename = (
+        getattr(site, "filename", None) or getattr(site, "path", None) or str(site)
+    )
     if Path(filename).is_absolute():
         construction_panic_gap(
             owner="ground_index_error",
