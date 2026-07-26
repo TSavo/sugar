@@ -111,6 +111,15 @@ class ResolvedContractRefsV1:
     table_cid: str
     by_use_site: Mapping[SourceFragmentCoordinateV1, ContextManagerResolutionV1]
 
+    def is_unenrolled_placeholder(self) -> bool:
+        """True when this table intentionally enrolls no With demands.
+
+        Sole-path manager-factory construction uses an empty placeholder so
+        nested ``with`` in a factory body (e.g. ``pytest.raises`` calling
+        ``RaisesExc``) does not treat every use-site as a bijection defect.
+        """
+        return self.table_cid == _EMPTY_CONTRACT_TABLE_CID
+
     def require(
         self, use_site: SourceFragmentCoordinateV1
     ) -> ContextManagerResolutionV1:
@@ -123,8 +132,8 @@ class ResolvedContractRefsV1:
 
 
 # Placeholder table for construction that does not enroll context-manager
-# demands (e.g. sole-path manager-factory construction). With.require still
-# fails closed when a use-site is absent.
+# demands (e.g. sole-path manager-factory construction). Missing use-sites on
+# this table alone are not bijection defects — see ``is_unenrolled_placeholder``.
 _EMPTY_CONTRACT_TABLE_CID = "blake3-512:" + ("00" * 64)
 
 

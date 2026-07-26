@@ -4380,6 +4380,14 @@ class With(Statement):
         try:
             return context.contract_refs.require(coordinate)
         except ContractRefProtocolError as exc:
+            # Empty placeholder tables deliberately enroll no With demands
+            # (sole-path factory projection). Missing is not a bijection defect
+            # there — return None so callers stay RuntimeSelected/loud without
+            # BackendDefect. Non-empty enrolled tables still fail closed.
+            if getattr(
+                context.contract_refs, "is_unenrolled_placeholder", lambda: False
+            )():
+                return None
             backend_defect(
                 owner="With._construct_sugar",
                 observed=str(exc),

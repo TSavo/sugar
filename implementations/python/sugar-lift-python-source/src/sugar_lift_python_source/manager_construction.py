@@ -316,9 +316,25 @@ def resolve_source_visible_frame(
 
     session.frame_active.add(cache_key)
     try:
-        result = _resolve_source_visible_frame_uncached(
-            resolved, graph=graph, module=module, session=session
-        )
+        try:
+            result = _resolve_source_visible_frame_uncached(
+                resolved, graph=graph, module=module, session=session
+            )
+        except Exception as exc:
+            # Nested With in a factory body (pytest.raises → RaisesExc) can
+            # raise RuntimeSelectedContextManager / other SugarNotWritten while
+            # projecting the ordinary source frame. That is a stage-keyed
+            # residual, not a bare crash and not a false free-name opaque.
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if isinstance(exc, SugarNotWritten):
+                result = ManagerConstructionGapV1(
+                    "opaque-call-target",
+                    resolved.cid,
+                    f"source-visible-frame:{type(exc).__name__}",
+                )
+            else:
+                raise
     finally:
         session.frame_active.discard(cache_key)
     if isinstance(result, tuple) and len(result) == 3:
@@ -396,9 +412,17 @@ def _resolve_source_visible_frame_uncached(
     external_opaque: set[str] = set()
 
     def _opaque_call_targets(function: FunctionDef) -> tuple[str, ...]:
+        # Parameters and names assigned in this body are not free external
+        # callees. pytest.raises binds ``func = args[0]`` then calls ``func(...)``
+        # on the non-CM path; treating that local as opaque-call-target:func
+        # aborted every source-derived EffectBoundary enrollment for the
+        # assertion-With mass (3555 pytest.raises sites).
+        local_bound = _function_local_bound_names(function)
         opaque: list[str] = []
         for call in _local_named_calls(function):
             name = call.func.id
+            if name in local_bound:
+                continue
             if name in external_frames:
                 continue
             if not _named_call_is_source_opaque(name, definition_names, builtin_floor):
@@ -569,6 +593,35 @@ def _named_call_is_source_opaque(
     if name in definition_names:
         return False
     return builtin_floor.value_if_bound(name) is None
+
+
+def _function_local_bound_names(function: FunctionDef) -> frozenset[str]:
+    """Names bound in this function's formals or simple body assignments.
+
+    Used only to exclude free-name external opacity for callees that are
+    parameters or assigned locals (e.g. ``func = args[0]; func(...)``). Nested
+    FunctionDef/ClassDef names are not required here: the walk that collects
+    named calls does not descend into nested definitions.
+    """
+    from sugar_source_tree.nodes import AnnAssign, Assign, Name, Param
+
+    names: set[str] = {
+        param.name for param in function.params if isinstance(param, Param)
+    }
+    stack = list(reversed(function.body))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (FunctionDef, ClassDef)):
+            continue
+        if isinstance(node, Assign):
+            for target in node.targets:
+                if isinstance(target, Name):
+                    names.add(target.id)
+        elif isinstance(node, AnnAssign) and isinstance(node.target, Name):
+            names.add(node.target.id)
+        children = [child for _, _, child in node.children()]
+        stack.extend(reversed(children))
+    return frozenset(names)
 
 
 def _local_named_calls(function: FunctionDef):

@@ -166,6 +166,43 @@ def test_free_name_call_stays_typed_loud(tmp_path):
     assert result.detail == "missing_helper"
 
 
+def test_local_assigned_callee_is_not_false_opaque_call_target(tmp_path):
+    """A callee bound by assignment/parameter is not a free external name.
+
+    pytest.raises uses ``func = args[0]; func(...)`` on its non-CM path. That
+    local must not abort frame projection as ``opaque-call-target:func`` —
+    assertion-With mass (3555 sites) stayed loud on that false free-name.
+    """
+    implementation = (
+        "class RenamedManager:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_guard(expected):\n"
+        "    cls = RenamedManager\n"
+        "    return cls(expected)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="make_guard"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "opaque-call-target"
+        and result.detail == "cls"
+    ), result
+    # May complete or refuse at a later stage-keyed gap — never false free-name.
+    if isinstance(result, ManagerConstructionGapV1):
+        assert result.kind != "opaque-call-target" or result.detail != "cls"
+
+
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
     """Python builtin names are not free-name opaques at frame resolution.
 
