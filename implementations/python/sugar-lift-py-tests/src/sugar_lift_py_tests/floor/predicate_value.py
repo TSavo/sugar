@@ -76,37 +76,23 @@ class PredicateValue(FloorValue):
         )
 
     def guarded(self, formula):
-        """A predicate entry carried under a branch guard IS the implication.
+        """A carried boolean rides under a guard unchanged.
 
-        This door is reached from ``if_sugar``'s ``entry.guarded(exit_.guard)``
-        over a branch face's record entries, so the receiver is a record entry,
-        not a bound value -- a bound value rides as a ``GuardedValue`` through
-        temporal scope and never arrives here. The law is ``InvValue.guarded``'s:
-        a formula stated under a guard is ``implies(guard, formula)``.
+        Same arm as ``CallSiteValue`` / ``ImportAliasValue``: this is a VALUE,
+        not an exit and not an obligation. A PredicateValue states no
+        ``inv_contribution`` and no ``post_contribution``, so a branch guard
+        over it is already owned by the branch's own control -- there is
+        nothing here for the guard to weaken.
 
-        It stays a ``PredicateValue`` rather than becoming an ``InvValue``
-        because guarding decides POLARITY, not assertional force. This entry
-        has not been ``stated()`` yet; when it is, the implication is what gets
-        stated, which is exactly the weakening a branch-local fact owes. The
-        alternative -- riding unchanged, as ``CallSiteValue.guarded`` does --
-        is wrong here for the same reason: a callsite coordinate asserts
-        nothing, and a predicate is nothing but an assertion waiting to be made.
-
-        Operand callsites and the derived / rewrite chains ride so edges still
-        project, and both binding rosters ride under the same guard the
-        implication now carries.
+        Weakening the carried formula to ``formula -> self.formula`` would be a
+        different value, not a guarded one: for `x = (a == b) if c else d` it
+        would make `x` TRUE wherever `c` is false, which the source never
+        states. An assertion over this predicate is an ``InvValue``, and THAT
+        is the arm that becomes an implication (``InvValue.guarded``); the
+        obligation is weakened where the obligation lives, never here.
         """
-        from sugar_lift_py_tests.ir import implies
-
-        return PredicateValue(
-            implies(formula, self.formula),
-            self.site,
-            self.operand_callsites,
-            self.derived_formulas,
-            self.rewrite_chains,
-            self.then_bindings,
-            self.else_bindings,
-        )
+        del formula
+        return self
 
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
