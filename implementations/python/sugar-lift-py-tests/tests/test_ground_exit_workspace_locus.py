@@ -99,11 +99,16 @@ def _raise_effects(root: Path) -> dict[str, RaiseEffect]:
         assert isinstance(outcome, Complete), (
             f"{function.name} did not construct: {outcome!r}"
         )
-        value = outcome.value
-        assert isinstance(value, RaiseValue), (
-            f"{function.name} constructed {type(value).__name__}, not a RaiseValue"
+        raises = [
+            statement
+            for statement in outcome.value.record.statements
+            if isinstance(statement, RaiseValue)
+        ]
+        assert len(raises) == 1, (
+            f"{function.name} constructed {len(raises)} raise exits, not the "
+            f"one ground exit its body proves"
         )
-        effects[function.name] = value.effect
+        effects[function.name] = raises[0].effect
     return effects
 
 
@@ -122,10 +127,15 @@ def test_ground_exit_blame_is_workspace_relative(corpus: Path) -> None:
     for name, effect in effects.items():
         blame = effect.blame
         assert blame is not None, f"{name} exit carries no blame locus"
-        assert blame.startswith("ground_exits.py:"), (
-            f"{name} blame `{blame}` is not the workspace-relative locus"
+        # The blame renders the fragment, which names the file it cites. That
+        # name must be the workspace-relative one -- an absolute spelling is
+        # the address no other checkout can resolve.
+        assert "'ground_exits.py'" in blame, (
+            f"{name} blame `{blame}` does not name the workspace-relative locus"
         )
-        assert not Path(blame.split(":")[0]).is_absolute()
+        assert str(corpus) not in blame, (
+            f"{name} blame `{blame}` leaks the absolute workspace path"
+        )
 
 
 def test_ground_exit_cites_the_source_it_locates(corpus: Path) -> None:
