@@ -42,6 +42,87 @@ class _ReducedBlock:
     transforms: tuple = ()
 
 
+def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
+    """Move every arm's pending obligations INTO that arm's block record.
+
+    THE NAMED CONSUMPTION. ``Completed.pending_contracts`` and
+    ``Halted.pending_contracts`` are in-flight carriers: they conserve an
+    obligation through the exit algebra, but nothing downstream of the algebra
+    reads them, so an arm that still owed something when the block finished had
+    its obligation vanish at this boundary -- conserved for the whole flight and
+    dropped on landing. Enrolment is what makes it discharged rather than
+    forgotten: ``entry.contribution()`` is the same one-row-per-demand split a
+    completed carrier goes through, and the rows join the block's entries, where
+    ``link_unit_projection`` enrols them for the linker.
+
+    The field is CLEARED as the rows are appended. That is what makes this a
+    consumption and not a duplication: the obligation exists in exactly one
+    place afterwards.
+
+    THIS IS ALSO THE ONE MINT. An arm carries its obligations as they were
+    incurred; the arm's ``guard`` is the face they are owed on, so `guard -> D`
+    is minted here, once, against the guard the arm finally holds. An arm under
+    the true guard owes the bare obligation and is not re-minted at all.
+
+    An arm with no block to enrol into (a halted arm whose state is ``None``)
+    stays LOUD -- there is no record to owe on, and inventing one would
+    attribute the obligation to a block that never ran.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import weaken_pending
+    from sugar_lift_py_tests.gap.info import GapKind
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+    enrolled: list[object] = []
+    for exit_ in exits.exits:
+        if not exit_.pending_contracts:
+            enrolled.append(exit_)
+            continue
+        owed = (
+            exit_.pending_contracts
+            if _is_true(exit_.guard)
+            else weaken_pending(exit_.pending_contracts, exit_.guard)
+        )
+        rows = tuple(row for entry in owed for row in entry.contribution())
+        block = exit_.value if isinstance(exit_, Completed) else exit_.state
+        if not isinstance(block, _ReducedBlock):
+            construction_panic_gap(
+                owner="reduce_block_to_exitset.enrol_exit_obligations",
+                blame=exit_.pending_contracts[0].source_node,
+                observed=(
+                    "a block exit owing "
+                    + ", ".join(
+                        demand.demand_cid
+                        for entry in exit_.pending_contracts
+                        for demand in entry.demands
+                    )
+                    + f" carries {type(block).__name__} where its reduced block "
+                    "record should be, so there is nothing to enrol the "
+                    "obligation into"
+                ),
+                requested="a reduced block record on every exit that owes",
+                fix=(
+                    "carry the reduced block on this arm, or hand the obligation "
+                    "to the producer that does; never drop it and never enrol it "
+                    "on a block that did not run"
+                ),
+                gap_kind=GapKind.FLOOR,
+            )
+        widened = _ReducedBlock(
+            (*block.entries, *rows),
+            block.can_fall_through,
+            block.fall_through,
+            block.transforms,
+        )
+        if isinstance(exit_, Completed):
+            enrolled.append(Completed(exit_.guard, widened, exit_.faces, ()))
+        else:
+            enrolled.append(
+                Halted(exit_.guard, exit_.effect, widened, exit_.faces, ())
+            )
+    return ExitSet(tuple(enrolled)).normalize()
+
+
 def _prefixed(state: _ReducedBlock, inner: object) -> object:
     """The temporal state of a halt INSIDE a nested statement, read from outside.
 
@@ -274,7 +355,11 @@ def reduce_block_to_exitset(
 
         exits = exits.sequence(reduce_next)
 
-    return exits
+    # The block boundary is where an obligation stops being in flight, so it is
+    # the one door that consumes the carriers. Doing it here rather than per
+    # statement keeps a single owner and lets `sequence` compose obligations
+    # across statements first.
+    return _enrol_exit_obligations(exits)
 
 
 def reduce_statements(statements: tuple, ctx: object = None):
