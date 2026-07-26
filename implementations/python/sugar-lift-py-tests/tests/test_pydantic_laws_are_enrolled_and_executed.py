@@ -139,12 +139,24 @@ def test_the_pydantic_laws_are_collected_by_name():
         f"collection of the pydantic laws failed:\n{result.stdout}\n{result.stderr}"
     )
 
-    collected = result.stdout
+    # EXACT node identities, not substrings. A substring test cannot tell a
+    # law from a law that was renamed around it: `..._numeric_range_RENAMED`
+    # contains `..._numeric_range`, so `in` reports the vanished law as
+    # present. Mutation caught exactly that, which is the whole point of a
+    # tooth that claims to check names.
+    collected = set()
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if ".py::" in line:
+            collected.add(line.split(".py::", 1)[1])
+
+    assert collected, f"no node IDs parsed; tooth would be vacuous:\n{result.stdout}"
     missing = [node for node in REQUIRED_NODE_IDS if node not in collected]
     assert not missing, (
-        f"R={len(missing)} pydantic laws are not enrolled by name:\n  "
+        f"R={len(missing)} pydantic laws are not enrolled by exact name:\n  "
         + "\n  ".join(missing)
-        + f"\ncollected was:\n{collected}"
+        + "\ncollected node IDs were:\n  "
+        + "\n  ".join(sorted(collected))
     )
 
 
