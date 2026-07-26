@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from sugar_lift_py_tests import lift_rpc
 from sugar_lift_py_tests.census import census
 from sugar_source_tree.panic import BackendDefect
-from sugar_source_tree.tree import SourceFile
 
 
 def test_census_returns_nonzero_when_construction_hits_backend_defect(
@@ -22,7 +22,11 @@ def test_census_returns_nonzero_when_construction_hits_backend_defect(
             fix="repair the backend",
         )
 
-    monkeypatch.setattr(SourceFile, "from_path", backend_crash)
+    # Plant the defect at the door the census actually opens. The census now
+    # opens files through ``open_source_file_for_construction``; this tooth
+    # used to patch ``SourceFile.from_path``, which that door never calls, so
+    # it would have gone green while measuring nothing.
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", backend_crash)
 
     assert census(tmp_path) != 0
 
