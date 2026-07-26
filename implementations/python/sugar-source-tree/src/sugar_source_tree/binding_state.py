@@ -85,6 +85,13 @@ class LoopProjectedCompletedFace:
     guard_formula_cid: str
     state: BindingState
     guard_formula: object | None = None
+    exit_partition_arity: int | None = None
+    """How many exit routes the PRODUCER declared for this loop occurrence.
+
+    ``None`` is a face from a producer that never stated a family size. Such a
+    face can still be read; it simply cannot carry completeness downstream, in
+    the same way ``PartitionFace.arity is None`` cannot.
+    """
 
     def __post_init__(self) -> None:
         _require_runtime_cid(self.target_cid, "targetCid")

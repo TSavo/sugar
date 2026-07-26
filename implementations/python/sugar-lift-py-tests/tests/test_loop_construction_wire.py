@@ -239,6 +239,12 @@ def _sample_graph():
             "incomingStateCid": pre["stateCid"],
             "completedFaceCid": break_face["completedFaceCid"],
             "projectedStateCid": break_state["stateCid"],
+            # This fixture projects ONE exit route, so it declares one. The
+            # field is required (#6336 family): a post-binding that does not
+            # say how many routes its loop owns leaves a downstream projection
+            # counting arrivals, where a dropped face reads as a complete
+            # partition. A one-route declaration mints no family -- correctly.
+            "exitPartitionArity": 1,
         },
         "postBindingObligationCid",
     )

@@ -42,12 +42,25 @@ def project_loop_post_binding(
         for record in construction.wire_graph()["records"]
         if record.get("kind") == "loop-completed-face"
     }
-    post_face_cids = {
-        record["completedFaceCid"]
+    post_records = [
+        record
         for record in construction.wire_graph()["records"]
         if record.get("kind") == "loop-post-binding"
         and record["bindingCoordinateCid"] == binding_coordinate.cid
-    }
+    ]
+    post_face_cids = {record["completedFaceCid"] for record in post_records}
+    # The DECLARED size of this loop occurrence's exit family. Read off the
+    # producer's own records, never counted from what arrived: counting would
+    # make a dropped face silently re-read as a smaller complete partition,
+    # which is precisely the "partial partition certified exhaustive" failure
+    # the admission rule in `outcome/exit_set.py` exists to refuse.
+    declared = {record["exitPartitionArity"] for record in post_records}
+    if len(declared) > 1:
+        raise BindingStateWireGap(
+            "loop post-binding records disagree on exitPartitionArity for one "
+            f"binding coordinate: observed {sorted(declared)}"
+        )
+    exit_partition_arity = declared.pop() if declared else None
     projected_faces = []
     for face in construction.completed_faces:
         if face.cid not in post_face_cids:
@@ -83,7 +96,17 @@ def project_loop_post_binding(
                     if live_guards is None
                     else live_guards.get(record["guardFormulaCid"])
                 ),
+                exit_partition_arity=exit_partition_arity,
             )
+        )
+    if exit_partition_arity is not None and len(projected_faces) != (
+        exit_partition_arity
+    ):
+        raise BindingStateWireGap(
+            "loop exit partition is short of its declared size: the producer "
+            f"declared {exit_partition_arity} exit routes and this projection "
+            f"retained {len(projected_faces)}. A partition missing a face is "
+            "an outcome nobody accounted for; do not project it as complete"
         )
     return LoopProjectedBinding(target_cid, tuple(projected_faces))
 

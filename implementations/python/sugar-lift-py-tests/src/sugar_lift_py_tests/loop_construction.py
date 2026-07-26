@@ -355,6 +355,10 @@ _EXACT_FIELDS = {
         "incomingStateCid",
         "completedFaceCid",
         "projectedStateCid",
+        # The producer's declared count of exit routes for this loop occurrence
+        # (#6336 family). Part of the sealed preimage on purpose: a family size
+        # that could be attached after the fact is not testimony.
+        "exitPartitionArity",
         "postBindingObligationCid",
     },
 }
@@ -640,6 +644,27 @@ def decode_loop_construction_v1(graph: Any) -> LoopConstructionV1:
         state(post.raw["projectedStateCid"])
         if post.raw["completedFaceCid"] not in completed_by_cid:
             raise LoopWireError("post binding face is not completed")
+        # The producer's DECLARED exit-route count for this loop occurrence.
+        # It is a partition size, so it must be at least two to be a split at
+        # all, and it must never name the latch: `BodyFallthrough` is the
+        # loop-back edge, not a way out.
+        arity = post.raw.get("exitPartitionArity")
+        if not isinstance(arity, int) or isinstance(arity, bool) or arity < 1:
+            raise LoopWireError(
+                "post binding must declare exitPartitionArity: the number of "
+                "exit routes this loop occurrence owns. Without it a downstream "
+                "projection could only count the faces that happened to arrive, "
+                "and a dropped face would read as a complete partition"
+            )
+        if completed_by_cid[post.raw["completedFaceCid"]].completion_kind == (
+            "BodyFallthrough"
+        ):
+            raise LoopWireError(
+                "post binding must not project BodyFallthrough: it is the latch "
+                "input (the loop-back edge), not an exit route. Projecting it "
+                "would put the latch into the exit partition and assert an "
+                "exclusion against the real exits that nobody established"
+            )
 
     for cid in root["outwardHaltedFaceCids"]:
         halted = record(cid, "loop-outward-halted-face")
