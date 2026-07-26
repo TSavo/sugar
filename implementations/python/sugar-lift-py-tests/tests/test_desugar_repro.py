@@ -73,6 +73,25 @@ def test_report_names_timeout_residual_and_requires_nonempty_denominator():
     assert empty["stableZero"] is False
 
 
+def test_report_splits_nonclean_statuses_into_zero_expected_floor_axes():
+    report = _MOD._report(
+        file="core/generic.py",
+        functions=[
+            {"status": "clean", "timedOut": False},
+            {"status": "ConstructionPanic", "timedOut": False},
+            {"status": "ConstructionPanic", "timedOut": False},
+            {"status": "ExitSetFactoringGap", "timedOut": False},
+        ],
+        elapsed_s=1.25,
+        deadline_seconds=180,
+    )
+
+    assert report["R(timeout)"] == 0
+    assert report["R(construction_panics)"] == 2
+    assert report["R(factoring_gaps)"] == 1
+    assert report["stableZero"] is False
+
+
 def test_open_source_file_binds_construction_context(tmp_path):
     source = tmp_path / "fixture.py"
     source.write_text("def f(cm):\n    with cm:\n        pass\n")

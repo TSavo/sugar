@@ -65,6 +65,12 @@ def _report(
     discovered = len(functions)
     completed = len(functions)
     timeouts = sum(bool(row["timedOut"]) for row in functions)
+    construction_panics = sum(
+        row["status"] == "ConstructionPanic" for row in functions
+    )
+    factoring_gaps = sum(
+        row["status"] == "ExitSetFactoringGap" for row in functions
+    )
     return {
         "schema": "sugar.desugar-repro.v1",
         "file": file,
@@ -73,7 +79,15 @@ def _report(
         "discovered": discovered,
         "completed": completed,
         "R(timeout)": timeouts,
-        "stableZero": discovered > 0 and discovered == completed and timeouts == 0,
+        "R(construction_panics)": construction_panics,
+        "R(factoring_gaps)": factoring_gaps,
+        "stableZero": (
+            discovered > 0
+            and discovered == completed
+            and timeouts == 0
+            and construction_panics == 0
+            and factoring_gaps == 0
+        ),
         "functions": list(functions),
     }
 
