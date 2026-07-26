@@ -49,24 +49,122 @@ class IfExpSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.outcome import Incomplete
+        # The test itself can halt or partition (`(a if f() else b)` where the
+        # call is unresolvable, `(a if (d[k] := c) else b)`): thread it through
+        # `and_then` rather than reading `cond.value`.
+        return self.test.desugar(ctx).and_then(
+            lambda cond_value: self._join(cond_value, ctx)
+        )
 
-        cond = self.test.desugar(ctx)
+    def _join(self, cond_value, ctx) -> Outcome:
+        from sugar_lift_py_tests.ir import not_
+
         # The guard is the test's TRUTHINESS as a predicate -- uniform via
         # `.truth`: a predicate test (`5 if a == b else 6`) stands as its formula,
         # a bare value (`5 if c else 6`) emits `py.truthy(c)`. A ground-bool test
         # folds to a literal with no formula and is not lifted yet -- LOUD.
-        formula = predicate_formula(cond.value, self.site)
+        formula = predicate_formula(cond_value, self.site)
+        not_formula = not_(formula)
 
         then_out = self.body.desugar(ctx)
         else_out = self.orelse.desugar(ctx)
-        # An arm that is itself an effect (an unresolvable call, a halt) is not a
-        # value to guard-join yet: be loud rather than fold an effect into a value.
-        if isinstance(then_out, Incomplete) or isinstance(else_out, Incomplete):
-            raise NotImplementedError(
-                "a conditional-expression arm that reduces to an effect is not "
-                "lifted yet: both arms must be values to form the guarded value"
-            )
 
-        return Complete(GuardedValue(formula, then_out.value, else_out.value))
+        # A PENDING PARAMETER-CONTRACT ARM (`p[0] if c else 1`, where `p` is a
+        # formal) wraps a value together with a demand the linker discharges. The
+        # value joins normally; the demand rides back out on the joined result,
+        # weakened to the arm's own face -- a caller that never takes the arm owes
+        # nothing. `demanded_under` weakens the demand WITHOUT guarding the value,
+        # because the join below guards the value itself.
+        pending = _pending(then_out), _pending(else_out)
+        if any(pending):
+            if all(pending):
+                # Both arms pending: one entry carries exactly one demand, so two
+                # demands on one expression have no representation here. Loud, and
+                # named -- never drop one of them.
+                from sugar_lift_py_tests.gap.info import GapKind
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="IfExpSugar._join",
+                    blame=str(self.site),
+                    observed=(
+                        "both conditional-expression arms enrolled a parameter "
+                        "contract demand"
+                    ),
+                    requested="one pending demand per constructed value",
+                    fix=(
+                        "widen ContractConditionalConstructionV1 to carry a demand "
+                        "SET before joining two pending arms"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                )
+            if pending[0]:
+                return then_out.demanded_under(formula).and_then(
+                    lambda value: self._join_arms(formula, Complete(value), else_out)
+                )
+            return else_out.demanded_under(not_formula).and_then(
+                lambda value: self._join_arms(formula, then_out, Complete(value))
+            )
+        return self._join_arms(formula, then_out, else_out)
+
+    def _join_arms(self, formula, then_out, else_out) -> Outcome:
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import Completed, ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        not_formula = not_(formula)
+
+        # BOTH ARMS ARE ONE VALUE: the fused conditional floor value, exactly as
+        # before. GuardedValue is the shape the whole design rests on --
+        # operations distribute into both arms and an equality resolves per atom
+        # -- so it is kept for the case that can carry it, never widened away.
+        if isinstance(then_out, Complete) and isinstance(else_out, Complete):
+            return Complete(GuardedValue(formula, then_out.value, else_out.value))
+
+        # AN ARM HALTS OR PARTITIONS. `(a if c else raise)`, `(f() if c else b)`
+        # with an unresolvable call, `(a if c else d[k] := v)`. Under `c` the
+        # expression IS `a`; under `not c` control leaves with the arm's effect.
+        # That is a partition of reachable execution, which is precisely an
+        # ExitSet -- the same union `IfSugar` builds for the statement form.
+        #
+        # This was `NotImplementedError: a conditional-expression arm that
+        # reduces to an effect is not lifted yet`. It was never missing meaning:
+        # the meaning is the union, and refusing it discarded the arm that DOES
+        # produce a value together with the arm that halts. Nothing here folds an
+        # effect into a value; each arm stays on its own face under its own
+        # guard, and every input arm is conserved into exactly one output arm.
+        exits = outcome_to_exitset(then_out).guarded(formula)
+        exits = exits.union(outcome_to_exitset(else_out).guarded(not_formula))
+
+        # A partition with a single completed face and no halt is a plain value
+        # again (normalize may have merged the faces): collapse rather than hand
+        # callers a one-arm ExitSet they would have to unwrap.
+        collapsed = exits.collapse()
+        if isinstance(collapsed, Complete):
+            return collapsed
+        if isinstance(collapsed, ExitSet) and len(collapsed.exits) == 2:
+            left, right = collapsed.exits
+            if isinstance(left, Completed) and isinstance(right, Completed):
+                # Both faces completed with distinct values: fuse them back into
+                # the conditional floor value under the test's own polarity.
+                if left.guard == formula and right.guard == not_formula:
+                    return Complete(GuardedValue(formula, left.value, right.value))
+                if left.guard == not_formula and right.guard == formula:
+                    return Complete(GuardedValue(formula, right.value, left.value))
+        return collapsed
+
+
+def _pending(outcome):
+    """The outcome as a pending parameter-contract entry, or ``None``.
+
+    A pending entry is an ``Outcome`` variant that WRAPS a value: it is neither a
+    plain value nor a partition, so it has no arm in the exit algebra
+    (``outcome_to_exitset`` refuses it). It is unwrapped before the join and
+    re-wrapped after.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        ContractConditionalConstructionV1,
+    )
+
+    return outcome if isinstance(outcome, ContractConditionalConstructionV1) else None

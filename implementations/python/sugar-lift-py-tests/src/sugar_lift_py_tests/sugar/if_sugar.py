@@ -38,7 +38,19 @@ def predicate_formula(value, site):
         raise NotImplementedError(
             f"condition truth did not produce one value: {type(truth).__name__}"
         )
-    formula = getattr(truth.value, "formula", None)
+    truth_value = truth.value
+    # A truth face that PRESENTS another value (`if (n := c):` -- the walrus keeps
+    # its value and bind faces inseparable) is transparent to the guard: the
+    # binding is temporal and `extend_scope` applies it, while the GUARD is the
+    # presented face's formula. Reading `formula` off the wrapper found nothing
+    # and reported `condition folded without a symbolic formula:
+    # NamedExpressionValue`, blaming the wrapper for a formula the presented
+    # value had all along. Structural: any value that presents another is
+    # projected through, with no table of which ones do.
+    presented = getattr(truth_value, "presented_value", None)
+    if presented is not None:
+        truth_value = presented
+    formula = getattr(truth_value, "formula", None)
     if formula is None:
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -48,12 +60,13 @@ def predicate_formula(value, site):
             TrueBoolLiteralSugar,
         )
 
-        if isinstance(truth.value, TrueBoolLiteralSugar):
+        if isinstance(truth_value, TrueBoolLiteralSugar):
             return true_guard()
-        if isinstance(truth.value, FalseBoolLiteralSugar):
+        if isinstance(truth_value, FalseBoolLiteralSugar):
             return false_guard()
         raise NotImplementedError(
-            f"condition folded without a symbolic formula: {type(value).__name__}"
+            "condition folded without a symbolic formula: "
+            f"{type(truth_value).__name__} (condition {type(value).__name__})"
         )
     return formula
 

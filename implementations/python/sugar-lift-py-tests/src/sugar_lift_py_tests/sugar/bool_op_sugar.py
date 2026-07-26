@@ -42,26 +42,40 @@ class BoolOpSugar(Sugar):
         from functools import reduce
 
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.outcome.exit_set import _and_guards, _or_guards
         from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
-        formulas = []
+        # Operands thread through `and_then`, the one door every Outcome variant
+        # implements. An operand that halts propagates -- the boolean is not
+        # decidable once a conjunct halts -- and an operand that PARTITIONS
+        # (`a and (d[k] := f())`, a conjunct whose store can halt) keeps both
+        # arms: each completed arm folds its own formula under its own guard.
+        # Reading `.value` off the outcome assumed exactly one arm and was the
+        # `'ExitSet' object has no attribute 'value'` defect here.
+        def collect(operand, collected):
+            return operand.desugar(ctx).and_then(
+                # Same truth→formula projection as if/if-exp: symbolic formulas
+                # stand as themselves; ground True/False (including None.truth →
+                # False) fold through true_guard/false_guard. Never raise bare
+                # NotImplementedError on a constructible ground boolean.
+                lambda value: Complete(
+                    (*collected, predicate_formula(value, self.site))
+                )
+            )
+
+        outcome = Complete(())
         for operand in self.values:
-            out = operand.desugar(ctx)
-            if isinstance(out, Incomplete):
-                # An operand that is itself an effect propagates -- the boolean is
-                # not decidable once a conjunct halts.
-                return out
-            # Same truth→formula projection as if/if-exp: symbolic formulas stand
-            # as themselves; ground True/False (including None.truth → False)
-            # fold through true_guard/false_guard. Never raise bare
-            # NotImplementedError on a constructible ground boolean.
-            formulas.append(predicate_formula(out.value, self.site))
+            outcome = outcome.and_then(
+                lambda collected, operand=operand: collect(operand, collected)
+            )
 
         # Fold with the shared guard algebra so ground identities absorb:
         #   false ∧ φ → false,  true ∧ φ → φ,  true ∨ φ → true,  false ∨ φ → φ.
         # Raw and_/or_ would leave and_([false, true]) as a connective and hide
         # that None and True is false in boolean context.
         combine = _and_guards if self.op_kind == "And" else _or_guards
-        return Complete(PredicateValue(reduce(combine, formulas), self.site))
+        return outcome.and_then(
+            lambda formulas: Complete(
+                PredicateValue(reduce(combine, formulas), self.site)
+            )
+        )

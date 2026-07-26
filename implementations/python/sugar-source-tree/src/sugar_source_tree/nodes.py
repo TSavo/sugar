@@ -1468,7 +1468,22 @@ class Statement(Node):
 
 @_abstract
 class Expression(Node):
-    pass
+    def dotted_expr_name(self) -> Optional[str]:
+        """The dotted PLACE this expression names, or ``None`` if it names none.
+
+        `x` -> "x", `a.b.c` -> "a.b.c", and everything else (a call, a subscript,
+        a literal, an operator) -> ``None``, because it is not a place a later
+        equality can refine a binding for. Structural only: it reads the tree it
+        is on and consults no table of names.
+
+        Only ``Name`` and ``Attribute`` override; the base answers ``None`` so
+        every expression can be ASKED. `EqualityOpSugar` used to reach the same
+        answer through a `site.compare_left()` method no real node implemented
+        (only a test double did), which is why every real `==` refinement site
+        raised `AttributeError: 'SourceFragment' has no attribute
+        'compare_left'`.
+        """
+        return None
 
 
 @_abstract
@@ -6662,7 +6677,17 @@ class Compare(Expression):
             left_s = operands[index].sugar()
             right_s = operands[index + 1].sugar()
             if isinstance(op, Eq):
-                return EqualityOpSugar(left=left_s, right=right_s, site=self.fragment)
+                # The refinement coordinate is the PAIR's left operand, read
+                # here where the tree is in hand. In a chain `a.k == b == c` the
+                # second pair's left is `b`, not `a.k`; a Compare-level fragment
+                # cannot tell them apart, which is why the coordinate is passed
+                # rather than rediscovered from the site.
+                return EqualityOpSugar(
+                    left=left_s,
+                    right=right_s,
+                    site=self.fragment,
+                    left_coordinate=operands[index].dotted_expr_name(),
+                )
             return ComparisonOpSugar(
                 op_kind=op.kind, left=left_s, right=right_s, site=self.fragment
             )
@@ -7526,6 +7551,12 @@ class Attribute(Expression):
     attr: str
     _child_fields = ("value",)
 
+    def dotted_expr_name(self) -> Optional[str]:
+        # `a.b.c` is a place only while every link is itself a place: a call or
+        # subscript in the chain (`f().b`, `d[k].b`) names nothing stable.
+        receiver = self.value.dotted_expr_name()
+        return None if receiver is None else f"{receiver}.{self.attr}"
+
     def _construct_sugar(self):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
         The attr name is a static identifier carried onto the coordinate.
@@ -7628,6 +7659,9 @@ class Starred(Expression):
 
 class Name(Expression):
     id: str
+
+    def dotted_expr_name(self) -> Optional[str]:
+        return self.id
 
     def substitute(self, scope: BindingMap) -> "Node":
         # A name resolves to its bound node, or stands unbound. This is the
