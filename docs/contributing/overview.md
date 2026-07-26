@@ -54,7 +54,7 @@ See [porting-to-a-new-language.md](porting-to-a-new-language.md).
 
 ## Code style and review
 
-Per-language idiomatic. The Rust workspace follows `cargo fmt` and `clippy -- -D warnings`. The TypeScript workspace uses Prettier. Each kit's directory has its own conventions; follow what's there.
+Per-language idiomatic. In the Rust workspace, `cargo fmt` is enforced -- CI runs `cargo fmt --all -- --check` (`.github/workflows/ci.yml`). `cargo clippy` is recommended but **not gated**: there is no clippy step in any Makefile target or workflow, and the workspace does not currently pass `-D warnings`. Do not read a clean CI run as a clippy-clean tree. The TypeScript workspace uses Prettier. Each kit's directory has its own conventions; follow what's there.
 
 Reviews focus on three questions, in order:
 
