@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Generic, TypeVar
 
@@ -79,6 +80,82 @@ def _or_guards(left: Formula, right: Formula) -> Formula:
     return or_([left, right])
 
 
+_LOGGER = logging.getLogger("sugar_lift_py_tests.exit_set")
+
+# Sentinel for a destination that cannot be hashed. A distinct object rather than
+# ``None``, because ``None`` is a perfectly good destination key.
+_UNHASHABLE = object()
+
+
+@dataclass
+class _NormalizeStats:
+    """Measured fallback: normalization is observable, not assumed.
+
+    The bucketed normalizer's whole claim is that comparisons stop scaling with
+    the square of the arm count. A claim like that has to be measurable from
+    outside or it decays into folklore the first time someone adds a destination
+    type that does not hash.
+    """
+
+    calls: int = 0
+    arms: int = 0
+    comparisons: int = 0
+    unhashable_destinations: int = 0
+    _warned: bool = False
+
+    def record(self, *, arms: int, comparisons: int, unhashable: int) -> None:
+        self.calls += 1
+        self.arms += arms
+        self.comparisons += comparisons
+        self.unhashable_destinations += unhashable
+        if unhashable and not self._warned:
+            # LOUD, once per process: an unhashable destination silently degrades
+            # this back toward the all-pairs scan it replaced. Nothing is dropped
+            # and no merge is missed -- but the performance claim no longer holds,
+            # and that is worth saying rather than discovering in a timeout.
+            self._warned = True
+            _LOGGER.warning(
+                "ExitSet.normalize: %d unhashable destination(s); those exits fall "
+                "back to a full scan. Merges are still exact; comparisons are not "
+                "bucket-local for them.",
+                unhashable,
+            )
+
+    def reset(self) -> None:
+        self.calls = 0
+        self.arms = 0
+        self.comparisons = 0
+        self.unhashable_destinations = 0
+        self._warned = False
+
+
+_NORMALIZE_STATS = _NormalizeStats()
+
+
+def normalize_stats() -> _NormalizeStats:
+    """The live normalization counters, for scaling receipts and gates."""
+    return _NORMALIZE_STATS
+
+
+def _destination_key(exit_: "Exit[T]") -> object:
+    """A hash coordinate for an exit's DESTINATION -- never its guard.
+
+    Guards are what merging disjoins, so two exits to the same destination differ
+    precisely in their guards; keying on the guard would put them in different
+    buckets and defeat the merge. The class tag keeps a ``Completed`` value from
+    colliding with a ``Halted`` ``(effect, state)`` pair of the same shape.
+    """
+    if isinstance(exit_, Completed):
+        key: object = (Completed, exit_.value)
+    else:
+        key = (Halted, exit_.effect, exit_.state)
+    try:
+        hash(key)
+    except TypeError:
+        return _UNHASHABLE
+    return key
+
+
 @dataclass(frozen=True)
 class Completed(Generic[T]):
     guard: Formula
@@ -135,12 +212,51 @@ class ExitSet(Generic[T]):
         return ExitSet(tuple(exits)).normalize()
 
     def normalize(self) -> "ExitSet[T]":
-        """Drop false exits and merge equal destinations by disjoining guards."""
+        """Drop false exits and merge equal destinations by disjoining guards.
+
+        Indexed by DESTINATION HASH BUCKET, not by scanning every prior exit.
+        The old all-pairs scan was quadratic in arm count -- at ~775 arms that is
+        ~600k destination comparisons -- which is what put `core/generic.py` over
+        the timeout floor.
+
+        The bucket key is a hash coordinate only. **A collision is a collision,
+        never equality**: the exact comparison below still decides every merge, so
+        this changes the number of comparisons and nothing about which exits merge.
+        Equal destinations land in the same bucket because Python's hash/eq
+        contract guarantees equal objects hash equal -- that is what makes
+        bucket-local comparison complete rather than merely cheaper.
+
+        Order is preserved by construction: buckets hold INDICES into ``merged``,
+        candidates are visited in ascending index order, and a merge rewrites in
+        place at the first-occurrence position. So output order is first-occurrence
+        order, exactly as the scan produced.
+        """
         merged: list[Exit[T]] = []
+        # destination key -> indices into `merged`, ascending.
+        buckets: dict[object, list[int]] = {}
+        # Destinations that cannot be hashed. These are NOT dropped and NOT assumed
+        # distinct: they stay in a scanned list, and every exit is compared against
+        # them as well as against its own bucket. Without that, a hashable exit
+        # equal to an unhashable prior would silently fail to merge -- a wrong
+        # answer, not a slow one. Cost degrades only with the number of unhashable
+        # destinations, and the count is reported below.
+        unhashable: list[int] = []
+        comparisons = 0
         for exit_ in self.exits:
             if _is_false(exit_.guard):
                 continue
-            for index, prior in enumerate(merged):
+            key = _destination_key(exit_)
+            if key is _UNHASHABLE:
+                # Exact semantics demand a full scan here: an unhashable value may
+                # still compare equal to a hashable one, and only comparison knows.
+                candidates: list[int] = list(range(len(merged)))
+            elif unhashable:
+                candidates = sorted(buckets.get(key, []) + unhashable)
+            else:
+                candidates = buckets.get(key, [])
+            for index in candidates:
+                prior = merged[index]
+                comparisons += 1
                 same_completed = (
                     isinstance(exit_, Completed)
                     and isinstance(prior, Completed)
@@ -163,7 +279,15 @@ class ExitSet(Generic[T]):
                     )
                     break
             else:
+                index = len(merged)
                 merged.append(exit_)
+                if key is _UNHASHABLE:
+                    unhashable.append(index)
+                else:
+                    buckets.setdefault(key, []).append(index)
+        _NORMALIZE_STATS.record(
+            arms=len(self.exits), comparisons=comparisons, unhashable=len(unhashable)
+        )
         return ExitSet(tuple(merged))
 
     def sequence(self, step: Callable[[T], "ExitSet[U]"]) -> "ExitSet[U]":
