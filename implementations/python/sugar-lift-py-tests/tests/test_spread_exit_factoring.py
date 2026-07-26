@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import itertools
 
+import pytest
+
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import (
@@ -41,7 +43,11 @@ from sugar_lift_py_tests.outcome.exit_set import (
     outcome_to_exitset,
     true_guard,
 )
-from sugar_lift_py_tests.sugar.spread_sugar import SpreadCollectionSugar
+from sugar_lift_py_tests.sugar.spread_sugar import (
+    SpreadCallSugar,
+    SpreadCollectionSugar,
+    SpreadDictSugar,
+)
 
 # --- the corpus shape: k elements, each with its own completed partition -----
 
@@ -94,13 +100,57 @@ class _SingleFacedElement:
         return Complete(SymbolicValue(ctor(f"only{self.index}", [])))
 
 
-def _spread(elements) -> ExitSet:
-    sugar = SpreadCollectionSugar(
+def _collection_sugar(elements):
+    """``[*a, *b, ...]``."""
+    return SpreadCollectionSugar(
         kind="list",
         elements=tuple((None, element) for element in elements),
         site="spread-site",
     )
-    return outcome_to_exitset(sugar.desugar())
+
+
+def _dict_sugar(elements):
+    """``{**a, **b, ...}`` — every entry is a None-key spread of one operand."""
+    return SpreadDictSugar(
+        entries=tuple((None, element) for element in elements),
+        site="spread-site",
+    )
+
+
+def _call_sugar(elements):
+    """``f(*a, *b, ...)`` — every argument is a starred operand."""
+    return SpreadCallSugar(
+        callee_name="f",
+        callee=None,
+        arguments=tuple(("star", None, element) for element in elements),
+        site="spread-site",
+    )
+
+
+# All three spread sugars route through the SAME ``_collect``, so all three
+# carried the same m ** k defect and all three are pinned here. Naming them
+# individually is the point: ``spread_sugar.py`` had NO tests at all — no file
+# under tests/ mentioned spread — which is how a Cartesian expansion lived in it
+# unnoticed until a 1,421-file corpus walked into it.
+_SUGARS = {
+    "collection": _collection_sugar,
+    "dict": _dict_sugar,
+    "call": _call_sugar,
+}
+_KINDS = tuple(_SUGARS)
+
+# The term each ``finish`` builds, and how many leading term arguments are NOT
+# operand positions, so the occurrence law can say "one position per operand"
+# without restating the production spelling.
+_TERM_SHAPE = {
+    "collection": ("python:list", 0),
+    "dict": ("python:dict", 0),
+    "call": ("python:call", 1),  # callee coordinate first, then one per operand
+}
+
+
+def _spread(elements, kind: str = "collection") -> ExitSet:
+    return outcome_to_exitset(_SUGARS[kind](elements).desugar())
 
 
 # --- the legacy-expansion oracle: denotation, not representation ------------
@@ -209,16 +259,14 @@ def _legacy_collect(sugars, ctx, done, finish):
     )
 
 
-def _legacy_spread(elements) -> ExitSet:
-    sugar = SpreadCollectionSugar(
-        kind="list",
-        elements=tuple((None, element) for element in elements),
-        site="spread-site",
-    )
-    # Re-use the production ``finish`` by driving the real desugar body with the
-    # legacy collector substituted in.
+def _legacy_spread(elements, kind: str = "collection") -> ExitSet:
+    # Re-use each sugar's production ``finish`` by driving the real desugar body
+    # with the legacy collector substituted in. That keeps the oracle honest
+    # about the ONE thing under test — how operands are sequenced — rather than
+    # re-spelling three ``finish`` bodies in the test.
     import sugar_lift_py_tests.sugar.spread_sugar as spread_module
 
+    sugar = _SUGARS[kind](elements)
     production = spread_module._collect
     spread_module._collect = _legacy_collect
     try:
@@ -291,27 +339,32 @@ def _stored_nodes(exit_set: ExitSet) -> int:
     return len(seen)
 
 
-def test_arm_population_grows_linearly_with_spread_arity() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_arm_population_grows_linearly_with_spread_arity(kind: str) -> None:
     """The population law: k factors of 3 arms may not cost 3**k arms."""
     populations = {}
     for arity in _ARITIES:
         elements = [_TwoFacedElement(i) for i in range(arity)]
-        populations[arity] = _arm_population(_spread(elements))
+        populations[arity] = _arm_population(_spread(elements, kind))
 
     # One completed face plus one halted arm per element: strictly linear.
     assert populations == {arity: arity + 1 for arity in _ARITIES}, populations
 
 
-def test_stored_representation_grows_linearly_with_spread_arity() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_stored_representation_grows_linearly_with_spread_arity(kind: str) -> None:
     """The storage law: the factored value may not hide an exponential either."""
-    sizes = [
-        (arity, _stored_nodes(_spread([_TwoFacedElement(i) for i in range(arity)])))
+    sizes = {
+        arity: _stored_nodes(
+            _spread([_TwoFacedElement(i) for i in range(arity)], kind)
+        )
         for arity in _GROWTH_ARITIES
-    ]
-    _assert_at_most_linear(dict(sizes), "retained DAG nodes")
+    }
+    _assert_at_most_linear(sizes, f"{kind}: retained DAG nodes")
 
 
-def test_work_grows_linearly_with_spread_arity() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_work_grows_linearly_with_spread_arity(kind: str) -> None:
     """The work law: normalize calls, not just retained arms, stay linear."""
     import sugar_lift_py_tests.outcome.exit_set as exit_set_module
 
@@ -326,41 +379,46 @@ def test_work_grows_linearly_with_spread_arity() -> None:
 
         exit_set_module.ExitSet.normalize = counting
         try:
-            _spread([_TwoFacedElement(i) for i in range(arity)])
+            _spread([_TwoFacedElement(i) for i in range(arity)], kind)
         finally:
             exit_set_module.ExitSet.normalize = original
         counts[arity] = calls[0]
 
-    _assert_at_most_linear(counts, "ExitSet.normalize calls")
+    _assert_at_most_linear(counts, f"{kind}: ExitSet.normalize calls")
 
 
-def test_factored_spread_denotes_the_same_outcomes_as_legacy_expansion() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_factored_spread_denotes_the_same_outcomes_as_legacy_expansion(
+    kind: str,
+) -> None:
     """Bounded extensional equivalence against the legacy-expansion oracle."""
     for arity in (1, 2, 3):
         elements = [_TwoFacedElement(i) for i in range(arity)]
-        factored = _spread(elements)
-        legacy = _legacy_spread(elements)
+        factored = _spread(elements, kind)
+        legacy = _legacy_spread(elements, kind)
         atoms = tuple(
             sorted(
                 set(_guard_atoms(factored)) | set(_guard_atoms(legacy)),
                 key=lambda a: a.name,
             )
         )
-        assert _denotation(factored, atoms) == _denotation(legacy, atoms), arity
+        assert _denotation(factored, atoms) == _denotation(legacy, atoms), (kind, arity)
 
 
-def test_neither_outcome_face_disappears() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_neither_outcome_face_disappears(kind: str) -> None:
     """Completed AND halted both survive factoring, for every element."""
     elements = [_TwoFacedElement(i) for i in range(4)]
-    exits = _spread(elements)
+    exits = _spread(elements, kind)
     assert any(isinstance(e, Completed) for e in exits.exits)
     halted_effects = {e.effect for e in exits.exits if isinstance(e, Halted)}
     assert halted_effects == {element.effect for element in elements}
 
 
-def test_single_arm_elements_keep_the_unfactored_shape() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_single_arm_elements_keep_the_unfactored_shape(kind: str) -> None:
     """No conditional is invented where the element had one completed face."""
-    exits = _spread([_SingleFacedElement(i) for i in range(3)])
+    exits = _spread([_SingleFacedElement(i) for i in range(3)], kind)
     assert len(exits.exits) == 1
     exit_ = exits.exits[0]
     assert isinstance(exit_, Completed)
@@ -369,16 +427,18 @@ def test_single_arm_elements_keep_the_unfactored_shape() -> None:
     assert "py.conditional" not in repr(term)
 
 
-def test_distinct_occurrences_stay_distinct_when_content_matches() -> None:
+@pytest.mark.parametrize("kind", _KINDS)
+def test_distinct_occurrences_stay_distinct_when_content_matches(kind: str) -> None:
     """Two elements with identical content are two positions, not one."""
     twin = _TwoFacedElement(0)
-    exits = _spread([twin, twin])
+    exits = _spread([twin, twin], kind)
     completed = [e for e in exits.exits if isinstance(e, Completed)]
     assert completed
+    name, leading = _TERM_SHAPE[kind]
     # Representation-independent: however many arms carry the completed face,
-    # every one of them must show TWO positions. Content equality is not
+    # every one of them must show TWO operand positions. Content equality is not
     # occurrence identity — merging the twins would silently drop an element.
     for arm in completed:
         term = arm.value.to_term(owner="occurrence")
-        assert isinstance(term, _Ctor) and term.name == "python:list", term
-        assert len(term.args) == 2, term
+        assert isinstance(term, _Ctor) and term.name == name, term
+        assert len(term.args) - leading == 2, term
