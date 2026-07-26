@@ -13,7 +13,11 @@ from sugar_lift_py_tests.loop_construction import (
     seal_loop_record,
 )
 
-from .binding_provenance import _state_wire
+from .binding_provenance import (
+    LoopProjectedBindingStateV1,
+    LoopProjectedFaceV1,
+    _state_wire,
+)
 from .binding_state import (
     BindingEntryV1,
     BindingMap,
@@ -90,14 +94,29 @@ def _seal_runtime_state(state):
         # NormalExhaustion, so that face's LoopBindingRef IS the unconditional
         # post-value (the ref itself carries the completion identity). Seal it
         # directly. A multi-face projection (a loop that can break) is a genuine
-        # multi-way join whose binary-guarded folding is not yet built -- it
-        # stays LOUD rather than guess a fallthrough and bind the wrong value.
+        # multi-way join. It is sealed AS a partition over the loop's own
+        # completion routes rather than folded into nested binary guards: a
+        # fold has to pick an order and name one face the else-branch, which
+        # asserts a fallthrough the producer never declared. Each face keeps
+        # the guard formula CID the producer minted and the arity it declared,
+        # so completeness travels instead of being reconstructed downstream.
         if len(state.completed_faces) == 1:
             return _seal_runtime_state(state.completed_faces[0].state)
-        raise BindingStateWireGap(
-            "multi-face loop projected binding sealing is unimplemented; "
-            "stays loud rather than fold a multi-way completion join"
+        faces = tuple(
+            sorted(
+                (
+                    LoopProjectedFaceV1(
+                        face.completion_kind,
+                        face.guard_formula_cid,
+                        cid_of_json(_state_wire(_seal_runtime_state(face.state))),
+                        face.exit_partition_arity,
+                    )
+                    for face in state.completed_faces
+                ),
+                key=lambda face: face.completion_kind,
+            )
         )
+        return LoopProjectedBindingStateV1(state.target_cid, faces)
     raise BindingStateWireGap(
         f"live loop state has no authenticated sealed projection: "
         f"{type(state).__name__}"

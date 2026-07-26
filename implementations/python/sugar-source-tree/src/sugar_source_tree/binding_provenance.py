@@ -206,7 +206,57 @@ class GuardedBindingStateV1:
     when_false_state_cid: str
 
 
-BindingStateV1 = BoundBindingStateV1 | UnboundBindingStateV1 | GuardedBindingStateV1
+@dataclass(frozen=True)
+class LoopProjectedFaceV1:
+    """One sealed completed face of a loop post-state."""
+
+    completion_kind: str
+    guard_formula_cid: str
+    state_cid: str
+    exit_partition_arity: int | None = None
+
+
+@dataclass(frozen=True)
+class LoopProjectedBindingStateV1:
+    """A loop post-state sealed as an n-way partition, never folded to binary.
+
+    A multi-face loop post-binding is a genuine n-way join: the faces are the
+    loop's own completion routes, and no two of them hold at once. Folding them
+    into nested ``GuardedBindingStateV1`` would require picking an order and
+    naming one face the else-branch, which asserts a fallthrough the producer
+    never declared. The faces are therefore sealed AS a partition, keyed by the
+    producer occurrence that minted them.
+
+    ``target_cid`` is that occurrence. Two loops in one function are two
+    occurrences and share no exclusion, so a downstream consumer keying on
+    anything weaker (a name, a completion kind, a value type) is the exact trap
+    the same-type partition law refuses -- the identical reason
+    ``LoopGuardedProjection`` carries the same field.
+    """
+
+    target_cid: str
+    faces: tuple[LoopProjectedFaceV1, ...]
+
+    def __post_init__(self) -> None:
+        if not self.faces:
+            raise BindingProvenanceGap("loop projected state requires faces")
+        kinds = [face.completion_kind for face in self.faces]
+        if len(set(kinds)) != len(kinds):
+            raise BindingProvenanceGap(
+                "loop projected state faces must be one per completion kind"
+            )
+        if kinds != sorted(kinds):
+            raise BindingProvenanceGap(
+                "loop projected state faces must be completion-kind sorted"
+            )
+
+
+BindingStateV1 = (
+    BoundBindingStateV1
+    | UnboundBindingStateV1
+    | GuardedBindingStateV1
+    | LoopProjectedBindingStateV1
+)
 
 
 @dataclass(frozen=True)
@@ -371,6 +421,20 @@ def _state_wire(state: BindingStateV1) -> dict[str, Any]:
             "whenTrueStateCid": _cid(state.when_true_state_cid, "whenTrueStateCid"),
             "whenFalseStateCid": _cid(state.when_false_state_cid, "whenFalseStateCid"),
         }
+    if isinstance(state, LoopProjectedBindingStateV1):
+        return {
+            "kind": "loopProjected",
+            "targetCid": _cid(state.target_cid, "targetCid"),
+            "faces": [
+                {
+                    "completionKind": face.completion_kind,
+                    "guardFormulaCid": _cid(face.guard_formula_cid, "guardFormulaCid"),
+                    "stateCid": _cid(face.state_cid, "stateCid"),
+                    "exitPartitionArity": face.exit_partition_arity,
+                }
+                for face in state.faces
+            ],
+        }
     raise BindingProvenanceGap(f"unknown binding state {type(state).__name__}")
 
 
@@ -395,6 +459,33 @@ def _decode_state(raw: object) -> BindingStateV1:
             _cid(raw["whenTrueStateCid"], "whenTrueStateCid"),
             _cid(raw["whenFalseStateCid"], "whenFalseStateCid"),
         )
+    if kind == "loopProjected":
+        raw = _exact(
+            raw, {"kind", "targetCid", "faces"}, "loopProjected BindingStateV1"
+        )
+        if not isinstance(raw["faces"], list):
+            raise BindingProvenanceGap("loop projected faces must be an array")
+        faces = []
+        for item in raw["faces"]:
+            item = _exact(
+                item,
+                {"completionKind", "guardFormulaCid", "stateCid", "exitPartitionArity"},
+                "loopProjected face",
+            )
+            arity = item["exitPartitionArity"]
+            if arity is not None and not isinstance(arity, int):
+                raise BindingProvenanceGap("exitPartitionArity must be an int or null")
+            faces.append(
+                LoopProjectedFaceV1(
+                    item["completionKind"],
+                    _cid(item["guardFormulaCid"], "guardFormulaCid"),
+                    _cid(item["stateCid"], "stateCid"),
+                    arity,
+                )
+            )
+        return LoopProjectedBindingStateV1(
+            _cid(raw["targetCid"], "targetCid"), tuple(faces)
+        )
     raise BindingProvenanceGap("unknown BindingStateV1 variant")
 
 
@@ -415,6 +506,8 @@ __all__ = [
     "BoundBindingStateV1",
     "ConstructedValueTestimonyV1",
     "GuardedBindingStateV1",
+    "LoopProjectedBindingStateV1",
+    "LoopProjectedFaceV1",
     "SubstitutionTraceRecordV1",
     "SubstitutionTraceV1",
     "UnboundBindingStateV1",
