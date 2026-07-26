@@ -967,3 +967,122 @@ if __name__ == "__main__":
     test_non_name_except_type_stays_loud()
     test_dotted_except_type_matches()
     print("ok: try sugar -- structural effect routing")
+
+
+def test_except_star_type_tuple_partitions_every_listed_type():
+    """`except* (A, B)` nets both A and B; only the unlisted leaf survives."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError(), KeyError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in outcome.effect.children] == ["KeyError"]
+
+
+def test_except_star_type_tuple_runs_its_body_exactly_once():
+    """The lying twin: one handler, one body run, however many types matched.
+
+    An implementation that expands `except* (A, B)` into one handler spec per
+    type -- which is honest for ordinary `except (A, B)` -- enters this body
+    twice on a group carrying both, and the raised RuntimeError appears twice.
+    Counting the leaf is what discriminates; the residual alone does not.
+    """
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        raise RuntimeError()\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    names = [leaf.exception_name for leaf in outcome.effect.children]
+    assert names == ["RuntimeError"], names
+
+
+def test_except_star_type_tuple_binds_one_group_of_all_matched_leaves():
+    """A bare re-raise regroups BOTH matched leaves, in original topology."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError(), KeyError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        raise\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in outcome.effect.children] == [
+        "ValueError",
+        "TypeError",
+        "KeyError",
+    ]
+
+
+def test_except_star_type_tuple_with_no_matching_leaf_stays_whole():
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [KeyError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in outcome.effect.children] == ["KeyError"]
+
+
+def test_except_star_empty_type_tuple_stays_loud():
+    """An empty tuple has no honest matcher: refuse by name, never match all."""
+    with pytest.raises(SugarNotWritten) as excinfo:
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError()])\n"
+            "    except* ():\n"
+            "        pass\n"
+        ).sugar()
+    assert "unsupported except* handler type" in str(excinfo.value)
+
+
+def test_except_star_computed_type_in_tuple_stays_loud():
+    with pytest.raises(SugarNotWritten) as excinfo:
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError()])\n"
+            "    except* (ValueError, tm.Other):\n"
+            "        pass\n"
+        ).sugar()
+    assert "unsupported except* handler type" in str(excinfo.value)
