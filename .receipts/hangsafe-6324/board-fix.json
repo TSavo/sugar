@@ -1,0 +1,571 @@
+{
+  "measuredCommit": "a02ebbe3ed37d6d7cdd6b3108ba1da09504ba0d4",
+  "evidenceStatus": "completed, commit-pinned, provisional",
+  "corpusCid": [
+    "22196d8904677ce92cdfbc0e0c0049ad7075ebc6ce56fc0336e3e6a51382cdd9"
+  ],
+  "corpusRoot": "/home/tsavo/census-a02-venv/lib/python3.12/site-packages/pandas",
+  "conservation": {
+    "expectedFiles": 1421,
+    "rowsWritten": 1421,
+    "distinctKeys": 1421,
+    "conserved": true,
+    "method": "(corpusCid, idx, rel, sha256) -- sha256 of file bytes authenticates the thing measured; position is not identity",
+    "duplicateKeys": [],
+    "duplicateIndices": [],
+    "distinctCorpusCids": 1
+  },
+  "terminalStatus": {
+    "completed": 1421
+  },
+  "R_timeout": 0,
+  "timeoutFiles": [],
+  "crashes": [],
+  "malformed": [],
+  "contaminationRows": [],
+  "loadDuringRun": {
+    "min": 12.91,
+    "max": 29.82,
+    "note": "the box was shared; counter ratios survive contention, wall times do not. No timing is claimed."
+  },
+  "axes": {
+    "R_construction": 5088,
+    "R_desugar": 9008,
+    "desugarConstructionPanics": 1194,
+    "desugarDefects": 51,
+    "fileLevelConstructionPanics": 0
+  },
+  "R_desugar_split": {
+    "raw": 9008,
+    "buckets": {
+      "1-accounted-semantics": 8950,
+      "3-construction-gap-refusal": 58
+    },
+    "owed": 58,
+    "accountedSemantics": 8950,
+    "byBucketOwners": {
+      "1-accounted-semantics": [
+        [
+          "SubscriptStoreRuntimeEffect",
+          3246
+        ],
+        [
+          "AttributeStoreRuntimeEffect",
+          2356
+        ],
+        [
+          "RaiseEffect",
+          1680
+        ],
+        [
+          "NameErrorEffect",
+          1284
+        ],
+        [
+          "SequenceUnpackRuntimeEffect",
+          271
+        ],
+        [
+          "SubscriptDeleteRuntimeEffect",
+          37
+        ],
+        [
+          "PowerRuntimeEffect",
+          35
+        ],
+        [
+          "BitwiseXorRuntimeEffect",
+          14
+        ],
+        [
+          "SubtractRuntimeEffect",
+          10
+        ],
+        [
+          "UnaryPlusRuntimeEffect",
+          9
+        ],
+        [
+          "SubscriptResultRuntimeEffect",
+          5
+        ],
+        [
+          "TypeErrorRuntimeEffect",
+          2
+        ],
+        [
+          "MatrixMultiplyRuntimeEffect",
+          1
+        ]
+      ],
+      "3-construction-gap-refusal": [
+        [
+          "YieldSuspensionSugar.desugar",
+          32
+        ],
+        [
+          "YieldFromSugar.desugar",
+          17
+        ],
+        [
+          "matches_raise_effect",
+          8
+        ],
+        [
+          "ClassDefinitionSugar.desugar",
+          1
+        ]
+      ]
+    },
+    "unknownPrefixes": {}
+  },
+  "crossFileOccurrenceCollisions": 0,
+  "constructionFamilies": [
+    [
+      "With",
+      5021
+    ],
+    [
+      "Try",
+      33
+    ],
+    [
+      "Assign",
+      25
+    ],
+    [
+      "AnnAssign",
+      6
+    ],
+    [
+      "Constant",
+      3
+    ]
+  ],
+  "desugarOwners": [
+    [
+      "SubscriptStoreRuntimeEffect",
+      3246
+    ],
+    [
+      "AttributeStoreRuntimeEffect",
+      2356
+    ],
+    [
+      "RaiseEffect",
+      1680
+    ],
+    [
+      "NameErrorEffect",
+      1284
+    ],
+    [
+      "SequenceUnpackRuntimeEffect",
+      271
+    ],
+    [
+      "SubscriptDeleteRuntimeEffect",
+      37
+    ],
+    [
+      "PowerRuntimeEffect",
+      35
+    ],
+    [
+      "YieldSuspensionSugar.desugar",
+      32
+    ],
+    [
+      "YieldFromSugar.desugar",
+      17
+    ],
+    [
+      "BitwiseXorRuntimeEffect",
+      14
+    ],
+    [
+      "SubtractRuntimeEffect",
+      10
+    ],
+    [
+      "UnaryPlusRuntimeEffect",
+      9
+    ],
+    [
+      "matches_raise_effect",
+      8
+    ],
+    [
+      "SubscriptResultRuntimeEffect",
+      5
+    ],
+    [
+      "TypeErrorRuntimeEffect",
+      2
+    ],
+    [
+      "ClassDefinitionSugar.desugar",
+      1
+    ],
+    [
+      "MatrixMultiplyRuntimeEffect",
+      1
+    ]
+  ],
+  "desugarPanicOwners": [
+    [
+      "DynamicUnpackAssignSugar",
+      825
+    ],
+    [
+      "guarded",
+      77
+    ],
+    [
+      "IfExpSugar._join",
+      54
+    ],
+    [
+      "collection ListValue",
+      52
+    ],
+    [
+      "collection build",
+      32
+    ],
+    [
+      "ListValue.contains",
+      26
+    ],
+    [
+      "TupleValue.contains",
+      18
+    ],
+    [
+      "ground_index_error",
+      16
+    ],
+    [
+      "StringValue.contains",
+      13
+    ],
+    [
+      "attribute",
+      11
+    ],
+    [
+      "add",
+      11
+    ],
+    [
+      "SetValue.contains",
+      9
+    ],
+    [
+      "bitwise_and",
+      8
+    ],
+    [
+      "GuardedValue._map(subscript)",
+      8
+    ],
+    [
+      "RuntimeEffect",
+      6
+    ],
+    [
+      "multiply",
+      6
+    ],
+    [
+      "collection TupleValue",
+      6
+    ],
+    [
+      "subtract",
+      5
+    ],
+    [
+      "bitwise_or",
+      2
+    ],
+    [
+      "ground_type_error",
+      2
+    ],
+    [
+      "bitwise_invert",
+      1
+    ],
+    [
+      "bitwise_xor",
+      1
+    ],
+    [
+      "truth",
+      1
+    ],
+    [
+      "divide",
+      1
+    ],
+    [
+      "unary_plus",
+      1
+    ],
+    [
+      "dict.subscript",
+      1
+    ],
+    [
+      "<SourceFragment '/home/tsavo/census-a02-venv/lib/python3.12/site-packages/pandas/tests/indexes/period/test_period.py' [3823, 3839) node=Call>",
+      1
+    ]
+  ],
+  "desugarDefectKinds": [
+    [
+      "desugar-exception:TypeError: <class 'sugar_lift_py_tests.caller_parameter_contract.ContractConditionalConstructionV1'>",
+      32
+    ],
+    [
+      "desugar-exception:BindingStateWireGap: loop outward face did not construct return or raise testimony",
+      2
+    ],
+    [
+      "desugar-exception:AttributeError: 'ExitSet' object has no attribute 'value'",
+      2
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: CallSiteValue / CallSiteValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47510:47522#blake3-512:cbba9bc7a22aae410e5a7ed2341e4c5afa38ef2ed63e01dca2f6909d9e14cce2f0f40d972a37309b4dbfc585229403b6a525bb36035f4065f8050d1ec623ebaa', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47611:47663#blake3-512:f508abc4f21dd61ef97422c84524b8c4137d390bc0cd7d21c658ba08f6eec20e03f5a99a49b1eebd3d696ddfce92342371d4f3183dd1c981728a0d5badb9fb91', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47737:47797#blake3-512:7b98a0078d92fce39e9af08a13300bf806838992b43148379a2d7b8ca9c02da19de0f16f9113df2ada4a29ea0da922247c7e5fb765c62b5d273fe71daaeb6cfc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47963:47992#blake3-512:87b6b15fbd3203fe72f5040e584138c0e7f6314babbe9755e9cce34de8571386bdaab9f25923a7f3539f0f68aeb419f0e7e266c549674dae3a075071570caffb', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48092:48136#blake3-512:da1feb8b300f6bd0404c8434a331e3161edccb2fe30785c00c5ca52a27dfb7e8e9b186e31c181d2cfb98da5980a5711fe07e0d481893ec58553ab70818298467', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48209:48271#blake3-512:db5e087706ef5b82be770d95310e52f5e77761a221ed24bcf9f1d079f5a9fe908c285a0838859242952999c39fb445d09b34350f1406bdcb36386a60e3152d9c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48331:48352#blake3-512:58ce2393804982fe073c7e46502a5dc7fcff625c721bed7adf7c0d40a58d4ffc492ddfd1fbb53a518739b6911bc86bf9c9b758a9976b8fd57da10e46264ca482', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48331:48352#blake3-512:58ce2393804982fe073c7e46502a5dc7fcff625c721bed7adf7c0d40a58d4ffc492ddfd1fbb53a518739b6911bc86bf9c9b758a9976b8fd57da10e46264ca482', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48759:48792#blake3-512:8d4f5a163fd47b0ceb2362f01299e6602d24b43c20e5a119a479aebbab11d3db735d306a1a31a7bb25467c8cefbcf253867b579a90b10923843f5939e9d36ca0', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48916:48944#blake3-512:93dec2e44389e5faa573b077dad22653b6fb8ad424a1fe0d9e3b465d17c86f1e648aeed35ba0acab88e5a0c2e779be0cb268e10932e131daaa4599eeb9b4c92e', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@49080:49179#blake3-512:09f0c132de3e6ef493ff0b7d738720598f1af09d4c461856674ea38646c500fc96e2e89f451f3b55f74cded37e48602efeb1d20a57fcc83b22279f292d697e99', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@49298:49327#blake3-512:05110f4925fab4a851d128a6a943c61e23b1cbade1a2fe8653ecabb2a6ab15cc01485e6c490667bccb5ea67d7322b174b9b6cec38a681d77ff119ff54a533d83', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47510:47522#blake3-512:cbba9bc7a22aae410e5a7ed2341e4c5afa38ef2ed63e01dca2f6909d9e14cce2f0f40d972a37309b4dbfc585229403b6a525bb36035f4065f8050d1ec623ebaa', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47611:47663#blake3-512:f508abc4f21dd61ef97422c84524b8c4137d390bc0cd7d21c658ba08f6eec20e03f5a99a49b1eebd3d696ddfce92342371d4f3183dd1c981728a0d5badb9fb91', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47737:47797#blake3-512:7b98a0078d92fce39e9af08a13300bf806838992b43148379a2d7b8ca9c02da19de0f16f9113df2ada4a29ea0da922247c7e5fb765c62b5d273fe71daaeb6cfc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@47963:47992#blake3-512:87b6b15fbd3203fe72f5040e584138c0e7f6314babbe9755e9cce34de8571386bdaab9f25923a7f3539f0f68aeb419f0e7e266c549674dae3a075071570caffb', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48092:48136#blake3-512:da1feb8b300f6bd0404c8434a331e3161edccb2fe30785c00c5ca52a27dfb7e8e9b186e31c181d2cfb98da5980a5711fe07e0d481893ec58553ab70818298467', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48209:48271#blake3-512:db5e087706ef5b82be770d95310e52f5e77761a221ed24bcf9f1d079f5a9fe908c285a0838859242952999c39fb445d09b34350f1406bdcb36386a60e3152d9c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48331:48352#blake3-512:58ce2393804982fe073c7e46502a5dc7fcff625c721bed7adf7c0d40a58d4ffc492ddfd1fbb53a518739b6911bc86bf9c9b758a9976b8fd57da10e46264ca482', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@48759:48792#blake3-512:8d4f5a163fd47b0ceb2362f01299e6602d24b43c20e5a119a479aebbab11d3db735d306a1a31a7bb25467c8cefbcf253867b579a90b10923843f5939e9d36ca0', sort=PrimitiveSort(name='String')),)),))))))))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: CallSiteValue / CallSiteValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50522:50534#blake3-512:cbba9bc7a22aae410e5a7ed2341e4c5afa38ef2ed63e01dca2f6909d9e14cce2f0f40d972a37309b4dbfc585229403b6a525bb36035f4065f8050d1ec623ebaa', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50623:50675#blake3-512:f508abc4f21dd61ef97422c84524b8c4137d390bc0cd7d21c658ba08f6eec20e03f5a99a49b1eebd3d696ddfce92342371d4f3183dd1c981728a0d5badb9fb91', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50750:50810#blake3-512:7b98a0078d92fce39e9af08a13300bf806838992b43148379a2d7b8ca9c02da19de0f16f9113df2ada4a29ea0da922247c7e5fb765c62b5d273fe71daaeb6cfc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50977:51006#blake3-512:87b6b15fbd3203fe72f5040e584138c0e7f6314babbe9755e9cce34de8571386bdaab9f25923a7f3539f0f68aeb419f0e7e266c549674dae3a075071570caffb', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51107:51151#blake3-512:da1feb8b300f6bd0404c8434a331e3161edccb2fe30785c00c5ca52a27dfb7e8e9b186e31c181d2cfb98da5980a5711fe07e0d481893ec58553ab70818298467', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51224:51245#blake3-512:58ce2393804982fe073c7e46502a5dc7fcff625c721bed7adf7c0d40a58d4ffc492ddfd1fbb53a518739b6911bc86bf9c9b758a9976b8fd57da10e46264ca482', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51224:51245#blake3-512:58ce2393804982fe073c7e46502a5dc7fcff625c721bed7adf7c0d40a58d4ffc492ddfd1fbb53a518739b6911bc86bf9c9b758a9976b8fd57da10e46264ca482', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51624:51649#blake3-512:5f91653d24cc9e95fb6d47941aae54fd9d3654e2d93153abfe6ffafc78c96a5ae794325d0868755a5e9c53df581c38844c4bad9486717fb604765d1e1095fc37', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51742:51775#blake3-512:8d4f5a163fd47b0ceb2362f01299e6602d24b43c20e5a119a479aebbab11d3db735d306a1a31a7bb25467c8cefbcf253867b579a90b10923843f5939e9d36ca0', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51900:51928#blake3-512:93dec2e44389e5faa573b077dad22653b6fb8ad424a1fe0d9e3b465d17c86f1e648aeed35ba0acab88e5a0c2e779be0cb268e10932e131daaa4599eeb9b4c92e', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@52064:52163#blake3-512:09f0c132de3e6ef493ff0b7d738720598f1af09d4c461856674ea38646c500fc96e2e89f451f3b55f74cded37e48602efeb1d20a57fcc83b22279f292d697e99', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@52284:52320#blake3-512:3ea6c30605e53e3c155dbca7f63de0e075eb731694fa491d8ae0e741cc2e82ebebd7aa0cc3ef20eac4bbbbf909d9f510d02e6ad44e5c808e74eb6ece4522c4a7', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@52410:52439#blake3-512:05110f4925fab4a851d128a6a943c61e23b1cbade1a2fe8653ecabb2a6ab15cc01485e6c490667bccb5ea67d7322b174b9b6cec38a681d77ff119ff54a533d83', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50522:50534#blake3-512:cbba9bc7a22aae410e5a7ed2341e4c5afa38ef2ed63e01dca2f6909d9e14cce2f0f40d972a37309b4dbfc585229403b6a525bb36035f4065f8050d1ec623ebaa', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50623:50675#blake3-512:f508abc4f21dd61ef97422c84524b8c4137d390bc0cd7d21c658ba08f6eec20e03f5a99a49b1eebd3d696ddfce92342371d4f3183dd1c981728a0d5badb9fb91', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50750:50810#blake3-512:7b98a0078d92fce39e9af08a13300bf806838992b43148379a2d7b8ca9c02da19de0f16f9113df2ada4a29ea0da922247c7e5fb765c62b5d273fe71daaeb6cfc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@50977:51006#blake3-512:87b6b15fbd3203fe72f5040e584138c0e7f6314babbe9755e9cce34de8571386bdaab9f25923a7f3539f0f68aeb419f0e7e266c549674dae3a075071570caffb', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51107:51151#blake3-512:da1feb8b300f6bd0404c8434a331e3161edccb2fe30785c00c5ca52a27dfb7e8e9b186e31c181d2cfb98da5980a5711fe07e0d481893ec58553ab70818298467', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51224:51245#blake3-512:58ce2393804982fe073c7e46502a5dc7fcff625c721bed7adf7c0d40a58d4ffc492ddfd1fbb53a518739b6911bc86bf9c9b758a9976b8fd57da10e46264ca482', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51624:51649#blake3-512:5f91653d24cc9e95fb6d47941aae54fd9d3654e2d93153abfe6ffafc78c96a5ae794325d0868755a5e9c53df581c38844c4bad9486717fb604765d1e1095fc37', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51624:51649#blake3-512:5f91653d24cc9e95fb6d47941aae54fd9d3654e2d93153abfe6ffafc78c96a5ae794325d0868755a5e9c53df581c38844c4bad9486717fb604765d1e1095fc37', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51742:51775#blake3-512:8d4f5a163fd47b0ceb2362f01299e6602d24b43c20e5a119a479aebbab11d3db735d306a1a31a7bb25467c8cefbcf253867b579a90b10923843f5939e9d36ca0', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@51900:51928#blake3-512:93dec2e44389e5faa573b077dad22653b6fb8ad424a1fe0d9e3b465d17c86f1e648aeed35ba0acab88e5a0c2e779be0cb268e10932e131daaa4599eeb9b4c92e', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@52064:52163#blake3-512:09f0c132de3e6ef493ff0b7d738720598f1af09d4c461856674ea38646c500fc96e2e89f451f3b55f74cded37e48602efeb1d20a57fcc83b22279f292d697e99', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:500dad2d65a9cf450380a45d6c2e39cc5f11dceb11f2bf57818f1a862930c19f7d3e8c27e1ef81f6eeccbfc20c5d892a9c9848ab05c0053e186760754a549a2d@52284:52320#blake3-512:3ea6c30605e53e3c155dbca7f63de0e075eb731694fa491d8ae0e741cc2e82ebebd7aa0cc3ef20eac4bbbbf909d9f510d02e6ad44e5c808e74eb6ece4522c4a7', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: CallSiteValue / GuardedValue\n  arm A guard: _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:80c7f0dde73a793f222c3626719571f3107896c943630e46a1261a1393e28bf0191d19144b6f313c85f7272c83d366d560c79c397c3ecacebada67a6d9d0d058@155833:155899#blake3-512:2dbf2bbbe2b15293fe852f0f1dbb5cd9bb5187bedf861f44bcb0019796438e42f98bfe368e150476ce4fb7f4eff66216d87a1905d31bcdd026be36ba6d476776', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:80c7f0dde73a793f222c3626719571f3107896c943630e46a1261a1393e28bf0191d19144b6f313c85f7272c83d366d560c79c397c3ecacebada67a6d9d0d058@155833:155899#blake3-512:2dbf2bbbe2b15293fe852f0f1dbb5cd9bb5187bedf861f44bcb0019796438e42f98bfe368e150476ce4fb7f4eff66216d87a1905d31bcdd026be36ba6d476776', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:80c7f0dde73a793f222c3626719571f3107896c943630e46a1261a1393e28bf0191d19144b6f313c85f7272c83d366d560c79c397c3ecacebada67a6d9d0d058@156023:156051#blake3-512:c7a34f63e65fe32cf3a770a985febd3ce20336b652985c636d7c88940ac1427d3becf25b78035fe520497a5609a087bece642e3b0c3ca35bd0e6634475a69c8f', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:80c7f0dde73a793f222c3626719571f3107896c943630e46a1261a1393e28bf0191d19144b6f313c85f7272c83d366d560c79c397c3ecacebada67a6d9d0d058@156293:156355#blake3-512:aa034839cd487177b95b1e22ab7e1a59b053466281ab54c5f84c86957c9109599991a7c3c4a7d9273878fe32eb486887ca197a145e899bd7bc766907e8ff88c7', sort=PrimitiveSort(name='String')),)),))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:80c7f0dde73a793f222c3626719571f3107896c943630e46a1261a1393e28bf0191d19144b6f313c85f7272c83d366d560c79c397c3ecacebada67a6d9d0d058@155833:155899#blake3-512:2dbf2bbbe2b15293fe852f0f1dbb5cd9bb5187bedf861f44bcb0019796438e42f98bfe368e150476ce4fb7f4eff66216d87a1905d31bcdd026be36ba6d476776', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:80c7f0dde73a793f222c3626719571f3107896c943630e46a1261a1393e28bf0191d19144b6f313c85f7272c83d366d560c79c397c3ecacebada67a6d9d0d058@156023:156051#blake3-512:c7a34f63e65fe32cf3a770a985febd3ce20336b652985c636d7c88940ac1427d3becf25b78035fe520497a5609a087bece642e3b0c3ca35bd0e6634475a69c8f', sort=PrimitiveSort(name='String')),)),))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: PredicateValue / PredicateValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:9047fe88fd771798a29fc73bd87c9ad80a188c6c35420a8abc128adc1473ca7520a627162603f26416d6d7eeff0085386902ae5329bc2cb74a6823b90b8dc995@86410:86450#blake3-512:55213604deb74097528077452ef24d5580684ec1e1a05829d5c1a890dd6e2007a28342f8ecc5378ddd696c57d1367b79d8453262d449cbdb00e6f4e56c7b11b6', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:9047fe88fd771798a29fc73bd87c9ad80a188c6c35420a8abc128adc1473ca7520a627162603f26416d6d7eeff0085386902ae5329bc2cb74a6823b90b8dc995@86570:86581#blake3-512:db93c5652c125063ac199227469eaa297721a0dae9d6379bdf3d4c35ad263c3a8ad00079dfbce2dee2de62b63c9d4f69ddc7205eab138826fc09945eb175b94e', sort=PrimitiveSort(name='String')),)),)),)))), _Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:9047fe88fd771798a29fc73bd87c9ad80a188c6c35420a8abc128adc1473ca7520a627162603f26416d6d7eeff0085386902ae5329bc2cb74a6823b90b8dc995@86645:86657#blake3-512:49c9b052b4052852e6f59c086e3b81b35f05ca4d9c16256afe1746df2b8ae34dd9e08701d011acd800da741def81bc3465029aa5d0b44b975b0815604c2a9b94', sort=PrimitiveSort(name='String')),)),)),))))\n  arm B guard: _Atomic(name='python.loop.exhausted', args=(_ConstStr(value='blake3-512:553a0b59fb12c254d7d703bed0ee9e4cf4c22e8f272d0b7f0b9e93612505f3bddf2e86a85f19e814cf3b3b901e50598e01a232fc7f591f790d8ccbed9e93ec48', sort=PrimitiveSort(name='String')),))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: SymbolicValue / StringValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@452978:452991#blake3-512:15c08a92396272478368aacc6b07062184878af8b7a7ca44f7fdc01b18be2808b829459c7a2af4d263ff3f47dd56bab8b5bf39cdb7fa2e0a37fa9553df5a6fe4', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453164:453177#blake3-512:ee1e5449e9b67547eaa7f057ba344cc3ee70d768fe60fd5fb4a6258433e44ae104cfafb59b3a03b54d5ce06ecc7f387b98bd1def38811c0724a7ac005c714cdc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453349:453362#blake3-512:89589fdefb21b9fb2ef3dcdeb3580567d3095c97a8b8d5b8a7757d171f5206d343b354fd1ed14f39a687f8f0acd7a414228b5e7009d7dd894bb08c1264a93f3b', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453349:453362#blake3-512:89589fdefb21b9fb2ef3dcdeb3580567d3095c97a8b8d5b8a7757d171f5206d343b354fd1ed14f39a687f8f0acd7a414228b5e7009d7dd894bb08c1264a93f3b', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453763:453776#blake3-512:02e2955c13ebf03401cf071243d5d18a2323ab5a42762d4e81c5925f83d122bdcc5dfdaca406ea320fe09377b2e881bffed96152bced7f04dd15707c14f733c1', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453763:453776#blake3-512:02e2955c13ebf03401cf071243d5d18a2323ab5a42762d4e81c5925f83d122bdcc5dfdaca406ea320fe09377b2e881bffed96152bced7f04dd15707c14f733c1', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454178:454191#blake3-512:ecc631ede9b445725d739dab6ace711bbb802c71a6a167bd0e846a5fc461ec2970a7321f7566f3447cd404aae4b146cee4b2ccfea72367bf681fecf8f4302abf', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454178:454191#blake3-512:ecc631ede9b445725d739dab6ace711bbb802c71a6a167bd0e846a5fc461ec2970a7321f7566f3447cd404aae4b146cee4b2ccfea72367bf681fecf8f4302abf', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454517:454531#blake3-512:6bb1713d5365d94ee24c59444a40ea4632641fe549932329ac1aa06f55fbef0e10a7ea2f126ce3b03be7cc08ef8681c7b57aa181649b30ff3959fe7394b7807c', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454517:454531#blake3-512:6bb1713d5365d94ee24c59444a40ea4632641fe549932329ac1aa06f55fbef0e10a7ea2f126ce3b03be7cc08ef8681c7b57aa181649b30ff3959fe7394b7807c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454772:454788#blake3-512:d2c03d320a5865c1c2ddcc960258ff4f2200705ebac131492711e4acf5a3389e1ddd6d28e91ecdb74ad52f64da2fdd9733c16ccb069cfa45d74397808016420a', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454772:454788#blake3-512:d2c03d320a5865c1c2ddcc960258ff4f2200705ebac131492711e4acf5a3389e1ddd6d28e91ecdb74ad52f64da2fdd9733c16ccb069cfa45d74397808016420a', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@455897:455911#blake3-512:822d2c6f3671cb31e6387c45e032843ea956216c0e2e5b32ece4caa2d6454778e08cd68a9bd1beb14164af41d040e2cfab89da685b3d2d4a1b746ccb0e33ef4f', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@452978:452991#blake3-512:15c08a92396272478368aacc6b07062184878af8b7a7ca44f7fdc01b18be2808b829459c7a2af4d263ff3f47dd56bab8b5bf39cdb7fa2e0a37fa9553df5a6fe4', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453164:453177#blake3-512:ee1e5449e9b67547eaa7f057ba344cc3ee70d768fe60fd5fb4a6258433e44ae104cfafb59b3a03b54d5ce06ecc7f387b98bd1def38811c0724a7ac005c714cdc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453349:453362#blake3-512:89589fdefb21b9fb2ef3dcdeb3580567d3095c97a8b8d5b8a7757d171f5206d343b354fd1ed14f39a687f8f0acd7a414228b5e7009d7dd894bb08c1264a93f3b', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453763:453776#blake3-512:02e2955c13ebf03401cf071243d5d18a2323ab5a42762d4e81c5925f83d122bdcc5dfdaca406ea320fe09377b2e881bffed96152bced7f04dd15707c14f733c1', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454178:454191#blake3-512:ecc631ede9b445725d739dab6ace711bbb802c71a6a167bd0e846a5fc461ec2970a7321f7566f3447cd404aae4b146cee4b2ccfea72367bf681fecf8f4302abf', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454517:454531#blake3-512:6bb1713d5365d94ee24c59444a40ea4632641fe549932329ac1aa06f55fbef0e10a7ea2f126ce3b03be7cc08ef8681c7b57aa181649b30ff3959fe7394b7807c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454772:454788#blake3-512:d2c03d320a5865c1c2ddcc960258ff4f2200705ebac131492711e4acf5a3389e1ddd6d28e91ecdb74ad52f64da2fdd9733c16ccb069cfa45d74397808016420a', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@455897:455911#blake3-512:822d2c6f3671cb31e6387c45e032843ea956216c0e2e5b32ece4caa2d6454778e08cd68a9bd1beb14164af41d040e2cfab89da685b3d2d4a1b746ccb0e33ef4f', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457010:457023#blake3-512:cafa81e9fba102958dcc1b4389241cfa443f07d40c23d8a090305dad9002516d74ed1f18aa9c7e343e198a2080f4190d783b0579910dd7da072c39bddc3819b4', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457010:457023#blake3-512:cafa81e9fba102958dcc1b4389241cfa443f07d40c23d8a090305dad9002516d74ed1f18aa9c7e343e198a2080f4190d783b0579910dd7da072c39bddc3819b4', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457334:457347#blake3-512:5b32feb0e3630b4d6204e6ffed269ece2581008fc37b12a4390aac94e85fd9155d8260315e9c190bdaec8715100bbd286c890864894ec58c02be3189cc993ce9', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457745:457758#blake3-512:5b603297f0e13ffd4e7ffcde2d896f06b13295b32a24239867e9dfc07c587eb8705d174e6c8a82e7f95b7ae09a26c8f04b5ee0b04699125c00bb3de765c0d4b8', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@459055:459069#blake3-512:edf862325999580225168d4ddba09e14894a34b33abbf14bd2b933186427c005f08a5bfd936619145fe81b45f7ca8396f6fe25e33aeb6ff91e251e8689411923', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@460354:460368#blake3-512:608f628eb0555f6785e347252bff993df50d450134c770f9c59bc0c823edaf2a080fb4d74a138f1c3fd161e00b4d11124a036106c6171933448b0ac9c14f3046', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@460354:460368#blake3-512:608f628eb0555f6785e347252bff993df50d450134c770f9c59bc0c823edaf2a080fb4d74a138f1c3fd161e00b4d11124a036106c6171933448b0ac9c14f3046', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@461810:461826#blake3-512:93d871970210cd1b3d66926e7e25a346b2aee85d74e0169ca80d4b3bfaebbcf795bdbef2358328fd504dc9ad30bf7817f972f70aa23a345b0656366b07274a0d', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@461810:461826#blake3-512:93d871970210cd1b3d66926e7e25a346b2aee85d74e0169ca80d4b3bfaebbcf795bdbef2358328fd504dc9ad30bf7817f972f70aa23a345b0656366b07274a0d', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462074:462091#blake3-512:e398a86a861cfdc24a60c28decee6c7d7751b2bcebd2e8a8946cc69a3c86e2676739bb9e60432ee9a65ab185155d2dfabc587bc567489e3f78280928c483efee', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462074:462091#blake3-512:e398a86a861cfdc24a60c28decee6c7d7751b2bcebd2e8a8946cc69a3c86e2676739bb9e60432ee9a65ab185155d2dfabc587bc567489e3f78280928c483efee', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462345:462361#blake3-512:7f427345347e85acb960d2200eb2db0b04f04c0267b1822f9c3dd4ba2222709e160f51da07ef55091ddab8a50dbd5b88ed9aa4d1ce65e93542b469158e702a41', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462345:462361#blake3-512:7f427345347e85acb960d2200eb2db0b04f04c0267b1822f9c3dd4ba2222709e160f51da07ef55091ddab8a50dbd5b88ed9aa4d1ce65e93542b469158e702a41', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462613:462629#blake3-512:a3ae6b2e60ba425f091734cb9f68162e83e9128e362fcbb869c63999032a930a92737fde7da749e002fde8637cabe58ea6094b9fb5b2203b440171adc2e59c49', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))))))))))))))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: SymbolicValue / SymbolicValue\n  arm A guard: _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:efa16f7745ca9e27dd2fd887511ed151272290d13bf49e0cd7d93f6bf63ee405ec8fb910405e929cfcc1ede8b4895ec6c9e2ea6f045db5d94dce9a34b7279331@7521:7559#blake3-512:ac796d6da6a5621d5243e380f3852f7997bd44c4a32f87e90131472362f96cad692ad87190c29326bf887a41fe437abbc6c3435bdc35b9d4d88d86b41dc70521', sort=PrimitiveSort(name='String')),)),))\n  arm B guard: _Atomic(name='python.loop.exhausted', args=(_ConstStr(value='blake3-512:524374dbac522550b29c9009f26ac3d271f23ded5ebab0602749cad7f0d780d46c551ac740b44ff30b1d98449a6bf4ca9748109d0493139ff0720c77dce4faa6', sort=PrimitiveSort(name='String')),))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: CallSiteValue / CallSiteValue\n  arm A guard: _Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13152:13212#blake3-512:b0005402b4ee2ed1cc0a6a188b922fe467f624b2b535734ead9166f1ba5fe6179bd7ddbe9154f3df9c6cfee5c6337f8dc1b48633f5d0e9b9ccb48282e31a3464', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13229:13247#blake3-512:35e2015e13c75b1a04d0dedf55999b8e1568f4e19161564364fddf60d1b717cad1a8bcefac772d71a41c58e653899e48a90e582e16d086eabac5e8e07f469700', sort=PrimitiveSort(name='String')),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13268:13302#blake3-512:8a9d5093a013bbd36270d46c1e1317288e714e2a49eda68aca921c44e942525f3e23223a2f051154b66d9089a409c8d742e4f244cd14982ede3bee6fba48f72d', sort=PrimitiveSort(name='String')),)),))))))\n  arm B guard: _Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13152:13212#blake3-512:b0005402b4ee2ed1cc0a6a188b922fe467f624b2b535734ead9166f1ba5fe6179bd7ddbe9154f3df9c6cfee5c6337f8dc1b48633f5d0e9b9ccb48282e31a3464', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='or', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13229:13247#blake3-512:35e2015e13c75b1a04d0dedf55999b8e1568f4e19161564364fddf60d1b717cad1a8bcefac772d71a41c58e653899e48a90e582e16d086eabac5e8e07f469700', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13229:13247#blake3-512:35e2015e13c75b1a04d0dedf55999b8e1568f4e19161564364fddf60d1b717cad1a8bcefac772d71a41c58e653899e48a90e582e16d086eabac5e8e07f469700', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13268:13302#blake3-512:8a9d5093a013bbd36270d46c1e1317288e714e2a49eda68aca921c44e942525f3e23223a2f051154b66d9089a409c8d742e4f244cd14982ede3bee6fba48f72d', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13560:13592#blake3-512:8bc4b8b9494b5419ffbb3faf47137eb13eb179eb30fb2dccb26202bb2cd04a81ab495301edb69a531dba0b42fb6e6efa5afc25a3957223d7621281d38589aa8b', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:99a25f991b7eaed1edbed8ad930fee0a86b354d5be5a79d366d1566a618f24ac8cf8eb3f6af92a2a8f0115ab50034e64b367bb4acde55b5032a25af9bedef99a@13805:13839#blake3-512:551e1dba02f569823f4e680f0b9fe826f28ee03caba16d22d05b4e84995cb983187230d6882323309efb8ab2d894e3e7893a00c1bfae1d173d6d080c3cce4e86', sort=PrimitiveSort(name='String')),)),))))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: CallSiteValue / CallSiteValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Connective(kind='and', operands=(_Connective(kind='implies', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167427:167474#blake3-512:6cef522fe191b67e030b1c193f930f00cfe3c70091bcf235e70e7649fe019b0c9a058fbe58f3de80a54188c9a10b8085544228639c5861c755d85c0cede88ea2', sort=PrimitiveSort(name='String')),)),)), _Atomic(name='identity', args=(_Ctor(name='call:_validate_apply_axis_arg', args=(_Var(name='left'), _ConstStr(value='left', sort=PrimitiveSort(name='String')), _Ctor(name='None', args=()), _Var(name='data'))), _Ctor(name='None', args=()))))), _Connective(kind='implies', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167427:167474#blake3-512:6cef522fe191b67e030b1c193f930f00cfe3c70091bcf235e70e7649fe019b0c9a058fbe58f3de80a54188c9a10b8085544228639c5861c755d85c0cede88ea2', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='identity', args=(_Var(name='left'), _Ctor(name='None', args=()))))))),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167726:167745#blake3-512:bdbeba8cbd9c422628b656e06876f04547251bbaaa6271c7665e5e0374be9182cf8b1fac97850f0f86d75d364c4245daaa596e458dbde351e751c305a0f5dd4f', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167726:167745#blake3-512:bdbeba8cbd9c422628b656e06876f04547251bbaaa6271c7665e5e0374be9182cf8b1fac97850f0f86d75d364c4245daaa596e458dbde351e751c305a0f5dd4f', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167797:167819#blake3-512:1239200891b25516c66e12b7641cb2926725e32a2b2cb19606d9acc2d4297502a090c7949eb1adb16e163083a7f82f482667a7efd3fca5f658e6cf77f5d73d06', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167871:167890#blake3-512:c5cc2922f13ebfdad0ef103088246e72fb7c4b3fab7de01148679f943d4382f994aeb70b8ec34169c10d22a9ee852c8daeacc76da505f2e1bae5513234548808', sort=PrimitiveSort(name='String')),)),))))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Connective(kind='and', operands=(_Connective(kind='implies', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167427:167474#blake3-512:6cef522fe191b67e030b1c193f930f00cfe3c70091bcf235e70e7649fe019b0c9a058fbe58f3de80a54188c9a10b8085544228639c5861c755d85c0cede88ea2', sort=PrimitiveSort(name='String')),)),)), _Atomic(name='identity', args=(_Ctor(name='call:_validate_apply_axis_arg', args=(_Var(name='left'), _ConstStr(value='left', sort=PrimitiveSort(name='String')), _Ctor(name='None', args=()), _Var(name='data'))), _Ctor(name='None', args=()))))), _Connective(kind='implies', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167427:167474#blake3-512:6cef522fe191b67e030b1c193f930f00cfe3c70091bcf235e70e7649fe019b0c9a058fbe58f3de80a54188c9a10b8085544228639c5861c755d85c0cede88ea2', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='identity', args=(_Var(name='left'), _Ctor(name='None', args=()))))))),)), _Connective(kind='or', operands=(_Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167726:167745#blake3-512:bdbeba8cbd9c422628b656e06876f04547251bbaaa6271c7665e5e0374be9182cf8b1fac97850f0f86d75d364c4245daaa596e458dbde351e751c305a0f5dd4f', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167797:167819#blake3-512:1239200891b25516c66e12b7641cb2926725e32a2b2cb19606d9acc2d4297502a090c7949eb1adb16e163083a7f82f482667a7efd3fca5f658e6cf77f5d73d06', sort=PrimitiveSort(name='String')),)),)))), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167726:167745#blake3-512:bdbeba8cbd9c422628b656e06876f04547251bbaaa6271c7665e5e0374be9182cf8b1fac97850f0f86d75d364c4245daaa596e458dbde351e751c305a0f5dd4f', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167797:167819#blake3-512:1239200891b25516c66e12b7641cb2926725e32a2b2cb19606d9acc2d4297502a090c7949eb1adb16e163083a7f82f482667a7efd3fca5f658e6cf77f5d73d06', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167871:167890#blake3-512:c5cc2922f13ebfdad0ef103088246e72fb7c4b3fab7de01148679f943d4382f994aeb70b8ec34169c10d22a9ee852c8daeacc76da505f2e1bae5513234548808', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:643af8a2583fa39f5915d56a37ba5155e014700cc8b01537502bf5be62d64f0079035e3c868f391ef68674d9d6277f72ff970062a01a761ef624cd465269e670@167942:167962#blake3-512:9db9101ff0f908c96ecc00a5492d43edf4117122870779d0bc9670071a534df483542d5f97d336fb0385a6e4cec3613995aeecd36053c15e99f8c241c1f9521a', sort=PrimitiveSort(name='String')),)),))))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: TermValue / ComplexValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1242:1257#blake3-512:efc583ae5dfeb50fa2439b74389240f61f551c7d0e2c294ff942d490122d6869e54a68cf97578a77229bfe51369c91a617e73b7edacdbf49422cb3e8a810a89c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1315:1343#blake3-512:2685c9f9a075ca577a725aabfb387149b48635579f34871cc4aefa7441fdac7b9fed313555930d1b836b2e6c768e40b0a889bf7a95db0e05e0d077839a2cab8f', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1315:1343#blake3-512:2685c9f9a075ca577a725aabfb387149b48635579f34871cc4aefa7441fdac7b9fed313555930d1b836b2e6c768e40b0a889bf7a95db0e05e0d077839a2cab8f', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1396:1414#blake3-512:a04187ee9d749c146fac73de63d40494019c8ed921dbf501738cb4a0f991060ac9d09c067c00057c98ecbb8b0a07ecce5db0bcefeefa99146e83a52fe8f094c0', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1396:1414#blake3-512:a04187ee9d749c146fac73de63d40494019c8ed921dbf501738cb4a0f991060ac9d09c067c00057c98ecbb8b0a07ecce5db0bcefeefa99146e83a52fe8f094c0', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1471:1488#blake3-512:6c689285fc8445cc8062fdfc6fedee2351844799f84ad60f042fd46e316d2cc506cfff4fff3b97c530462f28639034b75193029ac6b4d266e16d4f8ef7299124', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1554:1570#blake3-512:fafd1d66b5b5ff4189a0d0d64c5f588b292d9cabab1417423ecbeecaa48635d4078251bc5b8ee4d9507e0b94201d15e80d0d83c5c2b32e464ad26cae50892245', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1627:1642#blake3-512:0d36a46b43b620b8d4d692bcaf7e64c1963051d3d0842728f7c47801946047e68f70f76bcc66eea1be5cd941c939d643bf8cc68b4a7bf1169bb7095d57252b08', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1696:1711#blake3-512:da7ff919837e44dd8af59b74e42ebe80b3dd92f0fb1ea8e84880514b8042232e77f76ea284a2f30cb403cb57ab224c3d77c26f7cad24d090bf8388bdf4f99cc5', sort=PrimitiveSort(name='String')),)),))))))))))))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1242:1257#blake3-512:efc583ae5dfeb50fa2439b74389240f61f551c7d0e2c294ff942d490122d6869e54a68cf97578a77229bfe51369c91a617e73b7edacdbf49422cb3e8a810a89c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1315:1343#blake3-512:2685c9f9a075ca577a725aabfb387149b48635579f34871cc4aefa7441fdac7b9fed313555930d1b836b2e6c768e40b0a889bf7a95db0e05e0d077839a2cab8f', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1396:1414#blake3-512:a04187ee9d749c146fac73de63d40494019c8ed921dbf501738cb4a0f991060ac9d09c067c00057c98ecbb8b0a07ecce5db0bcefeefa99146e83a52fe8f094c0', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:6f367130e72b4a178f990f1bdd58e90628a765f4d27558a7a1851a0bc9aa03a6c48e7d82a1174047f1270a4ebf452462d09ad9ffcb3b41365edb27480547b84d@1471:1488#blake3-512:6c689285fc8445cc8062fdfc6fedee2351844799f84ad60f042fd46e316d2cc506cfff4fff3b97c530462f28639034b75193029ac6b4d266e16d4f8ef7299124', sort=PrimitiveSort(name='String')),)),))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: SymbolicValue / SymbolicValue\n  arm A guard: _Connective(kind='or', operands=(_Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@11535:11554#blake3-512:6d30dac370fdf21343901866d9c5fabd223027c8bc685654c0600226d2069dd45f1b6adc4ae0cc627de39c3262a5fc71438daa1440067afd556b3bd56137885b', sort=PrimitiveSort(name='String')),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@10644:10674#blake3-512:ca771e216e7f017c1c9d9cd802944f971df5c4d5caae0b9c608da68b136d006df1853ce74457ad863cfca2299c228c5c5b2960fd2bfcfd1ff5eae47ed82b127c', sort=PrimitiveSort(name='String')),)),)))), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@11535:11554#blake3-512:6d30dac370fdf21343901866d9c5fabd223027c8bc685654c0600226d2069dd45f1b6adc4ae0cc627de39c3262a5fc71438daa1440067afd556b3bd56137885b', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@11586:11617#blake3-512:ad1b7fc9743c000da1c3158d274866625acd8acf30219abb1a24a221316e7288c76a24f14ac6ed530c926a7ba1f729f51bd89500c3ffe4856ba40f7d70b5f15c', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@10644:10674#blake3-512:ca771e216e7f017c1c9d9cd802944f971df5c4d5caae0b9c608da68b136d006df1853ce74457ad863cfca2299c228c5c5b2960fd2bfcfd1ff5eae47ed82b127c', sort=PrimitiveSort(name='String')),)),))))))))\n  arm B guard: _Connective(kind='or', operands=(_Connective(kind='and', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@11535:11554#blake3-512:6d30dac370fdf21343901866d9c5fabd223027c8bc685654c0600226d2069dd45f1b6adc4ae0cc627de39c3262a5fc71438daa1440067afd556b3bd56137885b', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@10644:10674#blake3-512:ca771e216e7f017c1c9d9cd802944f971df5c4d5caae0b9c608da68b136d006df1853ce74457ad863cfca2299c228c5c5b2960fd2bfcfd1ff5eae47ed82b127c', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@10734:10764#blake3-512:12dda3b3ab06d68648ccd07c667c8e179742dcc7e8aa9df44cec951d7b43e4f6fb93ee15ebd94e377bf8026aafdc18c16aa6549449d550a6fd17ab0430d9d5b7', sort=PrimitiveSort(name='String')),)),)))))), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@11535:11554#blake3-512:6d30dac370fdf21343901866d9c5fabd223027c8bc685654c0600226d2069dd45f1b6adc4ae0cc627de39c3262a5fc71438daa1440067afd556b3bd56137885b', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@11586:11617#blake3-512:ad1b7fc9743c000da1c3158d274866625acd8acf30219abb1a24a221316e7288c76a24f14ac6ed530c926a7ba1f729f51bd89500c3ffe4856ba40f7d70b5f15c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@10644:10674#blake3-512:ca771e216e7f017c1c9d9cd802944f971df5c4d5caae0b9c608da68b136d006df1853ce74457ad863cfca2299c228c5c5b2960fd2bfcfd1ff5eae47ed82b127c', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f48cd2b960d55350ede58a5855b4a30a5a9c756ab033956993ff3123db67ffa1f50678ef79ccaead3a0059a7e7d70aa8b0a8291a5cd507756f06b2d1a57a2a96@10734:10764#blake3-512:12dda3b3ab06d68648ccd07c667c8e179742dcc7e8aa9df44cec951d7b43e4f6fb93ee15ebd94e377bf8026aafdc18c16aa6549449d550a6fd17ab0430d9d5b7', sort=PrimitiveSort(name='String')),)),))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: TermValue / TermValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5398:5427#blake3-512:eccb2f0c8d7cd3c2ae1f5e65d81dfa95cfe20584c1f668a80905d416292c333ab2c5d73a05832ee47247c11518a25a240831df3114ef30c8a337764117e6770e', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5490:5520#blake3-512:267ce1b51ee4f295387bcf48e52658563ba279dc00a752dd2531024100146d4da62e1c2ac73f015386546af3d7ed648b7f74a0afa6282bf0f27f899ca572cb62', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5490:5520#blake3-512:267ce1b51ee4f295387bcf48e52658563ba279dc00a752dd2531024100146d4da62e1c2ac73f015386546af3d7ed648b7f74a0afa6282bf0f27f899ca572cb62', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5580:5616#blake3-512:5d4aa384a4bc682ef124f56c06530629eecf3b6b3d4492796414446d47aca4687c60093e6ec397d92428de7f077ab48e023834412f7c112194a9f00ee4d4e6ac', sort=PrimitiveSort(name='String')),)),))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5398:5427#blake3-512:eccb2f0c8d7cd3c2ae1f5e65d81dfa95cfe20584c1f668a80905d416292c333ab2c5d73a05832ee47247c11518a25a240831df3114ef30c8a337764117e6770e', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5490:5520#blake3-512:267ce1b51ee4f295387bcf48e52658563ba279dc00a752dd2531024100146d4da62e1c2ac73f015386546af3d7ed648b7f74a0afa6282bf0f27f899ca572cb62', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5580:5616#blake3-512:5d4aa384a4bc682ef124f56c06530629eecf3b6b3d4492796414446d47aca4687c60093e6ec397d92428de7f077ab48e023834412f7c112194a9f00ee4d4e6ac', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:1d35011d09644fb842ce211045660613ae2779906f34fda74c711da88abf3f5d3dc609e9e2a2135d81e75789f5e4c5dba538530b7a0d6e255bbecd730b9ca2eb@5670:5708#blake3-512:0cb8f0c236f68703bdaaf6afcffa702ec236435f98edef04ef0ffcef1c18d839b209334498387ae9e13e4ed33a5b3747dacd070ad5a614310b9e4c7c3d3b1300', sort=PrimitiveSort(name='String')),)),))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: ListValue / ListValue\n  arm A guard: _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@67090:67111#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@67090:67111#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@67143:67165#blake3-512:c757aab14a3988522637a3a56e59d7bf56fc19d79e86b6710dc2800d1e0108cd4aa4964d5014773ef262953183f9cd4a0ee8a027c950c3432cfa5d89f3c9bb5c', sort=PrimitiveSort(name='String')),)),))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@67090:67111#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@67143:67165#blake3-512:c757aab14a3988522637a3a56e59d7bf56fc19d79e86b6710dc2800d1e0108cd4aa4964d5014773ef262953183f9cd4a0ee8a027c950c3432cfa5d89f3c9bb5c', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@67229:67250#blake3-512:dabbcf5355560bad7c44688eeafdd31219a1e12111d4a288c72a6008c967c3ff8592d449f17b268c6b7b467c099232582ff25bdc9ec068aed44ed58a7f617d1b', sort=PrimitiveSort(name='String')),)),))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: ListValue / ListValue\n  arm A guard: _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@68464:68485#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@68464:68485#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@68517:68539#blake3-512:c757aab14a3988522637a3a56e59d7bf56fc19d79e86b6710dc2800d1e0108cd4aa4964d5014773ef262953183f9cd4a0ee8a027c950c3432cfa5d89f3c9bb5c', sort=PrimitiveSort(name='String')),)),))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@68464:68485#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@68517:68539#blake3-512:c757aab14a3988522637a3a56e59d7bf56fc19d79e86b6710dc2800d1e0108cd4aa4964d5014773ef262953183f9cd4a0ee8a027c950c3432cfa5d89f3c9bb5c', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@68603:68624#blake3-512:dabbcf5355560bad7c44688eeafdd31219a1e12111d4a288c72a6008c967c3ff8592d449f17b268c6b7b467c099232582ff25bdc9ec068aed44ed58a7f617d1b', sort=PrimitiveSort(name='String')),)),))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:ExitSetFactoringGap: ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: ListValue / ListValue\n  arm A guard: _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@69777:69798#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@69777:69798#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@69830:69852#blake3-512:c757aab14a3988522637a3a56e59d7bf56fc19d79e86b6710dc2800d1e0108cd4aa4964d5014773ef262953183f9cd4a0ee8a027c950c3432cfa5d89f3c9bb5c', sort=PrimitiveSort(name='String')),)),))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@69777:69798#blake3-512:fb0bd139ec89eb87abb9dee91eb405bd950be85b1f5256d71d219f311b71556dc3372ef4d042fa862459b333462a7c0b111b118cd2452ba3f9242fc2449407e7', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@69830:69852#blake3-512:c757aab14a3988522637a3a56e59d7bf56fc19d79e86b6710dc2800d1e0108cd4aa4964d5014773ef262953183f9cd4a0ee8a027c950c3432cfa5d89f3c9bb5c', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:f2ecd27d2867bf272edfda2340d6e1a1057e028c240fbc077b928312baf9da3b66eb36388a50f5ecc4f5aac6712de05d1d10e3db9b529d139e6f92a91ab4d46f@69916:69937#blake3-512:dabbcf5355560bad7c44688eeafdd31219a1e12111d4a288c72a6008c967c3ff8592d449f17b268c6b7b467c099232582ff25bdc9ec068aed44ed58a7f617d1b', sort=PrimitiveSort(name='String')),)),))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: give the producing sugar complementary guards (the branch join shape ``g`` / ``not g``), or extend _are_exclusive to see the exclusion these two guards already carry. Do NOT re-materialize the product: that is the m ** k blow-up #6309 removed.",
+      1
+    ],
+    [
+      "desugar-exception:TypeError: <class 'sugar_lift_py_tests.sugar.binding_projection.LoopGuardedProjection'>",
+      1
+    ]
+  ],
+  "fileConstructionPanicOwners": [],
+  "withPartition": {
+    "sites": 5021,
+    "byBucket": {
+      "unclassified": 85,
+      "resource-protocol": 811,
+      "assertion-effect-boundary": 4125
+    },
+    "unresolved": 0,
+    "unclassifiedHeads": [
+      [
+        "ctx",
+        6
+      ],
+      [
+        "rewrite_exception",
+        5
+      ],
+      [
+        "tm.maybe_produces_warning",
+        4
+      ],
+      [
+        "activated_tracemalloc",
+        4
+      ],
+      [
+        "handle_data",
+        3
+      ],
+      [
+        "reader",
+        3
+      ],
+      [
+        "tm.set_locale",
+        3
+      ],
+      [
+        "tm.with_csv_dialect",
+        3
+      ],
+      [
+        "set_numba_data",
+        2
+      ],
+      [
+        "urlopen",
+        2
+      ],
+      [
+        "self",
+        2
+      ],
+      [
+        "exit_stack",
+        2
+      ],
+      [
+        "self.execute",
+        2
+      ],
+      [
+        "opt",
+        2
+      ],
+      [
+        "ZipFile",
+        2
+      ],
+      [
+        "dbapi.connect",
+        2
+      ],
+      [
+        "compress_method",
+        1
+      ],
+      [
+        "ThreadPoolExecutor",
+        1
+      ],
+      [
+        "pytest.MonkeyPatch.context",
+        1
+      ],
+      [
+        "c.builder.if_else",
+        1
+      ],
+      [
+        "window",
+        1
+      ],
+      [
+        "clipboard",
+        1
+      ],
+      [
+        "self.buffer",
+        1
+      ],
+      [
+        "stream_reader",
+        1
+      ],
+      [
+        "_get_buffer",
+        1
+      ],
+      [
+        "parser",
+        1
+      ],
+      [
+        "self.con.begin",
+        1
+      ],
+      [
+        "self.con.cursor",
+        1
+      ],
+      [
+        "pandas_converters",
+        1
+      ],
+      [
+        "handles",
+        1
+      ],
+      [
+        "patch_pickle",
+        1
+      ],
+      [
+        "xlrd.open_workbook",
+        1
+      ],
+      [
+        "_OpenpyxlWriter",
+        1
+      ],
+      [
+        "test",
+        1
+      ],
+      [
+        "tempfile.SpooledTemporaryFile",
+        1
+      ],
+      [
+        "ExitStack",
+        1
+      ],
+      [
+        "ThreadPool",
+        1
+      ],
+      [
+        "archive",
+        1
+      ],
+      [
+        "io_class",
+        1
+      ],
+      [
+        "mysql_pymysql_engine.connect",
+        1
+      ]
+    ]
+  }
+}
