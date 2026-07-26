@@ -11,6 +11,8 @@ import sys
 
 import pytest
 
+from declared_corpus import HEAVY_OPT_IN, optional_law_skipif
+
 REPRESENTATIVES = (
     ("numpy", "_core/tests/test_deprecations.py", "ImportAliasValue"),
     (
@@ -52,9 +54,10 @@ def _terminal_testimony(stdout: str) -> dict[str, object] | None:
     return None
 
 
-@pytest.mark.skipif(
+@optional_law_skipif(
     os.environ.get("SUGAR_FATAL_CORPUS_REPLAY") != "1",
-    reason="bounded live-corpus receipt; enable explicitly",
+    HEAVY_OPT_IN,
+    "bounded live-corpus receipt; enable explicitly",
 )
 @pytest.mark.parametrize(("package", "relative", "retired_owner"), REPRESENTATIVES)
 def test_import_alias_named_representative_advances_loudly_or_completes(

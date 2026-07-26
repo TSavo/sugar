@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from declared_corpus import DeclaredCorpusMissing, require_declared_corpus
+
 from sugar_lift_python_source.lifter import lift_source
 
 PACKAGES = ("numpy", "pandas")
@@ -58,10 +60,20 @@ def test_fixture_selection_is_keyed_by_package_versions() -> None:
     assert fixture["counts_by_kind"]["decorator-refused"] == 8971
 
 
-def test_unknown_package_version_skips_with_named_fixture_key() -> None:
-    with pytest.raises(pytest.skip.Exception) as exc_info:
+def test_unknown_package_version_fails_by_name_rather_than_skipping() -> None:
+    """Version drift off the pin is a broken environment, not an absent law.
+
+    ``sugar-build.toml`` pins numpy and pandas, so the pinned versions always
+    have a fixture. Skipping here reported green on every machine that had
+    drifted -- the law simply stopped running, and the suite went smaller
+    rather than red.
+    """
+    with pytest.raises(DeclaredCorpusMissing) as exc_info:
         _load_fixture_for_package_versions({"numpy": "9.9.9", "pandas": "3.0.3"})
 
+    assert not isinstance(exc_info.value, pytest.skip.Exception), (
+        "drift off a pinned vendor version must fail, never skip"
+    )
     assert "numpy=9.9.9,pandas=3.0.3" in str(exc_info.value)
     assert "numpy_pandas_honest_zero_counts__numpy-9.9.9__pandas-3.0.3.json" in str(
         exc_info.value
@@ -206,12 +218,17 @@ def _load_fixture_for_package_versions(
 ) -> dict[str, Any]:
     fixture_path = _fixture_path_for_package_versions(package_versions)
     if not fixture_path.exists():
-        pytest.skip(
-            "no numpy/pandas honest-zero fixture for package_versions "
-            f"{_fixture_key(package_versions)}; expected fixture "
-            f"{fixture_path.name}; vendor version is an explicit corpus input, "
-            "so add a version-keyed fixture instead of comparing against another "
-            "vendor version"
+        require_declared_corpus(
+            f"honest-zero fixture for package_versions "
+            f"{_fixture_key(package_versions)} (expected {fixture_path.name})",
+            FIXTURE_DIR,
+            "sugar-build.toml, which PINS numpy = 2.5.1 and pandas = 3.0.3 -- "
+            "so the pinned versions always have a fixture and any other "
+            "version means the environment drifted off the pin",
+            "install the pinned vendor versions, or add a version-keyed "
+            "fixture for the version you intend to gate on. Vendor version is "
+            "an explicit corpus input, so never compare against another "
+            "vendor version",
         )
     return json.loads(fixture_path.read_text(encoding="utf-8"))
 

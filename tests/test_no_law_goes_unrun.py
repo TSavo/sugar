@@ -1,0 +1,252 @@
+"""A skipped law is an unrun law, and an unrun law reported as green is a lie.
+
+``bpytest`` runs as root on battleaxe. Root bypasses the DAC mode checks that
+uid-sensitive laws are about, so a test guarding on ``os.getuid() == 0`` and
+skipping is unfalsifiable there: it can never fail, no matter how broken the
+code under it becomes. Two permission laws in ``test_heavy_measurement_lease``
+skipped on the box while passing locally, and nobody noticed, because the suite
+did not go red -- it went *smaller*.
+
+That is the same defect class as a collection error that shrinks the
+denominator. The colour is not the instrument; the executed count is.
+
+These are the teeth against that class:
+
+    1. No uid-guarded test may degrade to a skip. Structural, over the whole
+       corpus, so the class cannot regrow one test at a time.
+
+    2. The privilege-drop mechanism must actually deny something HERE. A
+       mechanism that quietly no-ops under root would restore the exact
+       unfalsifiability it was written to remove -- so it is tested by
+       provoking a real EACCES, not by inspection.
+
+    3. No law may be left unrun by an unnamed skip, anywhere in the Python
+       corpus. This is the same predicate one level more general, and it
+       covers the worse case: a missing corpus is a ROUTINE condition, so
+       ``pytest.skip(f"{package}: not installed")`` means those laws are unrun
+       on every machine lacking the package, permanently, with nobody ever
+       seeing a red. Absence of a DECLARED corpus must fail; a genuinely
+       conditional law must skip under a NAMED, COUNTED category.
+"""
+
+from __future__ import annotations
+
+import ast
+import os
+from pathlib import Path
+
+import pytest
+
+from unprivileged_identity import (
+    UnprivilegedIdentityUnavailable,
+    reachable_by_unprivileged,
+    run_unprivileged,
+    unprivileged_identity,
+)
+
+TESTS = Path(__file__).resolve().parent
+ROOT = TESTS.parent
+SELF = Path(__file__).name
+
+# Every Python test tree in the repo, not just this one. The uid pair lived
+# here; the far larger presence-guard population lives under the per-package
+# trees, and a guard that cannot see them is a guard in name only.
+CORPUS_ROOTS = (TESTS, ROOT / "implementations" / "python")
+
+# The single sanctioned home for raw skip machinery. Every legitimate skip
+# routes through its named categories, so a raw pytest.skip anywhere else is a
+# law somebody left unrun without deciding to.
+SANCTIONED_SKIP_MODULE = "declared_corpus.py"
+
+
+def _uid_guarded_skips():
+    """Every test function that both consults the uid and calls ``pytest.skip``."""
+    offenders = []
+    for path in _corpus_files():
+        if path.name == SELF:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            consults_uid = False
+            skips = False
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Attribute) and inner.attr in {
+                    "getuid",
+                    "geteuid",
+                }:
+                    consults_uid = True
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "skip"
+                ):
+                    skips = True
+            if consults_uid and skips:
+                offenders.append(f"{_rel(path)}:{node.lineno}: {node.name}")
+    return offenders
+
+
+def test_no_uid_sensitive_law_degrades_to_a_skip():
+    """A uid guard that skips makes the law unfalsifiable wherever it matters.
+
+    The suite runs as root under ``bpytest``, which is precisely the identity
+    such a guard excludes -- so the law would be skipped in the one environment
+    that is supposed to run it. Run it under a dropped identity instead
+    (``tests/unprivileged_identity.py``); never skip it.
+    """
+    offenders = _uid_guarded_skips()
+    assert not offenders, (
+        f"R={len(offenders)} uid-sensitive laws degrade to a skip and are "
+        "therefore unfalsifiable under the root identity bpytest runs as:\n"
+        + "\n".join(offenders)
+        + "\nreplacement: run the law under a non-root identity with "
+        "unprivileged_identity.run_unprivileged / unprivileged_preexec, or "
+        "fail by name -- a skip reports an unrun law as green"
+    )
+
+
+def test_the_privilege_drop_actually_denies_something_here(tmp_path):
+    """The positive control: without this, the mechanism could silently no-op.
+
+    A privilege drop that failed to take effect would leave every law using it
+    passing vacuously under root -- exactly the unfalsifiability being removed,
+    now hidden one layer deeper. So provoke a real EACCES and require it.
+    """
+    reachable_by_unprivileged(tmp_path)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    target = locked / "denied.txt"
+
+    def write():
+        target.write_text("x")
+        return "wrote"
+
+    with pytest.raises(PermissionError):
+        run_unprivileged(write)
+
+    assert not target.exists(), "the write must not have landed"
+    locked.chmod(0o700)
+
+
+def test_the_dropped_identity_is_not_root():
+    """Whatever identity the law runs under, the kernel must be checking it."""
+    assert run_unprivileged(os.getuid) != 0
+    assert run_unprivileged(os.geteuid) != 0
+
+
+def test_an_unavailable_identity_refuses_by_name_rather_than_skipping():
+    """The refusal is named and is an error, never a silently smaller suite."""
+    assert issubclass(UnprivilegedIdentityUnavailable, Exception)
+    assert not issubclass(UnprivilegedIdentityUnavailable, pytest.skip.Exception), (
+        "an unavailable identity must fail, never register as a skip"
+    )
+
+    identity = unprivileged_identity()
+    if identity is not None:
+        uid, _ = identity
+        assert uid != 0, "a 'dropped' identity of uid 0 would prove nothing"
+
+
+def _corpus_files():
+    """Every Python test-tree file in the repo, deduplicated and ordered."""
+    seen = {}
+    for root in CORPUS_ROOTS:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.py"):
+            if any(part in {".venv", "venv", "build", "__pycache__", "node_modules"}
+                   for part in path.parts):
+                continue
+            if root is not TESTS and "tests" not in path.parts:
+                continue
+            seen[path.resolve()] = path
+    return [seen[key] for key in sorted(seen)]
+
+
+def _rel(path):
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _unnamed_skips():
+    """Every raw skip outside the one module that owns skip machinery.
+
+    A raw ``pytest.skip`` / ``skipif`` is an anonymous absence: the law simply
+    stops running, and no bucket in the report says so. Legitimate conditional
+    laws go through ``optional_law_skip`` / ``optional_law_skipif``, which
+    stamp a named category; declared corpora that are missing raise
+    ``DeclaredCorpusMissing`` and fail.
+    """
+    offenders = []
+    for path in _corpus_files():
+        if path.name in {SELF, SANCTIONED_SKIP_MODULE}:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            # pytest.skip(...) and pytest.mark.skipif(...); bare `skip`
+            # attribute access (pytest.skip.Exception) is not a call.
+            if func.attr == "skip" or func.attr == "skipif":
+                offenders.append(f"{_rel(path)}:{node.lineno}: {func.attr}(...)")
+    return offenders
+
+
+def test_no_law_is_left_unrun_by_an_unnamed_skip():
+    """A missing corpus is routine, so a skip on absence is permanent silence.
+
+    ``pytest.skip(f"{package}: not installed at {path}")`` answers *"is it
+    present"* when the suite is asking *"did this law run"* -- the same shape
+    as ``dpkg-query`` answering "did apt install b3sum" when the build asked
+    "is b3sum usable". numpy and pandas are PINNED in ``sugar-build.toml`` and
+    declared by the ``[test]`` extra that calls itself the sole dependency
+    authority; the stdlib vendors ship with CPython; the showcase targets are
+    directories in this checkout. Every one of those absences is a broken
+    environment, and the honest report is a failure.
+    """
+    offenders = _unnamed_skips()
+    assert not offenders, (
+        f"R={len(offenders)} laws can be left unrun by an unnamed skip:\n"
+        + "\n".join(offenders)
+        + "\nreplacement: if the corpus is DECLARED (pinned vendor, stdlib, "
+        "in-repo path) its absence is a broken environment -- raise "
+        "DeclaredCorpusMissing via require_declared_corpus. If the law is "
+        "genuinely conditional, skip through optional_law_skip / "
+        "optional_law_skipif so the skip carries a named, counted category. "
+        "An anonymous skip reports an unrun law as green on every machine "
+        "that lacks the corpus."
+    )
+
+
+def test_the_sanctioned_skip_module_is_identical_in_every_package():
+    """Two packages, no dependency edge between them, one contract.
+
+    The helper is duplicated by necessity; drift between the copies would let
+    one package sanction a category the other rejects, which is a hole in the
+    guard rather than a cosmetic difference.
+    """
+    copies = sorted(
+        path for path in _corpus_files() if path.name == SANCTIONED_SKIP_MODULE
+    )
+    assert len(copies) >= 2, f"expected the helper in each package, found {copies}"
+    bodies = {path.read_text(encoding="utf-8") for path in copies}
+    assert len(bodies) == 1, (
+        "the sanctioned skip module has drifted between packages:\n"
+        + "\n".join(_rel(path) for path in copies)
+        + "\nreplacement: keep the copies byte-identical; a category "
+        "sanctioned in one package and rejected in the other is a hole"
+    )
