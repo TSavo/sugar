@@ -38,6 +38,8 @@ ToolSearch if deferred. Model is gpt-5.5 xhigh (their default).
 
 **Briefs must be COMPLETE and INLINE** (memory: `$(cat file)` does NOT survive the MCP boundary —
 paste the whole thing). Every brief contains, in order:
+- **Required sentence (every fleet brief, verbatim):**
+  > The objective is to eliminate authenticated residuals, not preserve today’s board. Pins protect completed laws only. A red residual is work or reattribution—never a baseline to ratify.
 - Reality sync: "PR #N merged, #issue closed" — spiky workers lose track; tell them where they are.
 - Exact worktree path + branch + "verify with git rev-parse --show-toplevel".
 - The doctrine (why this is a crime, one paragraph) — orientation they can't be assumed to hold.
@@ -49,6 +51,11 @@ paste the whole thing). Every brief contains, in order:
 - A "Do NOT" list fencing scope (workers wander into adjacent files and other agents' worktrees).
 - The recurring gotchas: "never touch files you did not edit in /Users/tsavo/provekit (it holds
   T's pre-existing dirty state); gh 403 = wait ~10min, retry, don't spin."
+- **Pin law:** re-measurement may prove an owner already drained; it may not replace unresolved
+  semantic work with a pin. Pins protect verified laws (truthful + lying faces already
+  implemented) only. Never pin Categories 3/5/6 (regressed / product gap / instrument defect)
+  as accepted red. Full classification + per-owner drain steps: repo-root `AGENTS.md`
+  ("Re-measurement and pins").
 
 **Worktrees**: one per issue, `git worktree add ~/provekit-wt/<name> origin/main -b codex/<name>`.
 Workers self-PR now (they own commit/push/gh pr create). You merge + delete worktree + redispatch.
