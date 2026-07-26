@@ -1124,6 +1124,37 @@ def main() -> int:
         "desugarDefects": len(desugar_defects),
     }
     result["controlEffectStableZeroTerms"] = stable_zero_terms
+    # A True stableZero sitting beside a red exit is the false green this whole
+    # repair exists to abolish. The term below is the brief's exact conjunction
+    # and is deliberately NOT redefined -- but it is a narrow claim, and axes
+    # outside it (desugar construction panics, desugar defects, per-file
+    # terminals) can be nonzero while it holds. So the run states its own
+    # colour and its reasons in the same breath, and no reader has to know
+    # which axes the conjunction happens to cover.
+    red_reasons: list[str] = []
+    if defects:
+        red_reasons.append(f"{len(defects)} per-file terminal defect rows")
+    if construction_panics:
+        red_reasons.append(f"{len(construction_panics)} construction panics")
+    if desugar_construction_panics:
+        red_reasons.append(
+            f"{len(desugar_construction_panics)} desugar construction panics "
+            "(construction-law None arms -- red, and never semantic R)"
+        )
+    if desugar_defects:
+        red_reasons.append(f"{len(desugar_defects)} desugar defects")
+    if unresolvable_dispatch:
+        red_reasons.append(
+            f"{len(unresolvable_dispatch)} unresolvable dispatch targets (#6329)"
+        )
+    if files_completed != len(file_names):
+        red_reasons.append(
+            f"denominator incomplete: {files_completed}/{len(file_names)} completed"
+        )
+    if not denominator["complete"]:
+        red_reasons.append("denominator contaminated (missing/duplicate/malformed)")
+    result["red"] = bool(red_reasons)
+    result["redReasons"] = red_reasons
     result["controlEffectStableZero"] = (
         stable_zero_terms["completedDenominatorPositive"]
         and stable_zero_terms["denominatorComplete"]
