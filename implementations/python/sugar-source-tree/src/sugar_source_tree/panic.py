@@ -150,6 +150,35 @@ class WithConstructionGapKind(str, Enum):
     DYNAMIC_EXPORT = "dynamic-export"
     STATIC_EXPORT_ABSENT = "static-export-absent"
     UNSUPPORTED_STATEMENT = "unsupported-statement"
+    MALFORMED_IMPORT_BINDING = "malformed-import-binding"
+    ARTIFACT_MODULE_ABSENT = "artifact-module-absent"
+    TARGET_OUTSIDE_BINDING = "target-outside-binding"
+    AMBIGUOUS_STATIC_EXPORT = "ambiguous-static-export"
+    OPAQUE_SOURCE = "opaque-source"
+    REEXPORT_CYCLE = "reexport-cycle"
+    # Source-derived preconstruction kinds.  Each is minted by a typed Literal
+    # (`ManagerConstructionGapV1`, `ManagerProtocolConstructionGapV1`,
+    # `DerivedManagerSummaryGapV1`), so this is a closed structural vocabulary,
+    # not a name table -- the derivation layer used to fuse `kind:detail` into
+    # one string and hand the wire decoder a kind it would have REFUSED.
+    INCOMPLETE_CALL_ACTUALS = "incomplete-call-actuals"
+    ARTIFACT_MISMATCH = "artifact-mismatch"
+    DEFINITION_MISSING = "definition-missing"
+    NON_MANAGER_RESULT = "non-manager-result"
+    CALL_BINDING = "call-binding"
+    FORCE_FLOOR = "force-floor"
+    # The four conditions that `opaque-call-target` fused into one name; see
+    # `manager_construction.py` for what decides each.
+    CALL_GRAPH_CYCLE = "call-graph-cycle"
+    VALUE_CALL_TARGET = "value-call-target"
+    CALL_TARGET_SOURCE_ABSENT = "call-target-source-absent"
+    CALL_TARGET_EXPORT_UNRESOLVED = "call-target-export-unresolved"
+    ENTER_MISSING = "enter-missing"
+    EXIT_MISSING = "exit-missing"
+    METHOD_CONSTRUCTION = "method-construction"
+    ENTER_MAY_HALT = "enter-may-halt"
+    EXIT_MAY_HALT = "exit-may-halt"
+    OPAQUE_EXIT_TRUTHINESS = "opaque-exit-truthiness"
     # Catch-all: never crash the census on a newly minted resolution kind.
     # The original string is preserved on ``ContextManagerResolutionConstructionGap.resolution_kind``.
     UNRECOGNIZED_RESOLUTION_KIND = "unrecognized-resolution-kind"

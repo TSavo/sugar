@@ -692,36 +692,21 @@ def populate_source_derived_resource_refs(
         from .manager_protocol_construction import ConstructedManagerProtocolV1
 
         if not isinstance(behavior, ConstructedManagerBehaviorV1):
-            # Stage-keyed residual: opaque-call-target:sorted, force-floor:… —
-            # never collapse assertion-membrane mass into a single opaque label.
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                _construction_gap_kind(behavior),
-            )
+            # Stage-keyed residual — never collapse assertion-membrane mass into
+            # a single opaque label, and never fuse the stage with its data:
+            # `value-call-target` is the key, the callee names are the row.
+            kind, detail = _gap_kind_and_detail(behavior)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         if not isinstance(protocol, ConstructedManagerProtocolV1):
-            kind = getattr(protocol, "kind", None) or "protocol-construction"
-            detail = getattr(protocol, "detail", None)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                f"{kind}:{detail}" if detail else str(kind),
-            )
+            kind, detail = _gap_kind_and_detail(protocol)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         summary = derive_manager_summary(protocol, behavior=behavior)
         if not isinstance(summary, DerivedManagerSummaryV1):
-            kind = getattr(summary, "kind", None) or "summary-derivation"
-            detail = getattr(summary, "detail", None)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                f"{kind}:{detail}" if detail else str(kind),
-            )
+            kind, detail = _gap_kind_and_detail(summary)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         context.source_derived_contract_refs[coordinate] = (
             SourceDerivedContextManagerRefV1(
@@ -734,19 +719,26 @@ def populate_source_derived_resource_refs(
         )
 
 
-def _construction_gap_kind(gap) -> str:
+def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
+    """Read a producer's ALREADY-SEPARATE kind and detail, unfused.
+
+    Every producer that reaches here declares ``kind`` as a closed ``Literal``
+    with ``detail`` as its own field.  This function used to be
+    ``_construction_gap_kind``, which returned ``f"{kind}:{detail}"`` and
+    truncated the result to 80 chars -- a key that can be truncated is not an
+    identity, and the fused strings it minted are what put a callee spelling at
+    79% of the pinned-pandas resolution board.  The structure was never
+    missing; the reporting layer was throwing it away and rebuilding a worse
+    one from a string.
+    """
     kind = getattr(gap, "kind", None) or "no-derived-contract"
     detail = getattr(gap, "detail", None)
-    if detail is None or detail == "":
-        return str(kind)
-    # Keep kind:detail compact for census keys (first free-name / first panic).
-    text = str(detail)
-    if len(text) > 80:
-        text = text[:77] + "..."
-    return f"{kind}:{text}"
+    return str(kind), (str(detail) if detail else None)
 
 
-def _install_derivation_gap(context, coordinate, receipt, kind: str) -> None:
+def _install_derivation_gap(
+    context, coordinate, receipt, kind: str, detail: str | None = None
+) -> None:
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
     )
@@ -757,4 +749,5 @@ def _install_derivation_gap(context, coordinate, receipt, kind: str) -> None:
         receipt.target_symbol,
         kind,
         (),
+        detail,
     )

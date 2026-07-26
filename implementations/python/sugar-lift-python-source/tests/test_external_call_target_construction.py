@@ -10,8 +10,10 @@ authenticate its callee.  These twins pin the two faces:
   asserted by the ACTUAL receiver state (field names and field values), with
   discrimination arms that perturb the defining source and must fail;
 * callee NOT reachable in the authenticated artifact (native, stdlib outside
-  the artifact, absent module) -> the site stays ``opaque-call-target``.  That
-  is the correct outcome, never a fabricated contract.
+  the artifact, absent module) -> the site stays typed-loud at
+  ``call-target-source-absent``.  That is the correct outcome, never a
+  fabricated contract.  The kind names the CONDITION; the callee spelling
+  rides ``detail`` and is never part of the key.
 
 All fixture source here is neutral and written for this test.  No vendor text,
 no vendor names, no name arms.
@@ -38,6 +40,7 @@ from sugar_lift_python_source.manager_construction import (
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
     ManagerConstructionGapV1,
+    _ExternalCallTargetGap,
     _resolve_external_call_frame,
     construct_manager_behavior,
 )
@@ -127,8 +130,8 @@ _CROSS_MODULE_CLASS_SUPPORT = (
 def test_cross_module_class_call_target_reduces_to_constructed_receiver(tmp_path):
     """POSITIVE: the callee lives in another authenticated module of the artifact.
 
-    On ``main`` this ends at ``opaque-call-target``: ``ScopedSlot`` is not a
-    definition of ``arbitrary.manager`` and not a semantic builtin.
+    Before the export door existed this ended typed-loud: ``ScopedSlot`` is not
+    a definition of ``arbitrary.manager`` and not a semantic builtin.
     """
     result, _ = _construct(
         tmp_path,
@@ -227,7 +230,9 @@ def test_reexport_chain_call_target_reduces(tmp_path):
     # make_guard, so ``arbitrary.ScopedSlot`` is NOT statically exported.
     # This is the honest negative face of the re-export door.
     assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "opaque-call-target"
+    assert result.kind == "call-target-source-absent"
+    # The KEY names the condition and carries no spelling.
+    assert ":" not in result.kind
     assert result.detail == "ScopedSlot"
 
 
@@ -249,7 +254,9 @@ def test_unavailable_callee_stays_typed_loud(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "opaque-call-target"
+    assert result.kind == "call-target-source-absent"
+    # The KEY names the condition and carries no spelling.
+    assert ":" not in result.kind
     assert result.detail == "Path"
 
 
@@ -267,7 +274,9 @@ def test_absent_module_callee_stays_typed_loud(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "opaque-call-target"
+    assert result.kind == "call-target-source-absent"
+    # The KEY names the condition and carries no spelling.
+    assert ":" not in result.kind
     assert result.detail == "ScopedSlot"
 
 
@@ -282,7 +291,9 @@ def test_undefined_free_name_call_stays_typed_loud(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "opaque-call-target"
+    assert result.kind == "call-target-source-absent"
+    # The KEY names the condition and carries no spelling.
+    assert ":" not in result.kind
     assert result.detail == "unbound_helper"
 
 
@@ -336,11 +347,16 @@ def test_external_call_frame_demand_maps_exactly_onto_availability(
         name, resolved=resolved, graph=graph, session=SourceResolutionSession()
     )
 
-    assert (frame is not None) is available
+    declined = isinstance(frame, _ExternalCallTargetGap)
+    assert (not declined) is available
     if available:
         # The frame is the callee's OWN definition, addressed by content.
         assert frame.frame_cid.startswith("blake3-512:")
         assert frame.definition_fragment_cid.startswith("blake3-512:")
+    else:
+        # A decline is not a bare `None`: it names WHICH decline it was, so an
+        # in-artifact symbol the door failed on can never be read as coverage.
+        assert frame.kind == "call-target-source-absent"
 
 
 def test_external_call_frame_is_the_callee_defining_source_not_the_caller(tmp_path):
@@ -382,4 +398,10 @@ def test_mutually_recursive_cross_module_call_stays_typed_loud(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "opaque-call-target"
+    # Recursion is a different condition from an unresolvable callee: the
+    # cycle is reported as itself even though it is reached through the
+    # export door, and it carries NO symbol.
+    assert result.kind == "call-graph-cycle"
+    assert ":" not in result.kind
+    # detail is DATA: which callee's projection cycled.  It is never the key.
+    assert result.detail == "build_slot"

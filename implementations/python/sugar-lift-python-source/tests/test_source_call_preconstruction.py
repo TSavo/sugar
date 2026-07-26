@@ -144,9 +144,14 @@ def test_source_visible_function_with_opaque_child_stays_typed_loud(
     coordinate = _coordinate(call)
     row = context.source_call_resolutions[coordinate]
     assert isinstance(row, SourceCallPreconstructionGapV1)
-    assert row.kind == "opaque-call-target"
+    # INHERITED RED on origin/main (78714a798): `len` is bound in the builtin
+    # temporal, so this fixture no longer has an opaque child and the row is a
+    # constructed ref.  The kind is renamed to the vocabulary that exists; the
+    # fixture is a separate defect and stays loud rather than being trimmed to
+    # fit.
+    assert row.kind == "call-target-source-absent"
     assert coordinate not in context.source_call_frames
-    with pytest.raises(SugarNotWritten, match="opaque-call-target"):
+    with pytest.raises(SugarNotWritten, match="call-target-source-absent"):
         call.sugar().desugar()
 
 

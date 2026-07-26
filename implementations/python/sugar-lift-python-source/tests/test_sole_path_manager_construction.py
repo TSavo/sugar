@@ -15,6 +15,7 @@ from sugar_lift_python_source.dependency_artifact import (
     resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
+    CALL_TARGET_GAP_KINDS as _CALL_TARGET_GAP_KINDS,
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
     ManagerConstructionGapV1,
@@ -152,7 +153,11 @@ def test_renamed_factory_constructs_returned_receiver_state_through_one_door(tmp
 
 
 def test_free_name_call_stays_typed_loud(tmp_path):
-    """A free (non-local, non-builtin) name remains opaque-call-target."""
+    """A free (non-local, non-builtin) name the export door declines.
+
+    The condition is artifact coverage: there is no defining source for this
+    name in the artifact.  That is the KEY; the spelling is the row.
+    """
     graph, resolved, actual, call_site = _resolved(
         tmp_path, "def make_guard(expected):\n    return missing_helper(expected)\n"
     )
@@ -162,16 +167,17 @@ def test_free_name_call_stays_typed_loud(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1)
-    assert result.kind == "opaque-call-target"
+    assert result.kind == "call-target-source-absent"
+    assert ":" not in result.kind
     assert result.detail == "missing_helper"
 
 
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
     """Python builtin names are not free-name opaques at frame resolution.
 
-    ``len`` is in the builtin temporal. Frame scan must not abort as
-    ``opaque-call-target:len``; construction may still refuse later when the
-    builtin is not yet a reducible force_floor (stage-keyed gap).
+    ``len`` is in the builtin temporal. Frame scan must not abort as a
+    call-target gap; construction may still refuse later when the builtin is
+    not yet a reducible force_floor (stage-keyed gap).
     """
     graph, resolved, actual, call_site = _resolved(
         tmp_path, "def make_guard(expected):\n    return len(expected)\n"
@@ -182,7 +188,7 @@ def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
     )
 
     assert isinstance(result, ManagerConstructionGapV1)
-    assert result.kind != "opaque-call-target", result
+    assert result.kind not in _CALL_TARGET_GAP_KINDS, result
     assert result.kind in {"non-manager-result", "force-floor"}, result
 
 
@@ -948,13 +954,22 @@ def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_pa
     # free-name / force-floor chain constructs without vendor arms.
     assert resolution.kind != "derived-contract"
     assert resolution.target_symbol and "raises" in resolution.target_symbol
-    assert (
-        resolution.kind.startswith("opaque-call-target")
-        or resolution.kind.startswith("force-floor")
-        or resolution.kind.startswith("non-manager-result")
-        or resolution.kind.startswith("protocol-construction")
-        or resolution.kind.startswith("summary-derivation")
-        or resolution.kind == "no-derived-contract"
+    # EXACT membership, not `startswith`: the kind is now the whole key, so a
+    # prefix match would pass on a fused `kind:symbol` string too -- which is
+    # precisely the shape this control has to refuse.
+    assert resolution.kind in (
+        _CALL_TARGET_GAP_KINDS
+        | {
+            "force-floor",
+            "non-manager-result",
+            "no-derived-contract",
+            "enter-missing",
+            "exit-missing",
+            "method-construction",
+            "enter-may-halt",
+            "exit-may-halt",
+            "opaque-exit-truthiness",
+        }
     ), resolution.kind
 
 
