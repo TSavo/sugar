@@ -60,6 +60,15 @@ class ListValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def project_sequence_with(self, operation, ctx):
+        """Unpack against the authenticated reduced members already in hand."""
+        return operation.project_tuple(self, ctx)
+
+    @property
+    def items(self) -> tuple:
+        """Member sequence for exact-arity sequence projection."""
+        return self.elements
+
     def contains(self, item, site):
         # A guarded needle is not one needle: distribute into its faces and
         # rejoin under the same guard before this receiver's own law runs.

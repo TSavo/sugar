@@ -17,7 +17,7 @@ Which one happens is decided by the RHS.  That decision is the whole content of
 the operation, and it splits on ONE question: does the reduced value carry
 authenticated finite members?
 
-- It does (a tuple/array literal floor value): the count is lift-time
+- It does (a list/tuple/array literal floor value): the count is lift-time
   decidable.  Matching arity binds each name to the member ALREADY IN HAND --
   never a fabricated element.  A mismatch is a decidable ``ValueError`` whose
   exact exceptional exit has no floor value yet, so it stays a loud

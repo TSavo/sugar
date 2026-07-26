@@ -398,6 +398,53 @@ def test_present_finite_testimony_binds_and_a_wrong_count_stays_loud() -> None:
 
 
 # ==========================================================================
+# Category: constructed list binding -- authenticated members survive a Name
+# ==========================================================================
+
+
+def test_constructed_list_binding_projects_its_authenticated_members() -> None:
+    """TRUTHFUL. A guarded list face is still the finite list constructed."""
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    members = (TermValue(4), TermValue(5))
+    answer = _operation("left", "right").submit(ListValue(members), None)
+    assert isinstance(answer, Complete)
+    assert isinstance(answer.value, ScopeRebinds)
+    assert answer.value.bindings == (("left", members[0]), ("right", members[1]))
+
+    seen, out = _receivers(
+        "def unpack_guarded_list(choose, fallback):\n"
+        " pair = [4, 5] if choose else fallback\n"
+        " left, right = pair\n"
+        " selected = left\n"
+        " return selected\n"
+    )
+    assert seen == ["GuardedValue"], seen
+    assert isinstance(out, ExitSet)
+    assert len(out.exits) == 2
+    assert sum(
+        isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+        for exit_ in out.exits
+        if isinstance(exit_, Halted)
+    ) == 1
+
+
+def test_constructed_list_binding_does_not_lie_about_its_arity() -> None:
+    """LYING. Three authenticated members cannot satisfy two targets."""
+    seen, out = _receivers(
+        "def unpack_guarded_list(choose, fallback):\n"
+        " values = [4, 5, 6] if choose else fallback\n"
+        " left, right = values\n"
+        " selected = left\n"
+        " return selected\n"
+    )
+    assert seen == ["GuardedValue"], seen
+    assert isinstance(out, ConstructionPanic)
+    assert "too many values" in str(out)
+
+
+# ==========================================================================
 # Category: conditional value -- the unpack distributes into both faces
 # ==========================================================================
 
