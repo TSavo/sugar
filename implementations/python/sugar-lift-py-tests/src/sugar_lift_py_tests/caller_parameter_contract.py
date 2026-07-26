@@ -95,13 +95,33 @@ class ContractConditionalConstructionV1:
         return cls(source_node, candidate, candidate_cid, demand, value)
 
     def and_then(self, step):
+        """Continue with the carried value; the demand rides on the result.
+
+        A following ``Complete`` takes the demand back and the entry rides on
+        into the block record, where ``link_unit_projection`` enrols it and the
+        linker discharges it.
+
+        Anything else has nowhere to carry it, and this used to ``return
+        following`` -- silently dropping the obligation. A dropped demand is
+        never enrolled and never discharged, so `p[0]` would stand with no
+        `python:indexable(p)` owed by anyone. That is not a smaller answer, it is
+        a wrong one, and it is loud now. Measured on 25 pandas modules / 158
+        functions: 4 such drops before this branch existed, and threading the
+        collection/f-string/bool-op reducers through ``and_then`` exposed 20
+        more that had previously been lost inside an `.value` read instead.
+        """
         from sugar_lift_py_tests.outcome import Complete
 
         following = step(self.value)
-        return (
-            replace(self, value=following.value)
-            if isinstance(following, Complete)
-            else following
+        if isinstance(following, Complete):
+            return replace(self, value=following.value)
+        from sugar_lift_py_tests.floor.single_outcome_law import rewrap_pending
+
+        return rewrap_pending(
+            self,
+            following,
+            owner="ContractConditionalConstructionV1.and_then",
+            blame=self.source_node,
         )
 
     def demanded_under(self, formula):

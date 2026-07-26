@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import dataclass
 
 import pytest
 
@@ -31,6 +32,7 @@ from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.tree import SourceFile
 
 
@@ -42,6 +44,22 @@ def _out(source: str):
 
 
 def _statements(out):
+    """Every body statement the lift produced, across whatever shape it produced.
+
+    A function whose body partitions reduces to an ExitSet of universes rather
+    than to one `Complete`; both are lawful, and a twin about "does this lift"
+    must not be blind to the partitioned shape.
+    """
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    if isinstance(out, ExitSet):
+        rows = []
+        for exit_ in out.exits:
+            if isinstance(exit_, Completed):
+                assert isinstance(exit_.value, UniverseValue)
+                rows.extend(exit_.value.record.statements)
+        assert rows
+        return tuple(rows)
     assert isinstance(out, Complete)
     assert isinstance(out.value, UniverseValue)
     return out.value.record.statements
@@ -53,6 +71,26 @@ def _pending(out):
         for row in _statements(out)
         if isinstance(row, ContractConditionalConstructionV1)
     )
+
+
+@dataclass(frozen=True)
+class _Site:
+    """A minimal site: the effect vocabulary asks a locus for filename/line/col."""
+
+    filename: str = "twin.py"
+    line: int = 1
+    col: int = 0
+
+
+class _BoundState(Sugar):
+    """A stand-in for a bound face: `delete_binding` treats any Sugar as bound."""
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):  # pragma: no cover - never reduced by delete
+        raise AssertionError("delete_binding must not reduce a bound face")
 
 
 def _demand_shape(entry):
@@ -345,3 +383,116 @@ def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
 
     with pytest.raises(NotImplementedError, match="TermValue"):
         predicate_formula(_Walrus(), site="twin")
+
+
+# --------------------------------------------------------------------------
+# Family: TypeError: LoopGuardedProjection
+# --------------------------------------------------------------------------
+
+
+def test_delete_over_a_loop_guarded_projection_unions_its_faces() -> None:
+    """POSITIVE. `del` over a loop-guarded projection had no arm at all, so it
+    raised `TypeError: LoopGuardedProjection` -- while `read` over the SAME
+    projection had had one all along. It now deletes ON EACH completed face,
+    under that face's own guard, exactly as the read verb reads them."""
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.binding_projection import (
+        LoopGuardedCompletedFace,
+        LoopGuardedProjection,
+        UnboundProjection,
+    )
+    from sugar_lift_py_tests.sugar.delete_name_sugar import delete_binding
+
+    entered = atomic("entered", [])
+    empty = atomic("empty", [])
+    projection = LoopGuardedProjection(
+        (
+            # The loop ran: `y` is bound, so deleting it completes.
+            LoopGuardedCompletedFace("normal", entered, _BoundState()),
+            # The loop never ran: `y` was never bound, so deleting it halts.
+            LoopGuardedCompletedFace(
+                "normal", empty, UnboundProjection("y", _Site())
+            ),
+        )
+    )
+    exits = delete_binding(projection, name="y", site=_Site(), ctx=None)
+    completed = [e for e in exits.exits if isinstance(e, Completed)]
+    halted = [e for e in exits.exits if isinstance(e, Halted)]
+    assert len(completed) == 1
+    assert len(halted) == 1
+    # Each face keeps its OWN guard -- the union must not flatten them together.
+    assert completed[0].guard == entered
+    assert halted[0].guard == empty
+
+
+def test_read_and_delete_answer_the_same_projection_union() -> None:
+    """DISCRIMINATING. Both verbs over `BindingProjection` must cover the same
+    four constructors, and an uncovered one must be NAMED, not a bare TypeError.
+    """
+    import inspect
+
+    from sugar_lift_py_tests.sugar import delete_name_sugar, guarded_binding_read_sugar
+
+    constructors = (
+        "Sugar",
+        "UnboundProjection",
+        "GuardedProjection",
+        "LoopGuardedProjection",
+    )
+    for module, verb in (
+        (guarded_binding_read_sugar, "read_binding"),
+        (delete_name_sugar, "delete_binding"),
+    ):
+        source = inspect.getsource(getattr(module, verb))
+        missing = [name for name in constructors if name not in source]
+        assert missing == [], f"{verb} has no arm for {missing}"
+        assert "raise TypeError(" not in source, verb
+
+
+def test_unhandled_projection_names_the_union_and_the_verb() -> None:
+    """POSITIVE. The replacement for the bare TypeError states the closed union
+    it is answering for and which verb is missing an arm."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.sugar.delete_name_sugar import _unhandled_projection
+
+    with pytest.raises(ConstructionPanic) as raised:
+        _unhandled_projection(object(), verb="delete", name="y", site=_Site())
+    message = str(raised.value)
+    assert "BindingProjection" in message
+    assert "LoopGuardedProjection" in message
+    assert "delete" in message
+
+
+# --------------------------------------------------------------------------
+# Family: BindingStateWireGap
+# --------------------------------------------------------------------------
+
+
+def test_loop_outward_face_returning_a_partition_lifts() -> None:
+    """POSITIVE. A loop's outward face whose `return` expression PARTITIONS used
+    to raise `BindingStateWireGap: loop outward face did not construct return or
+    raise testimony`. It was never a missing wire -- the face contributes its
+    partition under its own guard."""
+    out = _out(
+        "def f(xs, d, k, v):\n"
+        " for x in xs:\n"
+        "  if x:\n"
+        "   return d.setdefault(k, v)\n"
+        " return 0\n"
+    )
+    assert _statements(out)
+
+
+def test_loop_outward_face_with_a_plain_return_stays_one_completed_face() -> None:
+    """DISCRIMINATING. The simple face must NOT be routed through the partition
+    path: a plain `return` is still one completed exit carrying one return."""
+    from sugar_lift_py_tests.floor import ReturnValue
+
+    out = _out("def f(xs):\n for x in xs:\n  if x:\n   return 1\n return 0\n")
+    returns = [
+        row
+        for row in _statements(out)
+        if isinstance(row, ReturnValue) or isinstance(getattr(row, "value", None), ReturnValue)
+    ]
+    assert len(returns) >= 1
