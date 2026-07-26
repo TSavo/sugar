@@ -33,7 +33,7 @@ ENTRYPOINT ["/usr/local/bin/sugar-managed-entrypoint"]
 # are installed exactly; Sugar's Python packages execute from /workspace/sugar.
 FROM core AS python-test
 ARG PYTEST_VERSION=9.1.1
-ENV PYTHONPATH=/workspace/sugar/implementations/python/libsugar-py/src:/workspace/sugar/implementations/python/sugar-build-witness/src:/workspace/sugar/implementations/python/sugar-emit-python-hypothesis/src:/workspace/sugar/implementations/python/sugar-emit-python-pytest/src:/workspace/sugar/implementations/python/sugar-emit-python-unittest/src:/workspace/sugar/implementations/python/sugar-lift-py-pytest-witness/src:/workspace/sugar/implementations/python/sugar-lift-py-tests/src:/workspace/sugar/implementations/python/sugar-lift-python-source/src
+ENV PYTHONPATH=/workspace/sugar/implementations/python/libsugar-py:/workspace/sugar/implementations/python/sugar-build-witness/src:/workspace/sugar/implementations/python/sugar-emit-python-hypothesis/src:/workspace/sugar/implementations/python/sugar-emit-python-pytest/src:/workspace/sugar/implementations/python/sugar-emit-python-unittest/src:/workspace/sugar/implementations/python/sugar-lift-py-pytest-witness/src:/workspace/sugar/implementations/python/sugar-lift-py-tests/src:/workspace/sugar/implementations/python/sugar-lift-python-source/src:/workspace/sugar/implementations/python/sugar-source-tree/src
 RUN python -m pip install --no-cache-dir \
       pytest=="${PYTEST_VERSION}" \
       blake3==1.0.9 cbor2==6.1.3 cffi==2.1.0 hypothesis==6.156.6 \
