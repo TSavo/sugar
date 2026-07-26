@@ -251,6 +251,7 @@ class ExitSet(Generic[T]):
         expression.
         """
         from sugar_lift_py_tests.outcome.exit_disposition import (
+            RetainedObligation,
             exit_disposition_effect,
         )
 
@@ -267,11 +268,29 @@ class ExitSet(Generic[T]):
                     if isinstance(incoming, Completed)
                     else incoming.state
                 )
-                effect = exit_disposition_effect(disposition, incoming)
-                if effect is None:
+                verdict = exit_disposition_effect(disposition, incoming)
+                if isinstance(verdict, RetainedObligation):
+                    # An undecidable contract predicate is not a verdict. The
+                    # incoming exit leaves as BOTH faces under complementary
+                    # guards, so the predicate reaches the emitted FOL instead
+                    # of being admitted or dropped by silence here.
+                    obligation = verdict.obligation
+                    for sub_guard, sub_verdict in (
+                        (_and_guards(guard, obligation), verdict.held),
+                        (
+                            _and_guards(guard, complement_guard(obligation)),
+                            verdict.failed,
+                        ),
+                    ):
+                        if sub_verdict is None:
+                            exits.append(Completed(sub_guard, carried))
+                        else:
+                            exits.append(Halted(sub_guard, sub_verdict, carried))
+                    continue
+                if verdict is None:
                     exits.append(Completed(guard, carried))
                 else:
-                    exits.append(Halted(guard, effect, carried))
+                    exits.append(Halted(guard, verdict, carried))
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
