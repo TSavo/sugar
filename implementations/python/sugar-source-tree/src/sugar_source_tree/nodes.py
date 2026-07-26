@@ -161,6 +161,8 @@ class SourceUnit:
     # Memo for exception_type_identity: full-module walk was ~12ms/call on
     # asserters and dominated Raise exclusive heat under Body.If.
     _exception_type_identity_cache: dict = field(init=False, default_factory=dict)
+    # Memo for the module's per-occurrence import-binding map (one lexical pass).
+    _import_bound_name_targets: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -182,6 +184,27 @@ class SourceUnit:
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
         object.__setattr__(self, "_exception_type_identity_cache", {})
+        object.__setattr__(self, "_import_bound_name_targets", None)
+
+    def import_bound_name_target(
+        self, span: Tuple[int, int, int, int]
+    ) -> Optional[str]:
+        """The import target coordinate bound to the name USE at ``span``.
+
+        ``None`` when this module has no typed root yet or the name at that
+        occurrence is not uniquely import-bound -- a non-import name keeps its
+        ordinary construction, and stays as loud as it was.
+        """
+        targets = self._import_bound_name_targets
+        if targets is None:
+            module = self.typed_module
+            if module is None:
+                return None
+            from sugar_lift_py_tests.import_binding import import_bound_name_targets
+
+            targets = import_bound_name_targets(module, self.source_cid)
+            object.__setattr__(self, "_import_bound_name_targets", targets)
+        return targets.get(span)
 
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
@@ -7031,6 +7054,21 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
             )
         if isinstance(self.func, Attribute):
+            closed_symbol = self._import_bound_callee_symbol()
+            if closed_symbol is not None:
+                from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+                # The head is lexically bound to an import: the callee is a
+                # CLOSED coordinate (`numpy.rot90`), so the call-site absorbs
+                # the whole dotted spelling exactly as it does for a Name
+                # callee. No receiver constructs, so no module alias is minted
+                # as a universe Var it was never declared as.
+                return CallSiteSugar(
+                    target_name=closed_symbol,
+                    args=tuple(a.sugar() for a in self.args),
+                    site=self.fragment,
+                    keywords=keyword_sugars,
+                )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
             return MethodCallSugar(
@@ -7066,6 +7104,39 @@ class Call(Expression):
             keywords=keyword_sugars,
             source_call_frame=source_call_frame,
         )
+
+    def _import_bound_callee_symbol(self) -> Optional[str]:
+        """The closed target coordinate of a dotted callee whose head is imported.
+
+        ``np.rot90`` under ``import numpy as np`` is not a method on a value:
+        the head is a lexical import binding, so the callee names the closed
+        coordinate ``numpy.rot90``. The binding comes from the one lexical
+        import pass (reaching definitions), never from the spelling: a head
+        that is not uniquely import-bound -- a parameter, a local, a shadowed
+        or ambiguous name -- returns ``None`` and constructs as before.
+        """
+        link = self.func
+        attributes: list[str] = []
+        while isinstance(link, Attribute):
+            attributes.append(link.attr)
+            link = link.value
+        if not isinstance(link, Name):
+            return None
+        span = link.line_col_span()
+        target = self.unit.import_bound_name_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            return None
+        # The spelling is absorbed into the call-site coordinate, so every node
+        # of the callee chain answers the roll call as present-inert.
+        link.discharge_by_substitution()
+        chain = self.func
+        while isinstance(chain, Attribute):
+            chain.discharge_by_substitution()
+            chain = chain.value
+        module = target[len("python:") :] if target.startswith("python:") else target
+        return ".".join([module, *reversed(attributes)])
 
     @staticmethod
     def _spread_callee_name(callee: Expression) -> Optional[str]:
