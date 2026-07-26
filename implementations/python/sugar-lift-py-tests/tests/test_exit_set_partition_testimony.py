@@ -180,6 +180,45 @@ def test_disjoining_merge_keeps_only_testimony_both_arms_carried():
     assert merged.exits[0].faces == frozenset()
 
 
+def test_a_merge_whose_arms_agree_KEEPS_the_face_they_share():
+    """The other half of the intersection law, and it was unpinned.
+
+    The rule is `prior.faces & exit_.faces` -- keep exactly what BOTH
+    contributors carried. The twin above pins only the case where they carry
+    DIFFERENT faces, where the intersection is empty. That case is also what
+    "clear the stamps when merging" describes, and the two readings are not the
+    same rule: `frozenset()` and `&` agree on disagreeing arms and disagree
+    here. A merge of two arms that lie on the SAME side of one split is still
+    entirely on that side, and the testimony survives.
+
+    THIS IS THE STEP `merged_arm` RESTS ON. `FactoringGapClassification`
+    declares an `UNSTAMPED` gap with `merged_arm=True` to be correct output
+    rather than remaining work, on the reasoning that a face minted by wiring
+    the producer "would be minted and then intersected away". That is true
+    exactly when the merge's contributors would receive DIFFERENT faces. This
+    arm exhibits the shape where it is false -- same face, face survives -- so
+    the reasoning is a prediction about which shape a given site has, not a
+    theorem about merges. Losing this half would make the prediction look
+    unconditional, which is why it needs its own red.
+    """
+    condition = _pred("c")
+    one_side, _other_side = partition(("merge-owner", condition))
+
+    merged = ExitSet(
+        (
+            Completed(condition, "same", frozenset({one_side})),
+            Completed(_pred("q"), "same", frozenset({one_side})),
+        )
+    ).normalize()
+
+    assert len(merged.exits) == 1
+    assert merged.exits[0].faces == frozenset({one_side}), (
+        "a merge of two arms on the SAME side of one split dropped the face "
+        "they both carried: the rule is intersection, not clearing"
+    )
+    assert getattr(merged.exits[0].guard, "kind", None) == "or"
+
+
 def test_conjoining_composition_accumulates_both_arms_testimony():
     """``sequence`` conjoins guards, so the result carries both face sets."""
     condition = _pred("c")
