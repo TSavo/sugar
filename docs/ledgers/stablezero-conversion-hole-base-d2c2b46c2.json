@@ -1,0 +1,191 @@
+{
+ "schema": "stableZero-classify-isolated-v1",
+ "n_functions": 223,
+ "statuses": {
+  "ExitSetFactoringGap": 1,
+  "clean": 221,
+  "raised:TypeError": 1
+ },
+ "R(timeout)": 0,
+ "R(construction_panics)": 0,
+ "R(factoring_gaps)": 1,
+ "R(unnamed_exceptions)": 1,
+ "completed_denominator": 223,
+ "stableZero": false,
+ "desugar_s": 28.49,
+ "wall_s": 30.72,
+ "residuals": [
+  {
+   "name": null,
+   "line": 9596,
+   "status": "raised:TypeError",
+   "testimony": {
+    "type": "TypeError",
+    "message": "<class 'sugar_lift_py_tests.caller_parameter_contract.ContractConditionalConstructionV1'>",
+    "frames": [
+     {
+      "module": "__main__",
+      "qualname": "classify",
+      "line": 149
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "FunctionUniverseSugar.desugar",
+      "line": 369
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "reduce_body",
+      "line": 303
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "reduce_block_to_exitset",
+      "line": 275
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "ExitSet.sequence",
+      "line": 522
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "reduce_block_to_exitset.<locals>.reduce_next",
+      "line": 84
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.store_effect_sugar",
+      "qualname": "AttributeStoreEffectSugar.desugar",
+      "line": 48
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.subscript_sugar",
+      "qualname": "SubscriptSugar.desugar",
+      "line": 43
+     },
+     {
+      "module": "sugar_lift_py_tests.caller_parameter_contract",
+      "qualname": "ContractConditionalConstructionV1.and_then",
+      "line": 159
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.subscript_sugar",
+      "qualname": "SubscriptSugar.desugar.<locals>.<lambda>",
+      "line": 44
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.spread_sugar",
+      "qualname": "SpreadCollectionSugar.desugar",
+      "line": 119
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.spread_sugar",
+      "qualname": "_collect",
+      "line": 55
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "outcome_to_exitset",
+      "line": 809
+     }
+    ],
+    "innermost": {
+     "module": "sugar_lift_py_tests.outcome.exit_set",
+     "qualname": "outcome_to_exitset",
+     "line": 809
+    }
+   },
+   "seconds": 1.0831
+  },
+  {
+   "name": null,
+   "line": 13403,
+   "status": "ExitSetFactoringGap",
+   "testimony": {
+    "type": "ExitSetFactoringGap",
+    "message": "ExitSet.factor_completed cannot factor a completed face whose arms are not provably exclusive.\n  owner: SymbolicValue / StringValue\n  arm A guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@452978:452991#blake3-512:15c08a92396272478368aacc6b07062184878af8b7a7ca44f7fdc01b18be2808b829459c7a2af4d263ff3f47dd56bab8b5bf39cdb7fa2e0a37fa9553df5a6fe4', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453164:453177#blake3-512:ee1e5449e9b67547eaa7f057ba344cc3ee70d768fe60fd5fb4a6258433e44ae104cfafb59b3a03b54d5ce06ecc7f387b98bd1def38811c0724a7ac005c714cdc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453349:453362#blake3-512:89589fdefb21b9fb2ef3dcdeb3580567d3095c97a8b8d5b8a7757d171f5206d343b354fd1ed14f39a687f8f0acd7a414228b5e7009d7dd894bb08c1264a93f3b', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453349:453362#blake3-512:89589fdefb21b9fb2ef3dcdeb3580567d3095c97a8b8d5b8a7757d171f5206d343b354fd1ed14f39a687f8f0acd7a414228b5e7009d7dd894bb08c1264a93f3b', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453763:453776#blake3-512:02e2955c13ebf03401cf071243d5d18a2323ab5a42762d4e81c5925f83d122bdcc5dfdaca406ea320fe09377b2e881bffed96152bced7f04dd15707c14f733c1', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453763:453776#blake3-512:02e2955c13ebf03401cf071243d5d18a2323ab5a42762d4e81c5925f83d122bdcc5dfdaca406ea320fe09377b2e881bffed96152bced7f04dd15707c14f733c1', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454178:454191#blake3-512:ecc631ede9b445725d739dab6ace711bbb802c71a6a167bd0e846a5fc461ec2970a7321f7566f3447cd404aae4b146cee4b2ccfea72367bf681fecf8f4302abf', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454178:454191#blake3-512:ecc631ede9b445725d739dab6ace711bbb802c71a6a167bd0e846a5fc461ec2970a7321f7566f3447cd404aae4b146cee4b2ccfea72367bf681fecf8f4302abf', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454517:454531#blake3-512:6bb1713d5365d94ee24c59444a40ea4632641fe549932329ac1aa06f55fbef0e10a7ea2f126ce3b03be7cc08ef8681c7b57aa181649b30ff3959fe7394b7807c', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454517:454531#blake3-512:6bb1713d5365d94ee24c59444a40ea4632641fe549932329ac1aa06f55fbef0e10a7ea2f126ce3b03be7cc08ef8681c7b57aa181649b30ff3959fe7394b7807c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454772:454788#blake3-512:d2c03d320a5865c1c2ddcc960258ff4f2200705ebac131492711e4acf5a3389e1ddd6d28e91ecdb74ad52f64da2fdd9733c16ccb069cfa45d74397808016420a', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454772:454788#blake3-512:d2c03d320a5865c1c2ddcc960258ff4f2200705ebac131492711e4acf5a3389e1ddd6d28e91ecdb74ad52f64da2fdd9733c16ccb069cfa45d74397808016420a', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@455897:455911#blake3-512:822d2c6f3671cb31e6387c45e032843ea956216c0e2e5b32ece4caa2d6454778e08cd68a9bd1beb14164af41d040e2cfab89da685b3d2d4a1b746ccb0e33ef4f', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))))\n  arm B guard: _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@452978:452991#blake3-512:15c08a92396272478368aacc6b07062184878af8b7a7ca44f7fdc01b18be2808b829459c7a2af4d263ff3f47dd56bab8b5bf39cdb7fa2e0a37fa9553df5a6fe4', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453164:453177#blake3-512:ee1e5449e9b67547eaa7f057ba344cc3ee70d768fe60fd5fb4a6258433e44ae104cfafb59b3a03b54d5ce06ecc7f387b98bd1def38811c0724a7ac005c714cdc', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453349:453362#blake3-512:89589fdefb21b9fb2ef3dcdeb3580567d3095c97a8b8d5b8a7757d171f5206d343b354fd1ed14f39a687f8f0acd7a414228b5e7009d7dd894bb08c1264a93f3b', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@453763:453776#blake3-512:02e2955c13ebf03401cf071243d5d18a2323ab5a42762d4e81c5925f83d122bdcc5dfdaca406ea320fe09377b2e881bffed96152bced7f04dd15707c14f733c1', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454178:454191#blake3-512:ecc631ede9b445725d739dab6ace711bbb802c71a6a167bd0e846a5fc461ec2970a7321f7566f3447cd404aae4b146cee4b2ccfea72367bf681fecf8f4302abf', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454517:454531#blake3-512:6bb1713d5365d94ee24c59444a40ea4632641fe549932329ac1aa06f55fbef0e10a7ea2f126ce3b03be7cc08ef8681c7b57aa181649b30ff3959fe7394b7807c', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@454772:454788#blake3-512:d2c03d320a5865c1c2ddcc960258ff4f2200705ebac131492711e4acf5a3389e1ddd6d28e91ecdb74ad52f64da2fdd9733c16ccb069cfa45d74397808016420a', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@455897:455911#blake3-512:822d2c6f3671cb31e6387c45e032843ea956216c0e2e5b32ece4caa2d6454778e08cd68a9bd1beb14164af41d040e2cfab89da685b3d2d4a1b746ccb0e33ef4f', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457010:457023#blake3-512:cafa81e9fba102958dcc1b4389241cfa443f07d40c23d8a090305dad9002516d74ed1f18aa9c7e343e198a2080f4190d783b0579910dd7da072c39bddc3819b4', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457010:457023#blake3-512:cafa81e9fba102958dcc1b4389241cfa443f07d40c23d8a090305dad9002516d74ed1f18aa9c7e343e198a2080f4190d783b0579910dd7da072c39bddc3819b4', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457334:457347#blake3-512:5b32feb0e3630b4d6204e6ffed269ece2581008fc37b12a4390aac94e85fd9155d8260315e9c190bdaec8715100bbd286c890864894ec58c02be3189cc993ce9', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@457745:457758#blake3-512:5b603297f0e13ffd4e7ffcde2d896f06b13295b32a24239867e9dfc07c587eb8705d174e6c8a82e7f95b7ae09a26c8f04b5ee0b04699125c00bb3de765c0d4b8', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@459055:459069#blake3-512:edf862325999580225168d4ddba09e14894a34b33abbf14bd2b933186427c005f08a5bfd936619145fe81b45f7ca8396f6fe25e33aeb6ff91e251e8689411923', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@460354:460368#blake3-512:608f628eb0555f6785e347252bff993df50d450134c770f9c59bc0c823edaf2a080fb4d74a138f1c3fd161e00b4d11124a036106c6171933448b0ac9c14f3046', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@460354:460368#blake3-512:608f628eb0555f6785e347252bff993df50d450134c770f9c59bc0c823edaf2a080fb4d74a138f1c3fd161e00b4d11124a036106c6171933448b0ac9c14f3046', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@461810:461826#blake3-512:93d871970210cd1b3d66926e7e25a346b2aee85d74e0169ca80d4b3bfaebbcf795bdbef2358328fd504dc9ad30bf7817f972f70aa23a345b0656366b07274a0d', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@461810:461826#blake3-512:93d871970210cd1b3d66926e7e25a346b2aee85d74e0169ca80d4b3bfaebbcf795bdbef2358328fd504dc9ad30bf7817f972f70aa23a345b0656366b07274a0d', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462074:462091#blake3-512:e398a86a861cfdc24a60c28decee6c7d7751b2bcebd2e8a8946cc69a3c86e2676739bb9e60432ee9a65ab185155d2dfabc587bc567489e3f78280928c483efee', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462074:462091#blake3-512:e398a86a861cfdc24a60c28decee6c7d7751b2bcebd2e8a8946cc69a3c86e2676739bb9e60432ee9a65ab185155d2dfabc587bc567489e3f78280928c483efee', sort=PrimitiveSort(name='String')),)),)),)), _Connective(kind='or', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462345:462361#blake3-512:7f427345347e85acb960d2200eb2db0b04f04c0267b1822f9c3dd4ba2222709e160f51da07ef55091ddab8a50dbd5b88ed9aa4d1ce65e93542b469158e702a41', sort=PrimitiveSort(name='String')),)),)), _Connective(kind='and', operands=(_Connective(kind='not', operands=(_Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462345:462361#blake3-512:7f427345347e85acb960d2200eb2db0b04f04c0267b1822f9c3dd4ba2222709e160f51da07ef55091ddab8a50dbd5b88ed9aa4d1ce65e93542b469158e702a41', sort=PrimitiveSort(name='String')),)),)),)), _Atomic(name='py.truthy', args=(_Ctor(name='python:branch_result', args=(_ConstStr(value='branch-result:blake3-512:eefd68e431e302d2bb6af4dda17ea2b18cef12eff0495e1d9fa4c01d17f1f05251b70577693883b92223bc2a49b899e5af5297ccccc1c99003798c1ed5e9a4ce@462613:462629#blake3-512:a3ae6b2e60ba425f091734cb9f68162e83e9128e362fcbb869c63999032a930a92737fde7da749e002fde8637cabe58ea6094b9fb5b2203b440171adc2e59c49', sort=PrimitiveSort(name='String')),)),))))))))))))))))))))))))))))))))))))))))))))\n  why this is a gap: a GuardedValue chain selects ONE face, so it can only carry a partition. Overlapping arms with different values are two simultaneously reachable outcomes, and collapsing them would drop one.\n  fix: if the producing sugar OWNS a two-way split here, mint it with outcome.exit_set.partition(owner) and pass each face to .guarded(guard, face) \u2014 carried testimony survives merges and rewrites that guard shape does not. If it owns no split, these arms really are simultaneously reachable and this gap is correct: keep both at the exit level. Do NOT re-materialize the product (the m ** k blow-up #6309 removed), and do NOT widen _are_exclusive to guess exclusivity from how the formulas are spelled.\n  arm A faces: []\n  arm B faces: []",
+    "frames": [
+     {
+      "module": "__main__",
+      "qualname": "classify",
+      "line": 149
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "FunctionUniverseSugar.desugar",
+      "line": 369
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "reduce_body",
+      "line": 303
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "reduce_block_to_exitset",
+      "line": 275
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "ExitSet.sequence",
+      "line": 522
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.function_universe_sugar",
+      "qualname": "reduce_block_to_exitset.<locals>.reduce_next",
+      "line": 84
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.return_sugar",
+      "qualname": "ReturnSugar.desugar",
+      "line": 39
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.spread_sugar",
+      "qualname": "SpreadCallSugar.desugar",
+      "line": 197
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "ExitSet.and_then",
+      "line": 535
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "ExitSet.sequence",
+      "line": 522
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "ExitSet.and_then.<locals>.<lambda>",
+      "line": 535
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.spread_sugar",
+      "qualname": "SpreadCallSugar.desugar.<locals>.after_callee",
+      "line": 188
+     },
+     {
+      "module": "sugar_lift_py_tests.sugar.spread_sugar",
+      "qualname": "_collect",
+      "line": 55
+     },
+     {
+      "module": "sugar_lift_py_tests.outcome.exit_set",
+      "qualname": "ExitSet.factor_completed",
+      "line": 367
+     }
+    ],
+    "innermost": {
+     "module": "sugar_lift_py_tests.outcome.exit_set",
+     "qualname": "ExitSet.factor_completed",
+     "line": 367
+    }
+   },
+   "seconds": 0.7594
+  }
+ ],
+ "file": "/usr/local/lib/python3.14/site-packages/pandas/core/generic.py",
+ "label": "main-d2c2b46c2",
+ "deadline_seconds": 120.0
+}
