@@ -409,6 +409,10 @@ def _evict_term_content_cid(term: "Term") -> bool:
 
 def _remember_term_content_cid(term: "Term", cid: str) -> None:
     tid = id(term)
+    live = _TERM_CONTENT_CID.get(tid)
+    if live is not None and live[0]() is term:
+        # Already memoized for this exact object; do not mint a second weakref.
+        return
 
     def _on_die(wr: weakref.ReferenceType, *, _tid: int = tid) -> None:
         cur = _TERM_CONTENT_CID.get(_tid)
@@ -436,6 +440,22 @@ def _term_content_cid(term: "Term") -> str:
     Eviction (explicit or GC) must never change the coordinate; recompute is
     deterministic.
     """
+    # Identity-guarded memo on the *caller's* object, consulted BEFORE intern.
+    # ``_intern_term`` is a full heap walk of the spine; under a live scope the
+    # old order paid that walk on every lookup, so repeated identity questions
+    # about ONE term object scaled with the term's size instead of being O(1)
+    # (35.3M ``_term_content_cid`` calls on pandas/core/generic.py). The CID is
+    # a pure function of immutable content, so memoizing the pre-intern object
+    # is the same coordinate; the weakref ``is``-guard rejects a recycled id.
+    incoming = term
+    entry = _TERM_CONTENT_CID.get(id(incoming))
+    if entry is not None:
+        wr, cached = entry
+        if wr() is incoming:
+            return cached
+        if wr() is None:
+            _TERM_CONTENT_CID.pop(id(incoming), None)
+
     tables = _TERM_INTERN_TABLE.get()
     if tables is not None:
         _by_key, by_id, cid_by_id = tables
@@ -443,17 +463,9 @@ def _term_content_cid(term: "Term") -> str:
         tid = id(term)
         cached = cid_by_id.get(tid)
         if cached is not None and by_id.get(tid) is term:
+            _remember_term_content_cid(incoming, cached)
             return cached
         # Fall through to mint; fill both layers below.
-    else:
-        tid = id(term)
-        entry = _TERM_CONTENT_CID.get(tid)
-        if entry is not None:
-            wr, cached = entry
-            if wr() is term:
-                return cached
-            if wr() is None:
-                _TERM_CONTENT_CID.pop(tid, None)
 
     # Under scope, also consult weak memo for a term that outlived a prior scope.
     if tables is not None:
@@ -465,10 +477,13 @@ def _term_content_cid(term: "Term") -> str:
                 _by_key, by_id, cid_by_id = tables
                 if by_id.get(id(term)) is term:
                     cid_by_id[id(term)] = cached
+                _remember_term_content_cid(incoming, cached)
                 return cached
 
     cid = TermTableBuilder().reference(term)["cid"]
     _remember_term_content_cid(term, cid)
+    if incoming is not term:
+        _remember_term_content_cid(incoming, cid)
     if tables is not None:
         _by_key, by_id, cid_by_id = tables
         if by_id.get(id(term)) is term:
@@ -498,10 +513,77 @@ def _term_intern_arg_key(term: "Term") -> tuple:
 _term_formula_key = _term_content_key
 
 
-def _formula_key(formula: "Formula", *, term_key) -> tuple:
-    """Finite structural formula key; ``term_key`` selects intern vs identity."""
+# Content-key memo for Formula identity: id(formula) → (weakref, key).
+# Same contract as ``_TERM_CONTENT_CID``: the key is a pure function of
+# immutable content, ``id()`` is only a memo index, and the weakref ``is``-guard
+# rejects a recycled id while GC reclaims dead entries. Without it, every
+# ``Formula.__hash__``/``__eq__`` re-walked the whole formula spine and asked
+# every leaf term for its CID again — the identity half of the ExitSet
+# normalization blowup.
+_FORMULA_CONTENT_KEY: dict[int, tuple[weakref.ReferenceType, tuple]] = {}
+
+
+def _formula_content_key_memo_size() -> int:
+    """Live memo entries (test / diagnostics only)."""
+    return len(_FORMULA_CONTENT_KEY)
+
+
+def _lookup_formula_content_key(formula: "Formula") -> tuple | None:
+    entry = _FORMULA_CONTENT_KEY.get(id(formula))
+    if entry is None:
+        return None
+    wr, key = entry
+    if wr() is formula:
+        return key
+    if wr() is None:
+        _FORMULA_CONTENT_KEY.pop(id(formula), None)
+    return None
+
+
+def _remember_formula_content_key(formula: "Formula", key: tuple) -> None:
+    fid = id(formula)
+    live = _FORMULA_CONTENT_KEY.get(fid)
+    if live is not None and live[0]() is formula:
+        return
+
+    def _on_die(wr: weakref.ReferenceType, *, _fid: int = fid) -> None:
+        cur = _FORMULA_CONTENT_KEY.get(_fid)
+        if cur is not None and cur[0] is wr:
+            _FORMULA_CONTENT_KEY.pop(_fid, None)
+
+    try:
+        ref = weakref.ref(formula, _on_die)
+    except TypeError:
+        return
+    _FORMULA_CONTENT_KEY[fid] = (ref, key)
+
+
+def _evict_formula_content_key(formula: "Formula") -> bool:
+    """Drop any memoized content key for ``formula`` (cache control only)."""
+    fid = id(formula)
+    entry = _FORMULA_CONTENT_KEY.get(fid)
+    if entry is None:
+        return False
+    wr, _key = entry
+    if wr() is formula:
+        del _FORMULA_CONTENT_KEY[fid]
+        return True
+    if wr() is None:
+        _FORMULA_CONTENT_KEY.pop(fid, None)
+    return False
+
+
+def _formula_key(formula: "Formula", *, term_key, shared: bool = False) -> tuple:
+    """Finite structural formula key; ``term_key`` selects intern vs identity.
+
+    ``shared`` opts into the process-wide content-key memo. It is legal only
+    for the identity key (``_term_content_key``): the intern key may spell a
+    term as ``id(...)`` under a request scope, which must never outlive it.
+    """
     memo: dict[int, tuple] = {}
     active: set[int] = set()
+    completed: list[Formula] = []
+    saw_cycle = False
     stack: list[tuple[Formula, bool]] = [(formula, False)]
     while stack:
         node, expanded = stack.pop()
@@ -510,8 +592,15 @@ def _formula_key(formula: "Formula", *, term_key) -> tuple:
             continue
         if not expanded and marker in active:
             memo[marker] = ("cycle", marker)
+            saw_cycle = True
             continue
+        if not expanded and shared:
+            cached = _lookup_formula_content_key(node)
+            if cached is not None:
+                memo[marker] = cached
+                continue
         if expanded:
+            completed.append(node)
             active.discard(marker)
             if isinstance(node, _Atomic):
                 memo[marker] = (
@@ -540,6 +629,11 @@ def _formula_key(formula: "Formula", *, term_key) -> tuple:
             stack.extend((child, False) for child in reversed(node.operands))
         elif isinstance(node, _Quantifier):
             stack.append((node.body, False))
+    if shared and not saw_cycle:
+        # A cycle marker is an id from THIS walk and means nothing in the next
+        # one, so a walk that hit one publishes nothing.
+        for node in completed:
+            _remember_formula_content_key(node, memo[id(node)])
     return memo[id(formula)]
 
 
@@ -554,7 +648,10 @@ def _formula_content_key(formula: "Formula") -> tuple:
     Always content-addressed term CIDs. Never ``id(_intern_term(...))``.
     Hash and equality share this one key (no hash-on-A / eq-on-B split).
     """
-    return _formula_key(formula, term_key=_term_content_key)
+    cached = _lookup_formula_content_key(formula)
+    if cached is not None:
+        return cached
+    return _formula_key(formula, term_key=_term_content_key, shared=True)
 
 
 def _formula_cycle_key(formula: "Formula") -> tuple:
