@@ -62,8 +62,12 @@ Usage::
         --class python-package-suite \\
         --record "$GITHUB_WORKSPACE/lease-record.json" \\
         [--embed-into suite-report.json] [--timeout 14400] \\
-        [--lease /var/tmp/sugar-heavy-measurement.lease] \\
+        [--lease ~/.cache/sugar/binaries/.sugar-heavy-measurement.lease] \\
         -- <command> [args...]
+
+The default lease path already resolves correctly from both sides of the bind
+mount, so `--lease` is normally unnecessary. NEVER point it at /var/tmp: that
+path is per-container on battleaxe and a lease there serializes nothing.
 
 Exit status: the command's own status, or 75 if the lease was never acquired.
 """
@@ -120,12 +124,34 @@ ZERO_CLAIM_STATUS = STATUS_COMPLETED_ZERO_FINDINGS
 # Same kernel, different inode: a lease that serialized nothing. The receipts
 # caught it on day one, which is exactly why they record bootId and dev/ino.
 #
-# `/home/runner/.cache/sugar/binaries` is bind-mounted from the SAME host
-# directory into every runner container (verified across all twelve live
-# containers), so a lock file there is one lock for the whole machine.
+# `~/.cache/sugar/binaries` is bind-mounted from the SAME host directory into
+# every runner container (verified across all twelve live containers), so a lock
+# file there is one lock for the whole machine.
+#
+# THE DEFAULT IS `~`, NOT A HARDCODED `/home/runner`, AND THAT MATTERS.
+#
+# The bind mount joins two names for one directory: inside a runner container
+# HOME is `/home/runner`, on the host it is the owning user's home, and both
+# resolve to the same host inode. A hardcoded `/home/runner` is therefore
+# correct in exactly one of the two places a caller can stand. Off-runner it
+# does not exist and is not writable, so every interactive caller died in
+# `os.makedirs` with a bare `PermissionError` traceback -- no named refusal, no
+# statement of the right path.
+#
+# That failure mode has already cost a real overlap. Faced with the traceback,
+# the obvious workaround is `--lease /var/tmp/...`, which is per-container on
+# battleaxe and is precisely how two heavy jobs took the lease 0.0007s apart and
+# ran side by side. A default that fails opaquely teaches the one workaround
+# that breaks the invariant.
+#
+# `expanduser` resolves correctly from both sides of the mount. It is not
+# trusted blindly: `_require_machine_wide` still proves the resolved path is not
+# container-private before any measurement runs, and `_require_usable_directory`
+# turns an unusable directory into a named refusal that states the correct path
+# instead of a traceback.
 DEFAULT_LEASE_PATH = os.environ.get(
     "SUGAR_HEAVY_LEASE_PATH",
-    "/home/runner/.cache/sugar/binaries/.sugar-heavy-measurement.lease",
+    os.path.expanduser("~/.cache/sugar/binaries/.sugar-heavy-measurement.lease"),
 )
 DEFAULT_TIMEOUT_SECONDS = float(
     os.environ.get("SUGAR_HEAVY_LEASE_TIMEOUT_SECONDS", "14400")
@@ -160,6 +186,18 @@ class LeaseNotMachineWide(Exception):
     saying `acquired` while two censuses run side by side. That is the exact
     shape of dishonesty this mechanism exists to remove, so it is a REFUSAL,
     not a warning.
+    """
+
+
+class LeaseDirectoryUnusable(Exception):
+    """The lease file's directory cannot be created or written.
+
+    Raised INSTEAD of letting `os.makedirs`/`open` surface a bare `OSError`
+    traceback. The distinction is not cosmetic: the traceback names a path and
+    an errno, and the obvious workaround it invites is `--lease /var/tmp/...`,
+    which is per-container on battleaxe and has already produced two heavy jobs
+    overlapping with a 0.0007s wait. So the refusal has to carry the correct
+    path, not merely the failure.
     """
 
 
@@ -219,8 +257,40 @@ class HeavyMeasurementLease:
 
     # -- acquisition --------------------------------------------------------
 
+    def _require_usable_directory(self):
+        """The lease directory must exist and be writable, or REFUSE by name.
+
+        A bare `PermissionError` from `os.makedirs` states an errno and invites
+        `--lease /var/tmp/...` as the fix -- the one workaround that silently
+        destroys the invariant, because /var/tmp is per-container here. So this
+        names the correct path in the refusal itself.
+        """
+        directory = os.path.dirname(self.lease_path) or "."
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError as exc:
+            raise LeaseDirectoryUnusable(
+                f"cannot create the lease directory {directory}: {exc}. "
+                f"The lease must live on the ONE host-shared directory every "
+                f"runner container bind-mounts, which is `~/.cache/sugar/"
+                f"binaries` from whichever side you are standing on: "
+                f"/home/runner/... inside a runner, the owning user's home on "
+                f"the host. Point SUGAR_HEAVY_LEASE_PATH (or --lease) at that "
+                f"directory. Do NOT use /var/tmp: it is per-container on "
+                f"battleaxe, and a lease there reports `acquired` while a "
+                f"second census runs beside you."
+            ) from exc
+        if not os.access(directory, os.W_OK):
+            raise LeaseDirectoryUnusable(
+                f"the lease directory {directory} exists but is not writable by "
+                f"uid {os.getuid()}. A lease you cannot take is not a lease. "
+                f"Point SUGAR_HEAVY_LEASE_PATH (or --lease) at a host-shared "
+                f"directory you own -- never /var/tmp, which is per-container "
+                f"here and serializes nothing."
+            )
+
     def acquire(self, interrupted=None):
-        os.makedirs(os.path.dirname(self.lease_path) or ".", exist_ok=True)
+        self._require_usable_directory()
         self.requested_at = time.time()
         self.set_status(STATUS_LEASE_WAITING)
         _log(
@@ -508,8 +578,18 @@ def main(argv=None):
     # the wait.
     try:
         lease.acquire(interrupted=lambda: state["pending"] is not None)
-    except (LeaseTimeout, LeaseCancelled, LeaseNotMachineWide) as exc:
+    except (
+        LeaseTimeout,
+        LeaseCancelled,
+        LeaseNotMachineWide,
+        LeaseDirectoryUnusable,
+    ) as exc:
         _log(str(exc))
+        if isinstance(exc, LeaseDirectoryUnusable):
+            _log("REFUSING to measure without a lease that serializes.")
+            lease.set_status(STATUS_CANCELLED_BEFORE)
+            lease.released_at = time.time()
+            lease.stale_owner = str(exc)
         if isinstance(exc, LeaseNotMachineWide):
             _log("REFUSING to measure behind a lease that serializes nothing.")
             lease.set_status(STATUS_CANCELLED_BEFORE)
