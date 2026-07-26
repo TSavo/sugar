@@ -106,6 +106,96 @@ class PartitionFace:
 
     partition: object
     side: object
+    arity: int | None = None
+    """How many faces the producer declared for this origin, when it said.
+
+    A pair minted by ``partition`` declares 2. A family minted by
+    ``partition_family`` declares its own size. ``None`` is a face from a
+    producer that never stated a family size, and such a face can carry
+    pairwise exclusion but never COMPLETENESS -- see ``_complete_family``.
+    """
+
+
+def partition_family(
+    owner: object, sides: tuple
+) -> tuple[PartitionFace, ...]:
+    """Mint an EXHAUSTIVE family of faces over ONE authenticated origin (#6356).
+
+    ``partition`` covers a two-way split. A producer that decides among n
+    routes -- a loop completing by break or by exhaustion, a dispatch over a
+    closed set of outcomes -- owns an n-way split, and until now had no way to
+    say so. `_faces_exclusive` already handles n unchanged (it only asks
+    whether two arms carry the same origin with a different side), so the
+    prover needed nothing; the MINT and the carried arity are what was missing.
+
+    ``sides`` names every member, and the tuple's length is recorded on every
+    face as its ``arity``. That is what makes COMPLETENESS checkable later:
+    a set of arms covering fewer than ``arity`` distinct sides is a partial
+    partition, and a partial partition is not a partition.
+
+    THE PRODUCER MUST OWN THE WHOLE SPLIT. Minting a family over routes the
+    producer does not decide, or omitting a route it does, asserts an
+    exhaustiveness that is not true -- and unlike a pairwise face, an untrue
+    family licenses collapsing a face that was never accounted for. The
+    refusal in ``factor_completed`` exists for exactly the case where no such
+    testimony was earned; do not mint one to reach it.
+    """
+    if len(sides) < 2:
+        raise ValueError(
+            "a partition family needs at least two faces: "
+            f"owner=partition_family observed={len(sides)} sides "
+            "replacement=a one-way split is not a split; do not mint testimony "
+            "for it"
+        )
+    if len(set(sides)) != len(sides):
+        raise ValueError(
+            "a partition family needs DISTINCT faces: "
+            f"owner=partition_family observed={sides!r} "
+            "replacement=two members that cannot be told apart cannot carry "
+            "an exclusion between them"
+        )
+    token = ("sugar.exit_set.partition", owner)
+    return tuple(PartitionFace(token, side, len(sides)) for side in sides)
+
+
+def _complete_family(arms) -> bool:
+    """Whether these arms ARE one producer's complete, exhaustive partition.
+
+    ALL of the following, and same-type is deliberately NOT among them:
+
+      - every arm carries a face of ONE shared authenticated origin;
+      - that origin declared an arity (an unstated family cannot be complete);
+      - the arms' sides over it are pairwise DISTINCT;
+      - they cover the declared arity exactly -- every face retained, none
+        invented.
+
+    Same destination type is a hint and never an admission: two
+    ``PredicateValue`` arms from unrelated producers agree in type and share
+    no origin at all. Type agreement is exactly the trap the two measured
+    remaining-work rows are shaped like.
+    """
+    if len(arms) < 2:
+        return False
+    origins = None
+    for arm in arms:
+        faces = {face.partition for face in arm.faces if face.arity is not None}
+        origins = faces if origins is None else (origins & faces)
+        if not origins:
+            return False
+    for origin in origins:
+        sides, arity = [], None
+        for arm in arms:
+            member = next(
+                (f for f in arm.faces if f.partition == origin), None
+            )
+            if member is None:
+                break
+            sides.append(member.side)
+            arity = member.arity
+        else:
+            if arity == len(arms) == len(set(sides)):
+                return True
+    return False
 
 
 def partition(owner: object) -> tuple[PartitionFace, PartitionFace]:
@@ -122,7 +212,7 @@ def partition(owner: object) -> tuple[PartitionFace, PartitionFace]:
     exactly the case where no such testimony was ever earned.
     """
     token = ("sugar.exit_set.partition", owner)
-    return PartitionFace(token, True), PartitionFace(token, False)
+    return PartitionFace(token, True, 2), PartitionFace(token, False, 2)
 
 
 _NO_FACES: frozenset[PartitionFace] = frozenset()
@@ -412,6 +502,21 @@ class ExitSet(Generic[T]):
         if len(completed) <= 1:
             return self
 
+        # THE FAMILY ADMISSION (#6356). A producer that owns an n-way split and
+        # says so -- one authenticated origin, distinct sides, the declared
+        # arity covered exactly -- has proved pairwise exclusivity for the whole
+        # set in one statement, and the pairwise scan below would have to
+        # re-derive it from guard shape it may no longer be spelled in.
+        #
+        # Admission needs the WHOLE family. An incomplete one is not a
+        # partition: a missing face is an outcome nobody accounted for, and
+        # collapsing the rest would drop it. Same destination TYPE is not part
+        # of the test and must never become part of it -- two arms of one type
+        # from unrelated producers share no origin, which is exactly the shape
+        # the measured remaining-work rows have.
+        if _complete_family(completed):
+            return self._factored(completed)
+
         for index, arm in enumerate(completed):
             for other in completed[index + 1 :]:
                 # Carried testimony first: a producer that minted these as two
@@ -449,6 +554,15 @@ class ExitSet(Generic[T]):
                         other,
                     )
 
+        return self._factored(completed)
+
+    def _factored(self, completed) -> "ExitSet[T]":
+        """Collapse an ADMITTED completed face into one guarded-value arm.
+
+        One door for both admissions -- the family test and the pairwise scan --
+        so the two can never drift into producing different denotations for the
+        same arms. Nothing here decides admission; callers have already.
+        """
         from sugar_lift_py_tests.floor import GuardedValue
 
         chain = completed[-1].value
