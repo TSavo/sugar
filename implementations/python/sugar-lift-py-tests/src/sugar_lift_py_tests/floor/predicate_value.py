@@ -36,10 +36,6 @@ class PredicateValue(FloorValue):
         default=(), compare=False
     )
 
-    def denotes_value(self) -> bool:
-        """A carried boolean formula denotes a Python ``bool``."""
-        return True
-
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
 
@@ -55,32 +51,58 @@ class PredicateValue(FloorValue):
             )
         return super().to_term(owner=owner)
 
-    def guarded(self, formula):
-        """A carried boolean rides under a guard unchanged.
-
-        Same arm as ``CallSiteValue`` / ``ImportAliasValue``: this is a VALUE,
-        not an exit and not an obligation. A PredicateValue states no
-        ``inv_contribution`` and no ``post_contribution``, so a branch guard
-        over it is already owned by the branch's own control -- there is
-        nothing here for the guard to weaken.
-
-        Weakening the carried formula to ``formula -> self.formula`` would be a
-        different value, not a guarded one: for `x = (a == b) if c else d` it
-        would make `x` TRUE wherever `c` is false, which the source never
-        states. An assertion over this predicate is an ``InvValue``, and THAT
-        is the arm that becomes an implication (``InvValue.guarded``); the
-        obligation is weakened where the obligation lives, never here.
-        """
-        del formula
-        return self
-
     def attribute(self, name, site):
         # A boolean formula is not a field-bearing object; attribute projection
         # stays py.getattr over the predicate term (never invent a field).
         del site
-        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Complete
 
-        return getattr_coordinate(self, name, owner="PredicateValue.attribute")
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "py.getattr",
+                    [
+                        self.to_term(owner="PredicateValue.attribute"),
+                        str_const(name),
+                    ],
+                )
+            )
+        )
+
+    def guarded(self, formula):
+        """A predicate entry carried under a branch guard IS the implication.
+
+        This door is reached from ``if_sugar``'s ``entry.guarded(exit_.guard)``
+        over a branch face's record entries, so the receiver is a record entry,
+        not a bound value -- a bound value rides as a ``GuardedValue`` through
+        temporal scope and never arrives here. The law is ``InvValue.guarded``'s:
+        a formula stated under a guard is ``implies(guard, formula)``.
+
+        It stays a ``PredicateValue`` rather than becoming an ``InvValue``
+        because guarding decides POLARITY, not assertional force. This entry
+        has not been ``stated()`` yet; when it is, the implication is what gets
+        stated, which is exactly the weakening a branch-local fact owes. The
+        alternative -- riding unchanged, as ``CallSiteValue.guarded`` does --
+        is wrong here for the same reason: a callsite coordinate asserts
+        nothing, and a predicate is nothing but an assertion waiting to be made.
+
+        Operand callsites and the derived / rewrite chains ride so edges still
+        project, and both binding rosters ride under the same guard the
+        implication now carries.
+        """
+        from sugar_lift_py_tests.ir import implies
+
+        return PredicateValue(
+            implies(formula, self.formula),
+            self.site,
+            self.operand_callsites,
+            self.derived_formulas,
+            self.rewrite_chains,
+            self.then_bindings,
+            self.else_bindings,
+        )
 
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
@@ -112,16 +134,6 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(self)
-
-    def guarded(self, formula):
-        """A predicate rides under a branch guard unchanged.
-
-        The branch guard owns control; the formula already is the boolean value.
-        Same law as CallSiteValue / ImportAliasValue. Absence was
-        ``write more Floor: implement PredicateValue.guarded``.
-        """
-        del formula
-        return self
 
     def subscript(self, index, site):
         """Keep unknown scalar-versus-array predicate results visibly red.
