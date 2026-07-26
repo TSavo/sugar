@@ -845,6 +845,66 @@ pub fn blake3_of(bytes: &[u8]) -> String {
     blake3_512_of(bytes)
 }
 
+// ---------------------------------------------------------------------------
+// `sugar.enumerate` primitives (the ONE construction door -- there is no `lift`
+// kit method). The wire glue lives in `bin/witness_rpc.rs`; the identity and
+// anchor decisions live here so they are pinned by unit tests rather than only
+// by a suite-running end-to-end showcase.
+// ---------------------------------------------------------------------------
+
+/// The file-level locator: a `source-memento` carrying only `file` and the
+/// file's content CID. A whole file has no single body span or AST template, so
+/// those stay absent. Same shape the python kits seal
+/// (`lift_lsp._degenerate_file_memento`).
+pub fn degenerate_file_memento(rel: &str, source_cid: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "source-memento",
+        "file": rel,
+        "function_name": "",
+        "span": serde_json::Value::Null,
+        "param_names": [],
+        "source_cid": source_cid,
+        "template_cid": serde_json::Value::Null,
+    })
+}
+
+/// Seal one file's locator through the SAME minting door every other kit uses:
+/// read as UTF-8 text, then content-address the decoded bytes -- byte-for-byte
+/// what `path_source` does in the python source oracle. A kit that minted its
+/// own identity would address the same file differently than every other kit,
+/// and the same source would occupy two addresses.
+///
+/// Unreadable or undecodable is a LOUD `Err`, never a node with a made-up
+/// identity: the caller records it as an enumeration gap, not an absence.
+pub fn file_source_memento(project_dir: &Path, rel: &str) -> Result<serde_json::Value, String> {
+    let full = project_dir.join(rel);
+    let bytes = std::fs::read(&full).map_err(|e| format!("cannot read source `{rel}`: {e}"))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|e| format!("cannot decode source `{rel}` as utf-8: {e}"))?;
+    let cid = blake3_of(text.as_bytes());
+    Ok(degenerate_file_memento(rel, Some(&cid)))
+}
+
+/// The ANCHOR file for this kit's universe: the first code file, in sorted
+/// order, whose locator the census could actually seal.
+///
+/// A witness package is a WHOLE-SUITE artifact, not a per-file one. The census
+/// must still report every file (so the fold's `sourceMementos`/`sourceLedger`
+/// testify the real source closure), but the package's IR rows are emitted at
+/// exactly one file; every other file answers an empty universe, which is the
+/// truth -- it contributes no contract of its own.
+///
+/// A file that GAPPED in the census has no memento to be asked `at`, so it can
+/// never be the anchor. `discover_rust_files` returns `["."]` for its test-file
+/// handle -- a stable suite identifier, not a real path -- which is why the
+/// anchor is taken from the code files.
+pub fn enumerate_anchor_file(project_dir: &Path) -> Option<String> {
+    let (code_files, _test_files) = discover_rust_files(project_dir);
+    code_files
+        .into_iter()
+        .find(|rel| file_source_memento(project_dir, rel).is_ok())
+}
+
 /// Read the proofData JSON out of a serialized custom-evidence EvidenceTerm (the
 /// shape `prove` writes to the temp `.proof` and hands the discharge bin):
 ///   {"kind":"evidence","proofType":"custom","certificate":{...,"proofData":"<json>"}}
