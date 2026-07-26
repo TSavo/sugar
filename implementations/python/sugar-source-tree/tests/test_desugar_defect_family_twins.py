@@ -511,3 +511,22 @@ def test_loop_outward_face_with_a_plain_return_stays_one_completed_face() -> Non
         if isinstance(row, ReturnValue) or isinstance(getattr(row, "value", None), ReturnValue)
     ]
     assert len(returns) >= 1
+
+
+def test_loop_outward_face_returning_a_parameter_contract_lifts() -> None:
+    """POSITIVE, and the only shape in this family that DISCRIMINATES.
+
+    The two twins above were measured against the law itself: with the general
+    arm in `loop_recurrence_sugar` replaced by the raise it retired, BOTH still
+    pass. `d.setdefault(k, v)` never reaches that arm, so the partition twin
+    cannot fail when the law is removed -- it is the ceremony shape the ruling
+    names, and this test is the refutation rather than a third no-op.
+
+    `return p[0]` DOES reach it: the face owes a caller-parameter contract, so
+    it reduces to neither one return value nor one effect, which is exactly the
+    residue `BindingStateWireGap: loop outward face did not construct return or
+    raise testimony` was refusing to state. Removing the arm fails this node and
+    only this node.
+    """
+    out = _out("def f(xs, p):\n for x in xs:\n  if x:\n   return p[0]\n return 0\n")
+    assert _statements(out)
