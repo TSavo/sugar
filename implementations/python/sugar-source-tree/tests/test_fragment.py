@@ -8,6 +8,8 @@ Drift is unavailable loudly (SourceUnavailable) — never silence, never None.
 from pathlib import Path
 
 import pytest
+
+from declared_corpus import OPTIONAL_PROVIDER, optional_law_import
 from conftest import oracle_source_file
 from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 from sugar_source_tree import (
@@ -68,7 +70,7 @@ def test_file_level_fragment_round_trips():
 
 
 def test_round_trip_holds_across_backends():
-    pytest.importorskip("parso")
+    optional_law_import("parso", OPTIONAL_PROVIDER, "parso backend not installed")
     from sugar_source_tree.parso_adapter import ParsoBackend
 
     file = oracle_source_file(SOURCE)

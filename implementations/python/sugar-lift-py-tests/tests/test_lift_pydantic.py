@@ -21,7 +21,6 @@ def _loss_records(witnesses):
 
 class TestPydanticLift:
     def test_pydantic_v2_field_constraints(self):
-        pytest.importorskip("pydantic")
         from pydantic import BaseModel, Field
 
         class User(BaseModel):
@@ -36,7 +35,6 @@ class TestPydanticLift:
         assert "User.email" in names
 
     def test_pydantic_v2_numeric_range(self):
-        pytest.importorskip("pydantic")
         from pydantic import BaseModel, Field
 
         class Score(BaseModel):
@@ -49,7 +47,6 @@ class TestPydanticLift:
         assert decl.pre is not None
 
     def test_pydantic_v2_annotated_types(self):
-        pytest.importorskip("pydantic")
         from pydantic import BaseModel
         from typing import Annotated
         from annotated_types import Gt, Lt

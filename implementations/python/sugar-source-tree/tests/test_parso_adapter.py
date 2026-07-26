@@ -10,7 +10,11 @@ pinned as an explicit, named result rather than an unexplained failure.
 
 import pytest
 
-parso = pytest.importorskip("parso")
+from declared_corpus import OPTIONAL_PROVIDER, optional_law_import
+
+parso = optional_law_import(
+    "parso", OPTIONAL_PROVIDER, "parso backend not installed"
+)
 
 from pathlib import Path
 

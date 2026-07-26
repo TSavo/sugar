@@ -215,7 +215,12 @@ def _unnamed_skips():
                 continue
             # pytest.skip(...) and pytest.mark.skipif(...); bare `skip`
             # attribute access (pytest.skip.Exception) is not a call.
-            if func.attr == "skip" or func.attr == "skipif":
+            #
+            # importorskip is the same defect wearing an import: it answers
+            # "is the module present" when the suite is asking "did this law
+            # run", and leaves no bucket saying it did not. It hid a 441-line
+            # first-party pydantic lifter whose three laws never ran in CI.
+            if func.attr in {"skip", "skipif", "importorskip"}:
                 offenders.append(f"{_rel(path)}:{node.lineno}: {func.attr}(...)")
     return offenders
 
@@ -240,7 +245,8 @@ def test_no_law_is_left_unrun_by_an_unnamed_skip():
         "in-repo path) its absence is a broken environment -- raise "
         "DeclaredCorpusMissing via require_declared_corpus. If the law is "
         "genuinely conditional, skip through optional_law_skip / "
-        "optional_law_skipif so the skip carries a named, counted category. "
+        "optional_law_skipif / optional_law_import so the skip carries a "
+        "named, counted category. "
         "An anonymous skip reports an unrun law as green on every machine "
         "that lacks the corpus."
     )
