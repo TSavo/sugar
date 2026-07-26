@@ -4690,17 +4690,15 @@ class With(Statement):
                     WithEffectBoundarySugar,
                 )
 
+                observation_slot = None
                 if as_name is not None:
-                    from .panic import UnsupportedWithBindingTarget
-
-                    panic = UnsupportedWithBindingTarget(
-                        owner="With._construct_sugar",
-                        observed="EffectBoundary as-binding projection is not yet authenticated",
-                        requested="an EffectBoundary manager without optional_vars",
-                        fix="keep exception-info/warning observation binding loud until its projection slot is authenticated",
+                    # The slot exists because the CONTRACT declares a binding,
+                    # never because the source spelled `as`. A manager that
+                    # binds nothing cannot acquire a slot by being written with
+                    # a name next to it.
+                    observation_slot = self._effect_boundary_observation_slot(
+                        item, resolved_ref
                     )
-                    self.reporter.report_gap(self, panic)
-                    raise panic
                 manager_sugar = item.context_expr.sugar()
                 manager_sugar = self._authenticate_expected_exception_type(
                     item.context_expr, manager_sugar, resolved_ref
@@ -4717,6 +4715,7 @@ class With(Statement):
                             resolved_ref, resolved_ref.use_site
                         )
                     ),
+                    observation_slot_id=observation_slot,
                     site=self.fragment,
                 )
 
@@ -4868,6 +4867,47 @@ class With(Statement):
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
 
+    def _effect_boundary_binding(self, item, resolved_ref):
+        """(slot_id, projection) the CONTRACT declares for this ``as`` name.
+
+        The projection is read off the authenticated semantics' ``binding``
+        field -- exception-info or warning-observation -- so a manager name
+        never selects it. ``NoBindingV1`` means the contract states this
+        manager hands the body nothing, and a source that binds a name anyway
+        is a real disagreement between contract and use site: it stays loud
+        rather than acquiring a slot by syntax.
+        """
+        from sugar_lift_py_tests.context_manager_contract import (
+            EXCEPTION_INFO,
+            ExceptionInfoBindingV1,
+            WARNING_OBSERVATION,
+            WarningObservationBindingV1,
+        )
+
+        binding = resolved_ref.semantics.binding
+        if isinstance(binding, ExceptionInfoBindingV1):
+            projection = EXCEPTION_INFO
+        elif isinstance(binding, WarningObservationBindingV1):
+            projection = WARNING_OBSERVATION
+        else:
+            from .panic import UnsupportedWithBindingTarget
+
+            panic = UnsupportedWithBindingTarget(
+                owner="With._construct_sugar",
+                observed=(
+                    "source binds an EffectBoundary result the authenticated "
+                    f"contract declares no binding for ({type(binding).__name__})"
+                ),
+                requested="a contract carrying exception-info or warning-observation binding",
+                fix="never grant an observation slot from the `as` spelling alone",
+            )
+            self.reporter.report_gap(self, panic)
+            raise panic
+        return f"{item._manager_slot_id()}#observation", projection
+
+    def _effect_boundary_observation_slot(self, item, resolved_ref):
+        return self._effect_boundary_binding(item, resolved_ref)[0]
+
     def substitution_binding(self, scope):
         """Export ObservationRef for resolved resource enter-result as-names."""
         from sugar_lift_py_tests.context_manager_contract import (
@@ -4881,8 +4921,23 @@ class With(Statement):
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
                 return None
+            resolved_ref = None
             if self._generator_manager_frame(item) is None:
-                self._require_narrow_cm_ref(item)
+                resolved_ref = self._require_narrow_cm_ref(item)
+            from sugar_lift_py_tests.context_manager_contract import (
+                EffectBoundarySemanticsV1,
+            )
+
+            if resolved_ref is not None and isinstance(
+                getattr(resolved_ref, "semantics", None), EffectBoundarySemanticsV1
+            ):
+                # An effect boundary hands the body its OBSERVATION slot, not
+                # an enter result. Exporting enter-result here would have made
+                # the body read a projection the contract never declared.
+                slot, projection = self._effect_boundary_binding(item, resolved_ref)
+                return {
+                    item.optional_vars.id: item._make_observation_ref(slot, projection)
+                }
             enter_slot = f"{item._manager_slot_id()}#enter_result"
             return {
                 item.optional_vars.id: item._make_observation_ref(
