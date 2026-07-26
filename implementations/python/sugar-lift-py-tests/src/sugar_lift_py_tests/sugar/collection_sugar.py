@@ -51,16 +51,29 @@ def _reduce_into(element_sugars, ctx, build):
     # display has no guard of its own -- so it hoists at `true_guard`.
     pending = None
     stripped = []
+    # Two elements carrying the SAME obligation are not two obligations:
+    # ``demand_cid`` is the content address of the whole demand, so equal cids
+    # are the same formal, site, formula and candidate reached twice (`[p[0],
+    # p[0]]`, or one reduced element shared by a fold). Conjunction is
+    # idempotent, so one entry carries both. Only DISTINCT demands need a
+    # demand SET, and those stay loud.
     for outcome in reduced:
         entry, plain = pending_demand(outcome, true_guard())
-        if entry is not None and pending is not None:
+        if (
+            entry is not None
+            and pending is not None
+            and entry.demand.demand_cid != pending.demand.demand_cid
+        ):
             from sugar_lift_py_tests.gap.info import GapKind
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
             construction_panic_gap(
                 owner=owner,
                 blame=str(entry.source_node),
-                observed="two collection elements enrolled a contract demand",
+                observed=(
+                    "two collection elements enrolled DISTINCT contract demands "
+                    f"({pending.demand.demand_cid} and {entry.demand.demand_cid})"
+                ),
                 requested="one pending demand per constructed value",
                 fix=(
                     "widen ContractConditionalConstructionV1 to carry a demand SET "

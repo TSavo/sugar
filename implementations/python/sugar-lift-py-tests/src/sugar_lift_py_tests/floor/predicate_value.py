@@ -51,25 +51,32 @@ class PredicateValue(FloorValue):
             )
         return super().to_term(owner=owner)
 
+    def guarded(self, formula):
+        """A carried boolean rides under a guard unchanged.
+
+        Same arm as ``CallSiteValue`` / ``ImportAliasValue``: this is a VALUE,
+        not an exit and not an obligation. A PredicateValue states no
+        ``inv_contribution`` and no ``post_contribution``, so a branch guard
+        over it is already owned by the branch's own control -- there is
+        nothing here for the guard to weaken.
+
+        Weakening the carried formula to ``formula -> self.formula`` would be a
+        different value, not a guarded one: for `x = (a == b) if c else d` it
+        would make `x` TRUE wherever `c` is false, which the source never
+        states. An assertion over this predicate is an ``InvValue``, and THAT
+        is the arm that becomes an implication (``InvValue.guarded``); the
+        obligation is weakened where the obligation lives, never here.
+        """
+        del formula
+        return self
+
     def attribute(self, name, site):
         # A boolean formula is not a field-bearing object; attribute projection
         # stays py.getattr over the predicate term (never invent a field).
         del site
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "py.getattr",
-                    [
-                        self.to_term(owner="PredicateValue.attribute"),
-                        str_const(name),
-                    ],
-                )
-            )
-        )
+        return getattr_coordinate(self, name, owner="PredicateValue.attribute")
 
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
