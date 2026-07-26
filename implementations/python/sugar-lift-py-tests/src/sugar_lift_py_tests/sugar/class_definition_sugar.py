@@ -14,12 +14,20 @@ from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
 
 @dataclass(frozen=True)
+class ConstructedClassConditionalFieldsV1:
+    condition_fragment_cid: str
+    condition_sugar: Sugar = field(compare=False)
+    when_true: tuple[object, ...] = ()
+    when_false: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
 class ClassDefinitionSugar(Sugar):
     class_name: str
     source_identity_cid: str
     definition_fragment_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
-    fields: tuple[ConstructedClassFieldV1, ...]
+    fields: tuple[ConstructedClassFieldV1 | ConstructedClassConditionalFieldsV1, ...]
     docstring_cid: str | None
     annotation_cids: tuple[str, ...]
     decorator_cids: tuple[str, ...]
@@ -37,6 +45,19 @@ class ClassDefinitionSugar(Sugar):
 
     @property
     def preimage(self):
+        def encode_field(item):
+            if isinstance(item, ConstructedClassFieldV1):
+                return {
+                    "name": item.name,
+                    "definitionFragmentCid": item.definition_fragment_cid,
+                }
+            return {
+                "kind": "conditional",
+                "conditionFragmentCid": item.condition_fragment_cid,
+                "whenTrue": [encode_field(child) for child in item.when_true],
+                "whenFalse": [encode_field(child) for child in item.when_false],
+            }
+
         return {
             "kind": "python-class-definition",
             "schemaVersion": "1",
@@ -50,13 +71,7 @@ class ClassDefinitionSugar(Sugar):
                 }
                 for method in self.methods
             ],
-            "fields": [
-                {
-                    "name": item.name,
-                    "definitionFragmentCid": item.definition_fragment_cid,
-                }
-                for item in self.fields
-            ],
+            "fields": [encode_field(item) for item in self.fields],
             "docstringCid": self.docstring_cid,
             "annotationCids": list(self.annotation_cids),
             "decoratorCids": list(self.decorator_cids),
@@ -89,7 +104,38 @@ class ClassDefinitionSugar(Sugar):
                     fix="keep dynamic or opaque inheritance loud",
                 )
             base_values.append(outcome.value)
-        for item in self.fields:
+        def append_field(item):
+            if isinstance(item, ConstructedClassConditionalFieldsV1):
+                condition = item.condition_sugar.desugar(ctx)
+                from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                    FalseBoolLiteralSugar,
+                )
+                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                    TrueBoolLiteralSugar,
+                )
+
+                if not isinstance(condition, Complete) or not isinstance(
+                    condition.value, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
+                ):
+                    from sugar_source_tree.panic import SugarNotWritten
+
+                    raise SugarNotWritten(
+                        owner="ClassDefinitionSugar.desugar",
+                        observed="class conditional guard is not a ground bool literal",
+                        requested=(
+                            "one constructed TrueBoolLiteralSugar or "
+                            "FalseBoolLiteralSugar"
+                        ),
+                        fix="keep symbolic or effectful class-body control loud",
+                    )
+                selected = (
+                    item.when_true
+                    if isinstance(condition.value, TrueBoolLiteralSugar)
+                    else item.when_false
+                )
+                for child in selected:
+                    append_field(child)
+                return
             outcome = item.value_sugar.desugar(ctx)
             if not isinstance(outcome, Complete):
                 from sugar_source_tree.panic import SugarNotWritten
@@ -101,6 +147,9 @@ class ClassDefinitionSugar(Sugar):
                     fix="keep effectful or unresolved class initializers loud",
                 )
             class_fields.append(ObjectField(item.name, outcome.value))
+
+        for item in self.fields:
+            append_field(item)
         initializer = next(
             (method for method in self.methods if method.name == "__init__"), None
         )
