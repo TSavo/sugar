@@ -1,0 +1,91 @@
+{
+  "axisNote": "R_desugar 8624 is NOT one quantity. Presenting it as one overstates the work remaining: it mixes accounted semantics with obligations.",
+  "taxonomy": {
+    "1-correctly-constructed-effects": {
+      "subtotal": 7483,
+      "families": [
+        [
+          "SubscriptStoreRuntimeEffect",
+          3053
+        ],
+        [
+          "AttributeStoreRuntimeEffect",
+          2096
+        ],
+        [
+          "RaiseEffect",
+          1293
+        ],
+        [
+          "NameErrorEffect",
+          940
+        ],
+        [
+          "SubscriptDeleteRuntimeEffect",
+          35
+        ],
+        [
+          "PowerRuntimeEffect",
+          33
+        ],
+        [
+          "BitwiseXorRuntimeEffect",
+          13
+        ],
+        [
+          "UnaryPlusRuntimeEffect",
+          9
+        ],
+        [
+          "SubtractRuntimeEffect",
+          6
+        ],
+        [
+          "SubscriptResultRuntimeEffect",
+          4
+        ],
+        [
+          "MatrixMultiplyRuntimeEffect",
+          1
+        ]
+      ],
+      "meaning": "accounted semantics. Correct output. Python done does NOT require deleting these; it requires each to be correctly constructed, routed and accounted."
+    },
+    "2-explicit-incomplete-obligations": {
+      "subtotal": 1141,
+      "families": [
+        [
+          "DynamicUnpackAssignSugar.desugar",
+          1084
+        ],
+        [
+          "YieldSuspensionSugar.desugar",
+          31
+        ],
+        [
+          "YieldFromSugar.desugar",
+          17
+        ],
+        [
+          "matches_raise_effect",
+          8
+        ],
+        [
+          "ClassDefinitionSugar.desugar",
+          1
+        ]
+      ],
+      "meaning": "typed refusals (SugarNotWritten). Owed work, stated explicitly."
+    },
+    "3-construction-panics-gaps": {
+      "subtotal": 1074,
+      "meaning": "separate axis. One typed-loud law, 19 owners, 46 (owner x category) dispatch pairs."
+    },
+    "4-implementation-defects": {
+      "subtotal": 295,
+      "meaning": "separate axis. Ten families."
+    }
+  },
+  "derivationMethod": "Split by AUTHENTICATED OCCURRENCE KEY PREFIX, not family name: DesugarAxis tallies a typed refusal as desugar-call:<where> and a typed red effect under the effect own occurrence coordinate.",
+  "sourceCommit": "d94f67a3149ea2aceee4f9a8cff0397b6f6d374a"
+}

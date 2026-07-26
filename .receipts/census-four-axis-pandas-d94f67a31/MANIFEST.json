@@ -51,6 +51,18 @@
     }
   },
   "artifacts": {
+    "assertion-mechanisms.json": {
+      "sha256": "222a18d8bba8a538638655726e02957d6f6eb5793bba511057d799fe8d802e22",
+      "bytes": 1123254
+    },
+    "assertion_mechanisms.py": {
+      "sha256": "d057c12c9515fde39ff52af109d1321bd036e77c83be4bdc8479ba0cd0a32570",
+      "bytes": 9780
+    },
+    "bounded-replay.json": {
+      "sha256": "a65857a548d97a4e886a75c14d8174ae7faf796feb1cd5861ca0e79b2c12d81e",
+      "bytes": 12852
+    },
     "bounded_replay.py": {
       "sha256": "86363da6ad308eabe77971b529f3038e4a1e1154087459f53e758e6412b3e34e",
       "bytes": 6550
@@ -58,6 +70,10 @@
     "census-raw.log": {
       "sha256": "13265c5651ba5f041c5ef2101efabd0eb7f57878c60f5c47bdbf79b1a4be189c",
       "bytes": 4037636
+    },
+    "desugar-taxonomy.json": {
+      "sha256": "cba90d8a80fd353e6bce4d4a890f57a2652eda112e93f65c372ef408ad41544e",
+      "bytes": 2335
     },
     "fn-timing.json": {
       "sha256": "c4f867d195996a214f41fa8752585e5fbebbe51a2f1567ac77897cee3349b7c7",
@@ -78,6 +94,10 @@
     "lease-record-pass3.json": {
       "sha256": "d191125ca209b2e1b4c6e852d63af838e0ccc452f674b11f941caff4ba4046dc",
       "bytes": 1040
+    },
+    "lease-record-replay.json": {
+      "sha256": "d491cca8dfc73a6929209b4925bbf78ece4f1e45bb340ab65bfc0cc89adaed10",
+      "bytes": 1268
     },
     "lease-record.json": {
       "sha256": "f5076c2ded9d027018d26147294bf117b809bf60dac29de31a6becbb25ef6764",
@@ -115,9 +135,17 @@
       "sha256": "86b02cac383d2f163f4fd453fcb1b3989eb4aac50a06497bdf08683ca296a745",
       "bytes": 4570
     },
+    "resource-mechanisms.json": {
+      "sha256": "587e1ebe95a49a0b83e0d5a69013f1dd3de960769d138c81dd341de111550eed",
+      "bytes": 215374
+    },
+    "resource_mechanisms.py": {
+      "sha256": "c651897308b7b20c236ff01f211b84c7dd2df28a445f9c44dc73edde6f876418",
+      "bytes": 7983
+    },
     "run-meta.txt": {
-      "sha256": "d66e89d01bd8f5042016ce63f694722b5a0be5f8be07af5ef7c281dc2c6e0733",
-      "bytes": 1292
+      "sha256": "94c932c3f5a33007aeae2509f4595c4c8c96446cd901c0f91fa0d068ccd52920",
+      "bytes": 1922
     },
     "run1-VOID-meta.txt": {
       "sha256": "8927ab0a575fb993360d0b2dff6b76a80e5a6f5c42c8205cd8e5634066945a43",

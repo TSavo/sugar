@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "leaseClass": "pandas-bounded-replay-c11767c5e",
+  "measurementStatus": "completed/zero-findings",
+  "supportsZeroClaim": true,
+  "zeroClaimStatus": "completed/zero-findings",
+  "leaseIdentity": {
+    "path": "/var/tmp/sugar-heavy-measurement.lease",
+    "bootId": "unavailable",
+    "hostname": "MacBookPro.lan",
+    "device": 16777223,
+    "inode": 403349699
+  },
+  "acquired": true,
+  "timedOut": false,
+  "timeoutSeconds": 14400,
+  "requestedAtUnix": 1785022673.644095,
+  "acquiredAtUnix": 1785022673.650853,
+  "releasedAtUnix": 1785025114.000407,
+  "waitSeconds": 0.006758,
+  "heldSeconds": 2440.349554,
+  "measuredCommit": "unknown",
+  "owner": {
+    "githubRunId": null,
+    "githubRunAttempt": null,
+    "githubWorkflow": null,
+    "githubJob": null,
+    "githubRef": null,
+    "runnerName": null,
+    "holderPid": 80371
+  },
+  "command": "python3 /private/tmp/claude-501/-Users-tsavo/d335638d-e107-473a-809c-b2e3e6d6f14e/scratchpad/bounded_replay.py /private/tmp/claude-501/-Users-tsavo/d335638d-e107-473a-809c-b2e3e6d6f14e/scratchpad/full-dump.json /private/tmp/claude-501/-Users-tsavo/d335638d-e107-473a-809c-b2e3e6d6f14e/scratchpad/bounded-replay.json NameErrorEffect",
+  "commandExitStatus": 0,
+  "staleOwnerDiagnostics": null
+}
