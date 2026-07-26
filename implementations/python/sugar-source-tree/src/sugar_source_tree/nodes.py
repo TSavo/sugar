@@ -7963,9 +7963,11 @@ def _construct_binding_projection(state):
                     face.completion_kind,
                     face.guard_formula,
                     _construct_binding_projection(face.state),
+                    face.exit_partition_arity,
                 )
                 for face in state.completed_faces
-            )
+            ),
+            state.target_cid,
         )
     raise TypeError(type(state))
 
