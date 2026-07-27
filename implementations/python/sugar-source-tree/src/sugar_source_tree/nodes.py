@@ -5173,13 +5173,17 @@ class With(Statement):
     def _effect_boundary_observation_slot(self, item, resolved_ref):
         return self._effect_boundary_binding(item, resolved_ref)[0]
 
+    def _with_assignment_binding(self, item, value, scope):
+        """Delegate a with-as binding to Python's ordinary Assign seam."""
+        assignment = self._make_assign(item.optional_vars, value)
+        return assignment.substitution_binding(scope)
+
     def substitution_binding(self, scope):
-        """Export ObservationRef for resolved resource enter-result as-names."""
+        """Export a contract projection through ordinary Assign binding."""
         from sugar_lift_py_tests.context_manager_contract import (
             ENTER_RESULT,
         )
 
-        del scope
         if self.unit.construction_context is not None:
             if len(self.items) != 1:
                 return self._nest_items().substitution_binding(None)
@@ -5207,15 +5211,17 @@ class With(Statement):
                 # an enter result. Exporting enter-result here would have made
                 # the body read a projection the contract never declared.
                 slot, projection = self._effect_boundary_binding(item, resolved_ref)
-                return {
-                    item.optional_vars.id: item._make_observation_ref(slot, projection)
-                }
-            enter_slot = f"{item._manager_slot_id()}#enter_result"
-            return {
-                item.optional_vars.id: item._make_observation_ref(
-                    enter_slot, ENTER_RESULT
+                return self._with_assignment_binding(
+                    item,
+                    item._make_observation_ref(slot, projection),
+                    scope,
                 )
-            }
+            enter_slot = f"{item._manager_slot_id()}#enter_result"
+            return self._with_assignment_binding(
+                item,
+                item._make_observation_ref(enter_slot, ENTER_RESULT),
+                scope,
+            )
         return None
 
 

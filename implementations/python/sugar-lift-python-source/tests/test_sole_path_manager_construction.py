@@ -1589,13 +1589,16 @@ _BOUNDARY_IMPLEMENTATION = (
 )
 
 
-def _route_boundary_with_binding(tmp_path, *, body: str, as_clause: str = " as info"):
+def _route_boundary_with_binding(
+    tmp_path, *, body: str, as_clause: str = " as info", following: str = ""
+):
     distribution = _distribution(tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary")
     consumer = (
         "import arbitrary\n"
         "def use_boundary():\n"
         f"    with arbitrary.boundary(ValueError){as_clause}:\n"
         f"        {body}\n"
+        f"    {following}\n"
     )
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
@@ -1614,9 +1617,46 @@ def _route_boundary_with_binding(tmp_path, *, body: str, as_clause: str = " as i
     )
     from sugar_lift_py_tests.outcome import outcome_to_exitset
 
+    if following:
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        function = next(tree.functions()).sugar()
+        return reduce_block_to_exitset(function.statements)
     return outcome_to_exitset(
         next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
     )
+
+
+def test_boundary_as_binding_outlives_block_and_projects_consumed_effect(tmp_path):
+    """Concrete assertion-With: post-block `.value` reads the consumed halt."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    exits = _route_boundary_with_binding(
+        tmp_path,
+        body='raise ValueError("cannot convert")',
+        following='assert "cannot convert" in str(info.value)',
+    )
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Completed)
+    assert len(_effect_binding_facts(face)) == 3
+
+
+def test_boundary_as_binding_never_reifies_a_nonmatching_halt(tmp_path):
+    """Lying twin: post-block `.value` is unreachable without testimony."""
+    from sugar_lift_py_tests.outcome import Halted
+
+    exits = _route_boundary_with_binding(
+        tmp_path,
+        body='raise TypeError("cannot convert")',
+        following='assert "cannot convert" in str(info.value)',
+    )
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Halted)
+    assert _effect_slot_facts(face) == ()
 
 
 def _effect_slot_facts(face) -> tuple:
@@ -1632,6 +1672,17 @@ def _effect_slot_facts(face) -> tuple:
     )
 
 
+def _effect_binding_facts(face) -> tuple:
+    return tuple(
+        entry
+        for entry in _effect_slot_facts(face)
+        if any(
+            name in str(entry.formula)
+            for name in ("effect_slot_kind", "effect_slot_type", "effect_slot_origin")
+        )
+    )
+
+
 def test_boundary_as_binding_authenticates_the_slot_it_consumed(tmp_path):
     """Truthful twin: the consumed halt authenticates the observation slot."""
     from sugar_lift_py_tests.outcome import Completed
@@ -1641,7 +1692,7 @@ def test_boundary_as_binding_authenticates_the_slot_it_consumed(tmp_path):
     face = exits.exits[0]
     assert isinstance(face, Completed)
     # kind, type, origin -- exactly the three rows EffectBinding.to_facts owes.
-    assert len(_effect_slot_facts(face)) == 3
+    assert len(_effect_binding_facts(face)) == 3
 
 
 def test_boundary_as_binding_is_absent_when_the_halt_was_restored(tmp_path):
