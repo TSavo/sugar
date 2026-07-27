@@ -19,9 +19,12 @@ class CallSiteSugar(Sugar):
     projects the callEdge -- and a cue is the signal that this call warrants a
     dig (reduce the callee into its universe; its call sites cue further digs).
 
-    The dig itself is NOT done here (`body=None`). Digging is cued, not eager:
-    an assertion cues digs, and digs cue digs, so the recursion is driven by the
-    cueing mechanism (the enumeration), not by inlining the callee at every call.
+    An opaque call keeps ``body=None`` and remains a dig cue.  When construction
+    carries a source-authenticated body, however, Call is an effect producer:
+    it reduces that already-constructed body once and publishes its halted
+    ExitSet faces at this expression.  Completed faces retain the CallSiteValue
+    coordinate, so ordinary return-floor digging is unchanged.  No assertion
+    or other consumer is consulted to decide whether the call may halt.
 
     Meaning-only, node-constructed. Plain positional calls to a named callee;
     method/attribute/computed callees and keyword args stay gaps (the tree node
@@ -167,31 +170,28 @@ class CallSiteSugar(Sugar):
                         steps=self.source_call_frame.generator_steps,
                     )
                 )
-        return Complete(
-            CallSiteValue(
-                target_name=self.target_name,
-                arg_values=positional + tuple(value for _, value in kw_values),
-                parameters=(
-                    self.source_call_frame.parameters
-                    if self.source_call_frame is not None
-                    else ()
-                ),
-                term=term,
-                body=source_body,
-                keyword_names=tuple(name for name, _ in kw_values),
-                site=self.site,
-                exception_type_coordinate=self.exception_type_coordinate,
-                exception_type_mro=self.exception_type_mro,
-                source_call_frame_cid=source_frame_cid,
-                formal_coordinate_cids=(
-                    tuple(
-                        item.cid for item in self.source_call_frame.formal_coordinates
-                    )
-                    if self.source_call_frame is not None
-                    else ()
-                ),
-            )
+        callsite = CallSiteValue(
+            target_name=self.target_name,
+            arg_values=positional + tuple(value for _, value in kw_values),
+            parameters=(
+                self.source_call_frame.parameters
+                if self.source_call_frame is not None
+                else ()
+            ),
+            term=term,
+            body=source_body,
+            keyword_names=tuple(name for name, _ in kw_values),
+            site=self.site,
+            exception_type_coordinate=self.exception_type_coordinate,
+            exception_type_mro=self.exception_type_mro,
+            source_call_frame_cid=source_frame_cid,
+            formal_coordinate_cids=(
+                tuple(item.cid for item in self.source_call_frame.formal_coordinates)
+                if self.source_call_frame is not None
+                else ()
+            ),
         )
+        return callsite.producer_outcome(ctx)
 
     def _collect_bridged(self, positional: tuple) -> Outcome:
         from sugar_lift_py_tests.floor.bridged_contract_value import (
