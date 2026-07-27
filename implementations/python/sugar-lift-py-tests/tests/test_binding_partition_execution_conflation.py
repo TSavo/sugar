@@ -261,6 +261,64 @@ def test_tripwire_b_two_call_sites_do_not_specialize_the_callee(
     assert len(set(minted)) == 1
 
 
+def test_tripwire_b_the_join_itself_does_not_happen(tmp_path, monkeypatch) -> None:
+    """THE CONNECTIVE, asserted directly rather than inferred from mint counts.
+
+    This is the shape that satisfies BOTH preconditions at once: a compound
+    test (so specialization would collide the slot) AND a one-branch binding
+    (so the partition is actually minted). If two executions ever meet, they
+    meet here.
+
+    They do not. `factor_completed` never sees two completed arms carrying
+    opposite sides of one `binding.projection` partition, because ordinary
+    call sites stay opaque and `pick` is reduced once rather than once per
+    call. **The moment this assertion fails, the conflation is live** -- the
+    mechanism and the colliding key are already proved above, and this is the
+    only thing between them.
+    """
+    import sugar_lift_py_tests.outcome.exit_set as exit_set_module
+
+    joins: list[tuple[str, list[str]]] = []
+    original = exit_set_module.ExitSet.factor_completed
+
+    def watched(self):
+        completed = [e for e in self.exits if isinstance(e, Completed)]
+        if len(completed) > 1:
+            sides_by_partition: dict[str, set[str]] = {}
+            for exit_ in completed:
+                for face in exit_.faces:
+                    if "binding.projection" in str(face.partition):
+                        sides_by_partition.setdefault(str(face.partition), set()).add(
+                            str(face.side)
+                        )
+            for slot, sides in sides_by_partition.items():
+                if len(sides) > 1:
+                    joins.append((slot, sorted(sides)))
+        return original(self)
+
+    monkeypatch.setattr(exit_set_module.ExitSet, "factor_completed", watched)
+
+    source_file = _source(
+        tmp_path,
+        "join.py",
+        "def pick(c):\n"
+        "    if c > 0:\n"
+        "        x = 1\n"
+        "    return x\n"
+        "\n"
+        "\n"
+        "def caller(a, b):\n"
+        "    return pick(a) + pick(b)\n",
+    )
+    for function in source_file.functions():
+        try:
+            function.sugar().desugar(None)
+        except BaseException:
+            pass
+
+    assert joins == [], f"two executions met over one slot: {joins}"
+
+
 def test_tripwire_c_a_loop_body_does_not_mint_this_partition(
     tmp_path, monkeypatch
 ) -> None:
