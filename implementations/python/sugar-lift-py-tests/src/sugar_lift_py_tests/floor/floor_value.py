@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from enum import Enum
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .floor_dispatch_surface import FLOOR_OPERATION_METHOD_NAMES
@@ -119,13 +118,6 @@ _BINARY_OPERATOR_COORDINATE = {
     "left_shift": "<<",
     "right_shift": ">>",
 }
-
-
-class ExceptionalDispositionV1(str, Enum):
-    """Whether a completed floor value excludes an exceptional exit."""
-
-    COMPLETED_ONLY = "completed-only"
-    UNDECIDED = "undecided"
 
 
 class FloorValue:
@@ -879,15 +871,6 @@ class FloorValue:
         """
         return True
 
-    def exceptional_disposition(self) -> ExceptionalDispositionV1:
-        """Return completed-only or the explicit undecided third value.
-
-        A real raise travels as a halted ``RaiseEffect`` face, never through
-        this method. Native operations with unresolved runtime dispatch
-        override it so consumers cannot coerce undecided to ``False``.
-        """
-        return ExceptionalDispositionV1.COMPLETED_ONLY
-
     def _undecided_binary_law(self, other, site, operator):
         """The ONE law for a binary operation with an undecided operand.
 
@@ -918,24 +901,19 @@ class FloorValue:
         if self.runtime_type_is_decided() and other.runtime_type_is_decided():
             return None
 
-        from sugar_lift_py_tests.floor.undecided_binary_value import (
-            UndecidedBinaryOperationValue,
-        )
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            UndecidedBinaryOperationValue(
-                term=ctor(
+            SymbolicValue(
+                ctor(
                     operator,
                     [
                         self.to_term(owner=str(site)),
                         other.to_term(owner=str(site)),
                     ],
-                ),
-                operator=operator,
-                left=self,
-                right=other,
+                )
             )
         )
 

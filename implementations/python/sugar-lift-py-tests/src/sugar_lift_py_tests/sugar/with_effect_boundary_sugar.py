@@ -123,7 +123,6 @@ class WithEffectBoundarySugar(Sugar):
             body_es = promote_raise_halts(
                 reduce_block_to_exitset(self.body, ctx)
             ).guarded(manager_exit.guard)
-            _require_decided_completed_raise_projection(body_es)
 
             # One typed contract, both edges. ``unmet`` is what makes this an
             # assertion boundary rather than a resource ``__exit__``: under
@@ -160,39 +159,6 @@ class WithEffectBoundarySugar(Sugar):
         for part in routed[1:]:
             result = result.union(part)
         return result
-
-
-def _require_decided_completed_raise_projection(body_es) -> None:
-    """Keep a possible native operator raise loud on a completed body face."""
-    from sugar_lift_py_tests.floor.floor_value import ExceptionalDispositionV1
-    from sugar_lift_py_tests.outcome.exit_set import Completed
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-    from sugar_source_tree.panic import SugarNotWritten
-
-    for exit_ in body_es.exits:
-        if not isinstance(exit_, Completed) or not isinstance(
-            exit_.value, _ReducedBlock
-        ):
-            continue
-        for entry in exit_.value.entries:
-            disposition = getattr(entry, "exceptional_disposition", None)
-            if callable(disposition) and (
-                disposition() is ExceptionalDispositionV1.UNDECIDED
-            ):
-                raise SugarNotWritten(
-                    owner="WithEffectBoundarySugar.completed_raise_projection",
-                    observed=(
-                        "undecided binary operator dispatch inside an assertion boundary"
-                    ),
-                    requested=(
-                        "native testimony selecting a completed operation or one "
-                        "halted RaiseEffect face"
-                    ),
-                    fix=(
-                        "carry authenticated operator-dispatch testimony to the floor; "
-                        "never coerce undecided to completed or to the expected exception"
-                    ),
-                )
 
 
 def _bind_real_actuals(signature, manager_value):
