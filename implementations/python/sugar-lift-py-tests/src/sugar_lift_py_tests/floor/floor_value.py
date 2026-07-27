@@ -543,12 +543,18 @@ class FloorValue:
         construction_panic(info)
 
     def undecided_subscript(self, index, site, *, owner: str):
-        """Refuse a lookup whose runtime dispatch is not source-decided."""
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        """Refuse a lookup whose runtime dispatch is not source-decided.
 
-        construction_panic_gap(
+        This is accounted named-refusal semantics (``SugarNotWritten``), not a
+        construction-panic harness failure: the producer names the missing
+        testimony without inventing KeyError, IndexError, or a completed
+        ``py.subscript`` coordinate.
+        """
+        from sugar_source_tree.panic import SugarNotWritten
+
+        del site
+        raise SugarNotWritten(
             owner=owner,
-            blame=site,
             observed=(
                 "undecided receiver runtime type or index semantics: "
                 f"{type(self).__name__}[{type(index).__name__}]"

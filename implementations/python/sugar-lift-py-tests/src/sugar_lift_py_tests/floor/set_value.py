@@ -29,6 +29,20 @@ class SetValue(FloorValue):
         """This floor value denotes a ``set``."""
         return True
 
+    def python_index_protocol(self) -> bool:
+        return False
+
+    def subscript(self, index, site):
+        """Sets are never subscriptable: exact ground TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="SetValue.subscript",
+        )
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 

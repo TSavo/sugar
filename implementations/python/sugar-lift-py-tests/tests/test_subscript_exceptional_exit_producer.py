@@ -11,18 +11,20 @@ from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    DictValue,
     ListValue,
     RaiseValue,
+    SetValue,
     StringValue,
     SymbolicValue,
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_python_source.source_oracle import workspace_path_source
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
@@ -98,11 +100,13 @@ def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> 
         "series", receiver
     )
 
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         authenticated_site.sugar().desugar(ReduceContext(temporal))
 
-    assert raised.value.info.owner == "SymbolicValue.subscript"
-    assert "undecided receiver runtime type" in raised.value.info.observed
+    assert raised.value.owner == "SymbolicValue.subscript"
+    assert "undecided receiver runtime type" in raised.value.observed
+    assert "KeyError" not in raised.value.observed
+    assert "KeyError" not in raised.value.requested
 
 
 def test_truthful_out_of_range_concrete_list_emits_index_error(
@@ -140,13 +144,13 @@ def test_known_non_integer_list_index_emits_type_error(local_site) -> None:
 
 
 def test_unknown_list_index_is_a_named_third_value(local_site) -> None:
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         ListValue((TermValue(7),)).subscript(
             SymbolicValue(make_var("index")), local_site
         )
 
-    assert raised.value.info.owner == "ListValue.subscript"
-    assert "undecided" in raised.value.info.observed
+    assert raised.value.owner == "ListValue.subscript"
+    assert "undecided" in raised.value.observed
 
 
 @pytest.mark.parametrize(
@@ -182,8 +186,52 @@ def test_lying_nested_tuple_key_must_not_be_guessed_for_unknown_receiver(
         )
     )
 
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         SymbolicValue(make_var("receiver")).subscript(nested_key, local_site)
 
-    assert raised.value.info.owner == "SymbolicValue.subscript"
-    assert "undecided receiver runtime type" in raised.value.info.observed
+    assert raised.value.owner == "SymbolicValue.subscript"
+    assert "undecided receiver runtime type" in raised.value.observed
+
+
+def test_truthful_missing_dict_key_emits_key_error(local_site) -> None:
+    outcome = DictValue(((StringValue("a"), TermValue(1)),)).subscript(
+        StringValue("missing"), local_site
+    )
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "KeyError"
+
+
+def test_lying_present_dict_key_does_not_emit_exception(local_site) -> None:
+    outcome = DictValue(((StringValue("a"), TermValue(1)),)).subscript(
+        StringValue("a"), local_site
+    )
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, TermValue)
+    assert outcome.value.value == 1
+
+
+def test_unhashable_dict_key_emits_type_error(local_site) -> None:
+    outcome = DictValue(()).subscript(ListValue((TermValue(1),)), local_site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_number_receiver_emits_type_error(local_site) -> None:
+    outcome = TermValue(7).subscript(TermValue(0), local_site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_set_receiver_emits_type_error(local_site) -> None:
+    outcome = SetValue((TermValue(1),)).subscript(TermValue(0), local_site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
