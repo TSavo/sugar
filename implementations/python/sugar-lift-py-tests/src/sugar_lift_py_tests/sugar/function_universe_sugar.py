@@ -241,7 +241,29 @@ def reduce_block_to_exitset(
                 # into a contradictory second post-state.
                 return ExitSet.completed(state)
             active_ctx = state.context if state.context is not None else ctx
-            outcome = head.desugar(active_ctx)
+            statement_ctx = active_ctx
+            from sugar_lift_py_tests.effect_router import ObservedEffectBinding
+
+            observed = tuple(
+                entry
+                for entry in state.entries
+                if isinstance(entry, ObservedEffectBinding)
+            )
+            if observed:
+                from sugar_lift_py_tests.context import ReduceContext
+
+                statement_ctx = (
+                    ReduceContext.root(owner="reduce_block_to_exitset")
+                    if statement_ctx is None
+                    else ReduceContext.derived(
+                        statement_ctx, owner="reduce_block_to_exitset"
+                    )
+                )
+                for binding in observed:
+                    statement_ctx = statement_ctx.with_observed_effect(
+                        binding.slot_id, binding.effect
+                    )
+            outcome = head.desugar(statement_ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
             if (

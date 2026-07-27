@@ -449,6 +449,26 @@ def test_handler_halt_does_not_invent_post_try_fallthrough():
     assert reds[0].effect.exception_name == "RuntimeError"
 
 
+def test_handler_raise_carries_the_handled_occurrence_as_context():
+    """An explicit handler raise authenticates Python's chaining edge."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    out = _out(
+        "def A():\n"
+        "    try:\n"
+        "        raise ImportError('inner')\n"
+        "    except ImportError:\n"
+        "        raise ValueError('outer')\n"
+    )
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, RaiseEffect)
+    assert out.effect.exception_name == "ValueError"
+    assert isinstance(out.effect.context_effect, RaiseEffect)
+    assert out.effect.context_effect.exception_name == "ImportError"
+    assert out.effect.context_effect.occurrence.endswith(":6:8")
+
+
 # ---------------------------------------------------------------------------
 # except* separately loud (ordinary try path ≠ except*)
 # ---------------------------------------------------------------------------
