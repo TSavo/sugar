@@ -496,6 +496,37 @@ class SourceUnit:
         cache[cache_key] = result
         return result
 
+    def imported_exception_type_identity(self, node: "Expression"):
+        """Return the closed coordinate of an import-bound dotted type operand.
+
+        The context-manager contract authenticates the operand's role as an
+        exception type.  This method authenticates only its source identity:
+        the exact head occurrence must have one reaching import definition,
+        and every remaining component must be a static Attribute link.  A
+        shadowed, computed, or ambiguous head has no coordinate and stays loud.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        link = node
+        attributes = []
+        while isinstance(link, Attribute):
+            attributes.append(link.attr)
+            link = link.value
+        if not isinstance(link, Name):
+            return None
+        span = link.line_col_span()
+        target = self.import_bound_name_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            return None
+        module = target[len("python:") :] if target.startswith("python:") else target
+        qualified = ".".join([module, *reversed(attributes)])
+        return ctor(
+            "python:exception_type_identity",
+            [str_const("import"), str_const(qualified)],
+        )
+
     def _compute_exception_type_identity(
         self, node: "Name", span, builtin_names, ctor, str_const
     ):
@@ -5101,9 +5132,13 @@ class With(Statement):
             if index == selector.parameter_index:
                 actual, actual_location = value, location
                 break
-        if not isinstance(actual, Name):
+        if not isinstance(actual, (Name, Attribute)):
             return manager_sugar
-        identity = self.unit.exception_type_identity(actual)
+        identity = (
+            self.unit.exception_type_identity(actual)
+            if isinstance(actual, Name)
+            else self.unit.imported_exception_type_identity(actual)
+        )
         if identity is None:
             return manager_sugar
         if actual_location[0] == "arg":
@@ -8372,6 +8407,15 @@ class Name(Expression):
         bound = unwrap_binding_state(bound)
         if isinstance(bound, Node):
             return bound
+        span = self.line_col_span()
+        if self.unit.import_bound_name_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        ) is not None:
+            # The sole lexical import pass proves that this exact use has one
+            # reaching import definition.  Preserve the source node so its
+            # consumer can project that coordinate; do not replace it with an
+            # unbound temporal read merely because imports are inert facts.
+            return self
         return self._make_binding_read(bound)
 
     def _make_binding_read(self, state: BindingState) -> "Node":
