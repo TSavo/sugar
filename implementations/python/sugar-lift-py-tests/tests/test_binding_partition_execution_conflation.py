@@ -261,6 +261,26 @@ def test_tripwire_b_two_call_sites_do_not_specialize_the_callee(
     assert len(set(minted)) == 1
 
 
+def test_tripwire_a2_a_prior_binding_also_kills_the_mint(tmp_path, monkeypatch) -> None:
+    """The THIRD clause: `x = 0` before the branch collapses it too.
+
+    A prior binding leaves the else-face bound, so the join sees a plain Node
+    on both sides and takes the same `IfExp` arm as a two-branch binding --
+    the same mechanism reached by a different source shape.
+
+    This is the clause that makes the mint genuinely rare: initializing a name
+    before a conditional assignment is the MORE natural way to write it, so the
+    reachable shape is the less idiomatic one.
+    """
+    source_file = _source(
+        tmp_path,
+        "prior_binding.py",
+        "def prior(c):\n    x = 0\n    if c > 0:\n        x = 1\n    return x\n",
+    )
+
+    assert _mint_count(monkeypatch, source_file) == []
+
+
 def test_tripwire_b_the_join_itself_does_not_happen(tmp_path, monkeypatch) -> None:
     """THE CONNECTIVE, asserted directly rather than inferred from mint counts.
 
