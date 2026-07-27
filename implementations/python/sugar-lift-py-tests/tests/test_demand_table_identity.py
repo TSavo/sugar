@@ -230,3 +230,80 @@ def test_the_named_exception_is_not_a_producer() -> None:
             f"{name} now calls _cache_cardinalities, which reads sys.modules; "
             "the runtime-observation law's scoping is no longer sound"
         )
+
+
+# -- the correction: runtime IS in the key, until measured otherwise ----------
+
+
+def test_the_parser_identity_is_in_the_preimage(tmp_path) -> None:
+    """THE correction.
+
+    An earlier version excluded runtime on two independently-traced verdicts
+    that production never CALLS anything observing the interpreter. Both were
+    correct and both answered the wrong question: production's OUTPUT can
+    differ across interpreters with no such call, because the parse itself is
+    version-dependent. `CPythonAstBackend.fingerprint` documents it and names
+    3.12 versus 3.14 -- the offload host versus the workstations.
+    """
+    import sys
+
+    identity = _identity(_corpus(tmp_path / "corpus", _FILES))
+
+    assert identity.preimage()["parserIdentity"] == (
+        f"{sys.implementation.name}-{sys.version_info.major}."
+        f"{sys.version_info.minor}"
+    )
+
+
+def test_a_different_parser_identity_changes_the_key(tmp_path) -> None:
+    """The tooth. Two interpreters must not share one key while it is unproven
+    that they produce the same table.
+
+    Asymmetric on purpose: a too-specific key costs a rebuild and announces
+    itself as a miss; a too-loose key silently shares a table built under a
+    different parser behind a valid-looking CID. Loudly-lossy over
+    silently-wrong.
+    """
+    import sugar_lift_py_tests.demand_table_identity as module
+
+    root = _corpus(tmp_path / "corpus", _FILES)
+    here = _identity(root).content_key
+
+    original = module.parser_identity
+    module.parser_identity = lambda: "cpython-3.12"
+    try:
+        elsewhere = _identity(root).content_key
+    finally:
+        module.parser_identity = original
+
+    assert elsewhere != here
+
+
+def test_the_relaxing_condition_is_a_measurement_not_an_argument() -> None:
+    """Records what would let runtime leave the key, so the next reader does
+    not remove it on the strength of the two traces that were already wrong.
+
+    The gate is: build the table for one corpus on 3.12 and on 3.14 and
+    compare CIDs. Matching CIDs plus a test pinning the match is the only
+    thing that earns the removal.
+    """
+    from sugar_lift_py_tests import demand_table_identity as module
+
+    doc = " ".join((module.__doc__ or "").split())
+
+    assert "RELAXING IS A MEASUREMENT, NOT AN ARGUMENT" in doc
+    assert "3.12" in doc and "3.14" in doc
+
+
+def test_the_reason_the_first_answer_was_wrong_is_recorded() -> None:
+    """A key that mysteriously grew a field invites its own removal. The
+    evidence travels with the correction."""
+    from sugar_lift_py_tests import demand_table_identity as module
+
+    # Normalized: the docstring wraps, and a phrase split across lines is
+    # still the phrase. Asserting the wrapped form would pin the formatting
+    # rather than the claim.
+    doc = " ".join((module.__doc__ or "").split())
+
+    assert "version-dependent node stream" in doc
+    assert "answered the wrong question" in doc
