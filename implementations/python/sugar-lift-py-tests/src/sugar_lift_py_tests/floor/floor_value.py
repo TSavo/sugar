@@ -598,11 +598,12 @@ class FloorValue:
 
     def undecided_attribute(self, name, site, *, owner: str):
         """Refuse lookup when source testimony decides neither outgoing edge."""
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_source_tree.panic import SugarNotWritten
 
-        construction_panic_gap(
+        del site
+
+        raise SugarNotWritten(
             owner=owner,
-            blame=site,
             observed=(
                 "undecided receiver runtime type or member semantics: "
                 f"{type(self).__name__}.{name}"

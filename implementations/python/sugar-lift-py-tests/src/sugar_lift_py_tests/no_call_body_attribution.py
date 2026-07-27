@@ -6,10 +6,9 @@ to exactly one producer family and exactly one of three outcomes.  A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.  A
 ``ConstructionPanic`` remains a separate loud axis.
 
-Family denominators are the authenticated outer-body inventory on the
-pandas 3.0.3 corpus + #6464 demand table under the outer-node-not-Call law
-(Subscript 386, BinOp 349, Compare 181, Attribute 51, UnaryOp 13, BoolOp 2;
-sum 982). Nested Call descendants do not reclassify an outer producer.
+The producer family is the body's root expression. Calls used to construct an
+Attribute receiver remain children of that Attribute producer; they do not
+reclassify the raising operation as a Call.
 """
 
 from __future__ import annotations
@@ -48,10 +47,10 @@ class ProducerFamily(str, Enum):
 
 
 FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
-    ProducerFamily.SUBSCRIPT: 386,
-    ProducerFamily.BINOP: 349,
+    ProducerFamily.SUBSCRIPT: 392,
+    ProducerFamily.BINOP: 367,
     ProducerFamily.COMPARE: 181,
-    ProducerFamily.ATTRIBUTE: 51,
+    ProducerFamily.ATTRIBUTE: 53,
     ProducerFamily.UNARYOP: 13,
     ProducerFamily.BOOLOP: 2,
 }
@@ -345,9 +344,10 @@ def discover_no_call_body_probes(
 ) -> tuple[BodyProbe, ...]:
     """Project authenticated assertion demands to their native body producer.
 
-    ``targetSymbol`` is consumed as authenticated import testimony from the
-    shared table.  It selects the measurement population only; it grants no
-    semantic behavior to a manager or producer.
+    A resolved ``context-manager-demand`` row is authenticated preconstruction
+    testimony from the shared table. ``targetSymbol`` is deliberately ignored:
+    it grants neither population membership nor semantic behavior to a manager
+    or producer.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
@@ -382,7 +382,6 @@ def discover_no_call_body_probes(
         if (
             row.get("kind") != "context-manager-demand"
             or row.get("gapKind") is not None
-            or row.get("targetSymbol") != "pytest.raises"
         ):
             continue
         use_site = row.get("useSite") or {}
@@ -467,7 +466,9 @@ def require_expected_denominators(
 ) -> tuple[BodyProbe, ...]:
     """Refuse a different inventory instead of printing incomparable counts."""
     materialized = tuple(probes)
-    selected_families = tuple(ProducerFamily) if families is None else tuple(families)
+    selected_families = tuple(
+        family for family in ProducerFamily if families is None or family in families
+    )
     observed = {
         family: sum(probe.family is family for probe in materialized)
         for family in selected_families

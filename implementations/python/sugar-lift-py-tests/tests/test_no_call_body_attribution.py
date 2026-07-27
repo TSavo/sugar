@@ -83,14 +83,14 @@ def test_report_keeps_all_six_families_separate() -> None:
 
     assert tuple(report.by_family) == tuple(ProducerFamily)
     assert FAMILY_DENOMINATORS == {
-        ProducerFamily.SUBSCRIPT: 386,
-        ProducerFamily.BINOP: 349,
+        ProducerFamily.SUBSCRIPT: 392,
+        ProducerFamily.BINOP: 367,
         ProducerFamily.COMPARE: 181,
-        ProducerFamily.ATTRIBUTE: 51,
+        ProducerFamily.ATTRIBUTE: 53,
         ProducerFamily.UNARYOP: 13,
         ProducerFamily.BOOLOP: 2,
     }
-    assert sum(FAMILY_DENOMINATORS.values()) == 982
+    assert sum(FAMILY_DENOMINATORS.values()) == 1008
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
@@ -224,9 +224,7 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
     package.mkdir()
     sources = {
         "attribute_body.py": (
-            "def f(series):\n"
-            "    with boundary(AttributeError):\n"
-            "        series.bad\n"
+            "def f():\n    with boundary(AttributeError):\n        factory().bad\n"
         ),
         "subscript_body.py": (
             "def g(value):\n    with boundary(IndexError):\n        value[2]\n"
@@ -250,7 +248,11 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
             {
                 "kind": "context-manager-demand",
                 "gapKind": None,
-                "targetSymbol": "pytest.raises",
+                "targetSymbol": (
+                    "authenticated.boundary"
+                    if filename == "attribute_body.py"
+                    else "authenticated.resource"
+                ),
                 "useSite": {
                     "sourceCid": source_cid,
                     "startLine": span.start_line,
@@ -292,10 +294,3 @@ def test_selected_family_denominator_remains_fixed() -> None:
         require_expected_denominators(
             probes[:-1], families=frozenset({ProducerFamily.ATTRIBUTE})
         )
-
-
-def test_attribute_family_denominator_is_outer_body_inventory() -> None:
-    """Outer-body law measures Attribute 51 (historical no-Call-descendant pin was 41)."""
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 51
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 53
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 41

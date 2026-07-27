@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the authenticated 982 outer-body producer-family attribution.
+"""Run attribution for 1,008 assertion bodies whose root is not a Call.
 
 This entry point intentionally has no unauthenticated or build fallback.  Use
 ``bin/bpytest`` / ``sugar-bx.sh`` so CPython 3.12.13, NumPy 2.5.1, the canonical
