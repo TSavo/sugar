@@ -2059,7 +2059,20 @@ class FunctionDef(Statement):
                     FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
             else:
-                steps.append(OpaqueStepV1(statement.kind))
+                # The step vocabulary cannot name this shape. Say WHETHER it
+                # holds a suspension, because the two obligations differ:
+                # `x = 1` owes ordinary statement execution, `x = yield 1`
+                # owes the resumed value's binding. Bucketing them as one
+                # `Assign` row is why the suspension owners read as an
+                # undifferentiated mass. Read from `_owns_yield`, the same
+                # authenticated predicate that decided this body is a
+                # generator -- never from the statement's spelling.
+                steps.append(
+                    OpaqueStepV1(
+                        statement.kind,
+                        carries_suspension=self._owns_yield((statement,)),
+                    )
+                )
 
         for statement in body:
             append_statement(statement)
