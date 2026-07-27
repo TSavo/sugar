@@ -76,6 +76,12 @@ binaries = ["sugar"]
 command = ["python", "-m", "pytest"]
 network = "none"
 
+[tasks.authenticated-python-lift]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-m", "sugar_lift_py_tests.authenticated_pytest"]
+network = "none"
+
 [tasks.datetime-claim-twins]
 capabilities = ["python-test", "solver-z3"]
 binaries = ["sugar"]

@@ -60,6 +60,7 @@ def test_declared_tool_versions_have_exact_syntax_and_capability_mapping(tmp_pat
 
 @pytest.mark.parametrize(("name", "capabilities", "digest", "binaries", "command", "network"), [
     ("python-unit", ["core", "python-test"], "12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674", ["sugar"], ["python", "-m", "pytest"], "none"),
+    ("authenticated-python-lift", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "-m", "sugar_lift_py_tests.authenticated_pytest"], "none"),
     ("python-lift", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "-m", "pytest"], "none"),
     ("rust-unit", ["core", "solver-z3"], "ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497", [], ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"], "required"),
     ("examples-gate", ["core", "java", "node", "python-scientific", "python-test", "solver-coq", "solver-z3", "vampire"], "f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e", ["sugar", "sugar-ir-smt-lib"], ["make", "examples-gate"], "required"),
@@ -101,9 +102,9 @@ def test_python_unit_has_a_distinct_published_test_runtime():
     assert environment["image"] == "ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674"
 
 
-def test_bpytest_selects_published_python_unit_task():
+def test_bpytest_selects_authenticated_python_lift_task():
     wrapper = (ROOT / "bin/bpytest").read_text()
-    assert 'exec "$sugarbin" run --host bx --task python-unit -- "$@"' in wrapper
+    assert "authenticated-python-lift" in wrapper
 
 
 def test_pyright_private_node_is_not_the_node_capability():
