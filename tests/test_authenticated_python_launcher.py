@@ -222,3 +222,22 @@ def test_bpytest_wrapper_contract_is_collected_by_pytest() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "PASS: authenticated bpytest wrapper" in completed.stdout
+
+
+def test_bootstrap_venv_py312_twins_are_collected_by_pytest() -> None:
+    """The bootstrap script must live on main and refuse bare-python3 envs.
+
+    A prior session left scripts/bootstrap-venv-py312.sh only on one machine's
+    disk; other worktrees could not find it. These twins fail if the script is
+    absent, if pins are not post-editable, or if a non-exact 3.12.x / bare
+    python3 is accepted.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        ["bash", str(repo / "tests/bootstrap_venv_py312_twins.sh"), str(repo)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    assert "PASS: bootstrap-venv-py312 twins" in completed.stdout
