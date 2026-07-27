@@ -710,17 +710,51 @@ def test_ordinary_except_does_not_consume_grouped_raise():
     assert isinstance(outcome.effect, GroupedRaiseEffect)
 
 
-def test_warnings_warn_does_not_fabricate_a_warning_effect_without_a_producer():
-    """The live warning schema has no source producer; the call stays unresolved."""
+def test_warnings_warn_with_an_explicit_category_mints_authenticated_testimony():
+    """This test previously pinned the ABSENCE of a source producer.
+
+    It was right when it was written -- nothing in any ``src`` tree constructed
+    a ``WarningObservationValue``, so the consumer shipped in ``dd3d1b5ca``
+    (#6458) had no other half. The producer now exists, so the absence it
+    asserted is no longer the truth about this source, and pinning it would
+    keep the gap green. What replaces it is the same claim in the positive
+    direction: an EXPLICIT source-written category authenticates, and its
+    coordinate is the ordinary ``python:exception_type_identity`` the
+    raise/except projection already mints -- no warning vocabulary is added.
+    """
+    from sugar_lift_py_tests.floor.warning_observation_value import (
+        WarningObservationValue,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    v = _val(
+        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n"
+    )
+    entries = v.record.contribution()
+    observations = [
+        entry for entry in entries if isinstance(entry, WarningObservationValue)
+    ]
+    assert len(observations) == 1
+    assert observations[0].effect.category_identity == ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("UserWarning")],
+    )
+    assert observations[0].guards == ()
+
+
+def test_warnings_warn_without_a_category_still_fabricates_nothing():
+    """``warnings.warn(msg)`` defaults to ``UserWarning`` in CPython, not in the
+    source text. Inferring it here would put an unstated assumption inside an
+    authenticated coordinate, so the call stays an ordinary unresolved site --
+    which the completed-face boundary names, rather than reading as "no
+    warning". This is the half of the old test that is still true."""
     from sugar_lift_py_tests.effect.warning_effect import WarningEffect
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.warning_observation_value import (
         WarningObservationValue,
     )
 
-    v = _val(
-        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n"
-    )
+    v = _val("import warnings\n" "def A():\n" "    warnings.warn('message')\n")
     entries = v.record.contribution()
     calls = [entry for entry in entries if isinstance(entry, CallSiteValue)]
     assert len(calls) == 1
