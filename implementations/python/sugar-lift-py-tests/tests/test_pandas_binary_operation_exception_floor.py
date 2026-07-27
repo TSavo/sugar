@@ -14,10 +14,18 @@ from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_source_tree.nodes import BinOp
 from sugar_source_tree.tree import SourceFile
 
+# Content manifest (relative path + per-file BLAKE3-512). Path-shape
+# sha256:a223… is historical negative testimony only — never identity.
 PANDAS_MANIFEST_CID = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
+    "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+HISTORICAL_PATH_SHAPE_DIGEST = (
     "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
 FILE_SHA256 = "14698f3356d531b1cb87761c57be48737cb547b7ac97f7a6406c16336d5e2f5f"
+
+
 def _corpus_file() -> Path:
     corpus = authenticated_pandas_corpus()
     assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
@@ -25,6 +33,7 @@ def _corpus_file() -> Path:
         PANDAS_MANIFEST_CID,
         1421,
     )
+    assert corpus.manifest_cid != HISTORICAL_PATH_SHAPE_DIGEST
     return corpus.root / "tests/series/test_logical_ops.py"
 
 
@@ -45,19 +54,36 @@ def _line_96_bitand(source: str, path: Path):
     return matches[0]
 
 
-def _assert_named_undecided_refusal(node, *, observed: str) -> None:
+def _assert_named_panic(
+    node,
+    *,
+    owner: str,
+    observed: str,
+    requested_contains: str,
+) -> None:
     with pytest.raises(ConstructionPanic) as raised:
         node.sugar().desugar(None)
     info = raised.value.info
-    assert info.owner == "binary_operation_exception_floor"
+    assert info.owner == owner
     assert info.observed == observed
-    assert "authenticated exceptional exit" in info.requested
+    assert requested_contains in info.requested
+    # Never invent a runtime TypeError / RuntimeEffect for undecided source.
     assert "TypeError" not in str(info)
     assert "RuntimeEffect" not in str(info)
 
 
 def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> None:
-    """Truthful/lying runtime twins cannot license invented source testimony."""
+    """Truthful/lying runtime twins cannot license invented source testimony.
+
+    Site: ``pandas/tests/series/test_logical_ops.py:96`` ``s_0123 & np.nan``.
+
+    Operand evaluation runs before the BinOp floor. On the truthful site the
+    right operand is ``np.nan`` — Attribute on an unresolved name — so the
+    named coordinate is ``SymbolicValue.attribute``. Replacing the right
+    operand with a term (``0``) removes that child gap and the panic lands on
+    ``binary_operation_exception_floor`` as ``SymbolicValue & TermValue``.
+    Neither arm invents TypeError.
+    """
     path = _corpus_file()
     truthful = path.read_text(encoding="utf-8")
     assert hashlib.sha256(truthful.encode("utf-8")).hexdigest() == FILE_SHA256
@@ -71,11 +97,19 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
     assert (series & 0).tolist() == [0, 0, 0, 0]
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
-    _assert_named_undecided_refusal(
+    _assert_named_panic(
         _line_96_bitand(truthful, path),
-        observed="SymbolicValue & SymbolicValue",
+        owner="SymbolicValue.attribute",
+        observed=(
+            "undecided receiver runtime type or member semantics: SymbolicValue.nan"
+        ),
+        requested_contains=(
+            "source-authenticated attribute success or exceptional exit"
+        ),
     )
-    _assert_named_undecided_refusal(
+    _assert_named_panic(
         _line_96_bitand(lying, path),
+        owner="binary_operation_exception_floor",
         observed="SymbolicValue & TermValue",
+        requested_contains="authenticated exceptional exit",
     )

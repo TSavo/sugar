@@ -26,7 +26,15 @@ from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
 SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
-MANIFEST_CID = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+# Content manifest (relative path + per-file BLAKE3-512). Path-shape
+# sha256:a223… is historical negative testimony only — never identity.
+MANIFEST_CID = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
+    "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+HISTORICAL_PATH_SHAPE_DIGEST = (
+    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+)
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +82,9 @@ def test_launcher_authenticates_the_exact_corpus() -> None:
         MANIFEST_CID,
         1421,
     )
+    # Path-shape is refusal testimony, not an accepted corpus identity.
+    assert corpus.manifest_cid != HISTORICAL_PATH_SHAPE_DIGEST
+
 
 def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> None:
     receiver = CallSiteValue(
