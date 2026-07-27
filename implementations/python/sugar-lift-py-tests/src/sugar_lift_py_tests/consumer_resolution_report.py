@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
+from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
 
 
 class ConsumerResolutionMiss(RuntimeError):
@@ -67,19 +68,65 @@ class LauncherSelectionTestimony:
 
 
 @dataclass(frozen=True)
+class CallerAttribution:
+    """Caller-owned surviving gap testimony using #6511's closed outcomes."""
+
+    outcome: AttributionOutcome
+    detail: str
+
+    def __post_init__(self) -> None:
+        if self.outcome not in (
+            AttributionOutcome.NAMED_REFUSAL,
+            AttributionOutcome.CONSTRUCTION_PANIC,
+        ):
+            raise ValueError(
+                "surviving testimony must be a named refusal or construction panic"
+            )
+        if not self.detail:
+            raise ValueError("surviving testimony requires caller detail")
+
+
+@dataclass(frozen=True)
+class CallerReportTestimony:
+    """Reported observations; never promoted to artifact verification."""
+
+    concrete_source_site: str
+    before_outcome: str
+    after_outcome: str
+    surviving: tuple[CallerAttribution, ...]
+
+    def __post_init__(self) -> None:
+        fields = (
+            self.concrete_source_site,
+            self.before_outcome,
+            self.after_outcome,
+        )
+        if any(not value for value in fields):
+            raise ValueError("caller testimony cannot contain an absent observation")
+
+
+@dataclass(frozen=True)
 class ConsumerHitReport:
     source_stamp: str
     runtime: str
-    corpus_files: int
     corpus_manifest_cid: str
+    demand_table_content_key: str
+    caller: CallerReportTestimony
 
     def lines(self) -> tuple[str, ...]:
+        surviving = ",".join(
+            f"{item.outcome.value}:{item.detail}" for item in self.caller.surviving
+        )
         return (
             f"sourceStamp {self.source_stamp}",
             f"runtime {self.runtime}",
-            f"corpusFiles {self.corpus_files}",
             f"corpusManifest {self.corpus_manifest_cid}",
-            "artifactVerification success",
+            f"demandTableIdentity {self.demand_table_content_key}",
+            f"concreteSourceSite reported {self.caller.concrete_source_site}",
+            f"beforeOutcome reported {self.caller.before_outcome}",
+            f"afterOutcome reported {self.caller.after_outcome}",
+            "survivingTypedGapsOrReattributions reported "
+            f"[{surviving}]",
         )
 
     def render(self) -> str:
@@ -116,6 +163,7 @@ def resolve_consumer_hit(
     binary: BinaryCellTestimony,
     demand: DemandTableCellTestimony,
     launcher: LauncherSelectionTestimony,
+    caller: CallerReportTestimony,
 ) -> ConsumerHitReport:
     """Resolve one composite hit or refuse at its first differing coordinate."""
     source_stamps = (
@@ -172,8 +220,9 @@ def resolve_consumer_hit(
     return ConsumerHitReport(
         source_stamp=request.source_stamp,
         runtime=request.runtime,
-        corpus_files=request.corpus_files,
         corpus_manifest_cid=request.corpus_manifest_cid,
+        demand_table_content_key=demand.identity.content_key,
+        caller=caller,
     )
 
 
@@ -182,8 +231,9 @@ def print_consumer_hit(
     binary: BinaryCellTestimony,
     demand: DemandTableCellTestimony,
     launcher: LauncherSelectionTestimony,
+    caller: CallerReportTestimony,
 ) -> ConsumerHitReport:
     """Resolve and print the composed testimony at the consumer edge."""
-    report = resolve_consumer_hit(request, binary, demand, launcher)
+    report = resolve_consumer_hit(request, binary, demand, launcher, caller)
     print(report.render(), flush=True)
     return report

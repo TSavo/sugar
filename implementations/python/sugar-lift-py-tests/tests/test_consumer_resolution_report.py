@@ -6,6 +6,8 @@ import pytest
 
 from sugar_lift_py_tests.consumer_resolution_report import (
     BinaryCellTestimony,
+    CallerAttribution,
+    CallerReportTestimony,
     ConsumerResolutionMiss,
     ConsumerResolutionRequest,
     DemandTableCellTestimony,
@@ -14,6 +16,7 @@ from sugar_lift_py_tests.consumer_resolution_report import (
     resolve_consumer_hit,
 )
 from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
+from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
 
 
 STAMP = "blake3-512_" + "b" * 128
@@ -71,30 +74,49 @@ def _matching_testimony():
         corpus_manifest_cid=MANIFEST,
         corpus_files=1421,
     )
-    return request, binary, demand, launcher
+    caller = CallerReportTestimony(
+        concrete_source_site="pandas/tests/example.py:41:8",
+        before_outcome="named-refusal:opaque-call",
+        after_outcome="authenticated-exceptional-exit:TypeError",
+        surviving=(
+            CallerAttribution(
+                AttributionOutcome.NAMED_REFUSAL,
+                "opaque native callback remains source-undecided",
+            ),
+        ),
+    )
+    return request, binary, demand, launcher, caller
 
 
 def test_matching_three_artifacts_print_composite_hit():
-    request, binary, demand, launcher = _matching_testimony()
-    report = resolve_consumer_hit(request, binary, demand, launcher)
+    request, binary, demand, launcher, caller = _matching_testimony()
+    report = resolve_consumer_hit(request, binary, demand, launcher, caller)
     assert report.lines() == (
         f"sourceStamp {STAMP}",
         "runtime cpython-3.12.13",
-        "corpusFiles 1421",
         f"corpusManifest {MANIFEST}",
-        "artifactVerification success",
+        "demandTableIdentity blake3-512:" + "d" * 128,
+        "concreteSourceSite reported pandas/tests/example.py:41:8",
+        "beforeOutcome reported named-refusal:opaque-call",
+        "afterOutcome reported authenticated-exceptional-exit:TypeError",
+        "survivingTypedGapsOrReattributions reported "
+        "[named-refusal:opaque native callback remains source-undecided]",
     )
 
 
 def test_matching_three_artifacts_print_to_the_consumer_edge(capsys):
-    request, binary, demand, launcher = _matching_testimony()
-    print_consumer_hit(request, binary, demand, launcher)
+    request, binary, demand, launcher, caller = _matching_testimony()
+    print_consumer_hit(request, binary, demand, launcher, caller)
     assert capsys.readouterr().out.splitlines() == [
         f"sourceStamp {STAMP}",
         "runtime cpython-3.12.13",
-        "corpusFiles 1421",
         f"corpusManifest {MANIFEST}",
-        "artifactVerification success",
+        "demandTableIdentity blake3-512:" + "d" * 128,
+        "concreteSourceSite reported pandas/tests/example.py:41:8",
+        "beforeOutcome reported named-refusal:opaque-call",
+        "afterOutcome reported authenticated-exceptional-exit:TypeError",
+        "survivingTypedGapsOrReattributions reported "
+        "[named-refusal:opaque native callback remains source-undecided]",
     ]
 
 
@@ -108,32 +130,32 @@ def test_matching_three_artifacts_print_to_the_consumer_edge(capsys):
     ],
 )
 def test_each_request_coordinate_misses_by_its_own_name(coordinate, mutate):
-    request, binary, demand, launcher = _matching_testimony()
+    request, binary, demand, launcher, caller = _matching_testimony()
     with pytest.raises(ConsumerResolutionMiss) as caught:
-        resolve_consumer_hit(mutate(request), binary, demand, launcher)
+        resolve_consumer_hit(mutate(request), binary, demand, launcher, caller)
     assert caught.value.coordinate == coordinate
     assert str(caught.value).startswith(f"consumer resolution MISS: {coordinate} differs:")
 
 
 def test_platform_difference_is_the_same_named_coordinate_as_profile():
-    request, binary, demand, launcher = _matching_testimony()
+    request, binary, demand, launcher, caller = _matching_testimony()
     request = replace(request, platform="darwin-arm64")
     with pytest.raises(ConsumerResolutionMiss, match=r"MISS: profile/platform differs"):
-        resolve_consumer_hit(request, binary, demand, launcher)
+        resolve_consumer_hit(request, binary, demand, launcher, caller)
 
 
 def test_consumer_refuses_unverified_artifact_instead_of_printing_a_hit():
-    request, binary, demand, launcher = _matching_testimony()
+    request, binary, demand, launcher, caller = _matching_testimony()
     with pytest.raises(ConsumerResolutionMiss) as caught:
         resolve_consumer_hit(
-            request, replace(binary, artifact_verified=False), demand, launcher
+            request, replace(binary, artifact_verified=False), demand, launcher, caller
         )
     assert caught.value.coordinate == "artifact verification"
 
 
 def test_historical_path_shape_digest_is_a_named_corpus_identity_miss():
     """Even unanimous testimony cannot upgrade a non-corpus preimage."""
-    request, binary, demand, launcher = _matching_testimony()
+    request, binary, demand, launcher, caller = _matching_testimony()
     request = replace(request, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST)
     demand = replace(
         demand,
@@ -145,6 +167,41 @@ def test_historical_path_shape_digest_is_a_named_corpus_identity_miss():
         launcher, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST
     )
     with pytest.raises(ConsumerResolutionMiss) as caught:
-        resolve_consumer_hit(request, binary, demand, launcher)
+        resolve_consumer_hit(request, binary, demand, launcher, caller)
     assert caught.value.coordinate == "corpus identity"
     assert HISTORICAL_PATH_SHAPE_DIGEST in str(caught.value)
+
+
+def test_caller_testimony_cannot_inherit_or_override_artifact_verification():
+    request, binary, demand, launcher, caller = _matching_testimony()
+    caller = replace(
+        caller,
+        before_outcome="artifact verification success",
+        after_outcome="artifact verification success",
+    )
+    with pytest.raises(ConsumerResolutionMiss) as caught:
+        resolve_consumer_hit(
+            request,
+            replace(binary, artifact_verified=False),
+            demand,
+            launcher,
+            caller,
+        )
+    assert caught.value.coordinate == "artifact verification"
+
+
+def test_surviving_construction_panic_is_not_rendered_as_named_refusal():
+    request, binary, demand, launcher, caller = _matching_testimony()
+    caller = replace(
+        caller,
+        surviving=(
+            CallerAttribution(
+                AttributionOutcome.CONSTRUCTION_PANIC,
+                "missing constructed operand",
+            ),
+        ),
+    )
+    report = resolve_consumer_hit(request, binary, demand, launcher, caller)
+    assert report.lines()[-1].endswith(
+        "[construction-panic:missing constructed operand]"
+    )
