@@ -367,12 +367,10 @@ class SymbolicValue(FloorValue):
         return Complete(self)
 
     def bitwise_invert(self, site):
-        # Symbolic bitwise NOT: emit py.invert(term).
-        del site
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.invert", [self.term])))
+        # The term does not state a runtime type, so it cannot decide whether
+        # ``~`` returns a value or raises TypeError.  A symbolic coordinate for
+        # the success face would erase that exceptional face.
+        return super().bitwise_invert(site)
 
     def subscript(self, index, site):
         if self.formal_coordinate is not None:

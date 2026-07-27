@@ -548,23 +548,21 @@ class TermValue(FloorValue):
         return Complete(TermValue(+self.value))
 
     def bitwise_invert(self, site):
-        # Bitwise NOT: fold ints; floats raise TypeError at runtime in Python.
-        if type(self.value) is int:
+        # Bitwise NOT: fold ints; a known float has a ground TypeError exit.
+        if isinstance(self.value, int):
             from sugar_lift_py_tests.outcome import Complete
 
-            return Complete(TermValue(~self.value))
-        from sugar_lift_py_tests.effect import (
-            TypeErrorRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
+            # ``bool`` is an int subtype and Python 3.14 still defines its
+            # inversion through the underlying integer.  Convert explicitly
+            # so construction does not emit CPython's runtime deprecation
+            # warning while calculating a source-decided result.
+            return Complete(TermValue(~int(self.value)))
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-        return Incomplete(
-            TypeErrorRuntimeEffect(
-                f"bad operand type for unary ~: "
-                f"'float'; owner=TermValue.bitwise_invert site={site}",
-                **runtime_effect_evidence("py.bitwise_invert", self, site),
-            )
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="TermValue.bitwise_invert",
         )
 
     def to_term(self, *, owner: str):

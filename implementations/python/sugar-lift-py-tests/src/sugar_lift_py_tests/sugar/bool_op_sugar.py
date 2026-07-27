@@ -39,50 +39,73 @@ class BoolOpSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from functools import reduce
-
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete, ExitSet, outcome_to_exitset
         from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
             _and_guards,
             _or_guards,
+            complement_guard,
             factored_operand,
+            false_guard,
+            partition,
+            true_guard,
         )
         from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
-        # Operands thread through `and_then`, the one door every Outcome variant
-        # implements. An operand that halts propagates -- the boolean is not
-        # decidable once a conjunct halts -- and an operand that PARTITIONS
-        # (`a and (d[k] := f())`, a conjunct whose store can halt) keeps both
-        # arms: each completed arm folds its own formula under its own guard.
-        # Reading `.value` off the outcome assumed exactly one arm and was the
-        # `'ExitSet' object has no attribute 'value'` defect here.
-        def collect(operand, collected):
-            # One completed arm per operand (#6324): an unfactored partitioning
-            # conjunct multiplies the accumulated formula tuple, and k conjuncts
-            # distribute into m ** k arms.
-            return factored_operand(operand.desugar(ctx)).and_then(
-                # Same truth→formula projection as if/if-exp: symbolic formulas
-                # stand as themselves; ground True/False (including None.truth →
-                # False) fold through true_guard/false_guard. Never raise bare
-                # NotImplementedError on a constructible ground boolean.
-                lambda value: Complete(
-                    (*collected, predicate_formula(value, self.site))
-                )
-            )
-
-        outcome = Complete(())
-        for operand in self.values:
-            outcome = outcome.and_then(
-                lambda collected, operand=operand: collect(operand, collected)
-            )
-
-        # Fold with the shared guard algebra so ground identities absorb:
-        #   false ∧ φ → false,  true ∧ φ → φ,  true ∨ φ → true,  false ∨ φ → φ.
-        # Raw and_/or_ would leave and_([false, true]) as a connective and hide
-        # that None and True is false in boolean context.
         combine = _and_guards if self.op_kind == "And" else _or_guards
-        return outcome.and_then(
-            lambda formulas: Complete(
-                PredicateValue(reduce(combine, formulas), self.site)
+        stop_formula = false_guard() if self.op_kind == "And" else true_guard()
+
+        def reduce_from(index: int):
+            operand = self.values[index]
+            standing = factored_operand(operand.desugar(ctx)).and_then(
+                lambda value: Complete(predicate_formula(value, self.site))
             )
-        )
+
+            def continue_from(formula):
+                last = index == len(self.values) - 1
+                if last:
+                    return Complete(PredicateValue(formula, self.site))
+
+                # A decided stopping face never evaluates the RHS at all.
+                if formula == stop_formula:
+                    return Complete(PredicateValue(stop_formula, self.site))
+                if (self.op_kind == "And" and formula == true_guard()) or (
+                    self.op_kind == "Or" and formula == false_guard()
+                ):
+                    return reduce_from(index + 1)
+
+                tail = reduce_from(index + 1)
+                tail_es = outcome_to_exitset(tail)
+                halted = any(not isinstance(edge, Completed) for edge in tail_es.exits)
+
+                # If construction established that every RHS face completes,
+                # its truth formula is available and the ordinary boolean
+                # formula remains a single value.  No exceptional edge is being
+                # hidden in this arm.
+                if not halted and len(tail_es.exits) == 1:
+                    tail_value = tail_es.exits[0].value
+                    return Complete(
+                        PredicateValue(combine(formula, tail_value.formula), self.site)
+                    )
+
+                # Otherwise Python evaluates the tail only on this face.  The
+                # complementary face completes with the short-circuit result;
+                # the RHS halt is conditional, never promoted to unconditional
+                # and never discarded as absent.
+                rhs_guard = (
+                    formula if self.op_kind == "And" else complement_guard(formula)
+                )
+                rhs_face, stop_face = partition(
+                    ("BoolOpSugar", str(self.site), index, self.op_kind)
+                )
+                rhs = tail_es.guarded(rhs_guard, rhs_face)
+                stopped = ExitSet.completed(
+                    PredicateValue(stop_formula, self.site),
+                    complement_guard(rhs_guard),
+                ).guarded(true_guard(), stop_face)
+                return rhs.union(stopped)
+
+            return standing.and_then(continue_from)
+
+        return reduce_from(0)
