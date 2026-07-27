@@ -65,8 +65,24 @@ def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
     the true guard owes the bare obligation and is not re-minted at all.
 
     An arm with no block to enrol into (a halted arm whose state is ``None``)
-    stays LOUD -- there is no record to owe on, and inventing one would
-    attribute the obligation to a block that never ran.
+    stays LOUD, and the gap belongs to the PRODUCER that built it, not here.
+    Every composition that fans a halt across incoming arms -- ``and_finally``
+    over a cleanup halt, ``and_exit`` over an exit-expression halt,
+    ``outcome_to_exitset`` over an ``Incomplete`` -- can emit a halted arm whose
+    ``state`` is ``None``, and an obligation incurred on the path that reached
+    it then has no record to be owed on.
+
+    Two things that look like answers are not. Splicing the enclosing block's
+    prefix onto such an arm is sound about what happened but changes what
+    ``state is None`` MEANS: ``exit_disposition._boundary_halted_edge`` reads it
+    as "the reducer omitted the real pre-halt state" and refuses on it, so
+    supplying a record here would silence that refusal for exactly the arms that
+    owe. Synthesising a record whose entries are only the demand rows is worse
+    -- it asserts a temporal record where the producer said there was none.
+    Measured: it is one row on pandas `core/reshape/pivot.py:284` (two demands
+    from `pivot.py:327:19`, the `data[to_filter]` subscript on a formal), and
+    one loud row naming the producer is the honest answer until the producer
+    carries the record.
     """
     if not any(exit_.pending_contracts for exit_ in exits.exits):
         # The overwhelmingly common case, and it must cost nothing: this runs at
@@ -150,6 +166,47 @@ def _prefixed(state: _ReducedBlock, inner: object) -> object:
         (),
         state.transforms,
     )
+
+
+def _halt_state(state: _ReducedBlock, exit_) -> object:
+    """The temporal record a halted arm of a nested statement carries.
+
+    Normally ``_prefixed``: the nested reduction's own record with this block's
+    prefix spliced in front. A nested payload that is not a block record has
+    nothing to splice onto and is left alone -- ``outcome_to_exitset`` converts
+    an ``Incomplete`` to ``Halted(guard, effect, None)`` because that conversion
+    has no record to offer, and ``and_finally`` / ``and_exit`` fan cleanup and
+    exit halts across incoming arms the same way.
+
+    A stateless halt that OWES is the one case where ``None`` is not an answer.
+    The obligation was incurred on the path that reached the halt, and
+    ``_enrol_exit_obligations`` needs a record to enrol it into. The prefix IS
+    that record: an arm with no nested record halted at the top of this
+    statement, so everything this block had established when the statement began
+    is the complete temporal record for that path. Nothing is invented -- the
+    prefix genuinely happened.
+
+    WHY THIS DOES NOT WEAKEN THE BOUNDARY REFUSAL.
+    ``exit_disposition._boundary_halted_edge`` reads ``state is None`` as "the
+    reducer omitted the real pre-halt state" and refuses on it, so supplying a
+    record where that check will see one would silence it. It will not see this
+    one: that check runs inside ``ExitSet.and_exit``, during the statement's own
+    ``head.desugar(ctx)``, which is UPSTREAM of this seam. By the time a
+    statement hands its ExitSet back here, its boundary edges are already
+    decided.
+
+    Narrow on purpose. An arm that owes nothing keeps exactly the state it had,
+    so no existing temporal testimony moves; this supplies a record only where
+    one is now required and was previously absent. Measured on the 22-file
+    pandas 3.0.3 slice: with this, `pivot.py:536` and `format.py:1620` enrol and
+    drain; without it, all three sites merely change owner from
+    `ContractConditionalConstructionV1.and_then` to this module's refusal, which
+    is reattribution, not a drain.
+    """
+    spliced = _prefixed(state, exit_.state)
+    if exit_.pending_contracts and not isinstance(spliced, _ReducedBlock):
+        return state
+    return spliced
 
 
 def reduce_block_to_exitset(
@@ -287,7 +344,13 @@ def reduce_block_to_exitset(
                             Halted(
                                 exit_.guard,
                                 exit_.effect,
-                                _prefixed(state, exit_.state),
+                                _halt_state(state, exit_),
+                                # This rebuild used to state three fields, so it
+                                # dropped BOTH the arm's partition testimony and
+                                # its pending obligations on the way through --
+                                # the same shape of loss `ExitSet.guarded` had.
+                                exit_.faces,
+                                exit_.pending_contracts,
                             )
                             if isinstance(exit_, Halted)
                             else exit_
