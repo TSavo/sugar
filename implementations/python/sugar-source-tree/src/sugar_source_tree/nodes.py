@@ -8193,6 +8193,12 @@ def _construct_binding_projection(state):
             _construct_binding_projection(state.when_false),
         )
     if isinstance(state, LoopProjectedBinding):
+        # A loop routes HERE, not to GuardedProjection -- which is why a loop
+        # never mints ("binding.projection", slot_id). That matters: a loop is
+        # the one shape supplying many executions over one source location by
+        # construction, and that partition's key has no execution component.
+        # See tests/test_binding_partition_execution_conflation.py
+        # (test_tripwire_c_a_loop_body_does_not_mint_this_partition).
         if any(face.guard_formula is None for face in state.completed_faces):
             raise BindingStateWireGap(
                 "loop projected binding has CID-only guards; exact guard formula "
