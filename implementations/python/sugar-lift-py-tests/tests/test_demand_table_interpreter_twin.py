@@ -22,13 +22,23 @@ def render(value, width):
         return rendered
 """
 
-# Independently produced under authenticated CPython 3.12.13 on Battleaxe and
-# CPython 3.14.4 on the workstation. Both runs named the same pandas manifest
-# CID and produced this exact three-row table CID.
-MEASURED_312_314_OUTPUT_CID = (
-    "blake3-512:171cb05a5903a2d929596d9ea33b35432c4f5721f37c5553d2b012063495ee18"
-    "3b0e0281f23f3dbf9ceeadc4d1fb107163e78bfe4d570d457b4a0ae2867fe7fb"
+# Independently produced from base 964dbf95d under authenticated CPython
+# 3.12.13 on Battleaxe and CPython 3.14.4 on the workstation. The receipts pin
+# the decisive law, not merely its convenient conclusion: same corpus,
+# different parser output, byte-identical demand table.
+MEASURED_CORPUS_MANIFEST_CID = (
+    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
+MEASURED_DEMAND_TABLE_OUTPUT_CIDS = {
+    "cpython-3.12.13": (
+        "blake3-512:171cb05a5903a2d929596d9ea33b35432c4f5721f37c5553d2b012063495ee18"
+        "3b0e0281f23f3dbf9ceeadc4d1fb107163e78bfe4d570d457b4a0ae2867fe7fb"
+    ),
+    "cpython-3.14.4": (
+        "blake3-512:171cb05a5903a2d929596d9ea33b35432c4f5721f37c5553d2b012063495ee18"
+        "3b0e0281f23f3dbf9ceeadc4d1fb107163e78bfe4d570d457b4a0ae2867fe7fb"
+    ),
+}
 MEASURED_PARSER_AST_CIDS = {
     "cpython-ast-cpython-3.12": (
         "blake3-512:9981672e8b2c342a55f1c6f9e063bb4df7ae79b705aebf5c8c13c351d0574cf"
@@ -39,6 +49,16 @@ MEASURED_PARSER_AST_CIDS = {
         "f1ff3b249358ac7dfd87af98c013c114ab01060515b71c110d2d34514088ff96"
     ),
 }
+
+
+def test_measured_runtime_receipts_earn_parser_identity_removal() -> None:
+    """Runtime leaves the key only because the authenticated twin matched."""
+    assert set(MEASURED_DEMAND_TABLE_OUTPUT_CIDS) == {
+        "cpython-3.12.13",
+        "cpython-3.14.4",
+    }
+    assert len(set(MEASURED_PARSER_AST_CIDS.values())) == 2
+    assert len(set(MEASURED_DEMAND_TABLE_OUTPUT_CIDS.values())) == 1
 
 
 def test_demand_table_output_interpreter_twin(tmp_path: Path) -> None:
@@ -55,8 +75,10 @@ def test_demand_table_output_interpreter_twin(tmp_path: Path) -> None:
     output_cid = cid_of_json(
         {"kind": "python-preconstruction-demand-table", "rows": rows}
     )
-    assert output_cid == MEASURED_312_314_OUTPUT_CID
     interpreter = interpreter_identity()
+    runtime_identity = f"{interpreter.implementation}-{interpreter.version}"
+    assert manifest_cid == MEASURED_CORPUS_MANIFEST_CID
+    assert output_cid == MEASURED_DEMAND_TABLE_OUTPUT_CIDS[runtime_identity]
     parser_ast_cid = blake3_512_of(
         ast.dump(ast.parse(_SOURCE), include_attributes=False).encode("utf-8")
     )
@@ -64,7 +86,7 @@ def test_demand_table_output_interpreter_twin(tmp_path: Path) -> None:
     assert parser_ast_cid == MEASURED_PARSER_AST_CIDS[parser_identity]
     receipt = {
         "schema": "demand-table-interpreter-twin/v1",
-        "python": f"{interpreter.implementation}-{interpreter.version}",
+        "python": runtime_identity,
         "pythonExecutable": str(interpreter.executable),
         "parserIdentity": parser_identity,
         "parserAstCid": parser_ast_cid,
