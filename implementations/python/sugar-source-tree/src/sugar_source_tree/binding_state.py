@@ -1268,11 +1268,25 @@ def join_binding_state(
     execution's value re-attributed to the negation of the first's guard.
 
     That conflation is not reachable today, and this arm is one of three
-    reasons why: a name bound in BOTH branches never becomes a
-    ``GuardedBinding`` at all, so it never mints the partition. The other two
-    are that ordinary call sites stay opaque (one callee is not reduced twice
-    into one ``ExitSet``) and that loops route through
-    ``LoopGuardedProjection`` instead.
+    reasons why. The other two are that ordinary call sites stay opaque (one
+    callee is not reduced twice into one ``ExitSet``) and that loops route
+    through ``LoopGuardedProjection`` instead.
+
+    THE MINT NEEDS ALL THREE OF: a name bound in exactly ONE branch, with NO
+    PRIOR BINDING of that name, then read afterwards. Measured::
+
+        if p: x = 1 else: x = 2 ; return x   ->  no mint   (this arm)
+        x = 0 ; if p: x = 1 ; return x       ->  no mint
+        if p: x = 1 ; return x               ->  MINTS
+
+    The prior binding kills it for the same reason this arm does: ``x = 0``
+    leaves the else-face bound too, so the join has a plain Node on both sides
+    and collapses here. **Initializing the name first is the more natural way
+    to write that code**, which is why the mint is harder to reach than "bound
+    in one branch, then read" suggests -- one of twelve probed shapes reaches
+    it. Anyone checking this docstring against a shape with a prior
+    initialization will see no mint and should not conclude the docstring is
+    wrong.
 
     **Making this symmetric -- returning a ``GuardedBinding`` here for
     consistency with the arms below -- would hand a source-keyed partition to
