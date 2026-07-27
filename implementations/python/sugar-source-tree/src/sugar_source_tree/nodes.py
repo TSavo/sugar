@@ -5823,30 +5823,56 @@ class TryStar(Statement):
 
         handlers = []
         for handler in self.handlers:
-            if handler.type_ is None or not isinstance(handler.type_, Name):
+            # `except* (A, B)` is ONE handler over a union of types, not two
+            # handlers. The tuple is expanded into a tuple of matchers that the
+            # router partitions with in a single pass, so the body runs once no
+            # matter how many of the listed types the group carries. Expanding
+            # it into one handler spec per type -- which is honest for ordinary
+            # `except (A, B)`, where at most one exception is in flight -- would
+            # run an except* body twice on a group holding both.
+            if handler.type_ is None:
                 raise SugarNotWritten(
                     owner="TryStar._construct_sugar",
                     observed="unsupported except* handler type",
                     requested="one authenticated exception type operand",
                     fix="keep unsupported native handler behavior loud",
                 )
-            identity = self.unit.exception_type_identity(handler.type_)
-            if identity is None:
+            type_nodes = (
+                handler.type_.elts
+                if handler.type_.kind == "Tuple"
+                else (handler.type_,)
+            )
+            if not type_nodes or any(
+                not isinstance(type_node, Name) for type_node in type_nodes
+            ):
                 raise SugarNotWritten(
                     owner="TryStar._construct_sugar",
-                    observed="except* type lacks authenticated exception identity",
-                    requested="a constructed exception-type coordinate",
-                    fix="resolve the handler type lexically or keep it loud",
+                    observed="unsupported except* handler type",
+                    requested="one authenticated exception type operand",
+                    fix="keep unsupported native handler behavior loud",
+                )
+            matchers = []
+            for type_node in type_nodes:
+                identity = self.unit.exception_type_identity(type_node)
+                if identity is None:
+                    raise SugarNotWritten(
+                        owner="TryStar._construct_sugar",
+                        observed="except* type lacks authenticated exception identity",
+                        requested="a constructed exception-type coordinate",
+                        fix="resolve the handler type lexically or keep it loud",
+                    )
+                matchers.append(
+                    AuthenticatedExceptionTypeSugar(
+                        type_node.sugar(),
+                        identity,
+                        self.unit.exception_type_mro(type_node),
+                        type_node.fragment,
+                        class_value=self.unit.exception_class_value(type_node),
+                    )
                 )
             handlers.append(
                 (
-                    AuthenticatedExceptionTypeSugar(
-                        handler.type_.sugar(),
-                        identity,
-                        self.unit.exception_type_mro(handler.type_),
-                        handler.type_.fragment,
-                        class_value=self.unit.exception_class_value(handler.type_),
-                    ),
+                    tuple(matchers),
                     tuple(stmt.sugar() for stmt in handler.body),
                     handler._effect_slot_id(),
                 )
