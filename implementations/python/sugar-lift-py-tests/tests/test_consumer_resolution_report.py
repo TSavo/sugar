@@ -18,7 +18,6 @@ from sugar_lift_py_tests.consumer_resolution_report import (
 from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
 from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
 
-
 STAMP = "blake3-512_" + "b" * 128
 MANIFEST = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604ed"
@@ -126,7 +125,10 @@ def test_matching_three_artifacts_print_to_the_consumer_edge(capsys):
         ("source stamp", lambda r: replace(r, source_stamp="blake3-512_" + "0" * 128)),
         ("runtime", lambda r: replace(r, runtime="cpython-3.12.12")),
         ("profile/platform", lambda r: replace(r, profile="debug")),
-        ("corpus identity", lambda r: replace(r, corpus_manifest_cid="sha256:" + "0" * 64)),
+        (
+            "corpus identity",
+            lambda r: replace(r, corpus_manifest_cid="sha256:" + "0" * 64),
+        ),
     ],
 )
 def test_each_request_coordinate_misses_by_its_own_name(coordinate, mutate):
@@ -134,7 +136,9 @@ def test_each_request_coordinate_misses_by_its_own_name(coordinate, mutate):
     with pytest.raises(ConsumerResolutionMiss) as caught:
         resolve_consumer_hit(mutate(request), binary, demand, launcher, caller)
     assert caught.value.coordinate == coordinate
-    assert str(caught.value).startswith(f"consumer resolution MISS: {coordinate} differs:")
+    assert str(caught.value).startswith(
+        f"consumer resolution MISS: {coordinate} differs:"
+    )
 
 
 def test_platform_difference_is_the_same_named_coordinate_as_profile():
@@ -163,9 +167,7 @@ def test_historical_path_shape_digest_is_a_named_corpus_identity_miss():
             demand.identity, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST
         ),
     )
-    launcher = replace(
-        launcher, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST
-    )
+    launcher = replace(launcher, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST)
     with pytest.raises(ConsumerResolutionMiss) as caught:
         resolve_consumer_hit(request, binary, demand, launcher, caller)
     assert caught.value.coordinate == "corpus identity"
@@ -205,3 +207,20 @@ def test_surviving_construction_panic_is_not_rendered_as_named_refusal():
     assert report.lines()[-1].endswith(
         "[construction-panic:missing constructed operand]"
     )
+
+
+def test_surviving_reattribution_keeps_its_distinct_outcome_name():
+    request, binary, demand, launcher, caller = _matching_testimony()
+    caller = replace(
+        caller,
+        surviving=(
+            CallerAttribution(
+                AttributionOutcome.REATTRIBUTED,
+                "Subscript:undecided_subscript",
+            ),
+        ),
+    )
+
+    report = resolve_consumer_hit(request, binary, demand, launcher, caller)
+
+    assert report.lines()[-1].endswith("[reattributed:Subscript:undecided_subscript]")

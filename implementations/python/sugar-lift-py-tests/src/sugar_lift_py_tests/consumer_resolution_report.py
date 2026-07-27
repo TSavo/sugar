@@ -77,10 +77,12 @@ class CallerAttribution:
     def __post_init__(self) -> None:
         if self.outcome not in (
             AttributionOutcome.NAMED_REFUSAL,
+            AttributionOutcome.REATTRIBUTED,
             AttributionOutcome.CONSTRUCTION_PANIC,
         ):
             raise ValueError(
-                "surviving testimony must be a named refusal or construction panic"
+                "surviving testimony must be a named refusal, reattribution, "
+                "or construction panic"
             )
         if not self.detail:
             raise ValueError("surviving testimony requires caller detail")
@@ -125,8 +127,7 @@ class ConsumerHitReport:
             f"concreteSourceSite reported {self.caller.concrete_source_site}",
             f"beforeOutcome reported {self.caller.before_outcome}",
             f"afterOutcome reported {self.caller.after_outcome}",
-            "survivingTypedGapsOrReattributions reported "
-            f"[{surviving}]",
+            "survivingTypedGapsOrReattributions reported " f"[{surviving}]",
         )
 
     def render(self) -> str:
@@ -178,9 +179,10 @@ def resolve_consumer_hit(
         demand.identity.parser_identity,
         _runtime_parser_identity(request.runtime),
     )
-    if any(runtime != request.runtime for runtime in runtimes) or len(
-        set(parser_identities)
-    ) != 1:
+    if (
+        any(runtime != request.runtime for runtime in runtimes)
+        or len(set(parser_identities)) != 1
+    ):
         _miss("runtime", request.runtime, (runtimes, parser_identities))
 
     cell_coordinates = (

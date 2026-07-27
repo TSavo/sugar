@@ -60,6 +60,7 @@ FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
 class AttributionOutcome(str, Enum):
     AUTHENTICATED_EXIT = "authenticated-exceptional-exit"
     NAMED_REFUSAL = "named-refusal"
+    REATTRIBUTED = "reattributed"
     CONSTRUCTION_PANIC = "construction-panic"
 
 
@@ -76,6 +77,7 @@ class BodyProbe:
     body_id: str
     family: ProducerFamily
     evaluator: Callable[[], object]
+    reattributed_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,7 @@ class FamilyAttribution:
     enrolled: int
     authenticated_exceptional_exits: int
     named_refusals: int
+    reattributions: int
     construction_panics: int
 
     @property
@@ -118,6 +121,7 @@ class AttributionReport:
                         f"enrolled={row.enrolled}",
                         f"authenticatedExceptionalExit={row.authenticated_exceptional_exits}",
                         f"namedRefusal={row.named_refusals}",
+                        f"reattributed={row.reattributions}",
                         f"constructionPanic={row.construction_panics}",
                     )
                 )
@@ -151,6 +155,13 @@ def _attribute(probe: BodyProbe) -> BodyAttribution:
     try:
         outcome = probe.evaluator()
     except SugarNotWritten as refusal:
+        if probe.reattributed_to is not None:
+            return BodyAttribution(
+                probe.body_id,
+                probe.family,
+                AttributionOutcome.REATTRIBUTED,
+                f"{probe.reattributed_to}:{refusal.owner}",
+            )
         return BodyAttribution(
             probe.body_id,
             probe.family,
@@ -158,6 +169,13 @@ def _attribute(probe: BodyProbe) -> BodyAttribution:
             refusal.owner,
         )
     except ConstructionPanic as panic:
+        if probe.reattributed_to is not None:
+            return BodyAttribution(
+                probe.body_id,
+                probe.family,
+                AttributionOutcome.REATTRIBUTED,
+                f"{probe.reattributed_to}:{panic.info.owner}",
+            )
         return BodyAttribution(
             probe.body_id,
             probe.family,
@@ -165,6 +183,15 @@ def _attribute(probe: BodyProbe) -> BodyAttribution:
             panic.info.owner,
         )
 
+    if probe.reattributed_to is not None:
+        effect = getattr(outcome, "effect", None)
+        detail = type(effect if effect is not None else outcome).__name__
+        return BodyAttribution(
+            probe.body_id,
+            probe.family,
+            AttributionOutcome.REATTRIBUTED,
+            f"{probe.reattributed_to}:{detail}",
+        )
     if _exceptional_exit_present(outcome):
         return BodyAttribution(
             probe.body_id,
@@ -192,6 +219,9 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
             ),
             named_refusals=sum(
                 body.outcome is AttributionOutcome.NAMED_REFUSAL for body in selected
+            ),
+            reattributions=sum(
+                body.outcome is AttributionOutcome.REATTRIBUTED for body in selected
             ),
             construction_panics=sum(
                 body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
@@ -327,12 +357,15 @@ def _source_has_selected_family_demand(
         }
         if not coordinates.intersection(demands_by_coordinate):
             continue
-        if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
+        if len(node.body) != 1:
             continue
-        expression = node.body[0].value
-        # Outer-node law: nested Calls (values[index()]) do not reclassify
-        # the body. Bare Call roots are excluded by selected_names.
-        if type(expression).__name__ in selected_names:
+        statement = node.body[0]
+        # Outer-node law: nested Calls do not reclassify an Expr body. Bare
+        # Call roots are excluded because Call is not a producer family.
+        if (
+            isinstance(statement, ast.Expr)
+            and type(statement.value).__name__ in selected_names
+        ):
             return True
     return False
 
@@ -426,24 +459,30 @@ def discover_no_call_body_probes(
                     f"assertion demand resolves to {len(managers)} With nodes: {use_site!r}"
                 )
             with_node = managers[0]
-            if len(with_node.body) != 1 or not isinstance(with_node.body[0], Expr):
+            if len(with_node.body) != 1:
                 continue
-            expression = with_node.body[0].value
+            statement = with_node.body[0]
+            producer = statement.value if isinstance(statement, Expr) else statement
             family = next(
                 (
                     selected
                     for node_type, selected in family_by_type.items()
-                    if isinstance(expression, node_type)
+                    if isinstance(producer, node_type)
                 ),
                 None,
             )
+            reattributed_to = None
+            if family is ProducerFamily.UNARYOP and any(
+                isinstance(descendant, Subscript) for descendant in producer.walk()
+            ):
+                reattributed_to = "Subscript"
             if family is None:
                 continue
             if families is not None and family not in families:
                 continue
             body_id = (
                 f"{path.relative_to(corpus_root).as_posix()}:"
-                f"{expression.line_col_span().start_line}:{family.value}"
+                f"{producer.line_col_span().start_line}:{family.value}"
             )
             if body_id in seen:
                 raise AttributionInvariantError(f"duplicate body enrollment: {body_id}")
@@ -452,9 +491,8 @@ def discover_no_call_body_probes(
                 BodyProbe(
                     body_id=body_id,
                     family=family,
-                    evaluator=lambda expression=expression: expression.sugar().desugar(
-                        None
-                    ),
+                    evaluator=lambda producer=producer: producer.sugar().desugar(None),
+                    reattributed_to=reattributed_to,
                 )
             )
     return tuple(sorted(probes, key=lambda probe: probe.body_id))

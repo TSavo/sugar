@@ -14,11 +14,11 @@ import subprocess
 
 import pytest
 
+from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import RaiseValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, make_var, not_
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
@@ -28,10 +28,9 @@ from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.context import ReduceContext
+from sugar_source_tree.panic import SugarNotWritten
 
-CORPUS = Path(
-    "/Users/tsavo/sugar-defect-drain/.venv/lib/python3.14/site-packages/pandas"
-)
+CORPUS = authenticated_pandas_corpus().root
 UNARY_SITE = CORPUS / "tests/extension/base/ops.py"
 BOOLOP_SITE = CORPUS / "tests/generic/test_generic.py"
 DEMAND_TABLE_KEY = (
@@ -129,14 +128,14 @@ def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -
 )
 def test_undecided_unary_operand_is_named_refusal(method: str, operator: str) -> None:
     """Success versus TypeError is undecidable without the operand's runtime type."""
-    with pytest.raises(ConstructionPanic) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         getattr(SymbolicValue(make_var("ser")), method)(_Site())
 
-    info = caught.value.info
-    assert info.owner == "unary_operation_exception_floor"
-    assert info.observed == f"SymbolicValue {operator}"
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
+    refusal = caught.value
+    assert refusal.owner == "unary_operation_exception_floor"
+    assert refusal.observed == f"SymbolicValue {operator}"
+    assert "authenticated exceptional exit" in refusal.requested
+    assert "TypeError" not in str(refusal)
 
 
 def test_unary_invert_concrete_integer_truthful_twin_folds() -> None:
@@ -170,15 +169,15 @@ def test_undecided_not_operand_refuses_invented_truth() -> None:
     """``not obj`` cannot invent ``py.truthy`` when ``bool(obj)`` is undecided."""
     from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 
-    with pytest.raises(ConstructionPanic) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         UnaryOpSugar("Not", NameSugar("obj1", _Site()), _Site()).desugar(None)
 
-    info = caught.value.info
-    assert info.owner == "unary_operation_exception_floor"
-    assert info.observed == "SymbolicValue not"
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
-    assert "ValueError" not in str(info)
+    refusal = caught.value
+    assert refusal.owner == "unary_operation_exception_floor"
+    assert refusal.observed == "SymbolicValue not"
+    assert "authenticated exceptional exit" in refusal.requested
+    assert "TypeError" not in str(refusal)
+    assert "ValueError" not in str(refusal)
 
 
 class _EffectSugar:
@@ -263,15 +262,15 @@ def test_predicate_left_makes_rhs_effect_conditional(kind, rhs_guard) -> None:
 @pytest.mark.parametrize("kind", ("And", "Or"))
 def test_undecided_operand_type_refuses_invented_truth(kind: str) -> None:
     """``obj and obj`` cannot invent ``py.truthy`` when ``bool(obj)`` is undecided."""
-    with pytest.raises(ConstructionPanic) as caught:
+    with pytest.raises(SugarNotWritten) as caught:
         _boolop(kind, NameSugar("obj1", _Site()), NameSugar("obj2", _Site()))
 
-    info = caught.value.info
-    assert info.owner == "boolean_operation_exception_floor"
-    assert info.observed == f"SymbolicValue {'and' if kind == 'And' else 'or'}"
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
-    assert "ValueError" not in str(info)
+    refusal = caught.value
+    assert refusal.owner == "boolean_operation_exception_floor"
+    assert refusal.observed == f"SymbolicValue {'and' if kind == 'And' else 'or'}"
+    assert "authenticated exceptional exit" in refusal.requested
+    assert "TypeError" not in str(refusal)
+    assert "ValueError" not in str(refusal)
 
 
 def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
@@ -319,13 +318,13 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
             if isinstance(node, BoolOp) and node.line_col_span().start_line == line
         )
         assert len(matches) == 1
-        with pytest.raises(ConstructionPanic) as raised:
+        with pytest.raises(SugarNotWritten) as raised:
             matches[0].sugar().desugar(None)
-        info = raised.value.info
-        assert info.owner == "boolean_operation_exception_floor"
-        assert info.observed == f"SymbolicValue {operator}"
-        assert "authenticated exceptional exit" in info.requested
-        assert "ValueError" not in str(info)
+        refusal = raised.value
+        assert refusal.owner == "boolean_operation_exception_floor"
+        assert refusal.observed == f"SymbolicValue {operator}"
+        assert "authenticated exceptional exit" in refusal.requested
+        assert "ValueError" not in str(refusal)
 
 
 def test_pandas_unary_sites_stay_source_undecided() -> None:
@@ -374,11 +373,19 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
             if isinstance(node, UnaryOp) and node.line_col_span().start_line == line
         )
         assert len(matches) == 1, (rel, line, matches)
-        with pytest.raises(ConstructionPanic) as raised:
+        with pytest.raises(SugarNotWritten) as raised:
             matches[0].sugar().desugar(None)
-        info = raised.value.info
-        assert info.owner == "unary_operation_exception_floor", (rel, line, info.owner)
-        assert info.observed == f"SymbolicValue {operator}", (rel, line, info.observed)
-        assert "authenticated exceptional exit" in info.requested
-        assert "TypeError" not in str(info)
-        assert "ValueError" not in str(info)
+        refusal = raised.value
+        assert refusal.owner == "unary_operation_exception_floor", (
+            rel,
+            line,
+            refusal.owner,
+        )
+        assert refusal.observed == f"SymbolicValue {operator}", (
+            rel,
+            line,
+            refusal.observed,
+        )
+        assert "authenticated exceptional exit" in refusal.requested
+        assert "TypeError" not in str(refusal)
+        assert "ValueError" not in str(refusal)

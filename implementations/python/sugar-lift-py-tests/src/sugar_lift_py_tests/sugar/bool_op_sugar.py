@@ -43,13 +43,12 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
     if not denotes() or decided():
         return
 
-    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_source_tree.panic import SugarNotWritten
 
     operator = _BOOL_OPERATOR_COORDINATE[op_kind]
-    construction_panic_gap(
+    del site
+    raise SugarNotWritten(
         owner="boolean_operation_exception_floor",
-        blame=site,
         observed=f"{type(value).__name__} {operator}",
         requested=(
             "source-visible native truth testimony selecting completion "
@@ -61,8 +60,6 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
             "from source, or retain this named refusal without inventing an "
             "exception identity"
         ),
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
     )
 
 

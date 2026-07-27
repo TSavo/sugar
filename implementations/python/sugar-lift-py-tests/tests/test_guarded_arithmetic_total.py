@@ -6,6 +6,7 @@ from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import Complete
+from sugar_source_tree.panic import SugarNotWritten
 
 
 @pytest.mark.parametrize(
@@ -44,11 +45,11 @@ def test_guarded_unary_minus_preserves_an_undecided_arm_as_a_named_refusal() -> 
         SymbolicValue(make_var("left")),
         SymbolicValue(make_var("right")),
     )
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         value.unary_minus("t.py:1")
 
-    assert raised.value.info.owner == "unary_operation_exception_floor"
-    assert raised.value.info.observed == "SymbolicValue -"
+    assert raised.value.owner == "unary_operation_exception_floor"
+    assert raised.value.observed == "SymbolicValue -"
 
 
 def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:

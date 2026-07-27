@@ -105,6 +105,36 @@ def test_construction_panic_remains_a_separate_loud_axis() -> None:
     assert row.failures == 1
 
 
+def test_child_producer_gap_is_reattributed_without_becoming_a_refusal() -> None:
+    """Truthful twin: a structurally named child keeps its own ownership."""
+    probe = BodyProbe(
+        body_id="pandas/example.py:1:UnaryOp",
+        family=ProducerFamily.UNARYOP,
+        evaluator=_construction_panic,
+        reattributed_to="Subscript",
+    )
+
+    report = attribute_body_probes((probe,))
+    row = report.by_family[ProducerFamily.UNARYOP]
+    assert row.reattributions == 1
+    assert row.named_refusals == 0
+    assert row.construction_panics == 0
+    assert report.bodies[0].outcome is AttributionOutcome.REATTRIBUTED
+    assert report.bodies[0].detail == "Subscript:producer-construction"
+
+
+def test_root_construction_panic_cannot_claim_child_reattribution() -> None:
+    """Lying twin: absent structural testimony keeps the panic loud."""
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.UNARYOP, _construction_panic),)
+    )
+
+    row = report.by_family[ProducerFamily.UNARYOP]
+    assert row.reattributions == 0
+    assert row.construction_panics == 1
+    assert row.failures == 1
+
+
 def test_silent_completion_is_not_a_fourth_outcome() -> None:
     with pytest.raises(AttributionInvariantError, match="completed without"):
         attribute_body_probes(
