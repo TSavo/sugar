@@ -203,6 +203,154 @@ def test_two_no_warning_boundaries_do_not_share_observations():
     assert isinstance(second.exits[0].effect, ExpectationNotMetEffect)
 
 
+def _no_warning_from_exitset(body_es):
+    """``assert_produces_warning(None)`` over a pre-built body ExitSet.
+
+    Used for exception-edge twins: the body already halted, and the temporal
+    record rides on ``Halted.state`` exactly as ``reduce_block_to_exitset``
+    leaves it.
+    """
+    manager_value = CallSiteValue(
+        target_name="scope",
+        arg_values=(NoneValue(),),
+        parameters=("expected",),
+        term=ctor("call", []),
+        body=None,
+    )
+    signature = ImportSignatureV2(
+        (
+            CallParameterV1(
+                "expected",
+                PrimitiveSort("Value"),
+                PositionalOrKeywordV1(),
+                True,
+                NoDefaultV1(),
+            ),
+        )
+    )
+    return WithEffectBoundarySugar(
+        manager=_Fixed(Complete(manager_value)),
+        body=(_Fixed(body_es),),
+        semantics=SEMANTICS,
+        contract_ref=SimpleNamespace(import_signature=signature),
+        context_manager_edge=None,
+        site=None,
+    )
+
+
+def _raise_with_entries(*entries):
+    """Exception edge: body statements then a real RaiseEffect halt."""
+    type_identity = _identity("TypeError")
+    raised_value = CallSiteValue(
+        target_name="raised",
+        arg_values=(StringValue("operand failed"),),
+        parameters=("message",),
+        term=ctor("call", []),
+        body=None,
+    )
+    state = _ReducedBlock(
+        entries=tuple(entries),
+        can_fall_through=False,
+        fall_through=(),
+    )
+    return ExitSet(
+        (
+            Halted(
+                true_guard(),
+                RaiseEffect(
+                    exception_name="TypeError",
+                    exception_type_coordinate=type_identity,
+                    occurrence="body.py:3:4",
+                    raised_value=raised_value,
+                ),
+                state,
+            ),
+        )
+    )
+
+
+def test_no_warning_exception_edge_without_warning_restores_the_halt():
+    """Completed-edge inversion's exception twin: clean halt is not unmet."""
+    routed = _no_warning_from_exitset(
+        _raise_with_entries(TermValue(1), TermValue(2))
+    ).desugar()
+    assert len(routed.exits) == 1
+    face = routed.exits[0]
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+    assert face.effect.exception_name == "TypeError"
+    # Absence decided without inventing a warning effect on the halt.
+    assert not isinstance(face.effect, WarningEffect)
+
+
+def test_no_warning_exception_edge_with_warning_fails_assertion():
+    """Exception edge carries the observation on pre-halt state — still unmet."""
+    routed = _no_warning_from_exitset(
+        _raise_with_entries(_warning("FutureWarning"), TermValue(1))
+    ).desugar()
+    assert len(routed.exits) == 1
+    face = routed.exits[0]
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, ExpectationNotMetEffect)
+    # Failure is the assertion effect, never a fabricated WarningEffect halt.
+    assert not isinstance(face.effect, WarningEffect)
+    assert type(face.effect).__name__ == "ExpectationNotMetEffect"
+
+
+def test_no_warning_exception_edge_with_unresolved_producer_is_undecided():
+    unresolved = CallSiteValue(
+        target_name="f",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call", []),
+        body=None,
+    )
+    with pytest.raises(SugarNotWritten) as raised:
+        _no_warning_from_exitset(_raise_with_entries(unresolved)).desugar()
+    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
+    assert raised.value.observed == "completed face has unresolved warning producers"
+
+
+def test_no_warning_both_edges_discriminate_absence_from_arrival():
+    """One law, two edges: absence vs arrival must not collapse on either."""
+    completed_absent = _boundary(TermValue("ok"), expected=NoneValue()).desugar()
+    completed_arrived = _boundary(
+        _warning("FutureWarning"), expected=NoneValue()
+    ).desugar()
+    exception_absent = _no_warning_from_exitset(
+        _raise_with_entries(TermValue("ok"))
+    ).desugar()
+    exception_arrived = _no_warning_from_exitset(
+        _raise_with_entries(_warning("FutureWarning"))
+    ).desugar()
+
+    assert isinstance(completed_absent.exits[0], Completed)
+    assert isinstance(completed_arrived.exits[0], Halted)
+    assert isinstance(completed_arrived.exits[0].effect, ExpectationNotMetEffect)
+
+    assert isinstance(exception_absent.exits[0], Halted)
+    assert isinstance(exception_absent.exits[0].effect, RaiseEffect)
+    assert isinstance(exception_arrived.exits[0], Halted)
+    assert isinstance(exception_arrived.exits[0].effect, ExpectationNotMetEffect)
+
+
+def test_no_warning_guarded_occurrence_is_undecided_on_exception_edge():
+    """Guarded law is edge-independent: refuse on the halt face too."""
+    guarded = WarningObservationValue(
+        WarningEffect(
+            "UserWarning",
+            category_identity=_identity("UserWarning"),
+        ),
+        guards=(str_const("orient != tight"),),
+    )
+    with pytest.raises(SugarNotWritten) as raised:
+        _no_warning_from_exitset(_raise_with_entries(guarded)).desugar()
+    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
+    assert raised.value.observed == (
+        "warning occurrence is reached only under a branch guard"
+    )
+
+
 WARNING_WITH_PATTERN = EffectBoundarySemanticsV1(
     ExpectsModeV1(),
     WarningEffectKindV1(),

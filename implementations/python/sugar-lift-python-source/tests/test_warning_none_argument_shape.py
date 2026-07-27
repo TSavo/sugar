@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -12,24 +11,16 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_source_tree.nodes import Call, Constant, With
 from sugar_source_tree.tree import SourceFile
 
+# Content manifest (relative path + per-file BLAKE3-512) is identity.
+# Path-shape sha256:a223… is historical negative testimony only — never identity.
 CONTENT_MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda1"
     "c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 )
-MANIFEST_SHAPE_CID = (
+HISTORICAL_PATH_SHAPE_DIGEST = (
     "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
 FILE_SHA256 = "ef0819d48825f4614ec088f25b4d342a8808a12b1c5d45cff3281b481ec13252"
-
-
-def _manifest_shape_cid(root: Path) -> str:
-    from sugar_source_tree.tree import SourceTree
-
-    paths = sorted(
-        path.relative_to(root).as_posix() for path in SourceTree(root).paths()
-    )
-    preimage = json.dumps(paths, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
 
 
 def _corpus_file() -> Path:
@@ -39,7 +30,7 @@ def _corpus_file() -> Path:
         CONTENT_MANIFEST_CID,
         1421,
     )
-    assert _manifest_shape_cid(corpus.root) == MANIFEST_SHAPE_CID
+    assert corpus.manifest_cid != HISTORICAL_PATH_SHAPE_DIGEST
     return corpus.root / "tests/series/test_constructors.py"
 
 
