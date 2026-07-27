@@ -1479,6 +1479,107 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     ) == (3, 9, 3, 46)
 
 
+def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
+    """Real producer advances to its first still-opaque native transition.
+
+    The imported generator frame comes only from authenticated pandas source.
+    Its outer warning-capture ``With`` is not in the generator-step vocabulary,
+    so construction names that transition instead of inventing warning
+    testimony or collapsing the site to ``non-manager-result:BlockValue``.
+    """
+    consumer = (
+        "import pandas._testing as tm\n"
+        "def use_boundary(f):\n"
+        "    with tm.assert_produces_warning(FutureWarning):\n"
+        "        f()\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.generator_with_sugar import (
+        GeneratorWithSugar,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(boundary, GeneratorWithSugar)
+    with pytest.raises(SugarNotWritten) as caught:
+        boundary.desugar()
+    assert caught.value.owner == "GeneratorWithSugar.desugar"
+    assert caught.value.observed == "opaque generator transition: With"
+
+
+def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
+    """Truthful twin: suspension testimony, not a manager-name table, opens it."""
+    distribution = _distribution(
+        tmp_path,
+        "def make_guard(expected):\n    yield expected\n",
+    )
+    consumer = "import arbitrary\nwith arbitrary.make_guard(23):\n    pass\n"
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+
+    assert isinstance(
+        next(node for node in tree.nodes() if node.kind == "With").sugar(),
+        GeneratorWithSugar,
+    )
+
+
+def test_imported_ordinary_factory_cannot_lie_as_generator_manager(tmp_path):
+    """Lying twin: same import/call shape without a suspension gets no frame."""
+    distribution = _distribution(
+        tmp_path,
+        "def make_guard(expected):\n    return expected\n",
+    )
+    consumer = "import arbitrary\nwith arbitrary.make_guard(23):\n    pass\n"
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+
+    assert context.source_call_frames == {}
+    gap = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(gap, ContextManagerResolutionGapV1)
+    assert (gap.kind, gap.detail) == ("non-manager-result", "TermValue")
+
+
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):
     """Assertion membrane must not admit ProtocolResource managers.
 
