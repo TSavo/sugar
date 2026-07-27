@@ -40,6 +40,7 @@ from sugar_source_tree.nodes import (
     NamedExpr,
     Node,
     Starred,
+    Subscript,
     Tuple_,
     With,
 )
@@ -782,6 +783,20 @@ def _resolve_source_visible_frame_uncached(
         )
 
     definitions_by_name = {item.name: item for item in definitions}
+
+    def _local_class_base_name(base: Node) -> str | None:
+        """The local class named by ``Base`` or the native generic ``Base[T]``.
+
+        Subscription supplies type arguments; it does not change which class
+        owns inherited runtime methods. Computed and attributed bases remain
+        loud because neither shape authenticates a local class coordinate.
+        """
+        if isinstance(base, Name):
+            return base.id
+        if isinstance(base, Subscript) and isinstance(base.value, Name):
+            return base.value.id
+        return None
+
     reachable_names = {target.name}
     pending_names = [target.name]
     while pending_names:
@@ -789,7 +804,9 @@ def _resolve_source_visible_frame_uncached(
         dependencies = []
         if isinstance(current, ClassDef):
             dependencies.extend(
-                base.id for base in current.bases if isinstance(base, Name)
+                name
+                for base in current.bases
+                if (name := _local_class_base_name(base)) is not None
             )
             functions = tuple(
                 item for item in current.body if isinstance(item, FunctionDef)
@@ -1014,15 +1031,25 @@ def _resolve_source_visible_frame_uncached(
 
     frames: dict[str, object] = {}
     reaching_classes: dict[str, ClassDef] = {}
+    from sugar_source_tree.panic import SugarNotWritten
+
     for item in definitions:
         if not isinstance(item, ClassDef):
             continue
         local_bases = []
         for base in item.bases:
-            if not isinstance(base, Name) or base.id not in reaching_classes:
+            base_name = _local_class_base_name(base)
+            if base_name is None or base_name not in reaching_classes:
                 local_bases = []
                 break
-            local_bases.append(reaching_classes[base.id].sugar())
+            try:
+                local_bases.append(reaching_classes[base_name].sugar())
+            except SugarNotWritten as exc:
+                owner = getattr(exc, "owner", None) or type(exc).__name__
+                observed = getattr(exc, "observed", None) or str(exc)
+                return ManagerConstructionGapV1(
+                    "force-floor", resolved.cid, f"{owner}:{observed}"
+                )
         if local_bases and len(local_bases) == len(item.bases):
             context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
         reaching_classes[item.name] = item

@@ -855,6 +855,67 @@ def test_local_inherited_manager_methods_follow_authenticated_mro(tmp_path):
     assert protocol.exit_outcome() is not None
 
 
+def test_subscripted_local_base_supplies_inherited_constructor_method(tmp_path):
+    """Truthful twin: ``Base[T]`` names Base; its method body is testimony."""
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class Ancestor:\n"
+        "    def project(self, value):\n"
+        "        return value\n\n"
+        "class Descendant(Ancestor[Marker]):\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        return self.marker\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_guard(marker):\n"
+        "    return Descendant(marker)\n",
+    )
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert behavior.receiver_state.has_method("project")
+    fields = {field.name: field.value for field in behavior.receiver_state.fields}
+    assert fields["marker"] is actual.value
+
+
+def test_computed_base_does_not_supply_inherited_constructor_method(tmp_path):
+    """Lying twin: ``base_factory()[T]`` states no source class coordinate."""
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class Ancestor:\n"
+        "    def project(self, value):\n"
+        "        return value\n\n"
+        "class Descendant(base_factory()[Marker]):\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        return self.marker\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_guard(marker):\n"
+        "    return Descendant(marker)\n",
+    )
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert not behavior.receiver_state.has_method("project")
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as caught:
+        behavior.receiver_state.call_method_value(
+            "project", (actual.value,), owner="computed-base liar", blame=call_site
+        )
+    assert "Descendant.project" in str(caught.value)
+
+
 def test_opaque_base_never_fabricates_inherited_manager_methods(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,
@@ -1510,7 +1571,8 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
         with_node.sugar()
 
     assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    assert "ExitSet with 3 arms" in caught.value.observed
+    assert "Try.sugar:Try at _pytest/raises.py:" in caught.value.observed
+    assert "ExitSet with 3 arms" not in caught.value.observed
     assert (
         caught.value.coordinate.start_line,
         caught.value.coordinate.start_col,
@@ -1539,7 +1601,8 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
         with_node.sugar()
 
     assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    assert "ExitSet with 4 arms" in caught.value.observed
+    assert "Try.sugar:Try at _pytest/raises.py:" in caught.value.observed
+    assert "ExitSet with 4 arms" not in caught.value.observed
     assert (
         caught.value.coordinate.start_line,
         caught.value.coordinate.start_col,
