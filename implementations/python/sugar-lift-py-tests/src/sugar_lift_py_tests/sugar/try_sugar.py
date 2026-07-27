@@ -218,7 +218,16 @@ def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
             reduce_block_to_exitset,
         )
 
+        # In-flight: bare re-raise. Observed: ``except ... as e`` / EffectRef
+        # projects the same RaiseEffect this arm just matched — identity, not
+        # a reconstructed E(). Observed must be installed BEFORE the body
+        # reduces; prepending facts after the fact cannot authenticate a read
+        # that already desugared to a pure coordinate.
         handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect)
+        if slot_id is not None:
+            observer = getattr(handler_ctx, "with_observed_effect", None)
+            if observer is not None:
+                handler_ctx = observer(slot_id, exit_.effect)
         handler_es = reduce_block_to_exitset(handler_body, handler_ctx)
         facts = _binding_facts_for(slot_id, exit_.effect, site)
         return _prepend_facts(handler_es, facts) if facts else handler_es
