@@ -2029,12 +2029,38 @@ class FunctionDef(Statement):
             return None
         from sugar_lift_py_tests.generator_construction import (
             FinallyStepV1,
+            IfStepV1,
             OpaqueStepV1,
             ReturnStepV1,
             YieldStepV1,
         )
 
         steps = []
+
+        def branch_steps(body):
+            """Steps for one branch, or None if any shape is unnameable.
+
+            None keeps the whole `If` opaque. A partially-nameable branch is
+            not provable: `x = yield v` resumes to a value that reaches no
+            name, so naming the branch holding it would claim an execution we
+            cannot perform. An honest `OpaqueStepV1` is the better answer.
+            """
+            collected = []
+            for nested in body:
+                if isinstance(nested, Expr) and isinstance(nested.value, Yield):
+                    value = nested.value.value
+                    collected.append(
+                        YieldStepV1(None if value is None else value.sugar())
+                    )
+                elif isinstance(nested, Return):
+                    collected.append(
+                        ReturnStepV1(
+                            None if nested.value is None else nested.value.sugar()
+                        )
+                    )
+                else:
+                    return None
+            return tuple(collected)
 
         def append_statement(statement):
             if isinstance(statement, Expr) and isinstance(statement.value, Yield):
@@ -2058,8 +2084,59 @@ class FunctionDef(Statement):
                 steps.append(
                     FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
+            elif isinstance(statement, If) and self._owns_yield((statement,)):
+                # A BRANCH IS A TWO-FACE PARTITION and this producer owns it.
+                # Admitted only when BOTH branches are wholly nameable: a
+                # branch holding a shape the machine cannot resume keeps the
+                # whole `If` opaque and loud rather than half-named.
+                #
+                # The partition is NOT minted here. Its key needs the machine's
+                # `instance_coordinate`, which `allocate` mints AFTER these
+                # steps exist, so the mint happens at transition time and this
+                # step stays instance-agnostic -- which is what lets one
+                # generator's steps be shared by every instance over it while
+                # each mints its own partition.
+                then_body = branch_steps(statement.body)
+                else_body = branch_steps(statement.orelse)
+                if then_body is None or else_body is None:
+                    # A branch holds a step the vocabulary cannot name, so the
+                    # whole `If` stays opaque -- but it is still an `If` that
+                    # may CARRY a suspension, and that is the discrimination
+                    # #6439 landed. Dropping the flag here would report
+                    # `if c: x = yield 1` as a plain `If`, which is the exact
+                    # row-merge #6439 exists to prevent. #6439 and #6445 were
+                    # each green and merged with NO textual conflict; this
+                    # line is what the clean merge silently lost.
+                    steps.append(
+                        OpaqueStepV1(
+                            statement.kind,
+                            carries_suspension=self._owns_yield((statement,)),
+                        )
+                    )
+                else:
+                    steps.append(
+                        IfStepV1(
+                            statement.test.sugar(),
+                            then_body,
+                            else_body,
+                            statement.fragment.seal().cid,
+                        )
+                    )
             else:
-                steps.append(OpaqueStepV1(statement.kind))
+                # The step vocabulary cannot name this shape. Say WHETHER it
+                # holds a suspension, because the two obligations differ:
+                # `x = 1` owes ordinary statement execution, `x = yield 1`
+                # owes the resumed value's binding. Bucketing them as one
+                # `Assign` row is why the suspension owners read as an
+                # undifferentiated mass. Read from `_owns_yield`, the same
+                # authenticated predicate that decided this body is a
+                # generator -- never from the statement's spelling.
+                steps.append(
+                    OpaqueStepV1(
+                        statement.kind,
+                        carries_suspension=self._owns_yield((statement,)),
+                    )
+                )
 
         for statement in body:
             append_statement(statement)
@@ -4880,9 +4957,7 @@ class With(Statement):
                 )
 
             manager_slot = item._manager_slot_id()
-            enter_slot = (
-                f"{manager_slot}#enter_result" if binds_enter_result else None
-            )
+            enter_slot = f"{manager_slot}#enter_result" if binds_enter_result else None
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
@@ -8195,6 +8270,12 @@ def _construct_binding_projection(state):
             _construct_binding_projection(state.when_false),
         )
     if isinstance(state, LoopProjectedBinding):
+        # A loop routes HERE, not to GuardedProjection -- which is why a loop
+        # never mints ("binding.projection", slot_id). That matters: a loop is
+        # the one shape supplying many executions over one source location by
+        # construction, and that partition's key has no execution component.
+        # See tests/test_binding_partition_execution_conflation.py
+        # (test_tripwire_c_a_loop_body_does_not_mint_this_partition).
         if any(face.guard_formula is None for face in state.completed_faces):
             raise BindingStateWireGap(
                 "loop projected binding has CID-only guards; exact guard formula "

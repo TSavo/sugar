@@ -53,13 +53,25 @@ def sugarbin_route(*, os_name: str, hostname: str) -> str:
     return "posix-broker"
 
 
+def current_os_name() -> str:
+    """The platform family this process is running as.
+
+    Exists so a test can substitute the routing input WITHOUT patching
+    ``os.name`` itself. ``os.name`` is process-global and ``pathlib.Path.__new__``
+    dispatches on it, so patching it makes every ``Path`` in the interpreter --
+    including pytest's own reporter -- a ``WindowsPath``, which aborts the
+    session. Patch this function instead.
+    """
+    return os.name
+
+
 def resolve_sugar_binary(
     *,
     env: Mapping[str, str] | None = None,
     profile: str = "release",
 ) -> Path:
     child_env = dict(os.environ if env is None else env)
-    route = sugarbin_route(os_name=os.name, hostname=platform.node())
+    route = sugarbin_route(os_name=current_os_name(), hostname=platform.node())
     if route == "battleaxe-native":
         command = [
             "powershell.exe",
