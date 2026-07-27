@@ -760,8 +760,9 @@ class FloorValue:
         construction_panic(info)
 
     def bitwise_invert(self, site):
-        # Default: no bitwise-not floor. TermValue folds ints; SymbolicValue
-        # emits py.invert; absence is the honest "no".
+        # Default: no bitwise-not floor. TermValue decides concrete operands;
+        # an untyped symbol refuses because success versus TypeError is not
+        # source-decidable.
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
