@@ -19,6 +19,8 @@ Options:
 Environment (shared with bcargo so roots, caps and test harnesses apply):
   BCARGO_REMOTE_HOST   SSH host alias (default: battleaxe)
   BCARGO_REMOTE_ROOT   Remote scratch root (default: /home/tsavo/remote/sugar-bcargo-<checkout-hash>)
+  BCARGO_REMOTE_BINARY_SHELF  Exact binary shelf mounted into managed builders
+                              (default: /home/tsavo/.cache/sugar/binary-shelf-v2)
   BCARGO_CLEAN_REMOTE_ROOT        never | success | always (default: never)
   BCARGO_CLEAN_REMOTE_ROOT_UNSAFE Set to 1 to allow cleanup outside
                                   /home/tsavo/remote/sugar-bcargo-*
