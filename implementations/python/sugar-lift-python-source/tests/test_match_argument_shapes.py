@@ -89,6 +89,7 @@ from sugar_source_tree.nodes import (
     Constant,
     FunctionDef,
     Name,
+    With,
 )
 from sugar_source_tree.tree import SourceFile
 
@@ -513,6 +514,38 @@ def test_resolvable_call_drains_against_the_pinned_table() -> None:
     escape = escape_rows[0]
     assert escape.get("importSignature"), "the drained row carries no import signature"
     assert escape.get("gapKind") is None
+
+
+def test_real_name_ref_site_binds_and_reads_exception_context() -> None:
+    """The pinned name-ref site is also the real chained-observation reproducer."""
+    table = _pinned_demand_table()
+    site = next(s for s in ENROLLED_SITES if s.shape == "name-ref")
+    assert table["rows"]["name-ref"], "shared table has no rows for the real file"
+
+    source_file = _source_file(_corpus_root() / site.relative_path)
+    with_node = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, With) and node.line_col_span().start_line == site.line
+    )
+    item = with_node.items[0]
+    assert isinstance(item.optional_vars, Name)
+    assert item.optional_vars.id == "exc_info"
+    manager = item.context_expr
+    assert isinstance(manager, Call)
+    match_argument = next(
+        keyword.value for keyword in manager.keywords if keyword.arg == "match"
+    )
+    assert isinstance(match_argument, Name)
+
+    context_reads = [
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Attribute)
+        and node.attr == "__context__"
+        and "exc_info.value.__context__" in node.segment()
+    ]
+    assert len(context_reads) == 1
 
 
 def test_opaque_callee_is_absent_from_every_row_of_its_file() -> None:

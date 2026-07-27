@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import importlib.metadata
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -2230,18 +2231,25 @@ _BOUNDARY_IMPLEMENTATION = (
 
 
 def _route_boundary_with_binding(
-    tmp_path, *, body: str, as_clause: str = " as info", following: str = ""
+    tmp_path,
+    *,
+    body: str,
+    as_clause: str = " as info",
+    following: str = "",
+    implementation: str = _BOUNDARY_IMPLEMENTATION,
+    prefix: str = "",
+    manager: str = "arbitrary.boundary(ValueError)",
 ):
     distribution = _distribution(
-        tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary"
+        tmp_path, implementation, exported="boundary"
     )
-    consumer = (
-        "import arbitrary\n"
-        "def use_boundary():\n"
-        f"    with arbitrary.boundary(ValueError){as_clause}:\n"
-        f"        {body}\n"
-        f"    {following}\n"
-    )
+    consumer = "import arbitrary\ndef use_boundary():\n"
+    if prefix:
+        consumer += textwrap.indent(textwrap.dedent(prefix), "    ")
+    consumer += f"    with {manager}{as_clause}:\n"
+    consumer += textwrap.indent(textwrap.dedent(body), "        ") + "\n"
+    if following:
+        consumer += textwrap.indent(textwrap.dedent(following), "    ") + "\n"
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -2299,6 +2307,85 @@ def test_boundary_as_binding_never_reifies_a_nonmatching_halt(tmp_path):
     face = exits.exits[0]
     assert isinstance(face, Halted)
     assert _effect_slot_facts(face) == ()
+
+
+def test_boundary_as_binding_projects_authenticated_exception_context(tmp_path):
+    """Truthful chained twin: `.value.__context__` is the handled occurrence."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    exits = _route_boundary_with_binding(
+        tmp_path,
+        body=(
+            "try:\n"
+            "    raise ImportError('inner')\n"
+            "except ImportError:\n"
+            "    raise ValueError('cannot convert')"
+        ),
+        following="assert isinstance(info.value.__context__, ImportError)",
+    )
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(completed) == 1
+    face = completed[0]
+    assert len(_effect_binding_facts(face)) == 3
+    context_facts = tuple(
+        entry
+        for entry in _effect_slot_facts(face)
+        if "effect_slot_context" in str(entry.formula)
+    )
+    assert len(context_facts) == 1
+
+
+def test_boundary_context_binding_composes_with_variable_message_predicate(tmp_path):
+    """The binding survives a same-manager predicate supplied through Assign."""
+    implementation = (
+        "class Boundary:\n"
+        "    def __init__(self, expected, match):\n"
+        "        self.expected = expected\n"
+        "        self.match = match\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return (effect_type is self.expected) and (effect.message == self.match)\n\n"
+        "def boundary(expected, match):\n"
+        "    return Boundary(expected, match)\n"
+    )
+    from sugar_lift_py_tests.outcome import Completed
+
+    exits = _route_boundary_with_binding(
+        tmp_path,
+        implementation=implementation,
+        prefix="pattern = 'cannot convert'\n",
+        manager="arbitrary.boundary(ValueError, match=pattern)",
+        body=(
+            "try:\n"
+            "    raise ImportError('inner')\n"
+            "except ImportError:\n"
+            "    raise ValueError('cannot convert')"
+        ),
+        following="assert isinstance(info.value.__context__, ImportError)",
+    )
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(completed) == 1
+    assert any(
+        "effect_slot_context" in str(entry.formula)
+        for entry in _effect_slot_facts(completed[0])
+    )
+
+
+def test_boundary_as_binding_refuses_missing_exception_context(tmp_path):
+    """Lying chained twin: no context preimage means no usable value."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as caught:
+        _route_boundary_with_binding(
+            tmp_path,
+            body="raise ValueError('cannot convert')",
+            following="assert isinstance(info.value.__context__, ImportError)",
+        )
+    assert caught.value.info.owner == "EffectCoordinate.attribute.__context__"
+    assert "no authenticated context preimage" in caught.value.info.observed
 
 
 def _effect_slot_facts(face) -> tuple:

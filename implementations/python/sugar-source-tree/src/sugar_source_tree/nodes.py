@@ -5522,6 +5522,11 @@ class Raise(Statement):
             cause=self.cause.sugar() if self.cause is not None else None,
             exception_name=self._exception_name(),
             site=self.fragment,
+            in_flight_slot=(
+                self.control_context.exception_slots[-1]
+                if self.control_context.exception_slots
+                else None
+            ),
         )
 
 

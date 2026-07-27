@@ -38,16 +38,22 @@ class ObservationRefSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
         from sugar_lift_py_tests.floor.effect_coordinate import (
             EffectCoordinate,
             ExceptionInfoCoordinate,
+            ObservedExceptionInfoValue,
         )
 
         if self.projection == "exception_info":
-            return Complete(
-                ExceptionInfoCoordinate(slot_id=self.slot_id, site=self.site)
-            )
+            reader = getattr(ctx, "observed_effect_for", None)
+            effect = reader(self.slot_id) if reader is not None else None
+            if effect is not None:
+                return Complete(
+                    ObservedExceptionInfoValue(
+                        slot_id=self.slot_id, effect=effect, site=self.site
+                    )
+                )
+            return Complete(ExceptionInfoCoordinate(slot_id=self.slot_id, site=self.site))
         if self.projection == "enter_result":
             from sugar_lift_py_tests.floor.manager_coordinate import (
                 EnterResultCoordinate,

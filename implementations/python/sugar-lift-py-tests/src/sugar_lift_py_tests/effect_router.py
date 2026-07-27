@@ -20,11 +20,23 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
+from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
 from sugar_lift_py_tests.outcome.incomplete import Incomplete
 
 _EFFECT_ABSENT_NAME = "py.effect.none"
 _EFFECT_EXPECTED_OBLIGATION = "py.effect.expected"
+
+
+@dataclass(frozen=True)
+class ObservedEffectBinding(FloorValue):
+    """Producer-owned preimage for projections from one consumed effect slot."""
+
+    slot_id: str
+    effect: RaiseEffect
+
+    def contribution(self):
+        return ()
 
 
 class RuntimeSelectedReachedRouter(RuntimeError):
@@ -90,6 +102,24 @@ class EffectBinding:
                     site=site,
                 )
             )
+        if isinstance(self.effect, RaiseEffect):
+            context = self.effect.context_effect
+            context_value = getattr(context, "raised_value", None)
+            if isinstance(context, RaiseEffect) and isinstance(
+                context_value, FloorValue
+            ):
+                facts.append(
+                    InvValue(
+                        eq(
+                            ctor("effect_slot_context", [slot]),
+                            context_value.to_term(
+                                owner="EffectBinding.context_preimage"
+                            ),
+                        ),
+                        site=site,
+                    )
+                )
+            facts.append(ObservedEffectBinding(self.slot_id, self.effect))
         return tuple(facts)
 
 

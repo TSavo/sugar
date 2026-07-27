@@ -23,6 +23,9 @@ class RaiseEffect:
     # The constructed expression after an explicit ``from``. Host ``None``
     # means the clause was absent; explicit Python ``None`` is a NoneValue.
     cause_value: object | None = None
+    # The handled occurrence active when this raise happened. This is Python's
+    # ``__context__`` testimony and is distinct from an explicit ``from`` cause.
+    context_effect: "RaiseEffect | None" = None
 
     @property
     def occurrence_id(self) -> str | None:

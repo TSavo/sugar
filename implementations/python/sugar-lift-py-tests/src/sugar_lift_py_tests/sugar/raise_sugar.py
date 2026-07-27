@@ -72,6 +72,13 @@ class RaiseSugar(Sugar):
             return Incomplete(resolve_in_flight_effect(ctx, self.in_flight_slot))
 
         def halt(raised_value, cause_value=None):
+            context_effect = None
+            if self.in_flight_slot is not None:
+                from sugar_lift_py_tests.in_flight_effect import (
+                    resolve_in_flight_effect,
+                )
+
+                context_effect = resolve_in_flight_effect(ctx, self.in_flight_slot)
             identity_reader = getattr(raised_value, "exception_type_identity", None)
             mro_reader = getattr(raised_value, "exception_type_mro", None)
             return Incomplete(
@@ -93,6 +100,7 @@ class RaiseSugar(Sugar):
                     ),
                     raised_value=raised_value,
                     cause_value=cause_value,
+                    context_effect=context_effect,
                 )
             )
 
