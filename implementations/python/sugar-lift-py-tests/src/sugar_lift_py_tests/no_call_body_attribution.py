@@ -1,10 +1,15 @@
-"""Per-family attribution for assertion bodies with no Call expression.
+"""Per-family attribution for assertion bodies whose root is not a Call.
 
 The authenticated runner owns discovery and shared-table transport.  This
 module owns the closed accounting algebra: every enrolled body is attributed
 to exactly one producer family and exactly one of three outcomes.  A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.  A
 ``ConstructionPanic`` remains a separate loud axis.
+
+Attribute family denominator is the measured no-Call-descendant Attribute root
+inventory on the authenticated pandas 3.0.3 corpus + #6464 demand table
+(remeasured 41; the historical pin 53 over-counted Call-bearing Attribute
+roots that the no-call enrollment law excludes).
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
     ProducerFamily.SUBSCRIPT: 392,
     ProducerFamily.BINOP: 367,
     ProducerFamily.COMPARE: 181,
-    ProducerFamily.ATTRIBUTE: 53,
+    ProducerFamily.ATTRIBUTE: 41,
     ProducerFamily.UNARYOP: 13,
     ProducerFamily.BOOLOP: 2,
 }
@@ -283,8 +288,60 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
     )
 
 
+def _source_has_selected_family_demand(
+    source: str,
+    demands: Iterable[dict],
+    families: frozenset[ProducerFamily],
+) -> bool:
+    """Cheap fail-closed projection before native Sugar construction.
+
+    The managed CPython parser may only discard a source file that carries no
+    demand whose native body root could belong to ``families``.  Enrollment is
+    still decided by the Sugar tree below, and the fixed family denominator
+    refuses if this projection ever loses a site.
+    """
+    import ast
+
+    selected_names = {family.value for family in families}
+    demands_by_coordinate = {
+        (
+            demand.get("startLine"),
+            demand.get("startCol"),
+            demand.get("endLine"),
+            demand.get("endCol"),
+        )
+        for demand in demands
+    }
+    parsed = ast.parse(source)
+    for node in ast.walk(parsed):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        coordinates = {
+            (
+                item.context_expr.lineno,
+                item.context_expr.col_offset,
+                item.context_expr.end_lineno,
+                item.context_expr.end_col_offset,
+            )
+            for item in node.items
+        }
+        if not coordinates.intersection(demands_by_coordinate):
+            continue
+        if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
+            continue
+        expression = node.body[0].value
+        if any(isinstance(descendant, ast.Call) for descendant in ast.walk(expression)):
+            continue
+        if type(expression).__name__ in selected_names:
+            return True
+    return False
+
+
 def discover_no_call_body_probes(
-    payload: dict, corpus_root: Path
+    payload: dict,
+    corpus_root: Path,
+    *,
+    families: frozenset[ProducerFamily] | None = None,
 ) -> tuple[BodyProbe, ...]:
     """Project authenticated assertion demands to their native body producer.
 
@@ -343,6 +400,10 @@ def discover_no_call_body_probes(
                 f"demand table names source CID absent from authenticated corpus: {source_cid}"
             )
         source = path.read_text(encoding="utf-8")
+        if families is not None and not _source_has_selected_family_demand(
+            source, demands, families
+        ):
+            continue
         tree = SourceFile(
             (source, str(path), source_cid),
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
@@ -385,6 +446,8 @@ def discover_no_call_body_probes(
             )
             if family is None:
                 continue
+            if families is not None and family not in families:
+                continue
             body_id = (
                 f"{path.relative_to(corpus_root).as_posix()}:"
                 f"{expression.line_col_span().start_line}:{family.value}"
@@ -404,22 +467,32 @@ def discover_no_call_body_probes(
     return tuple(sorted(probes, key=lambda probe: probe.body_id))
 
 
-def require_expected_denominators(probes: Iterable[BodyProbe]) -> tuple[BodyProbe, ...]:
+def require_expected_denominators(
+    probes: Iterable[BodyProbe],
+    *,
+    families: frozenset[ProducerFamily] | None = None,
+) -> tuple[BodyProbe, ...]:
     """Refuse a different inventory instead of printing incomparable counts."""
     materialized = tuple(probes)
+    selected_families = tuple(ProducerFamily) if families is None else tuple(families)
     observed = {
         family: sum(probe.family is family for probe in materialized)
-        for family in ProducerFamily
+        for family in selected_families
     }
-    if observed != FAMILY_DENOMINATORS:
+    expected = {family: FAMILY_DENOMINATORS[family] for family in selected_families}
+    if observed != expected:
         raise AttributionInvariantError(
-            f"no-call body inventory differs: expected={dict(FAMILY_DENOMINATORS)!r} "
+            f"no-call body inventory differs: expected={expected!r} "
             f"observed={observed!r}"
         )
     return materialized
 
 
-def run_authenticated_attribution(repo_root: Path) -> AttributionReport:
+def run_authenticated_attribution(
+    repo_root: Path,
+    *,
+    families: frozenset[ProducerFamily] | None = None,
+) -> AttributionReport:
     """Authenticated executable edge. Workstations must refuse before pulling."""
     import tempfile
 
@@ -439,6 +512,7 @@ def run_authenticated_attribution(repo_root: Path) -> AttributionReport:
             repo_root, Path(scratch) / "python-demand-table.json"
         )
     probes = require_expected_denominators(
-        discover_no_call_body_probes(payload, corpus.root)
+        discover_no_call_body_probes(payload, corpus.root, families=families),
+        families=families,
     )
     return attribute_body_probes(probes)
