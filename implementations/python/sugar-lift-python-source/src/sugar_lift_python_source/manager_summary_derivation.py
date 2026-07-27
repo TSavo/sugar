@@ -92,11 +92,21 @@ def derive_manager_summary(
     """
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+
     try:
         enter = outcome_to_exitset(protocol.enter_outcome())
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        return DerivedManagerSummaryGapV1(
+            "enter-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
+    except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
+        owner = getattr(exc, "owner", None) or type(exc).__name__
+        observed = getattr(exc, "observed", None) or str(exc)
         return DerivedManagerSummaryGapV1(
             "enter-may-halt",
             protocol.protocol_construction_cid,
@@ -111,6 +121,14 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        return DerivedManagerSummaryGapV1(
+            "exit-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
+    except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
+        owner = getattr(exc, "owner", None) or type(exc).__name__
+        observed = getattr(exc, "observed", None) or str(exc)
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -650,9 +668,28 @@ def populate_source_derived_resource_refs(
             if frame.generator_steps is not None:
                 _install_source_call_frame(context, call, frame)
                 continue
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+        from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+        actual_ctx = ReduceContext(temporal=builtin_name_temporal())
+
+        def _actual_outcome(node):
+            # Substitution has already replaced every reaching lexical binding.
+            # A surviving bare builtin is therefore the language-owned value,
+            # not a free formal. NameSugar deliberately represents every other
+            # survivor symbolically, so project this one native floor here.
+            from sugar_lift_py_tests.outcome import Complete as _Complete
+            from sugar_source_tree.nodes import Name
+
+            if isinstance(node, Name):
+                builtin = actual_ctx.temporal.value_if_bound(node.id)
+                if builtin is not None:
+                    return _Complete(builtin)
+            return node.sugar().desugar(actual_ctx)
+
         actuals = []
         for node in call.args:
-            outcome = node.sugar().desugar()
+            outcome = _actual_outcome(node)
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
@@ -673,7 +710,7 @@ def populate_source_derived_resource_refs(
                     keyword_actuals = []
                     actuals = []
                     break
-                outcome = keyword.value.sugar().desugar()
+                outcome = _actual_outcome(keyword.value)
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []
