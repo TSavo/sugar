@@ -384,3 +384,164 @@ def test_weaken_pending_weakens_every_carrier():
 
     assert len(weakened) == 2
     assert set(_cids(weakened)).isdisjoint(_cids(group))
+
+
+# ------------------------------------------- the nested-statement splice -----
+
+
+def _block(entries=()):
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    return _ReducedBlock(entries=tuple(entries), can_fall_through=True, fall_through=())
+
+
+class _StatementReducingToExitSet:
+    """A statement sugar whose `desugar` hands back its OWN ExitSet.
+
+    This is the shape the nested-statement seam exists for -- a try/with whose
+    body was reduced separately -- reduced to the smallest thing that reaches
+    it. A stub, not vendor source: the seam is what is under test, not any
+    particular statement.
+    """
+
+    def __init__(self, exits):
+        self._exits = exits
+
+    def desugar(self, ctx):
+        del ctx
+        return self._exits
+
+
+def test_the_nested_statement_splice_conserves_faces_and_obligations():
+    """TRUTHFUL. The rebuild at the nested-statement seam stated three fields,
+    so it dropped BOTH the arm's partition testimony and its pending
+    obligations -- the same shape of loss `ExitSet.guarded` had.
+
+    Driven through `reduce_block_to_exitset`, not re-implemented here: a control
+    that copies the rebuild into itself cannot fail when the rebuild changes,
+    which is exactly the twin that proves nothing."""
+    from sugar_lift_py_tests.outcome.exit_set import PartitionFace
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        reduce_block_to_exitset,
+    )
+
+    pending = _carrier()
+    face = PartitionFace(("test-origin",), "left", 2)
+    inner = _ReducedBlock(("inner-entry",), False, ())
+    statement = _StatementReducingToExitSet(
+        ExitSet(
+            (
+                Halted(
+                    _guard("h"),
+                    RaiseEffect("ValueError", "boom"),
+                    inner,
+                    frozenset({face}),
+                    (pending,),
+                ),
+            )
+        )
+    )
+
+    reduced = reduce_block_to_exitset((statement,))
+
+    halted = [e for e in reduced.exits if isinstance(e, Halted)]
+    assert len(halted) == 1
+    arm = halted[0]
+    # The obligation reached the block record: enrolment moved it into the
+    # arm's entries and cleared the carrier, so the demand rows are the proof.
+    owed = [
+        entry
+        for entry in arm.state.entries
+        if isinstance(entry, ContractConditionalConstructionV1)
+    ]
+    assert len(owed) == 1
+    # Enrolment is the ONE mint: the arm holds under `h`, so what reaches the
+    # record is `h -> D`, not the bare obligation. Asserting the unweakened cid
+    # here would be asserting that the weakening never happened.
+    assert _cids(owed) == _cids(weaken_pending((pending,), _guard("h")))
+    assert _cids(owed) != _cids((pending,))
+    assert face in arm.faces
+
+
+def test_a_stateless_halt_that_owes_stays_loud():
+    """TRUTHFUL. `and_finally`, `and_exit` and `outcome_to_exitset` can all emit
+    a halted arm whose state is None. An obligation incurred on that path has no
+    record to be owed on, and the gap belongs to the producer that built the
+    arm. Supplying a record here would silence
+    `_boundary_halted_edge`'s refusal, which reads `state is None` as "the
+    reducer omitted the real pre-halt state"; synthesising one from the demand
+    rows would assert a record the producer said was absent."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _enrol_exit_obligations,
+    )
+
+    owing = ExitSet(
+        (
+            Halted(
+                true_guard(),
+                RaiseEffect("ValueError", "boom"),
+                None,
+                frozenset(),
+                (_carrier(),),
+            ),
+        )
+    )
+
+    with pytest.raises(ConstructionPanic):
+        _enrol_exit_obligations(owing)
+
+
+def test_an_arm_owing_nothing_never_reaches_the_refusal():
+    """LYING TWIN. A mechanism that panicked on any stateless halt would pass
+    the law above and turn every ordinary `raise` inside a `finally` into a
+    construction gap. Only an arm that OWES has anything to enrol."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _enrol_exit_obligations,
+    )
+
+    clean = ExitSet((Halted(true_guard(), RaiseEffect("ValueError", "boom"), None),))
+
+    assert _enrol_exit_obligations(clean) is clean
+
+
+def test_a_stateless_halt_that_owes_is_given_the_prefix_record():
+    """TRUTHFUL. `outcome_to_exitset` converts an `Incomplete` to
+    `Halted(guard, effect, None)`; `and_finally` and `and_exit` fan halts the
+    same way. An arm with no nested record halted at the TOP of its statement,
+    so the block's prefix is the complete temporal record for that path and is
+    the record the obligation enrols into. Measured: without this, all three
+    `and_then` sites on the slice merely change owner instead of draining."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        _halt_state,
+    )
+
+    prefix = _ReducedBlock(("earlier-entry",), True, ())
+    owing = Halted(
+        true_guard(),
+        RaiseEffect("ValueError", "boom"),
+        None,
+        frozenset(),
+        (_carrier(),),
+    )
+
+    carried = _halt_state(prefix, owing)
+
+    assert isinstance(carried, _ReducedBlock)
+    assert carried.entries == ("earlier-entry",)
+
+
+def test_a_stateless_halt_that_owes_nothing_keeps_its_state():
+    """LYING TWIN. Splicing the prefix onto EVERY stateless halt would satisfy
+    the law above and silently move existing temporal testimony: an arm that
+    owes nothing needed no record and must keep exactly the state it had."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        _halt_state,
+    )
+
+    clean = Halted(true_guard(), RaiseEffect("ValueError", "boom"), None)
+
+    assert _halt_state(_ReducedBlock(("earlier-entry",), True, ()), clean) is None

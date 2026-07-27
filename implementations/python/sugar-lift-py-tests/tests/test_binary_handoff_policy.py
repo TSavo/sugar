@@ -607,7 +607,7 @@ def test_python_wrapper_uses_native_windows_sugarbin(monkeypatch) -> None:
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, f"{resolved}\n", "")
 
-    monkeypatch.setattr(sugar_binary.os, "name", "nt")
+    monkeypatch.setattr(sugar_binary, "current_os_name", lambda: "nt")
     monkeypatch.setattr(sugar_binary.platform, "node", lambda: "Battleaxe")
     monkeypatch.setattr(sugar_binary, "subprocess_run", fake_run)
 
@@ -632,7 +632,7 @@ def test_python_wrapper_keeps_non_battleaxe_windows_on_broker(monkeypatch) -> No
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, f"{resolved}\n", "")
 
-    monkeypatch.setattr(sugar_binary.os, "name", "nt")
+    monkeypatch.setattr(sugar_binary, "current_os_name", lambda: "nt")
     monkeypatch.setattr(sugar_binary.platform, "node", lambda: "MapLaptop")
     monkeypatch.setattr(sugar_binary, "subprocess_run", fake_run)
 
