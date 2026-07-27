@@ -336,12 +336,13 @@ def test_the_two_call_shapes_are_not_the_same_condition() -> None:
 # wearing a pin's clothes; a content key returns one artifact or nothing.
 # --------------------------------------------------------------------------
 
-#: The first authenticated ``python-demand-table``, published through the
-#: ``ee50531eb`` shelf path. Producer ``964dbf95d``, corpus pandas 3.0.3 /
-#: 1,421 files, runtime ``cpython-3.14.4``.
+#: The declared authenticated ``python-demand-table`` identity: producer
+#: ``964dbf95d``, corpus pandas 3.0.3 / 1,421 files, parser
+#: ``cpython-3.12`` and runtime ``cpython-3.12.13``. The runtime cell must be
+#: genuinely re-minted; the former 3.14.4 bytes cannot satisfy this address.
 DEMAND_TABLE_CONTENT_KEY = (
-    "blake3-512:e225fcd0991f7c9011107521516e513390e448cc78ec4ce2da5eceb7116e1d89"
-    "6cba3f8d9f19c1b5375692117a8395aa9f1529a63b768387ce9aeb43d8323499"
+    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
+    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
 )
 
 #: The CONTENT identity of the enrolled corpus: ``corpus_pin.aggregate_hash``
@@ -415,7 +416,7 @@ def _pinned_demand_table() -> dict:
                 "--output",
                 str(output),
                 "--runtime",
-                "cpython-3.14.4",
+                "cpython-3.12.13",
             ],
             cwd=root,
             capture_output=True,
@@ -436,6 +437,7 @@ def _pinned_demand_table() -> dict:
     # The shelf is content-addressed, but the artifact says who it is and that
     # is what gets checked -- never the filename it arrived under.
     assert payload["contentKey"] == DEMAND_TABLE_CONTENT_KEY
+    assert payload["authentication"]["python"] == "cpython-3.12.13"
     assert (
         payload["authentication"]["authenticatedCorpusManifestCid"]
         == DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID

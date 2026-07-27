@@ -39,13 +39,36 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
+    InterpreterIdentity,
     authenticate_corpus_manifest,
+    authenticate_interpreter_runtime,
     authenticated_pandas_corpus,
+    declared_interpreter_runtime,
 )
 from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
 
 _PYPROJECT = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
 _CORPUS_PACKAGES = ("pandas", "numpy")
+
+
+def test_managed_runtime_authority_is_cpython_31213() -> None:
+    assert declared_interpreter_runtime() == "cpython-3.12.13"
+
+
+def test_declared_runtime_authenticates() -> None:
+    identity = InterpreterIdentity("cpython", "3.12.13", pathlib.Path("/python"))
+
+    assert authenticate_interpreter_runtime(identity) == identity
+
+
+def test_undeclared_cpython_3144_refuses_loudly() -> None:
+    identity = InterpreterIdentity("cpython", "3.14.4", pathlib.Path("/python"))
+
+    with pytest.raises(
+        ExecutionEnvironmentMismatch,
+        match=r"required cpython-3\.12\.13; observed cpython-3\.14\.4",
+    ):
+        authenticate_interpreter_runtime(identity)
 
 
 def _declared_pins() -> dict[str, str]:

@@ -53,6 +53,30 @@ def interpreter_identity() -> InterpreterIdentity:
     )
 
 
+def declared_interpreter_runtime() -> str:
+    """Read the one managed Python authority from the build manifest."""
+    repo_root = Path(__file__).resolve().parents[5]
+    manifest = tomllib.loads(
+        (repo_root / "sugar-build.toml").read_text(encoding="utf-8")
+    )
+    version = str(manifest["tools"]["python"])
+    return f"cpython-{version}"
+
+
+def authenticate_interpreter_runtime(
+    identity: InterpreterIdentity,
+) -> InterpreterIdentity:
+    """Refuse execution testimony minted outside the declared runtime."""
+    observed = f"{identity.implementation}-{identity.version}"
+    required = declared_interpreter_runtime()
+    if observed != required:
+        raise ExecutionEnvironmentMismatch(
+            "Python runtime authority mismatch: "
+            f"required {required}; observed {observed} at {identity.executable}"
+        )
+    return identity
+
+
 def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -179,6 +203,7 @@ def _declared_corpus(package_root: Path) -> tuple[dict[str, str], str]:
 def authenticate_environment() -> (
     tuple[ImportIdentity, ImportIdentity, ImportIdentity, str]
 ):
+    authenticate_interpreter_runtime(interpreter_identity())
     package_root = Path(__file__).resolve().parents[2]
     repo_root = Path(__file__).resolve().parents[5]
     activate_checkout_import_roots(repo_root, sys.path)

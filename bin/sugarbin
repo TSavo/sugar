@@ -1151,16 +1151,17 @@ filesystem_shelf_root() {
 }
 
 filesystem_shelf_cell() {
-  local kind="$1" stamp="$2" name="$3"
+  local kind="$1" stamp="$2" name="$3" runtime="${4:-}"
   if [[ "$kind" == binary ]]; then
     printf '%s/%s/%s/%s/%s\n' \
       "$(filesystem_shelf_root)" "$(platform_key)" "$profile" \
       "$(stamp_for_filename "$stamp")" "$name"
     return 0
   fi
-  printf '%s/%s/%s/%s/%s/%s\n' \
+  [[ -n "$runtime" ]] || { log "artifact shelf cell requires an authenticated runtime"; return 2; }
+  printf '%s/%s/%s/%s/%s/%s/%s\n' \
     "$(filesystem_shelf_root)" "$kind" "$(platform_key)" "$profile" \
-    "$(stamp_for_filename "$stamp")" "$name"
+    "$runtime" "$(stamp_for_filename "$stamp")" "$name"
 }
 
 filesystem_shelf_complete() {
@@ -1171,10 +1172,10 @@ filesystem_shelf_complete() {
 }
 
 publish_to_filesystem_shelf() {
-  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" manifest cell parent tmp actor sha meta
+  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta
   manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
-  cell="$(filesystem_shelf_cell "$kind" "$stamp" "$name")"
+  cell="$(filesystem_shelf_cell "$kind" "$stamp" "$name" "$runtime")"
   if filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf already has $name"
     return 0
@@ -1373,7 +1374,7 @@ publish_payload_artifact() {
   payload="$staging/$name"
   cp "$input" "$payload"
   write_payload_artifact_manifest "$payload" "$kind" "$key" "$runtime" || { status=$?; rm -rf "$staging"; return "$status"; }
-  publish_to_filesystem_shelf "$payload" "$key" "$name" "$kind"
+  publish_to_filesystem_shelf "$payload" "$key" "$name" "$kind" "$runtime"
   status=$?
   rm -rf "$staging"
   return "$status"
@@ -1381,7 +1382,7 @@ publish_payload_artifact() {
 
 pull_payload_artifact() {
   local kind="$1" key="$2" runtime="$3" output="$4" name="$5" cell staging payload manifest output_manifest
-  cell="$(filesystem_shelf_cell "$kind" "$key" "$name")"
+  cell="$(filesystem_shelf_cell "$kind" "$key" "$name" "$runtime")"
   if ! filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf miss for $kind key $key"
     return 1
@@ -1412,6 +1413,14 @@ dispatch_artifact_subcommand() {
   [[ "$artifact_kind" == python-demand-table ]] || { log "unknown artifact kind: $artifact_kind"; return 2; }
   [[ "$artifact_key" =~ ^blake3-512[:_][0-9a-f]{128}$ ]] || { log "artifact --content-key must be a blake3-512 content key"; return 2; }
   [[ "$artifact_runtime" =~ ^[A-Za-z0-9._-]+$ ]] || { log "artifact --runtime must be a path-safe name"; return 2; }
+  local declared_python runtime
+  declared_python="$(awk -F ' *= *' '$1 == "python" { gsub(/"/, "", $2); print $2 }' "$repo_root/sugar-build.toml")"
+  [[ -n "$declared_python" ]] || { log "crime=missing-runtime-authority owner=sugar-build.toml replacement=declare tools.python exactly once"; return 78; }
+  runtime="cpython-$declared_python"
+  if [[ "$artifact_runtime" != "$runtime" ]]; then
+    log "crime=undeclared-python-runtime owner=bin/sugarbin required=$runtime requested=$artifact_runtime replacement=request the runtime declared by sugar-build.toml or publish a distinct declared cell"
+    return 78
+  fi
   [[ -z "$artifact_shelf_root" ]] || SUGAR_BINARY_SHELF_ROOT="$artifact_shelf_root"
   local name="$artifact_kind"
   case "$artifact_subcommand" in

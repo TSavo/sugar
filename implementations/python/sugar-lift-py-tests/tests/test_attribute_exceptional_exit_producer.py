@@ -30,8 +30,8 @@ SOURCE_CID = (
 )
 MANIFEST_CID = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 DEMAND_TABLE_KEY = (
-    "blake3-512:e225fcd0991f7c9011107521516e513390e448cc78ec4ce2da5eceb7116e1d89"
-    "6cba3f8d9f19c1b5375692117a8395aa9f1529a63b768387ce9aeb43d8323499"
+    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
+    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
 )
 
 
@@ -113,7 +113,7 @@ def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) 
             "--output",
             str(output),
             "--runtime",
-            "cpython-3.14.4",
+            "cpython-3.12.13",
         ],
         cwd=_repo_root(),
         capture_output=True,
@@ -128,6 +128,7 @@ def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) 
         table_file.fileno(), 0, access=mmap.ACCESS_READ
     ) as table:
         assert table.find(DEMAND_TABLE_KEY.encode()) >= 0
+        assert table.find(b'"python": "cpython-3.12.13"') >= 0
         assert table.find(MANIFEST_CID.encode()) >= 0
         assert table.find(b'"pandas": "3.0.3"') >= 0
         assert table.find(b'"fileCount": 1421') >= 0
