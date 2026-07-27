@@ -56,6 +56,28 @@ class OpaqueStepV1:
 
 
 @dataclass(frozen=True)
+class InertStepV1:
+    """A body statement that owes NOTHING and is therefore stepped past.
+
+    The discriminating property is not the statement's spelling but what it
+    owes: no effect, no binding, no suspension. A bare ``Constant`` expression
+    -- a docstring, or any evaluated-and-discarded literal -- is the only shape
+    admitted today, because evaluating a literal and discarding it is
+    observationally nothing.
+
+    This is deliberately NARROWER than ``OpaqueStepV1``. An opaque step names a
+    real obligation the vocabulary cannot yet perform; an inert step names the
+    absence of one. Widening this row to any statement that merely *looks*
+    harmless would make the machine skip work it cannot do and report the wrong
+    blocker -- the failure this row must never cause. ``observed`` is retained
+    so a stepped-past statement is still nameable in testimony rather than
+    vanishing.
+    """
+
+    observed: str
+
+
+@dataclass(frozen=True)
 class FinallyStepV1:
     statements: tuple[object, ...]
 
@@ -85,7 +107,9 @@ class IfStepV1:
     fragment_cid: str
 
 
-GeneratorStepV1 = YieldStepV1 | ReturnStepV1 | OpaqueStepV1 | FinallyStepV1 | IfStepV1
+GeneratorStepV1 = (
+    YieldStepV1 | ReturnStepV1 | OpaqueStepV1 | InertStepV1 | FinallyStepV1 | IfStepV1
+)
 
 
 @dataclass(frozen=True)
@@ -197,6 +221,13 @@ class GeneratorConstructionV1:
         step = self.steps[self.cursor]
         if isinstance(step, OpaqueStepV1):
             return self._gap(requested, step.gap_observed())
+        if isinstance(step, InertStepV1):
+            # Owes nothing, so there is nothing to perform and nothing to
+            # refuse: advance and let the NEXT step answer. This is what makes
+            # the machine report its first real blocker instead of the first
+            # statement it happens to meet.
+            machine = replace(self, cursor=self.cursor + 1)
+            return machine._transition(requested)
         if isinstance(step, FinallyStepV1):
             cleanup = self._reduce_finally(step)
             from sugar_lift_py_tests.outcome import Completed, Halted

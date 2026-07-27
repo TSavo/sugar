@@ -150,3 +150,46 @@ def test_contextmanager_style_try_finally_resumes_cleanup_before_termination():
     assert outcome.value.statements[0].formula == eq(
         ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
     )
+
+
+def test_docstring_is_stepped_and_is_never_the_blocker():
+    """TRUTHFUL TWIN. A leading docstring owes nothing, so it is stepped.
+
+    The generator enters at its `yield` exactly as it does with no docstring
+    at all -- the `InertStepV1` row is the whole difference. Without it the
+    machine refuses at statement zero and names `Expr`, which is a blocker
+    that asks for nothing.
+    """
+    sugar = _with_sugar("    '''Real work happens below.'''\n    yield 7")
+
+    outcome = sugar.desugar()
+    assert isinstance(outcome, Complete)
+    assert outcome.value.statements[0].formula == eq(
+        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+    )
+
+
+def test_inert_step_does_not_swallow_a_call_expression():
+    """LYING TWIN. An `Expr` that is not a `Constant` still owes execution.
+
+    `record()` is spelled like the docstring -- a bare expression statement --
+    and is exactly what a spelling-based admission would step past. It owes a
+    call, so it stays opaque and loud. If this node goes green the inert row
+    has been widened past what it can prove.
+    """
+    sugar = _with_sugar("    record()\n    yield 7")
+
+    with pytest.raises(SugarNotWritten, match="opaque generator transition: Expr"):
+        sugar.desugar()
+
+
+def test_inert_step_does_not_swallow_a_binding():
+    """LYING TWIN. A binding is real work and must remain the named blocker.
+
+    This is the pandas `__tracebackhide__ = True` shape, and it is what the
+    machine must report once the docstring ahead of it is stepped.
+    """
+    sugar = _with_sugar("    '''Doc.'''\n    hidden = True\n    yield 7")
+
+    with pytest.raises(SugarNotWritten, match="opaque generator transition: Assign"):
+        sugar.desugar()

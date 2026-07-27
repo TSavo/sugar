@@ -2097,6 +2097,7 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.generator_construction import (
             FinallyStepV1,
             IfStepV1,
+            InertStepV1,
             OpaqueStepV1,
             ReturnStepV1,
             YieldStepV1,
@@ -2151,6 +2152,22 @@ class FunctionDef(Statement):
                 steps.append(
                     FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
+            elif (
+                isinstance(statement, Expr)
+                and isinstance(statement.value, Constant)
+                and not self._owns_yield((statement,))
+            ):
+                # EVALUATED AND DISCARDED IS NOTHING. A bare `Constant`
+                # expression -- the docstring case -- owes no effect, no
+                # binding and no suspension, so calling it opaque made the
+                # machine refuse at a statement that asks for nothing and name
+                # the WRONG blocker. It is stepped, not performed.
+                #
+                # The admission is structural (`Expr` holding `Constant`) and
+                # the suspension check is `_owns_yield`, the same authenticated
+                # predicate the rest of this producer reads -- never a judgement
+                # that a statement "looks harmless".
+                steps.append(InertStepV1(statement.kind))
             elif isinstance(statement, If) and self._owns_yield((statement,)):
                 # A BRANCH IS A TWO-FACE PARTITION and this producer owns it.
                 # Admitted only when BOTH branches are wholly nameable: a
