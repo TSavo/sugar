@@ -281,7 +281,7 @@ def _route_warning_boundary(
     # Exact ``None`` is the manager's inverted contract: no warning may arrive.
     # NoneValue is the literal's floor type, not a placeholder warning class.
     if isinstance(expected, NoneValue):
-        return _route_completed_no_warning_boundary(
+        return _route_no_warning_boundary(
             body=body,
             ctx=ctx,
             manager_exit=manager_exit,
@@ -401,15 +401,28 @@ def _route_warning_boundary(
     return ExitSet(tuple(exits)).normalize()
 
 
-def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
-    """Accept a completed face only when warning absence is decidable."""
+def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
+    """Invert Expects/Warning for literal ``None`` on both body edges.
+
+    ``assert_produces_warning(None)`` is not an empty category. Exact
+    ``NoneValue`` means no warning may arrive:
+
+    - completed edge: absence is success; an unguarded observation is
+      ``ExpectationNotMetEffect`` (never a fabricated ``WarningEffect``)
+    - exception edge: the same observation law applies to the pre-halt
+      record. Clean absence restores the original halt; an unguarded
+      observation still fails the assertion. A halt with no temporal
+      record is not a warning decision surface and is restored unchanged
+
+    Guarded occurrences and unresolved producers remain undecided on either
+    edge — the same refusals the matching-category router already names.
+    """
     from sugar_lift_py_tests.context_manager_contract import ExpectsModeV1
     from sugar_lift_py_tests.effect import ExpectationNotMetEffect
-    from sugar_lift_py_tests.floor import CallSiteValue
     from sugar_lift_py_tests.floor.warning_observation_value import (
         WarningObservationValue,
     )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
     from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
@@ -421,15 +434,21 @@ def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site)
     )
     exits = []
     for face in body_es.exits:
-        if isinstance(face, Halted):
-            exits.append(face)
-            continue
-        entries = getattr(face.value, "entries", None)
+        # Matching-category routing already reads both faces the same way:
+        # Completed carries the reduced block as its value; Halted carries
+        # the pre-halt record as its state.
+        record = face.value if isinstance(face, Completed) else face.state
+        entries = getattr(record, "entries", None)
         if not isinstance(entries, tuple):
+            if isinstance(face, Halted):
+                # Exception edge without a temporal record: do not invent a
+                # warning verdict. Restore the halt as the body left it.
+                exits.append(face)
+                continue
             raise SugarNotWritten(
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed=(
-                    f"completed face carries {type(face.value).__name__}, "
+                    f"completed face carries {type(record).__name__}, "
                     "not a reduced block record"
                 ),
                 requested=(
@@ -459,11 +478,14 @@ def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site)
             )
         if observations:
             if isinstance(mode, ExpectsModeV1):
+                # Fail the inverted contract with the assertion effect only.
+                # Never mint a WarningEffect here — observations arrive only
+                # from the producer, and unmet is ExpectationNotMetEffect.
                 exits.append(
                     Halted(
                         face.guard,
                         ExpectationNotMetEffect("warning", site),
-                        face.value,
+                        record,
                         face.faces,
                         face.pending_contracts,
                     )
@@ -487,5 +509,7 @@ def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site)
             # ever routed into.
             refusal.unresolved_warning_producers = unresolved_members
             raise refusal
+        # Decidable absence: completed stays completed; exception edge restores
+        # the original halt without inventing any warning effect.
         exits.append(face)
     return ExitSet(tuple(exits)).normalize()
