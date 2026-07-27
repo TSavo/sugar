@@ -2099,7 +2099,20 @@ class FunctionDef(Statement):
                 then_body = branch_steps(statement.body)
                 else_body = branch_steps(statement.orelse)
                 if then_body is None or else_body is None:
-                    steps.append(OpaqueStepV1(statement.kind))
+                    # A branch holds a step the vocabulary cannot name, so the
+                    # whole `If` stays opaque -- but it is still an `If` that
+                    # may CARRY a suspension, and that is the discrimination
+                    # #6439 landed. Dropping the flag here would report
+                    # `if c: x = yield 1` as a plain `If`, which is the exact
+                    # row-merge #6439 exists to prevent. #6439 and #6445 were
+                    # each green and merged with NO textual conflict; this
+                    # line is what the clean merge silently lost.
+                    steps.append(
+                        OpaqueStepV1(
+                            statement.kind,
+                            carries_suspension=self._owns_yield((statement,)),
+                        )
+                    )
                 else:
                     steps.append(
                         IfStepV1(
