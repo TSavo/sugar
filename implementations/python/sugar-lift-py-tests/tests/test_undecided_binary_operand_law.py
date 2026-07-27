@@ -8,9 +8,8 @@ named for THIS right operand, falling to the (owner x pair) gap.
 
 Most of those pairs are not eight arms to write. When at least one operand's
 runtime TYPE is undecided, Python's own operator dispatch for the pair is
-undecided, so the exact denotation is the symbolic coordinate
-``operator(left, right)`` -- the coordinate ``SymbolicValue`` already
-constructed, hoisted off that one class onto the law it was always stating.
+undecided.  That is a third value: the producer cannot claim completion and
+cannot invent an exception identity, so the shared law emits one named gap.
 
 The category is read from each value's own testimony (``denotes_value`` /
 ``runtime_type_is_decided``), never from a lexical type name.
@@ -36,7 +35,6 @@ from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, _Lambda, ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
 
 SITE = "undecided-binary-site"
 
@@ -66,13 +64,80 @@ def _comprehension() -> ComprehensionValue:
     )
 
 
-def _coordinate(outcome, operator: str):
-    assert isinstance(outcome, Complete), outcome
-    assert type(outcome.value) is SymbolicValue
-    term = outcome.value.term
-    assert term.name == operator
-    assert len(term.args) == 2
-    return term
+def _refusal(left, right, method: str, operator: str):
+    with pytest.raises(ConstructionPanic) as raised:
+        getattr(left, method)(right, SITE)
+    info = raised.value.info
+    assert info.owner == "binary_operation_exception_floor"
+    assert info.observed == f"{type(left).__name__} {operator} {type(right).__name__}"
+    assert "authenticated exceptional exit" in info.requested
+    assert "TypeError" not in str(info)
+    assert "RuntimeEffect" not in str(info)
+    return info
+
+
+def test_undecided_native_bitwise_dispatch_refuses_in_the_producer() -> None:
+    """The producer cannot choose ``__and__``/``__rand__`` or an exception."""
+    with pytest.raises(ConstructionPanic) as raised:
+        _symbolic().bitwise_and(TermValue(0), SITE)
+
+    info = raised.value.info
+    assert info.owner == "binary_operation_exception_floor"
+    assert info.observed == "SymbolicValue & TermValue"
+    assert info.requested == (
+        "source-visible native operator testimony selecting completion or an "
+        "authenticated exceptional exit"
+    )
+    assert "TypeError" not in str(info)
+    assert "RuntimeEffect" not in str(info)
+
+
+@pytest.mark.parametrize(
+    ("method", "operator"),
+    (
+        ("add", "+"),
+        ("subtract", "-"),
+        ("multiply", "*"),
+        ("divide", "/"),
+        ("floor_divide", "//"),
+        ("modulo", "%"),
+        ("power", "**"),
+        ("matrix_multiply", "@"),
+        ("bitwise_and", "&"),
+        ("bitwise_or", "|"),
+        ("bitwise_xor", "^"),
+        ("left_shift", "<<"),
+        ("right_shift", ">>"),
+    ),
+)
+def test_undecided_call_result_has_no_completion_or_effect_side_door(
+    method: str, operator: str
+) -> None:
+    _refusal(_callsite(), TermValue(2), method, operator)
+
+
+@pytest.mark.parametrize(
+    ("method", "operator"),
+    (
+        ("add", "+"),
+        ("subtract", "-"),
+        ("multiply", "*"),
+        ("divide", "/"),
+        ("floor_divide", "//"),
+        ("modulo", "%"),
+        ("power", "**"),
+        ("matrix_multiply", "@"),
+        ("bitwise_and", "&"),
+        ("bitwise_or", "|"),
+        ("bitwise_xor", "^"),
+        ("left_shift", "<<"),
+        ("right_shift", ">>"),
+    ),
+)
+def test_symbolic_left_operand_has_no_completed_binary_side_door(
+    method: str, operator: str
+) -> None:
+    _refusal(_symbolic(), TermValue(2), method, operator)
 
 
 # -- positive arm: the pairs the pinned census actually found -----------------
@@ -99,13 +164,13 @@ def _coordinate(outcome, operator: str):
         (NoneValue(), _callsite(), "add", "+"),
     ),
 )
-def test_an_undecided_operand_constructs_the_symbolic_coordinate(
+def test_an_undecided_operand_keeps_the_third_value_loud(
     left, right, method, operator
 ) -> None:
-    _coordinate(getattr(left, method)(right, SITE), operator)
+    _refusal(left, right, method, operator)
 
 
-def test_the_law_covers_every_operator_it_names_from_one_place() -> None:
+def test_the_law_refuses_every_operator_it_names_from_one_place() -> None:
     """Eight operator names, one law -- so a ninth costs no new arm."""
     for method, operator in (
         ("add", "+"),
@@ -122,18 +187,15 @@ def test_the_law_covers_every_operator_it_names_from_one_place() -> None:
         ("left_shift", "<<"),
         ("right_shift", ">>"),
     ):
-        _coordinate(getattr(BytesValue(b"x"), method)(_symbolic(), SITE), operator)
+        _refusal(BytesValue(b"x"), _symbolic(), method, operator)
 
 
-def test_both_operands_are_conserved_in_the_coordinate() -> None:
-    """One output arm conserves exactly its two input arms, in order."""
+def test_both_operand_categories_are_conserved_in_the_refusal() -> None:
+    """The gap names the actual pair and operator; no operand becomes a value."""
     left = BytesValue(b"ab")
     right = _symbolic()
-
-    term = _coordinate(left.add(right, SITE), "+")
-
-    assert term.args[0] == left.to_term(owner=SITE)
-    assert term.args[1] == right.to_term(owner=SITE)
+    info = _refusal(left, right, "add", "+")
+    assert info.observed == "BytesValue + SymbolicValue"
 
 
 # -- the real reproducers: whole functions, lifted from source ---------------
@@ -154,23 +216,20 @@ def test_both_operands_are_conserved_in_the_coordinate() -> None:
         ("set_minus_call", "def f(g):\n    return {1, 2} - g()\n"),
     ),
 )
-def test_the_whole_function_lifts_where_it_construction_panicked(
+def test_the_whole_function_refuses_undecided_native_dispatch(
     tmp_path, name, source
 ) -> None:
-    """Each of these construction_panicked on the tree before the law: a
-    snippet flip is not the acceptance, the whole function is."""
+    """Whole-function construction cannot launder the third value."""
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_source_tree.tree import SourceFile
 
     path = tmp_path / f"{name}.py"
     path.write_text(source, encoding="utf-8")
 
     fn = next(SourceFile(path_source(str(path))).functions())
-    outcome = fn.sugar().desugar(None)
-
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is UniverseValue
+    with pytest.raises(ConstructionPanic) as raised:
+        fn.sugar().desugar(None)
+    assert raised.value.info.owner == "binary_operation_exception_floor"
 
 
 # -- discriminating arm: the law refuses, loudly, everywhere else -------------
@@ -321,8 +380,8 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
         # A pair the field law REFUSES -- it decides, then falls through.
         with pytest.raises(ConstructionPanic):
             TermValue(10**400).add(ComplexValue(0.0, 1.0), SITE)
-        # The pair this law answers -- the field law still got asked first.
-        _coordinate(ComplexValue(0.0, 1.0).add(_symbolic(), SITE), "+")
+        # The pair this law refuses -- the field law still got asked first.
+        _refusal(ComplexValue(0.0, 1.0), _symbolic(), "add", "+")
     finally:
         complex_arithmetic.complex_add = original
 
@@ -448,6 +507,6 @@ def test_no_value_class_states_testimony_the_base_class_lost() -> None:
     assert orphaned == []
 
 
-def test_the_undecided_pair_still_answers_end_to_end() -> None:
+def test_the_undecided_pair_still_refuses_end_to_end() -> None:
     """The one shape that proves the law is wired, not merely present."""
-    _coordinate(BytesValue(b"x").add(_symbolic(), SITE), "+")
+    _refusal(BytesValue(b"x"), _symbolic(), "add", "+")
