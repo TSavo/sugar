@@ -258,12 +258,10 @@ class SymbolicValue(FloorValue):
         )
 
     def unary_minus(self, site):
-        # Symbolic arithmetic negation: emit py.neg(term) (LAW in symbolic_term).
-        del site
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.neg", [self.term])))
+        # The term does not state a runtime type, so it cannot decide whether
+        # ``-`` returns a value or raises TypeError.  A symbolic ``py.neg``
+        # coordinate for the success face would erase that exceptional face.
+        return super().unary_minus(site)
 
     def absolute(self, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -359,12 +357,10 @@ class SymbolicValue(FloorValue):
         return self._runtime_bitwise_refusal(other, site, "@")
 
     def unary_plus(self, site):
-        # Unary plus on a symbolic is identity (symbolic_term UAdd returns the
-        # operand). Match the LAW; do not invent a py.pos spelling.
-        del site
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(self)
+        # The term does not state a runtime type, so it cannot decide whether
+        # ``+`` is identity or raises TypeError (e.g. DatetimeArray).  Completing
+        # as the operand erases that exceptional face.
+        return super().unary_plus(site)
 
     def bitwise_invert(self, site):
         # The term does not state a runtime type, so it cannot decide whether

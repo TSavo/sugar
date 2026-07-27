@@ -2,10 +2,10 @@
 
 Mirrors BinOpSugar: the node carries its operator, so recognition is the node's;
 this routes the reduced operand to the floor method that operator names, and the
-value owns the answer (a number folds, a symbol emits `py.neg`/`py.invert`, a
-type with no such floor hits its own loud gap). `not` is the one that composes
-two floor verbs: Python `not x` is `not bool(x)`, so it takes the operand's
-TRUTHINESS (`truth`) and negates that predicate -- never a bespoke boolean.
+value owns the answer (a number folds; an undecided type refuses rather than
+inventing ``py.neg`` / identity / ``py.invert``). `not` composes two floor verbs:
+Python `not x` is `not bool(x)`, so it takes a decided truthiness and negates
+that predicate -- never inventing ``py.truthy`` when ``bool(x)`` is undecided.
 """
 
 from __future__ import annotations
@@ -24,6 +24,45 @@ UNARYOP_METHODS: dict[str, str] = {
     "UAdd": "unary_plus",
     "Invert": "bitwise_invert",
 }
+
+
+def refuse_undecided_unary_truth(value, site) -> None:
+    """Keep undecided ``bool(operand)`` dispatch loud at the UnaryOp ``not`` producer.
+
+    Python evaluates ``not x`` by first taking ``bool(x)``.  When the operand
+    denotes a value but its runtime type is undecided, native ``__bool__`` /
+    ``__len__`` may complete or raise (``Series`` / ``NA`` raise ``TypeError`` /
+    ``ValueError``).  Emitting ``py.truthy`` invents a total completion; inventing
+    an exception identity invents the failure.  Both stay refused until
+    source-visible type testimony decides.
+    """
+    denotes = getattr(value, "denotes_value", None)
+    decided = getattr(value, "runtime_type_is_decided", None)
+    if not callable(denotes) or not callable(decided):
+        return
+    if not denotes() or decided():
+        return
+
+    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="unary_operation_exception_floor",
+        blame=site,
+        observed=f"{type(value).__name__} not",
+        requested=(
+            "source-visible native truth testimony selecting completion "
+            "or an authenticated exceptional exit"
+        ),
+        fix=(
+            "preserve the undecided third value at the UnaryOp producer; "
+            "resolve native operand types and their __bool__/__len__ bodies "
+            "from source, or retain this named refusal without inventing an "
+            "exception identity"
+        ),
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
 
 
 @dataclass(frozen=True)
@@ -46,8 +85,12 @@ class UnaryOpSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         operand = self.operand.desugar(ctx)
         if self.op_kind == "Not":
-            # `not x` = not bool(x): take the operand's truthiness, negate it.
-            return operand.and_then(lambda v: v.truth(self.site)).and_then(
+            # `not x` = not bool(x): only a decided truthiness may be negated.
+            def project_not(value):
+                refuse_undecided_unary_truth(value, self.site)
+                return value.truth(self.site)
+
+            return operand.and_then(project_not).and_then(
                 lambda predicate: predicate.negate()
             )
         method = UNARYOP_METHODS[self.op_kind]
