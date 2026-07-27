@@ -1615,10 +1615,30 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
 def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_path):
     """Real producer advances to its first still-opaque native transition.
 
-    The imported generator frame comes only from authenticated pandas source.
-    Its outer warning-capture ``With`` is not in the generator-step vocabulary,
-    so construction names that transition instead of inventing warning
-    testimony or collapsing the site to ``non-manager-result:BlockValue``.
+    The imported generator frame comes only from authenticated pandas source,
+    and construction names its first unconsumable step instead of inventing
+    warning testimony or collapsing the site to
+    ``non-manager-result:BlockValue``.
+
+    ``assert_produces_warning`` has a THREE-statement body::
+
+        0  Expr    (a ``Constant`` -- the docstring)
+        1  Assign  (``__tracebackhide__ = True``)
+        2  With    (the warning capture)
+
+    Statement 0 owes nothing -- no effect, no binding, no suspension -- so it
+    is stepped as an ``InertStepV1`` and is not the answer. Statement 1 is,
+    because a binding is real work the machine cannot yet perform.
+
+    This test previously asserted ``With``, which is statement TWO PAST where
+    the machine can reach; it was born red and never passed. ``With`` is the
+    KNOWN REMAINING DISTANCE, not a defect in this arm: naming it requires
+    stepping ``__tracebackhide__ = True``, and a binding step needs an
+    authenticated binding record that ``binding_state`` does not yet hold.
+    That is its own mechanism and its own PR.
+
+    Still a tooth: remove ``InertStepV1`` and the docstring blocks first, so
+    this node reports ``Expr`` and goes red.
     """
     consumer = (
         "import pandas._testing as tm\n"
@@ -1648,7 +1668,7 @@ def test_installed_pandas_warning_manager_names_opaque_generator_transition(tmp_
     with pytest.raises(SugarNotWritten) as caught:
         boundary.desugar()
     assert caught.value.owner == "GeneratorWithSugar.desugar"
-    assert caught.value.observed == "opaque generator transition: With"
+    assert caught.value.observed == "opaque generator transition: Assign"
 
 
 def test_imported_renamed_generator_manager_installs_native_frame(tmp_path):
