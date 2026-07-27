@@ -27,6 +27,7 @@ Every law twin here is paired 1:1 with a discrimination arm.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
@@ -43,11 +44,17 @@ from sugar_lift_py_tests.context_manager_contract import (
     LiteralDefaultV1,
     NeverSuppressesDispositionV1,
     NoDefaultV1,
+    NoMessagePatternV1,
     OptionalFormalArgumentProjectionV1,
     PositionalOrKeywordV1,
     ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
+    WarningEffectKindV1,
+    WarningObservationBindingV1,
 )
+from sugar_lift_py_tests.effect import ExpectationNotMetEffect, WarningEffect
+from sugar_lift_py_tests.floor import BlockValue, NoneValue
+from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ImportSignatureV2,
@@ -57,7 +64,9 @@ from sugar_lift_py_tests.context_manager_resolution import (
     _hash_json,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_python_source.source_oracle import path_source
@@ -149,6 +158,31 @@ def _boundary_ref(use_site) -> ContextManagerContractRefV1:
     )
 
 
+def _no_warning_ref(use_site) -> ContextManagerContractRefV1:
+    """An inverted warning boundary: literal None means no warning may arrive."""
+    return _base_ref(
+        use_site,
+        signature=ImportSignatureV2(
+            (
+                CallParameterV1(
+                    "expected_warning",
+                    PrimitiveSort("Value"),
+                    PositionalOrKeywordV1(),
+                    True,
+                    NoDefaultV1(),
+                ),
+            )
+        ),
+        semantics=EffectBoundarySemanticsV1(
+            ExpectsModeV1(),
+            WarningEffectKindV1(),
+            FormalArgumentProjectionV1(0),
+            NoMessagePatternV1(),
+            WarningObservationBindingV1(),
+        ),
+    )
+
+
 HEADER = (
     "from dependency import manager\n"
     "from pytest import raises as expect_raises\n"
@@ -170,6 +204,14 @@ RESOURCE_ONLY = HEADER + (
     "def f():\n"
     "    with manager():\n"
     '        raise ValueError("boom")\n'
+)
+
+NO_WARNING_RESOURCE = (
+    "from dependency import no_warning, resource, configure, emit\n"
+    "def f(warn_category, filter_category):\n"
+    "    with no_warning(None), resource():\n"
+    '        configure(category=filter_category, action="ignore")\n'
+    '        emit("test", category=warn_category)\n'
 )
 
 
@@ -212,6 +254,34 @@ def _with_chain(sugar):
 
     walk(sugar)
     return chain
+
+
+class _Record(Sugar):
+    """A completed body carrying the producer entries selected by a twin."""
+
+    def __init__(self, entries):
+        self.entries = tuple(entries)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(BlockValue(self.entries))
+
+
+def _mixed_no_warning_sugar(tmp_path, *, entries=()):
+    """Construct the native two-item spelling, then select its body testimony."""
+    outer, inner = _with_chain(
+        _mixed_sugar(
+            tmp_path,
+            NO_WARNING_RESOURCE,
+            refs=(_no_warning_ref, _resource_ref),
+        )
+    )
+    routed_inner = replace(inner, body=(_Record(entries),))
+    return replace(outer, body=(routed_inner,)), routed_inner
 
 
 # ------------------------------------------------- LAW: both contracts retained
@@ -422,3 +492,66 @@ def test_discrimination_single_manager_site_builds_one_router(tmp_path):
     )
     assert len(chain) == 1
     assert isinstance(chain[0], WithResourceSugar)
+
+
+# ------------------ LAW: inverted warning assertion + resource juxtaposition
+
+
+def test_no_warning_resource_site_retains_both_routers_in_source_order(tmp_path):
+    outer, inner = _mixed_no_warning_sugar(tmp_path)
+
+    assert isinstance(outer, WithEffectBoundarySugar)
+    assert isinstance(inner, WithResourceSugar)
+    assert outer.body == (inner,)
+
+
+def test_no_warning_expected_operand_remains_literal_none(tmp_path):
+    outer, _inner = _mixed_no_warning_sugar(tmp_path)
+
+    manager = outer.manager.desugar(None)
+    assert isinstance(manager, Complete)
+    assert len(manager.value.arg_values) == 1
+    assert isinstance(manager.value.arg_values[0], NoneValue)
+
+
+def test_parametrized_warning_classes_survive_native_multi_item_construction(
+    tmp_path,
+):
+    path = tmp_path / "computed_categories.py"
+    path.write_text(NO_WARNING_RESOURCE, encoding="utf-8")
+    source = SourceFile(path_source(str(path)))
+    with_node = next(node for node in source.nodes() if node.kind == "With")
+
+    assert len(with_node.items) == 2
+    calls = [node for node in with_node.body if node.kind == "Expr"]
+    assert [call.value.keywords[0].value.id for call in calls] == [
+        "filter_category",
+        "warn_category",
+    ]
+
+
+def test_clean_inner_resource_satisfies_inverted_warning_boundary(tmp_path):
+    outer, _inner = _mixed_no_warning_sugar(tmp_path)
+
+    routed = outer.desugar()
+    assert len(routed.exits) == 1
+    assert isinstance(routed.exits[0], Completed)
+
+
+def test_warning_arriving_through_inner_resource_fails_inverted_boundary(tmp_path):
+    warning = WarningObservationValue(WarningEffect("computed-warning"))
+    outer, _inner = _mixed_no_warning_sugar(tmp_path, entries=(warning,))
+
+    routed = outer.desugar()
+    assert len(routed.exits) == 1
+    face = routed.exits[0]
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, ExpectationNotMetEffect)
+
+
+def test_lying_warning_arrival_cannot_be_reported_as_clean_completion(tmp_path):
+    warning = WarningObservationValue(WarningEffect("computed-warning"))
+    outer, _inner = _mixed_no_warning_sugar(tmp_path, entries=(warning,))
+
+    with pytest.raises(AssertionError):
+        assert isinstance(outer.desugar().exits[0], Completed)
