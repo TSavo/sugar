@@ -346,12 +346,17 @@ def _suite_binds_export(statements, name: str) -> bool:
 
 
 def _statement_contains_module_init_raise(statement: ast.AST) -> bool:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        # The definition statement executes decorators/bases, not its body.
+        # A Raise nested in that deferred body is not a module-init edge and
+        # cannot make a later module binding control-dependent.
+        return False
     stack: list[ast.AST] = [statement]
     while stack:
         node = stack.pop()
         if isinstance(node, ast.Raise):
             return True
-        if node is not statement and isinstance(
+        if isinstance(
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
         ):
             continue

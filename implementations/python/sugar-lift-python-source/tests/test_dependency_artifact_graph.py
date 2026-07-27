@@ -506,6 +506,34 @@ def test_with_suppressible_exceptional_prefix_does_not_authenticate_unreachable_
     assert result.kind == "dynamic-export"
 
 
+def test_raise_inside_earlier_function_does_not_make_later_export_dynamic(
+    tmp_path: Path,
+) -> None:
+    """A deferred raise is not a module-initialization edge.
+
+    pandas._testing defines helpers containing ``raise`` before defining
+    ``external_error_raised``. Walking into those earlier function bodies made
+    the later, unconditional helper definition look dynamically reachable.
+    """
+    graph = DependencyArtifactGraph.authenticate(
+        _install_distribution(
+            tmp_path,
+            package_source="from example_pkg.implementation import build\n",
+            implementation_source=(
+                "def earlier():\n"
+                "    raise RuntimeError()\n\n"
+                "def build(value):\n"
+                "    return value\n"
+            ),
+        )
+    )
+
+    result = resolve_import_binding(_demand(tmp_path), graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.start_line == 4
+
+
 def test_export_transfer_exhaustively_classifies_running_ast_statement_grammar() -> (
     None
 ):

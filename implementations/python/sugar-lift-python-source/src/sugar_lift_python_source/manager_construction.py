@@ -26,6 +26,7 @@ from sugar_source_tree.binding_state import BindingEntryV1
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
+    Attribute,
     AugAssign,
     Call,
     ClassDef,
@@ -46,7 +47,11 @@ from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
 from .canonical import cid_of_json
-from .dependency_artifact import DependencyArtifactGraph, ResolvedPythonObjectV1
+from .dependency_artifact import (
+    DependencyArtifactGraph,
+    ResolvedPythonObjectV1,
+    resolve_import_binding,
+)
 from .resolution_session import SourceResolutionSession, session_or_new
 
 
@@ -802,6 +807,114 @@ def _resolve_source_visible_frame_uncached(
                 pending_names.append(name)
     definitions = tuple(item for item in definitions if item.name in reachable_names)
 
+    # Imported calls inside the authenticated factory body are ordinary source
+    # calls too.  In particular, a function-local ``import package`` followed
+    # by ``return package.factory(...)`` is invisible to a module-import-only
+    # scan and cannot be recovered from the outer With-head spelling.  Reuse
+    # the lexical import testimony at the exact inner call coordinate, then
+    # project the imported callable through the same artifact/frame doors.
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    reachable_calls = {
+        (
+            call.line_col_span().start_line,
+            call.line_col_span().start_col,
+            call.line_col_span().end_line,
+            call.line_col_span().end_col,
+        ): call
+        for definition in definitions
+        for function in _scanned_definitions(definition)
+        for call in _local_imported_attribute_calls(function)
+    }
+    if reachable_calls:
+        module_path = Path(module.source_seat)
+        import_receipts, _ = authenticated_import_use_receipts(
+            Path("."),
+            module_path,
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
+    else:
+        import_receipts = ()
+    dependency_graphs: dict[str, DependencyArtifactGraph] = {
+        resolved.module_name.split(".", 1)[0]: graph
+    }
+    for receipt in import_receipts:
+        raw_site = receipt.use["useSite"]
+        call = reachable_calls.get(
+            (
+                raw_site["startLine"],
+                raw_site["startCol"],
+                raw_site["endLine"],
+                raw_site["endCol"],
+            )
+        )
+        if call is None:
+            continue
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        dependency_graph = dependency_graphs.get(top_level)
+        if dependency_graph is None:
+            from .dependency_artifact import (
+                DependencyArtifactAuthenticationError,
+                authenticate_dependency_top_level,
+            )
+
+            try:
+                dependency_graph = authenticate_dependency_top_level(top_level)
+            except DependencyArtifactAuthenticationError:
+                _install_opaque_call_obligation(
+                    context,
+                    call,
+                    OpaqueSourceCallObligationV1(
+                        _call_coordinate(call),
+                        receipt.target_symbol,
+                        resolved.cid,
+                        resolution_kind="call-target-source-absent",
+                    ),
+                )
+                continue
+            dependency_graphs[top_level] = dependency_graph
+        imported = resolve_import_binding(
+            receipt, graph=dependency_graph, session=session
+        )
+        if not isinstance(imported, ResolvedPythonObjectV1):
+            _install_opaque_call_obligation(
+                context,
+                call,
+                OpaqueSourceCallObligationV1(
+                    _call_coordinate(call),
+                    receipt.target_symbol,
+                    resolved.cid,
+                    resolution_kind="call-target-source-absent",
+                ),
+            )
+            continue
+        projected = resolve_source_visible_frame(
+            imported, graph=dependency_graph, session=session
+        )
+        if isinstance(projected, ManagerConstructionGapV1):
+            kind = (
+                "call-graph-cycle"
+                if projected.kind == "call-graph-cycle"
+                else "call-target-export-unresolved"
+            )
+            _install_opaque_call_obligation(
+                context,
+                call,
+                OpaqueSourceCallObligationV1(
+                    _call_coordinate(call),
+                    receipt.target_symbol,
+                    resolved.cid,
+                    resolution_kind=kind,
+                ),
+            )
+            continue
+        imported_frame, _ = projected
+        _install_source_call_frame(context, call, imported_frame)
+
     definition_names = {item.name for item in definitions}
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 
@@ -1176,6 +1289,41 @@ def _local_named_calls(function: FunctionDef):
             yield node
         children = [child for _, _, child in node.children()]
         stack.extend(reversed(children))
+
+
+def _local_imported_attribute_calls(function: FunctionDef):
+    """Direct attribute calls rooted in an import bound by this function.
+
+    The lexical receipt remains the authority at each use coordinate.  This
+    syntax walk only bounds the expensive receipt pass to the missing native
+    shape; it does not decide what module or callable the spelling denotes.
+    """
+    imported_slots: set[str] = set()
+    stack = list(reversed(function.body))
+    calls: list[Call] = []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (FunctionDef, ClassDef)):
+            continue
+        if isinstance(node, (Import, ImportFrom)):
+            imported_slots.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+            )
+        elif (
+            isinstance(node, Call)
+            and isinstance(node.func, Attribute)
+            and isinstance(node.func.value, Name)
+        ):
+            calls.append(node)
+        children = [child for _, _, child in node.children()]
+        stack.extend(reversed(children))
+    return tuple(
+        call
+        for call in calls
+        if isinstance(call.func, Attribute)
+        and isinstance(call.func.value, Name)
+        and call.func.value.id in imported_slots
+    )
 
 
 def _has_non_higher_order_return(
