@@ -15,7 +15,7 @@ the shelf."* Same discipline, second artifact kind:
                 + demand-table schema version
                 + producer source CID
                 + resolution-affecting configuration
-    CELL PATH     platform, interpreter identity, anything situational
+    CELL PATH     platform, exact interpreter patch, anything situational
     EXCLUDED      checkout path, package spelling, monorepo HEAD, docs
 
 RELATIVE PATHS ARE THE WHOLE POINT. Two byte-identical corpora at different
@@ -24,7 +24,7 @@ per-checkout cache wearing a CID. That is the discriminating face, and it is
 the one that proves the key was taken over the preimage rather than the
 location.
 
-RUNTIME IS REPORTED, BUT A MEASURED TWIN REMOVED IT FROM THE CONTENT KEY.
+PARSER IDENTITY IS IN THE CONTENT KEY.
 
 An earlier version of this module excluded runtime identity, on two
 independently-traced verdicts that demand production never CALLS anything
@@ -42,19 +42,11 @@ tree, says so:
 per interpreter for that reason, and it names 3.12 and 3.14 -- which is the
 offload host versus the workstations exactly.
 
-So runtime joined the content key until a measurement said it could leave. The
-two failures are not symmetric: a key that is too SPECIFIC costs a rebuild per
-interpreter and announces itself as a cache miss; a key that is too LOOSE
-silently shares a table built under a different parser behind a valid-looking
-CID, and announces nothing. Loudly-lossy over silently-wrong was the correct
-default while the comparison was absent.
-
-MEASURED RELAXATION. The authenticated producer was run on the same small
-corpus and the same pinned pandas manifest under Battleaxe CPython 3.12.13 and
-workstation CPython 3.14.4. Both produced three demand rows with output CID
-``blake3-512:171cb05a5903a2d929596d9ea33b35432c4f5721f37c5553d2b012063495ee183b0e0281f23f3dbf9ceeadc4d1fb107163e78bfe4d570d457b4a0ae2867fe7fb``.
-The acceptance test pins that output. Runtime therefore stays in the receipt
-and cell-path testimony, but no longer enters the content preimage.
+The managed runtime authority is CPython 3.12.13. A workstation measurement
+under 3.14.4 cannot relax this identity: it is testimony from an undeclared
+runtime, not a second supported cell. The parser's major/minor fingerprint
+therefore remains in the content preimage, while the exact patch identity is
+authenticated at execution and artifact boundaries.
 """
 
 from __future__ import annotations
@@ -105,6 +97,7 @@ class DemandTableIdentityV1:
             "corpusManifestCid": self.corpus_manifest_cid,
             "producerSourceCid": self.producer_source_cid,
             "resolutionConfigCid": self.resolution_config_cid,
+            "parserIdentity": self.parser_identity,
             "fileCount": self.file_count,
         }
 

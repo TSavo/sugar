@@ -248,11 +248,10 @@ def test_the_named_exception_is_not_a_producer() -> None:
         )
 
 
-# -- measured relaxation: runtime is testimony, not content identity ----------
+# -- parser identity is authenticated content identity -----------------------
 
 
-def test_the_parser_identity_is_reported_but_not_in_the_preimage(tmp_path) -> None:
-    """The measured 3.12/3.14 twin earned runtime's removal from content."""
+def test_the_parser_identity_is_in_the_preimage(tmp_path) -> None:
     import sys
 
     identity = _identity(_corpus(tmp_path / "corpus", _FILES))
@@ -261,37 +260,36 @@ def test_the_parser_identity_is_reported_but_not_in_the_preimage(tmp_path) -> No
         f"{sys.implementation.name}-{sys.version_info.major}."
         f"{sys.version_info.minor}"
     )
-    assert "parserIdentity" not in identity.preimage()
+    assert identity.preimage()["parserIdentity"] == identity.parser_identity
 
 
-def test_a_different_parser_identity_preserves_the_measured_content_key(
+def test_a_different_parser_identity_changes_the_content_key(
     tmp_path,
 ) -> None:
-    """3.12 and 3.14 share only after the real output twin proved equality."""
+    """An undeclared 3.14 parser cannot share the authoritative 3.12 key."""
     import sugar_lift_py_tests.demand_table_identity as module
 
     root = _corpus(tmp_path / "corpus", _FILES)
     here = _identity(root).content_key
 
     original = module.parser_identity
-    module.parser_identity = lambda: "cpython-3.12"
+    module.parser_identity = lambda: "cpython-3.14"
     try:
         elsewhere = _identity(root).content_key
     finally:
         module.parser_identity = original
 
-    assert elsewhere == here
+    assert elsewhere != here
 
 
-def test_the_runtime_relaxation_is_bound_to_the_measured_twin() -> None:
-    """Runtime left only after two authenticated producers matched exactly."""
+def test_the_runtime_authority_reason_is_recorded() -> None:
     from sugar_lift_py_tests import demand_table_identity as module
 
     doc = " ".join((module.__doc__ or "").split())
 
-    assert "MEASURED RELAXATION" in doc
-    assert "3.12" in doc and "3.14" in doc
-    assert "171cb05a5903" in doc
+    assert "PARSER IDENTITY IS IN THE CONTENT KEY" in doc
+    assert "CPython 3.12.13" in doc and "3.14.4" in doc
+    assert "undeclared runtime" in doc
 
 
 def test_the_reason_the_first_answer_was_wrong_is_recorded() -> None:

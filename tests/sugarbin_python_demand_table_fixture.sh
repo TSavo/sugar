@@ -35,7 +35,7 @@ publish() {
     --kind python-demand-table \
     --content-key "$content_key" \
     --input "$input" \
-    --runtime python-test-runtime \
+    --runtime cpython-3.12.13 \
     --platform test-platform \
     --profile test-profile \
     --shelf-root "$shelf"
@@ -47,10 +47,38 @@ pull() {
     --kind python-demand-table \
     --content-key "$content_key" \
     --output "$output" \
-    --runtime python-test-runtime \
+    --runtime cpython-3.12.13 \
     --platform test-platform \
     --profile test-profile \
     --shelf-root "$shelf"
+}
+
+# The managed closure declares exactly one Python authority. A shelf request
+# for workstation 3.14 testimony must refuse before looking for an artifact;
+# accepting both would claim a second authenticated runtime cell exists.
+set +e
+"$repo/bin/sugarbin" artifact pull \
+  --kind python-demand-table \
+  --content-key "$content_key" \
+  --output "$tmp/wrong-runtime.json" \
+  --runtime cpython-3.14.4 \
+  --platform test-platform \
+  --profile test-profile \
+  --shelf-root "$tmp/seed-shelf" \
+  2>"$tmp/wrong-runtime.err"
+wrong_runtime_status=$?
+set -e
+[[ "$wrong_runtime_status" == 78 ]] || {
+  echo "undeclared runtime request returned $wrong_runtime_status; expected refusal 78" >&2
+  exit 1
+}
+grep -Fq 'required=cpython-3.12.13 requested=cpython-3.14.4' "$tmp/wrong-runtime.err" || {
+  echo 'undeclared runtime refusal did not name required and requested identities' >&2
+  exit 1
+}
+[[ ! -e "$tmp/wrong-runtime.json" ]] || {
+  echo 'undeclared runtime request materialized an artifact' >&2
+  exit 1
 }
 
 # Obtain a real completed cell through the production publisher, then remove
