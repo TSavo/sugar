@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -11,18 +12,34 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_source_tree.nodes import Call, Constant, With
 from sugar_source_tree.tree import SourceFile
 
-
-MANIFEST_CID = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+CONTENT_MANIFEST_CID = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda1"
+    "c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+MANIFEST_SHAPE_CID = (
+    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+)
 FILE_SHA256 = "ef0819d48825f4614ec088f25b4d342a8808a12b1c5d45cff3281b481ec13252"
+
+
+def _manifest_shape_cid(root: Path) -> str:
+    from sugar_source_tree.tree import SourceTree
+
+    paths = sorted(
+        path.relative_to(root).as_posix() for path in SourceTree(root).paths()
+    )
+    preimage = json.dumps(paths, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
 
 
 def _corpus_file() -> Path:
     corpus = authenticated_pandas_corpus()
     assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
         "3.0.3",
-        MANIFEST_CID,
+        CONTENT_MANIFEST_CID,
         1421,
     )
+    assert _manifest_shape_cid(corpus.root) == MANIFEST_SHAPE_CID
     return corpus.root / "tests/series/test_constructors.py"
 
 
@@ -40,8 +57,7 @@ def test_real_pandas_back_to_back_none_warning_managers_are_distinct_native_site
     sites = tuple(
         node
         for node in tree.nodes()
-        if isinstance(node, With)
-        and node.line_col_span().start_line in {1290, 1296}
+        if isinstance(node, With) and node.line_col_span().start_line in {1290, 1296}
     )
     assert len(sites) == 2
     assert tuple(len(site.body) for site in sites) == (2, 1)
@@ -52,7 +68,22 @@ def test_real_pandas_back_to_back_none_warning_managers_are_distinct_native_site
         assert isinstance(manager.args[0], Constant)
         assert manager.args[0].value is None
 
+    first_names = tuple(
+        node.id
+        for statement in sites[0].body
+        for node in statement.walk()
+        if node.kind == "Name"
+    )
+    assert first_names.count("middle") == 2
+
     assert tuple(
         (site.line_col_span().start_line, site.line_col_span().start_col)
+        for site in sites
+    ) == ((1290, 8), (1296, 8))
+    assert tuple(
+        (
+            site.items[0].context_expr.line_col_span().start_line,
+            site.items[0].context_expr.line_col_span().start_col,
+        )
         for site in sites
     ) == ((1290, 13), (1296, 13))
