@@ -54,12 +54,12 @@ from sugar_lift_python_source.manager_construction import (
     CALL_TARGET_GAP_KINDS,
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
-    ManagerConstructionGapV1,
     _frame_bound_names,
     construct_manager_behavior,
 )
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.nodes import Call, Constant, FunctionDef
+from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 from sugar_source_tree.tree import SourceFile
 
 
@@ -119,6 +119,12 @@ def _construct(root: Path, manager_source: str, **extra_modules: str):
     )
 
 
+def _opaque_gap(root: Path, manager_source: str, **extra_modules: str):
+    with pytest.raises(OpaqueSourceCallResolutionGap) as raised:
+        _construct(root, manager_source, **extra_modules)
+    return raised.value
+
+
 # --------------------------------------------------------------------------
 # value-call-target -- the callee is a VALUE bound by the enclosing definition
 # --------------------------------------------------------------------------
@@ -132,14 +138,12 @@ def test_called_parameter_is_a_value_call_target_not_a_missing_import(tmp_path):
     because there is nothing to look up.  Reporting this as an unresolvable
     external symbol claims a coverage problem that does not exist.
     """
-    result = _construct(
+    gap = _opaque_gap(
         tmp_path,
         "def make_guard(helper):\n    return helper()\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "value-call-target"
-    assert result.detail == "helper"
+    assert gap.observed == "value-call-target:helper"
 
 
 def test_called_local_binding_is_a_value_call_target(tmp_path):
@@ -149,7 +153,7 @@ def test_called_local_binding_is_a_value_call_target(tmp_path):
     this frame.  Parameter and local must not split into two kinds, because the
     missing capability is one capability.
     """
-    result = _construct(
+    gap = _opaque_gap(
         tmp_path,
         "def picked(value):\n"
         "    return value\n"
@@ -159,9 +163,7 @@ def test_called_local_binding_is_a_value_call_target(tmp_path):
         "    return helper(expected)\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "value-call-target"
-    assert result.detail == "helper"
+    assert gap.observed == "value-call-target:helper"
 
 
 def test_module_level_definition_of_the_same_spelling_constructs(tmp_path):
@@ -195,7 +197,7 @@ def test_parameter_shadowing_a_module_definition_is_still_a_value(tmp_path):
     would resolve a frame the call never reaches, which is a soundness bug and
     not only a reporting one.
     """
-    result = _construct(
+    gap = _opaque_gap(
         tmp_path,
         "class Slot:\n"
         "    def __init__(self, label):\n"
@@ -208,20 +210,17 @@ def test_parameter_shadowing_a_module_definition_is_still_a_value(tmp_path):
         "    return helper()\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "value-call-target"
+    assert gap.observed == "value-call-target:helper"
 
 
 def test_parameter_shadowing_a_builtin_is_still_a_value(tmp_path):
     """A parameter shadows the builtin temporal too, for the same reason."""
-    result = _construct(
+    gap = _opaque_gap(
         tmp_path,
         "def make_guard(len):\n    return len(7)\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "value-call-target"
-    assert result.detail == "len"
+    assert gap.observed == "value-call-target:len"
 
 
 # --------------------------------------------------------------------------
@@ -231,27 +230,23 @@ def test_parameter_shadowing_a_builtin_is_still_a_value(tmp_path):
 
 def test_callee_outside_the_artifact_is_coverage_not_a_defect(tmp_path):
     """POSITIVE: the export door declines -- no defining source in the artifact."""
-    result = _construct(
+    gap = _opaque_gap(
         tmp_path,
         "def make_guard(expected):\n    return unbound_helper(expected)\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    assert result.detail == "unbound_helper"
+    assert gap.observed == "call-target-source-absent:unbound_helper"
 
 
-def test_in_artifact_callee_whose_frame_fails_is_a_door_defect(tmp_path):
-    """POSITIVE: the callee IS authenticated here, and its frame still failed.
+def test_in_artifact_callee_carries_nested_refusal_to_nested_consumer(tmp_path):
+    """The callee resolves; its reached opaque child names its own consumer.
 
     ``support.build_slot`` is a real definition inside this artifact's own file
-    manifest, statically exported and reached through the same door.  Its own
-    body is what refuses.  Under the fused key this was indistinguishable from
-    a stdlib symbol the artifact does not contain -- a real defect hidden inside
-    a much larger coverage bucket, and therefore never worked.  Tracked at
-    #6410; this test only makes it nameable.
+    manifest, statically exported and reached through the same door.  Therefore
+    the outer ``build_slot`` call is not the refusal: ordinary control flow
+    reaches ``absent_from_artifact`` inside its authenticated body.
     """
-    result = _construct(
+    gap = _opaque_gap(
         tmp_path,
         "from arbitrary.support import build_slot\n"
         "\n"
@@ -260,22 +255,21 @@ def test_in_artifact_callee_whose_frame_fails_is_a_door_defect(tmp_path):
         support="def build_slot(label):\n    return absent_from_artifact(label)\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-export-unresolved"
-    assert result.detail == "build_slot"
+    assert gap.observed == "call-target-source-absent:absent_from_artifact"
 
 
-def test_coverage_and_defect_do_not_share_a_kind(tmp_path):
-    """DISCRIMINATION: run both arms and require the kinds to DIFFER.
+def test_resolved_outer_callee_does_not_relabel_the_nested_gap(tmp_path):
+    """DISCRIMINATION: direct and nested routes identify the same consumer.
 
-    Asserting each arm separately would still pass if both collapsed onto the
-    same kind tomorrow.  This is the assertion that cannot.
+    The nested route adds an authenticated ``build_slot`` frame.  If eager frame
+    preparation still adjudicated the route, it would relabel the refusal at
+    that outer call rather than carrying the reached inner obligation.
     """
-    absent = _construct(
+    absent = _opaque_gap(
         tmp_path / "absent",
         "def make_guard(expected):\n    return unbound_helper(expected)\n",
     )
-    defect = _construct(
+    defect = _opaque_gap(
         tmp_path / "defect",
         "from arbitrary.support import build_slot\n"
         "\n"
@@ -284,9 +278,8 @@ def test_coverage_and_defect_do_not_share_a_kind(tmp_path):
         support="def build_slot(label):\n    return absent_from_artifact(label)\n",
     )
 
-    assert isinstance(absent, ManagerConstructionGapV1), absent
-    assert isinstance(defect, ManagerConstructionGapV1), defect
-    assert absent.kind != defect.kind
+    assert absent.observed == "call-target-source-absent:unbound_helper"
+    assert defect.observed == "call-target-source-absent:absent_from_artifact"
 
 
 # --------------------------------------------------------------------------
@@ -311,24 +304,18 @@ def test_the_kind_is_a_structural_key_and_never_carries_a_spelling(
     chars.  A key that can be truncated is not an identity, and a key whose
     cardinality is the cardinality of callee spellings is a name table.
     """
-    result = _construct(tmp_path, manager_source)
+    gap = _opaque_gap(tmp_path, manager_source)
+    kind, spelling = gap.observed.split(":", 1)
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind in CALL_TARGET_GAP_KINDS, result.kind
-    assert ":" not in result.kind
+    assert kind in CALL_TARGET_GAP_KINDS, kind
+    assert ":" not in kind
     # The spelling exists -- it just is not the key.
-    assert result.detail and ":" not in result.detail
+    assert spelling and ":" not in spelling
 
 
-def test_the_whole_blocking_set_rides_the_row_not_the_first_hit(tmp_path):
-    """``detail`` is the SORTED blocking set, not whichever callee sorted first.
-
-    ``opaque[0]`` made the reported symbol depend on statement order, so a term
-    reading ``N sites blocked on <callee>`` actually meant ``N sites whose
-    blocking set happened to put <callee> first``.  Order-dependent, and lossy
-    about every other blocker.
-    """
-    result = _construct(
+def test_ordinary_control_flow_selects_the_first_reached_blocker(tmp_path):
+    """Every blocker is parked; statement order decides which one is reached."""
+    gap = _opaque_gap(
         tmp_path,
         "def make_guard(expected):\n"
         "    zulu(expected)\n"
@@ -336,9 +323,7 @@ def test_the_whole_blocking_set_rides_the_row_not_the_first_hit(tmp_path):
         "    return mike(expected)\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    assert result.detail == "alpha,mike,zulu"
+    assert gap.observed == "call-target-source-absent:zulu"
 
 
 # --------------------------------------------------------------------------
@@ -473,20 +458,16 @@ def test_method_calling_an_absent_symbol_refuses_instead_of_fabricating(tmp_path
     fabricated contract, which ``_resolve_external_call_frame`` explicitly
     promises never to yield.
     """
-    result = _construct(tmp_path, _ABSENT_FROM_ARTIFACT_METHOD)
+    gap = _opaque_gap(tmp_path, _ABSENT_FROM_ARTIFACT_METHOD)
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    assert result.detail == "absent_from_artifact"
+    assert gap.observed == "call-target-source-absent:absent_from_artifact"
 
 
 def test_method_calling_a_parameter_is_a_value_call_target(tmp_path):
     """A called parameter is higher-order dispatch inside a method too."""
-    result = _construct(tmp_path, _CALLED_PARAMETER_METHOD)
+    gap = _opaque_gap(tmp_path, _CALLED_PARAMETER_METHOD)
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "value-call-target"
-    assert result.detail == "helper"
+    assert gap.observed == "value-call-target:helper"
 
 
 def test_method_calling_a_module_definition_still_constructs(tmp_path):
@@ -531,10 +512,9 @@ def test_both_spellings_of_the_same_opacity_reach_the_same_kind(
     the assertion that cannot: same condition, same kind, whichever syntax
     carries it.
     """
-    result = _construct(tmp_path, source)
+    gap = _opaque_gap(tmp_path, source)
 
-    assert isinstance(result, ManagerConstructionGapV1), (spelling, result)
-    assert result.kind == "call-target-source-absent", spelling
+    assert gap.observed == "call-target-source-absent:absent_from_artifact", spelling
 
 
 def test_scanned_definitions_reaches_methods_and_nothing_else(tmp_path):

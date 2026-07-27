@@ -349,8 +349,8 @@ def test_memo_disablement_changes_performance_only(tmp_path: Path) -> None:
 # --------------------------------------------------- gaps are memoized too
 
 
-def test_disablement_preserves_gap_verdicts(tmp_path: Path) -> None:
-    """A gap answers identically warm, cold, and with the memo switched off."""
+def test_disablement_preserves_parked_obligation_verdicts(tmp_path: Path) -> None:
+    """A parked gap answers identically warm, cold, and with the memo off."""
     root = tmp_path / "gap"
     _install(root, implementation_source="def build(value):\n    return other(value)\n")
     distribution = importlib.metadata.Distribution.at(
@@ -362,7 +362,18 @@ def test_disablement_preserves_gap_verdicts(tmp_path: Path) -> None:
     def answer(session):
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         assert isinstance(resolved, ResolvedPythonObjectV1)
-        return resolve_source_visible_frame(resolved, graph=graph, session=session)
+        projected = resolve_source_visible_frame(
+            resolved, graph=graph, session=session
+        )
+        assert isinstance(projected, tuple), projected
+        frame, target = projected
+        obligations = tuple(
+            sorted(
+                target.unit.construction_context.opaque_source_call_obligations.values(),
+                key=lambda obligation: repr(obligation.coordinate),
+            )
+        )
+        return frame.frame_cid, target.name, obligations
 
     warm_session = SourceResolutionSession()
     first_warm = answer(warm_session)
@@ -370,8 +381,10 @@ def test_disablement_preserves_gap_verdicts(tmp_path: Path) -> None:
     cold = answer(SourceResolutionSession())
     off = answer(SourceResolutionSession(enabled=False))
 
-    assert isinstance(first_warm, mc.ManagerConstructionGapV1), first_warm
     assert first_warm == second_warm == cold == off
+    assert len(first_warm[2]) == 1
+    assert first_warm[2][0].resolution_kind == "call-target-source-absent"
+    assert first_warm[2][0].target_name == "other"
 
 
 # ------------------------------------------------- both sides of the door

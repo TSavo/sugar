@@ -893,6 +893,7 @@ def _resolve_source_visible_frame_uncached(
         progressed = False
         for function in tuple(pending):
             local_calls = tuple(_local_named_calls(function))
+            frame_binders = _frame_bound_names(function)
             for call, name, kind in _parked_call_targets(function):
                 coordinate = _call_coordinate(call)
                 _install_opaque_call_obligation(
@@ -913,6 +914,11 @@ def _resolve_source_visible_frame_uncached(
             if unresolved:
                 continue
             for call in local_calls:
+                if call.func.id in frame_binders:
+                    # A parameter/local shadows any module-level definition
+                    # with the same spelling.  Its parked value-call-target
+                    # obligation is the sole classification at this site.
+                    continue
                 nested = frames.get(call.func.id)
                 if nested is None:
                     nested = external_frames.get(call.func.id)
