@@ -232,38 +232,26 @@ def test_the_named_exception_is_not_a_producer() -> None:
         )
 
 
-# -- the correction: runtime IS in the key, until measured otherwise ----------
+# -- measured relaxation: runtime is testimony, not content identity ----------
 
 
-def test_the_parser_identity_is_in_the_preimage(tmp_path) -> None:
-    """THE correction.
-
-    An earlier version excluded runtime on two independently-traced verdicts
-    that production never CALLS anything observing the interpreter. Both were
-    correct and both answered the wrong question: production's OUTPUT can
-    differ across interpreters with no such call, because the parse itself is
-    version-dependent. `CPythonAstBackend.fingerprint` documents it and names
-    3.12 versus 3.14 -- the offload host versus the workstations.
-    """
+def test_the_parser_identity_is_reported_but_not_in_the_preimage(tmp_path) -> None:
+    """The measured 3.12/3.14 twin earned runtime's removal from content."""
     import sys
 
     identity = _identity(_corpus(tmp_path / "corpus", _FILES))
 
-    assert identity.preimage()["parserIdentity"] == (
+    assert identity.parser_identity == (
         f"{sys.implementation.name}-{sys.version_info.major}."
         f"{sys.version_info.minor}"
     )
+    assert "parserIdentity" not in identity.preimage()
 
 
-def test_a_different_parser_identity_changes_the_key(tmp_path) -> None:
-    """The tooth. Two interpreters must not share one key while it is unproven
-    that they produce the same table.
-
-    Asymmetric on purpose: a too-specific key costs a rebuild and announces
-    itself as a miss; a too-loose key silently shares a table built under a
-    different parser behind a valid-looking CID. Loudly-lossy over
-    silently-wrong.
-    """
+def test_a_different_parser_identity_preserves_the_measured_content_key(
+    tmp_path,
+) -> None:
+    """3.12 and 3.14 share only after the real output twin proved equality."""
     import sugar_lift_py_tests.demand_table_identity as module
 
     root = _corpus(tmp_path / "corpus", _FILES)
@@ -276,23 +264,18 @@ def test_a_different_parser_identity_changes_the_key(tmp_path) -> None:
     finally:
         module.parser_identity = original
 
-    assert elsewhere != here
+    assert elsewhere == here
 
 
-def test_the_relaxing_condition_is_a_measurement_not_an_argument() -> None:
-    """Records what would let runtime leave the key, so the next reader does
-    not remove it on the strength of the two traces that were already wrong.
-
-    The gate is: build the table for one corpus on 3.12 and on 3.14 and
-    compare CIDs. Matching CIDs plus a test pinning the match is the only
-    thing that earns the removal.
-    """
+def test_the_runtime_relaxation_is_bound_to_the_measured_twin() -> None:
+    """Runtime left only after two authenticated producers matched exactly."""
     from sugar_lift_py_tests import demand_table_identity as module
 
     doc = " ".join((module.__doc__ or "").split())
 
-    assert "RELAXING IS A MEASUREMENT, NOT AN ARGUMENT" in doc
+    assert "MEASURED RELAXATION" in doc
     assert "3.12" in doc and "3.14" in doc
+    assert "171cb05a5903" in doc
 
 
 def test_the_reason_the_first_answer_was_wrong_is_recorded() -> None:

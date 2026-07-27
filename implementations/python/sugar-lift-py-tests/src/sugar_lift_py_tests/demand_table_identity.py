@@ -24,7 +24,7 @@ per-checkout cache wearing a CID. That is the discriminating face, and it is
 the one that proves the key was taken over the preimage rather than the
 location.
 
-RUNTIME IS IN THE KEY, AND THE FIRST ANSWER WAS WRONG.
+RUNTIME IS REPORTED, BUT A MEASURED TWIN REMOVED IT FROM THE CONTENT KEY.
 
 An earlier version of this module excluded runtime identity, on two
 independently-traced verdicts that demand production never CALLS anything
@@ -42,16 +42,19 @@ tree, says so:
 per interpreter for that reason, and it names 3.12 and 3.14 -- which is the
 offload host versus the workstations exactly.
 
-So runtime joins the content key until a measurement says it may leave. The
+So runtime joined the content key until a measurement said it could leave. The
 two failures are not symmetric: a key that is too SPECIFIC costs a rebuild per
 interpreter and announces itself as a cache miss; a key that is too LOOSE
 silently shares a table built under a different parser behind a valid-looking
-CID, and announces nothing. Loudly-lossy over silently-wrong.
+CID, and announces nothing. Loudly-lossy over silently-wrong was the correct
+default while the comparison was absent.
 
-RELAXING IS A MEASUREMENT, NOT AN ARGUMENT. Build the table for one corpus on
-3.12 and on 3.14 and compare. If the CIDs match, runtime may leave the key
-WITH a test pinning that they match. If they differ, the key is already right
-and that comparison is its twin. Until one of those exists, it stays.
+MEASURED RELAXATION. The authenticated producer was run on the same small
+corpus and the same pinned pandas manifest under Battleaxe CPython 3.12.13 and
+workstation CPython 3.14.4. Both produced three demand rows with output CID
+``blake3-512:171cb05a5903a2d929596d9ea33b35432c4f5721f37c5553d2b012063495ee183b0e0281f23f3dbf9ceeadc4d1fb107163e78bfe4d570d457b4a0ae2867fe7fb``.
+The acceptance test pins that output. Runtime therefore stays in the receipt
+and cell-path testimony, but no longer enters the content preimage.
 """
 
 from __future__ import annotations
@@ -102,7 +105,6 @@ class DemandTableIdentityV1:
             "corpusManifestCid": self.corpus_manifest_cid,
             "producerSourceCid": self.producer_source_cid,
             "resolutionConfigCid": self.resolution_config_cid,
-            "parserIdentity": self.parser_identity,
             "fileCount": self.file_count,
         }
 

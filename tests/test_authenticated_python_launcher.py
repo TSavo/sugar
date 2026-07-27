@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 import subprocess
+import sys
 from types import ModuleType
 
 import pytest
@@ -13,6 +14,7 @@ from sugar_lift_py_tests.authenticated_pytest import (
     authenticate_distribution,
     authenticate_lift,
     corpus_manifest_cid,
+    interpreter_identity,
     main,
 )
 
@@ -34,6 +36,7 @@ def test_truthful_distribution_inside_own_site_packages_is_accepted(tmp_path) ->
         module=module,
         expected_version="3.0.3",
         metadata_version="3.0.3",
+        metadata_location=purelib,
         purelib=purelib,
     )
 
@@ -51,6 +54,7 @@ def test_lying_233_distribution_is_refused_loudly(tmp_path) -> None:
             module=module,
             expected_version="3.0.3",
             metadata_version="2.3.3",
+            metadata_location=purelib,
             purelib=purelib,
         )
 
@@ -69,6 +73,7 @@ def test_leaking_distribution_outside_own_site_packages_is_refused(tmp_path) -> 
             module=module,
             expected_version="3.0.3",
             metadata_version="3.0.3",
+            metadata_location=foreign,
             purelib=purelib,
         )
 
@@ -83,6 +88,26 @@ def test_dist_info_disagreement_is_refused(tmp_path) -> None:
             module=module,
             expected_version="3.0.3",
             metadata_version="3.0.5",
+            metadata_location=purelib,
+            purelib=purelib,
+        )
+
+
+def test_same_version_foreign_dist_info_is_refused(tmp_path) -> None:
+    purelib = tmp_path / "managed/lib/python3.12/site-packages"
+    foreign = tmp_path / "ambient/lib/python3.12/site-packages"
+    module = fake_module("pandas", "3.0.3", purelib / "pandas/__init__.py")
+
+    with pytest.raises(
+        ExecutionEnvironmentMismatch,
+        match="dist-info loaded from.*outside this interpreter's own site-packages",
+    ):
+        authenticate_distribution(
+            name="pandas",
+            module=module,
+            expected_version="3.0.3",
+            metadata_version="3.0.3",
+            metadata_location=foreign,
             purelib=purelib,
         )
 
@@ -111,6 +136,16 @@ def test_manifest_cid_is_order_independent_and_path_bound() -> None:
         "sha256:194cbd45be1fdf143d4ed8dca52fb946dc88b5a15198dbef26426ef514503ca6"
     )
     assert corpus_manifest_cid(["pandas/a.py"]) != corpus_manifest_cid(["pandas/b.py"])
+
+
+def test_selected_interpreter_identity_is_named() -> None:
+    identity = interpreter_identity()
+
+    assert identity.implementation == sys.implementation.name
+    assert identity.version == (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+    assert identity.executable == Path(sys.executable).absolute()
 
 
 def test_checkout_import_roots_come_from_the_managed_closure_declaration(

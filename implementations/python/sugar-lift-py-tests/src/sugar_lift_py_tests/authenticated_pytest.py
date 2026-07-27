@@ -26,6 +26,22 @@ class ImportIdentity:
     loaded_from: Path
 
 
+@dataclass(frozen=True)
+class InterpreterIdentity:
+    implementation: str
+    version: str
+    executable: Path
+
+
+def interpreter_identity() -> InterpreterIdentity:
+    version = sys.version_info
+    return InterpreterIdentity(
+        implementation=sys.implementation.name,
+        version=f"{version.major}.{version.minor}.{version.micro}",
+        executable=Path(sys.executable).absolute(),
+    )
+
+
 def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -36,11 +52,13 @@ def authenticate_distribution(
     module: ModuleType,
     expected_version: str,
     metadata_version: str,
+    metadata_location: Path,
     purelib: Path,
 ) -> ImportIdentity:
     loaded_from = Path(str(getattr(module, "__file__", ""))).resolve()
     imported_version = str(getattr(module, "__version__", "<missing>"))
     purelib = purelib.resolve()
+    metadata_location = metadata_location.resolve()
     if imported_version != expected_version:
         raise ExecutionEnvironmentMismatch(
             f"{name} corpus mismatch: imported {imported_version} from "
@@ -50,6 +68,11 @@ def authenticate_distribution(
         raise ExecutionEnvironmentMismatch(
             f"{name} loaded from {loaded_from}, outside this interpreter's own "
             f"site-packages {purelib}; refusing a leaking environment"
+        )
+    if not _inside(metadata_location, purelib):
+        raise ExecutionEnvironmentMismatch(
+            f"{name} dist-info loaded from {metadata_location}, outside this "
+            f"interpreter's own site-packages {purelib}; refusing foreign metadata"
         )
     if metadata_version != imported_version:
         raise ExecutionEnvironmentMismatch(
@@ -140,18 +163,22 @@ def authenticate_environment() -> (
     pandas = import_module("pandas")
     numpy = import_module("numpy")
     lift = import_module("sugar_lift_py_tests")
+    pandas_distribution = metadata.distribution("pandas")
+    numpy_distribution = metadata.distribution("numpy")
     pandas_identity = authenticate_distribution(
         name="pandas",
         module=pandas,
         expected_version=pins["pandas"],
-        metadata_version=metadata.version("pandas"),
+        metadata_version=pandas_distribution.version,
+        metadata_location=Path(pandas_distribution.locate_file("")),
         purelib=purelib,
     )
     numpy_identity = authenticate_distribution(
         name="numpy",
         module=numpy,
         expected_version=pins["numpy"],
-        metadata_version=metadata.version("numpy"),
+        metadata_version=numpy_distribution.version,
+        metadata_location=Path(numpy_distribution.locate_file("")),
         purelib=purelib,
     )
     lift_identity = authenticate_lift(lift, repo_root)
@@ -186,8 +213,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 78
 
+    interpreter = interpreter_identity()
     print(
         "authenticated execution environment: "
+        f"python={interpreter.implementation}-{interpreter.version} "
+        f"pythonExecutable={interpreter.executable} "
         f"corpusManifestCid={manifest_cid} "
         f"pandas={pandas_identity.version} pandasPath={pandas_identity.loaded_from} "
         f"numpy={numpy_identity.version} numpyPath={numpy_identity.loaded_from} "
