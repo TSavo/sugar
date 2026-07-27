@@ -24,6 +24,7 @@ class WithSourceResourceSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -48,13 +49,14 @@ class WithSourceResourceSugar(Sugar):
             manager_facts = ManagerBinding(
                 self.manager_slot_id, manager_face.value
             ).to_facts(site=self.site)
-            enter_es = sugar_outcome_to_exitset(self.protocol.enter_outcome(ctx))
+            enter_es = outcome_to_exitset(self.protocol.enter_resource_outcome(ctx))
             for enter_face in enter_es.exits:
                 guard = _and(manager_face.guard, enter_face.guard)
                 if isinstance(enter_face, Halted):
                     parts.append(ExitSet((Halted(guard, enter_face.effect),)))
                     continue
-                enter_value = _returned_value(enter_face.value)
+                entered = enter_face.value
+                enter_value = _returned_value(entered.enter_value)
                 enter_facts = ()
                 if self.enter_slot_id is not None and enter_value is not None:
                     enter_facts = EnterResultBinding(
@@ -63,7 +65,9 @@ class WithSourceResourceSugar(Sugar):
                 body_es = promote_raise_halts(
                     reduce_block_to_exitset(self.body)
                 ).guarded(guard)
-                exit_es = sugar_outcome_to_exitset(self.protocol.exit_outcome(ctx))
+                exit_es = outcome_to_exitset(
+                    self.protocol.exit_outcome_for(entered, ctx)
+                )
                 for body_face in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face

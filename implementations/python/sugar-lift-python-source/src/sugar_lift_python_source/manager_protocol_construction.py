@@ -8,6 +8,8 @@ from typing import Literal
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    EnteredManagerStateValue,
+    GuardedReceiverFieldStoreValue,
     ObjectField,
     ObjectValue,
     ReceiverFieldStoreValue,
@@ -93,6 +95,34 @@ class ConstructedManagerProtocolV1:
             lambda receiver: outcome_to_exitset(run_exit(receiver))
         )
 
+    def enter_resource_outcome(self, ctx: object = None):
+        """Run enter once and carry each face's exact receiver into resource exit."""
+
+        def run_enter(receiver):
+            enter = _call_protocol_method(
+                receiver, "__enter__", (), self.exit_face_id, ctx
+            ).reduce_source_outcome(ctx)
+            return _resource_enter_transitions(receiver, enter)
+
+        if isinstance(self.receiver_state, ObjectValue):
+            return run_enter(self.receiver_state)
+        return self.receiver_state.exits.sequence(run_enter)
+
+    def exit_outcome_for(self, entered: EnteredManagerStateValue, ctx: object = None):
+        if not isinstance(entered, EnteredManagerStateValue):
+            raise TypeError(type(entered).__name__)
+        return _call_protocol_method(
+            entered.receiver_state,
+            "__exit__",
+            (
+                ExitTypeCoordinate(self.exit_face_id, None),
+                ExitValueCoordinate(self.exit_face_id, None),
+                ExitTracebackCoordinate(self.exit_face_id, None),
+            ),
+            self.exit_face_id,
+            ctx,
+        ).reduce_source_outcome(ctx)
+
 
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
     from sugar_source_tree.panic import SugarNotWritten
@@ -172,6 +202,92 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
     return ObjectValue(
         receiver.class_name,
         first,
+        methods=receiver.methods,
+        class_fields=receiver.class_fields,
+        identity=receiver.identity,
+    )
+
+
+def _resource_enter_transitions(receiver: ObjectValue, enter_outcome):
+    from sugar_lift_py_tests.ir import and_, not_
+    from sugar_lift_py_tests.outcome import (
+        Completed,
+        ExitSet,
+        Halted,
+        outcome_to_exitset,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import partition
+    from sugar_source_tree.panic import SugarNotWritten
+
+    projected = []
+    for face in outcome_to_exitset(enter_outcome).exits:
+        if isinstance(face, Halted):
+            projected.append(face)
+            continue
+        if not isinstance(face.value, BlockValue):
+            raise SugarNotWritten(
+                owner="ConstructedManagerProtocolV1.enter_resource_outcome",
+                observed=type(face.value).__name__,
+                requested="completed enter block carrying exact acquisition stores",
+                fix="preserve the ordinary enter block or keep resource state loud",
+            )
+        states = [(face.guard, receiver, face.faces)]
+        for statement in face.value.statements:
+            if isinstance(statement, GuardedReceiverFieldStoreValue):
+                then_face, else_face = partition(
+                    ("resource-enter-store", statement.to_term(owner=receiver.identity))
+                )
+                next_states = []
+                for guard, state, faces in states:
+                    next_states.append(
+                        (
+                            and_([guard, statement.guard]),
+                            _apply_receiver_store(state, statement),
+                            faces | {then_face},
+                        )
+                    )
+                    next_states.append(
+                        (
+                            and_([guard, not_(statement.guard)]),
+                            state,
+                            faces | {else_face},
+                        )
+                    )
+                states = next_states
+            elif isinstance(statement, ReceiverFieldStoreValue):
+                states = [
+                    (guard, _apply_receiver_store(state, statement), faces)
+                    for guard, state, faces in states
+                ]
+        projected.extend(
+            Completed(
+                guard,
+                EnteredManagerStateValue(face.value, state),
+                faces,
+                face.pending_contracts,
+            )
+            for guard, state, faces in states
+        )
+    return ExitSet(tuple(projected)).normalize()
+
+
+def _apply_receiver_store(
+    receiver: ObjectValue, statement: ReceiverFieldStoreValue
+) -> ObjectValue:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if statement.receiver.identity != receiver.identity:
+        raise SugarNotWritten(
+            owner="ConstructedManagerProtocolV1.enter_resource_outcome",
+            observed="receiver coordinate mismatch",
+            requested="acquisition store from the exact authenticated receiver",
+            fix="preserve ObjectValue.identity across the enter transition",
+        )
+    fields = {field.name: field.value for field in receiver.fields}
+    fields[statement.attr] = statement.value
+    return ObjectValue(
+        receiver.class_name,
+        tuple(ObjectField(name, fields[name]) for name in sorted(fields)),
         methods=receiver.methods,
         class_fields=receiver.class_fields,
         identity=receiver.identity,

@@ -58,6 +58,7 @@ from .inv_value import InvValue
 from .bytes_value import BytesValue
 from .complex_value import ComplexValue
 from .ellipsis_value import EllipsisValue
+from .entered_manager_state_value import EnteredManagerStateValue
 from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
@@ -108,6 +109,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ExceptionCauseValue,
     ExceptionalExitValue,
     ExceptionValue,
+    EnteredManagerStateValue,
     ExceptionClassValue,
     LocalExceptionClassValue,
     FunctionCallable,
@@ -204,6 +206,7 @@ __all__ = [
     "BytesValue",
     "ComplexValue",
     "EllipsisValue",
+    "EnteredManagerStateValue",
     "NoneValue",
     "ObjectField",
     "ObjectMethodValue",

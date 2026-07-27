@@ -26,12 +26,19 @@ class _FixedSugar(Sugar):
 
 
 class _CompletedProtocol:
-    def enter_outcome(self, ctx=None):
-        del ctx
-        return Complete(TermValue(2))
+    def __init__(self):
+        self.enter_calls = 0
+        self.exit_calls = 0
 
-    def exit_outcome(self, ctx=None):
+    def enter_resource_outcome(self, ctx=None):
         del ctx
+        self.enter_calls += 1
+        return Complete(SimpleNamespace(enter_value=TermValue(2)))
+
+    def exit_outcome_for(self, entered, ctx=None):
+        assert entered.enter_value == TermValue(2)
+        del ctx
+        self.exit_calls += 1
         return Complete(BlockValue((), can_fall_through=True))
 
 
@@ -40,9 +47,10 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
     summary = SimpleNamespace(
         semantics=SimpleNamespace(exit=SimpleNamespace(disposition=disposition))
     )
+    protocol = _CompletedProtocol()
     sugar = WithSourceResourceSugar(
         manager=_FixedSugar(Complete(TermValue(1))),
-        protocol=_CompletedProtocol(),
+        protocol=protocol,
         summary=summary,
         body=(
             _FixedSugar(
@@ -67,3 +75,5 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
         and getattr(face.effect, "exception_name", None) == "ValueError"
         for face in exits
     )
+    assert protocol.enter_calls == 1
+    assert protocol.exit_calls == 1
