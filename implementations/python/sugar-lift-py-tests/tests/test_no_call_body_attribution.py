@@ -67,8 +67,8 @@ def test_truthful_authenticated_body_is_counted_as_an_exceptional_exit() -> None
     assert report.bodies[0].outcome is AttributionOutcome.AUTHENTICATED_EXIT
 
 
-def test_named_refusal_is_not_counted_as_a_failure() -> None:
-    """Lying twin: refusing honestly must not inflate the failure frontier."""
+def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
+    """Lying twin: declared refusal must not inflate the failure frontier."""
     report = attribute_body_probes((_probe(ProducerFamily.BINOP, _named_refusal),))
 
     row = report.by_family[ProducerFamily.BINOP]
@@ -100,18 +100,18 @@ def test_report_keeps_all_six_families_separate() -> None:
 
     assert tuple(report.by_family) == tuple(ProducerFamily)
     assert FAMILY_DENOMINATORS == {
-        ProducerFamily.SUBSCRIPT: 386,
-        ProducerFamily.BINOP: 349,
+        ProducerFamily.SUBSCRIPT: 392,
+        ProducerFamily.BINOP: 367,
         ProducerFamily.COMPARE: 181,
-        ProducerFamily.ATTRIBUTE: 51,
+        ProducerFamily.ATTRIBUTE: 53,
         ProducerFamily.UNARYOP: 13,
         ProducerFamily.BOOLOP: 2,
     }
-    assert sum(FAMILY_DENOMINATORS.values()) == 982
+    assert sum(FAMILY_DENOMINATORS.values()) == 1008
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
-def test_construction_panic_remains_a_separate_loud_axis() -> None:
+def test_escaped_construction_panic_remains_a_separate_loud_axis() -> None:
     report = attribute_body_probes(
         (_probe(ProducerFamily.ATTRIBUTE, _construction_panic),)
     )
@@ -120,6 +120,7 @@ def test_construction_panic_remains_a_separate_loud_axis() -> None:
     assert row.named_refusals == 0
     assert row.construction_panics == 1
     assert row.failures == 1
+    assert report.bodies[0].outcome is AttributionOutcome.CONSTRUCTION_PANIC
 
 
 def test_silent_completion_is_not_a_fourth_outcome() -> None:
@@ -163,7 +164,7 @@ def test_shared_table_accepts_only_the_canonical_content_manifest() -> None:
         )
 
 
-def test_discovery_uses_outer_body_producer_and_excludes_bare_call_bodies(
+def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     tmp_path,
 ) -> None:
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -183,17 +184,17 @@ def test_discovery_uses_outer_body_producer_and_excludes_bare_call_bodies(
     call_path = package / "call_body.py"
     call_source = "def g():\n    with boundary(TypeError):\n        opaque()\n"
     call_path.write_text(call_source, encoding="utf-8")
-    nested_call_path = package / "nested_call_subscript_body.py"
-    nested_call_source = (
-        "def h(values):\n" "    with boundary(TypeError):\n" "        values[index()]\n"
+    binop_path = package / "binop_body.py"
+    binop_source = (
+        "def h():\n" "    with boundary(TypeError):\n" "        opaque() + 1\n"
     )
-    nested_call_path.write_text(nested_call_source, encoding="utf-8")
+    binop_path.write_text(binop_source, encoding="utf-8")
 
     rows = []
     for path, source in (
         (subscript_path, subscript_source),
         (call_path, call_source),
-        (nested_call_path, nested_call_source),
+        (binop_path, binop_source),
     ):
         source_cid = blake3_512_of(source.encode())
         tree = SourceFile(
@@ -206,7 +207,9 @@ def test_discovery_uses_outer_body_producer_and_excludes_bare_call_bodies(
             {
                 "kind": "context-manager-demand",
                 "gapKind": None,
-                "targetSymbol": "pytest.raises",
+                "targetSymbol": (
+                    "native.boundary" if path == binop_path else "pytest.raises"
+                ),
                 "useSite": {
                     "sourceCid": source_cid,
                     "startLine": span.start_line,
@@ -219,11 +222,16 @@ def test_discovery_uses_outer_body_producer_and_excludes_bare_call_bodies(
 
     probes = discover_no_call_body_probes({"rows": rows}, package)
 
-    assert len(probes) == 2
-    assert all(probe.family is ProducerFamily.SUBSCRIPT for probe in probes)
-    assert [probe.body_id for probe in probes] == [
-        "nested_call_subscript_body.py:3:Subscript",
-        "subscript_body.py:3:Subscript",
+    assert [(probe.family, probe.body_id) for probe in probes] == [
+        (ProducerFamily.BINOP, "binop_body.py:3:BinOp"),
+        (ProducerFamily.SUBSCRIPT, "subscript_body.py:3:Subscript"),
+    ]
+
+    binop_only = discover_no_call_body_probes(
+        {"rows": rows}, package, families=frozenset({ProducerFamily.BINOP})
+    )
+    assert [(probe.family, probe.body_id) for probe in binop_only] == [
+        (ProducerFamily.BINOP, "binop_body.py:3:BinOp")
     ]
 
 
@@ -311,8 +319,5 @@ def test_selected_family_denominator_remains_fixed() -> None:
         )
 
 
-def test_attribute_family_denominator_is_outer_body_inventory() -> None:
-    """Outer-body law measures Attribute 51 (historical no-Call-descendant pin was 41)."""
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 51
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 53
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 41
+def test_attribute_family_denominator_is_native_root_inventory() -> None:
+    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 53
