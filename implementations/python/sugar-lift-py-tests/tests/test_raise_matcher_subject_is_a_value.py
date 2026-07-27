@@ -260,6 +260,26 @@ def test_written_empty_message_regex_rejects_a_nonempty_message() -> None:
     assert absent == MatchDecided(True)
 
 
+def test_written_none_message_pattern_states_no_regex_obligation() -> None:
+    """A written Python ``None`` is a value, but not a regex pattern."""
+    from sugar_lift_py_tests.floor import NoneValue
+
+    effect, expected = _effect_with_message("boom")
+
+    verdict = raise_effect_message_verdict(effect, expected, NoneValue())
+
+    assert verdict == MatchDecided(True)
+
+
+def test_string_spelled_none_remains_a_real_message_constraint() -> None:
+    """Lying twin: spelling cannot turn the string ``"None"`` into None."""
+    effect, expected = _effect_with_message("boom")
+
+    verdict = raise_effect_message_verdict(effect, expected, StringValue("None"))
+
+    assert verdict == MatchDecided(False)
+
+
 def test_accumulated_pattern_remains_an_owed_regex_predicate() -> None:
     """A branch-built alternation is a runtime value, not a false predicate."""
     effect, expected = _effect_with_message("boom")

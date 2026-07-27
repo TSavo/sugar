@@ -179,10 +179,13 @@ def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     halves have THREE outcomes, and this function is their conjunction, so it
     is the conjunction of two three-valued verdicts and nothing here may
     collapse one. A contract that states no pattern asserts nothing about the
-    message (``MatchDecided(True)``). Two ground strings settle the message
-    predicate here. Anything else -- a symbolic message, a computed pattern --
-    leaves as ``MatchRetained`` carrying ``py.re_search(pattern, message)``,
-    the vendor's own predicate spelled on the membrane.
+    message (``MatchDecided(True)``). A written Python ``None`` arrives as the
+    distinct ``NoneValue`` floor and also states no regex constraint; it is not
+    reclassified as an absent operand or sent to ``re_search``. Two ground
+    strings settle the message predicate here. Anything else -- a symbolic
+    message, a computed pattern -- leaves as ``MatchRetained`` carrying
+    ``py.re_search(pattern, message)``, the vendor's own predicate spelled on
+    the membrane.
 
     A ``False`` on either half is ``False`` outright: a conjunct that is
     decidably false settles the conjunction without deciding the other half.
@@ -209,7 +212,9 @@ def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
             return MatchRetained(retained_identity)
         return MatchRetained(and_([retained_identity, verdict.obligation]))
 
-    if pattern is None:
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    if pattern is None or isinstance(pattern, NoneValue):
         return _conjoin(MatchDecided(True))
 
     owner = "authenticated_exception_matching.raise_effect_message_verdict"
