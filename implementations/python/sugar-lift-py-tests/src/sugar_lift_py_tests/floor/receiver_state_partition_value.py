@@ -21,7 +21,16 @@ class ReceiverStatePartitionValue(FloorValue):
                 payload = face.value.to_term(owner=owner)
                 kind = "completed"
             elif isinstance(face, Halted):
-                payload = face.effect.to_term(owner=owner)
+                from sugar_lift_py_tests.effect import RaiseEffect
+
+                if isinstance(face.effect, RaiseEffect):
+                    from sugar_lift_py_tests.floor.raise_value import (
+                        _exceptional_exit_term,
+                    )
+
+                    payload = _exceptional_exit_term(face.effect)
+                else:
+                    payload = face.effect.to_term(owner=owner)
                 kind = "halted"
             else:  # pragma: no cover - ExitSet is closed over these two faces.
                 raise TypeError(type(face).__name__)

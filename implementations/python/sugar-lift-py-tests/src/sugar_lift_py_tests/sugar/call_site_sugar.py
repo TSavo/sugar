@@ -152,6 +152,23 @@ class CallSiteSugar(Sugar):
             owner = getattr(self.source_call_frame, "owner", None)
             if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
                 source_body = owner.source_visible_constructor_frame().body
+            elif owner is not None and hasattr(owner, "source_visible_call_frame"):
+                # Imported helper calls are node-specialized when the caller's
+                # Sugar is built. Their FloorValue actuals are curried below,
+                # so reduction must use the callee's declaration body whose
+                # BindingCoordinateRefs match this frame's formal coordinates,
+                # not the caller's inlined formal nodes.
+                declaration_frame = owner.source_visible_call_frame()
+                if declaration_frame.frame_cid != self.source_call_frame.frame_cid:
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        owner="CallSiteSugar.desugar",
+                        observed="declaration/source frame mismatch",
+                        requested="byte-identical authenticated source frame",
+                        fix="retain the callee declaration frame across node binding",
+                    )
+                source_body = declaration_frame.body
             source_frame_cid = self.source_call_frame.frame_cid
             # bind_actuals returned the complete formal-ordered tuple,
             # including keyword/default actuals. They must not be appended a

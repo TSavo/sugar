@@ -38,6 +38,21 @@ class ClassValue(FloorValue):
 
         return Complete(TrueBoolLiteralSugar(site=site))
 
+    def is_identical(self, other, site):
+        # An authenticated class object cannot be Python's None singleton.
+        # This is class-floor testimony, not a spelling test: unresolved values
+        # still use FloorValue's symbolic identity and remain a third value.
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+
+        if type(other) is NoneValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().is_identical(other, site)
+
     def test_python_type(self, value, site):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)
 

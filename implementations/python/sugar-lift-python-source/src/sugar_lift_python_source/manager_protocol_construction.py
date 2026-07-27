@@ -57,7 +57,7 @@ class ConstructedManagerProtocolV1:
             return self.enter_call.reduce_source_outcome(ctx)
         from sugar_lift_py_tests.outcome import outcome_to_exitset
 
-        return self.receiver_state.exits.sequence(
+        return _completed_receiver_exits(self.receiver_state).sequence(
             lambda receiver: outcome_to_exitset(
                 _call_protocol_method(
                     receiver,
@@ -91,7 +91,7 @@ class ConstructedManagerProtocolV1:
             return run_exit(self.receiver_state)
         from sugar_lift_py_tests.outcome import outcome_to_exitset
 
-        return self.receiver_state.exits.sequence(
+        return _completed_receiver_exits(self.receiver_state).sequence(
             lambda receiver: outcome_to_exitset(run_exit(receiver))
         )
 
@@ -106,7 +106,7 @@ class ConstructedManagerProtocolV1:
 
         if isinstance(self.receiver_state, ObjectValue):
             return run_enter(self.receiver_state)
-        return self.receiver_state.exits.sequence(run_enter)
+        return _completed_receiver_exits(self.receiver_state).sequence(run_enter)
 
     def exit_outcome_for(self, entered: EnteredManagerStateValue, ctx: object = None):
         if not isinstance(entered, EnteredManagerStateValue):
@@ -122,6 +122,25 @@ class ConstructedManagerProtocolV1:
             self.exit_face_id,
             ctx,
         ).reduce_source_outcome(ctx)
+
+
+def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
+    """Protocol methods run only after manager construction completed.
+
+    Constructor validation halts remain authenticated in the behavior's
+    receiver partition, but they never enter ``__enter__`` or ``__exit__``.
+    Filtering to native Completed object faces preserves each face's guard,
+    partition testimony, and pending contracts without reconstructing them.
+    """
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    return ExitSet(
+        tuple(
+            face
+            for face in receiver_state.exits.exits
+            if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
+        )
+    )
 
 
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):

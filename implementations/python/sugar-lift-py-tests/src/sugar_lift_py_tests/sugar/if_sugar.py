@@ -124,7 +124,13 @@ class IfSugar(Sugar):
         if isinstance(cond.value, RaiseValue):
             return Incomplete(cond.value.effect)
         observed_formula = predicate_formula(cond.value, self.site)
-        formula = branch_result_guard(self.branch_slot, self.site)
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+
+        formula = (
+            observed_formula
+            if observed_formula in (false_guard(), true_guard())
+            else branch_result_guard(self.branch_slot, self.site)
+        )
         authentication = BranchResultAuthentication(
             self.branch_slot, observed_formula, self.site
         )
@@ -134,8 +140,22 @@ class IfSugar(Sugar):
         # branch suite cannot resolve authenticated actuals and panics as
         # unspecialized source-call formal (dual-mode EffectBoundary factories
         # nest further ifs that read those formals).
-        then_exits = reduce_block_to_exitset(self.then_body, ctx)
-        else_exits = reduce_block_to_exitset(self.else_body, ctx)
+        # A ground condition selects one suite before that suite is reduced.
+        # Reducing the dead peer first can demand a loud producer that Python
+        # never executes, turning an unreachable diagnostic into a function
+        # construction failure. Symbolic conditions still reduce both suites
+        # and preserve their guarded exits exactly as before.
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if observed_formula == false_guard():
+            then_exits = ExitSet(())
+            else_exits = reduce_block_to_exitset(self.else_body, ctx)
+        elif observed_formula == true_guard():
+            then_exits = reduce_block_to_exitset(self.then_body, ctx)
+            else_exits = ExitSet(())
+        else:
+            then_exits = reduce_block_to_exitset(self.then_body, ctx)
+            else_exits = reduce_block_to_exitset(self.else_body, ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a

@@ -182,6 +182,24 @@ def _resolve_export_uncached(
             module_name,
             exported_name,
         )
+    # Module-level ``name = Class()`` / ``name: Class = Class()`` is a static
+    # callable-instance binding when Class is a local ClassDef with ``__call__``.
+    # The export is the authenticated ``__call__`` body, not a free dynamic
+    # residual and not a spelling of the binding name.
+    if binding is not None and binding[0] == "dynamic":
+        call_method = _callable_instance_call_method(
+            tree.body, binding[1], exported_name
+        )
+        if call_method is not None:
+            definition = _definition(module, call_method)
+            return ResolvedPythonObjectV1(
+                distribution_artifact_cid=graph.distribution_artifact_cid,
+                import_binding_cid=binding_cid,
+                module_name=module_name,
+                source_cid=module.source_cid,
+                reexport_warrants=warrants,
+                definition=definition,
+            )
     return _gap(
         (
             "dynamic-export"
@@ -193,6 +211,58 @@ def _resolve_export_uncached(
         module_name,
         exported_name,
     )
+
+
+def _callable_instance_call_method(
+    body: list[ast.stmt], statement: ast.AST, exported_name: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Return Class.__call__ when statement is ``name = Class()`` for a local Class.
+
+    Only zero-arg constructor calls are accepted: the export is the instance's
+    call protocol, not a partially applied factory with undecided construction
+    actuals. Multi-arg or keyword construction stays dynamic-export.
+    """
+    value: ast.expr | None = None
+    if isinstance(statement, ast.Assign):
+        if not (
+            len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == exported_name
+        ):
+            return None
+        value = statement.value
+    elif isinstance(statement, ast.AnnAssign):
+        if not (
+            isinstance(statement.target, ast.Name)
+            and statement.target.id == exported_name
+            and statement.value is not None
+        ):
+            return None
+        value = statement.value
+    else:
+        return None
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and not value.args
+        and not value.keywords
+    ):
+        return None
+    class_name = value.func.id
+    class_def = None
+    for node in body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            class_def = node
+            break
+    if class_def is None:
+        return None
+    for item in class_def.body:
+        if (
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == "__call__"
+        ):
+            return item
+    return None
 
 
 def _definition(

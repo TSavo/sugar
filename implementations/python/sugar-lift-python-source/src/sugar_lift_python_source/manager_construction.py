@@ -275,6 +275,10 @@ def _project_return_faces_to_manager(
         ]
     ] = []
     nested: list[tuple[FloorValue, FloorValue, CallSiteValue | None]] = []
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
     for face in faces:
         returned = face.value
         if isinstance(returned, ObjectValue):
@@ -290,20 +294,17 @@ def _project_return_faces_to_manager(
             continue
         try:
             floor = returned.force_floor(
-                None,
+                reduce_ctx,
                 owner="construct_manager_behavior returned object",
                 project_callsite=False,
             )
-        except ConstructionPanic as panic:
+        except ConstructionPanic:
             # A nested source constructor can itself have guarded completion
             # arms. Project those arms through the same source-authenticated
             # manager door used for a top-level multi-arm factory.
-            observed = getattr(getattr(panic, "info", None), "observed", None)
-            if "ExitSet" not in str(observed):
-                continue
             from sugar_lift_py_tests.outcome import ExitSet
 
-            nested_outcome = returned.reduce_source_outcome(None)
+            nested_outcome = returned.reduce_source_outcome(reduce_ctx)
             if not isinstance(nested_outcome, ExitSet):
                 continue
             projected = _project_manager_from_exitset(
@@ -649,9 +650,13 @@ def construct_manager_behavior(
     factory_prefix: tuple[FloorValue, ...] = ()
     seen_calls: set[int] = set()
     projected_force_floor_detail: str | None = None
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+    reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
     try:
         result = call.force_floor(
-            None, owner="construct_manager_behavior", project_callsite=False
+            reduce_ctx, owner="construct_manager_behavior", project_callsite=False
         )
         projected = _project_factory_manager(
             result,
@@ -672,7 +677,7 @@ def construct_manager_behavior(
             projected_force_floor_detail = str(observed)
             from sugar_lift_py_tests.outcome import Complete, ExitSet
 
-            outcome = call.reduce_source_outcome(None)
+            outcome = call.reduce_source_outcome(reduce_ctx)
             if isinstance(outcome, ExitSet):
                 manager_projection_arm_count = len(outcome.exits) - bool(
                     keyword_actuals
@@ -874,10 +879,51 @@ def _resolve_source_visible_frame_uncached(
     target = next(
         (item for item in definitions if _matches_definition(item, resolved)), None
     )
+    # Callable-instance exports resolve to a nested ``Class.__call__`` method.
+    # Top-level definition scan cannot see those coordinates; methods of
+    # module-level classes are the sole additional surface.
+    if target is None:
+        for item in definitions:
+            if not isinstance(item, ClassDef):
+                continue
+            method = next(
+                (
+                    member
+                    for member in item.body
+                    if isinstance(member, FunctionDef)
+                    and _matches_definition(member, resolved)
+                ),
+                None,
+            )
+            if method is not None:
+                target = method
+                break
     if target is None:
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "resolved definition coordinate"
         )
+    # Nested method export: project its ordinary frame without requiring the
+    # enclosing class to be the export target. Leading ``self`` is the bound
+    # instance for ``name = Class()`` callables and is not supplied by the
+    # free-name call site.
+    if (
+        isinstance(target, FunctionDef)
+        and target not in definitions
+        and resolved.definition.name == "__call__"
+    ):
+        frame = target.source_visible_call_frame()
+        if frame.parameters and frame.parameters[0] == "self":
+            frame = replace(
+                frame,
+                parameters=frame.parameters[1:],
+                formal_coordinates=frame.formal_coordinates[1:],
+                parameter_kinds=frame.parameter_kinds[1:],
+                default_sugars=frame.default_sugars[1:],
+                default_nodes=frame.default_nodes[1:],
+                default_fragments=frame.default_fragments[1:],
+                default_fragment_cids=frame.default_fragment_cids[1:],
+            )
+        return frame, target, source_file
 
     definitions_by_name = {item.name: item for item in definitions}
 
