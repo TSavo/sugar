@@ -38,6 +38,17 @@ class ObservedEffectBinding(FloorValue):
     def contribution(self):
         return ()
 
+    def guarded(self, formula):
+        """Arm-scoped binding testimony rides under a guard unchanged.
+
+        The handler route already selected this slot under the arm's polarity.
+        Guarding does not invent a second occurrence and does not convert the
+        binding into an implication — it is the same RaiseEffect object the
+        router deposited for ``except ... as e`` / EffectRef projection.
+        """
+        del formula
+        return self
+
 
 class RuntimeSelectedReachedRouter(RuntimeError):
     """Raised when a ``RuntimeSelected`` contract reaches ``route``."""

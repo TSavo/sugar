@@ -177,15 +177,50 @@ def test_same_spelling_unresolved_handler_identity_stays_loud():
         ).sugar()
 
 
-def test_unresolved_raised_identity_stays_loud_at_the_router():
-    with pytest.raises(SugarNotWritten):
+def test_unresolved_raised_identity_is_retained_not_decided_at_the_router():
+    """Formal ``raise E`` vs typed ``except ValueError`` is MatchRetained.
+
+    ``matches_raise_effect`` retains ``adt.is_python_type(E, ValueError)`` when
+    both operands have value terms but no authenticated exception identity.
+    That is not a construction gap and not a silent match/miss: both faces of
+    the partition must survive. ObservedEffectBinding rides under the match
+    arm guard without inventing a second occurrence.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.effect_router import ObservedEffectBinding
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    out = (
         _fn(
             "def A(E):\n"
             "    try:\n"
             "        raise E\n"
             "    except ValueError:\n"
             "        pass\n"
-        ).sugar().desugar()
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(out, Complete)
+    assert isinstance(out.value, UniverseValue)
+    record = out.value.record
+    # Residual halt under the open type test (miss face).
+    residual = tuple(
+        entry
+        for entry in record.statements
+        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
+    )
+    assert residual, "miss face of retained identity must remain a raise"
+    # Match-arm binding testimony must not invent TypeError / RuntimeEffect.
+    bindings = tuple(
+        entry for entry in record.statements if isinstance(entry, ObservedEffectBinding)
+    )
+    assert all(isinstance(b.effect, RaiseEffect) for b in bindings)
+    text = str(out)
+    assert "adt.is_python_type" in text
+    assert "TypeError" not in text
+    assert "RuntimeEffect" not in text
 
 
 def test_bare_reraise_reemits_the_exact_inflight_raise():
