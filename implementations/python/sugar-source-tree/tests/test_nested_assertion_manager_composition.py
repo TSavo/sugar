@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -38,6 +39,7 @@ from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
@@ -382,6 +384,136 @@ def test_pinned_three_deep_chain_cannot_move_the_assertion_inside_cleanup():
     assert not isinstance(outer, WithResourceSugar)
     assert not isinstance(middle, WithEffectBoundarySugar)
     assert not isinstance(inner, WithEffectBoundarySugar)
+
+
+class _FixedOutcomeSugar(Sugar):
+    """One test seam for exercising the routers built from the pinned source."""
+
+    def __init__(self, outcome, *, probe=None):
+        self.outcome = outcome
+        self.probe = probe
+
+    def desugar(self, ctx=None):
+        del ctx
+        if self.probe is not None:
+            self.probe.append(1)
+        return self.outcome
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+
+def _three_deep_manager_halt(exception_name: str):
+    """Route an innermost construction halt through the same three routers."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    source = (
+        "def test_close_on_error():\n"
+        "    with boundary(OSError):\n"
+        "        with bytes_io() as buffer:\n"
+        "            with get_handle(buffer) as handles:\n"
+        "                pass\n"
+    )
+    identity = (source, "test_common_three_deep.py", blake3_512_of(source.encode()))
+    probe = SourceFile(identity)
+    with_nodes = sorted(
+        (node for node in probe.nodes() if node.kind == "With"),
+        key=lambda node: node.line_col_span().start_line,
+    )
+    rows = {}
+    for index, node in enumerate(with_nodes):
+        coordinate = _coordinate(node.items[0].context_expr)
+        rows[coordinate] = (
+            _ref(coordinate, _raise_semantics(), "h")
+            if index == 0
+            else _resource_ref(coordinate, str(index))
+        )
+    outer, middle, inner = _with_routers(
+        _built_function(identity, "test_close_on_error", rows)
+    )
+    original_middle = middle
+    original_inner = inner
+    middle_exit, inner_enter, inner_exit = [], [], []
+    inner = replace(
+        inner,
+        manager=_FixedOutcomeSugar(
+            Incomplete(
+                RaiseEffect(
+                    exception_name=exception_name,
+                    exception_type_coordinate=ctor(
+                        "python:exception_type_identity",
+                        [str_const("builtins"), str_const(exception_name)],
+                    ),
+                    occurrence="test_common.py:640",
+                )
+            )
+        ),
+        enter=_FixedOutcomeSugar(
+            Complete(StringValue("inner-enter")), probe=inner_enter
+        ),
+        exit=_FixedOutcomeSugar(Complete(StringValue("inner-exit")), probe=inner_exit),
+    )
+    middle = replace(
+        middle,
+        manager=_FixedOutcomeSugar(Complete(StringValue("bytes-io"))),
+        enter=_FixedOutcomeSugar(Complete(StringValue("buffer"))),
+        exit=_FixedOutcomeSugar(
+            Complete(StringValue("bytes-io-exit")), probe=middle_exit
+        ),
+        body=tuple(
+            inner if child is original_inner else child for child in middle.body
+        ),
+    )
+    outer = replace(
+        outer,
+        body=tuple(
+            middle if child is original_middle else child for child in outer.body
+        ),
+    )
+    return outer.desugar(), middle_exit, inner_enter, inner_exit
+
+
+def test_three_deep_innermost_manager_halt_reaches_outer_assertion_after_cleanup():
+    """Truthful: the subject's OSError crosses BytesIO cleanup and is consumed."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+    outcome, middle_exit, inner_enter, inner_exit = _three_deep_manager_halt("OSError")
+    exits = outcome_to_exitset(outcome)
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(completed) == 1
+    assert not any(
+        getattr(getattr(face, "effect", None), "exception_name", None) == "OSError"
+        for face in exits.exits
+    )
+    assert middle_exit == [1]
+    assert inner_enter == []
+    assert inner_exit == []
+
+
+def test_three_deep_nonmatching_manager_halt_stays_halted_after_cleanup():
+    """Lying twin: outer OSError boundary must not consume a TypeError halt."""
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+    outcome, middle_exit, inner_enter, inner_exit = _three_deep_manager_halt(
+        "TypeError"
+    )
+    exits = outcome_to_exitset(outcome)
+    preserved = [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted)
+        and getattr(face.effect, "exception_name", None) == "TypeError"
+    ]
+    assert len(preserved) == 1
+    assert not any(isinstance(face, Completed) for face in exits.exits)
+    assert middle_exit == [1]
+    assert inner_enter == []
+    assert inner_exit == []
 
 
 def test_pinned_juxtaposed_assertion_and_resource_nest_left_to_right():
