@@ -16,6 +16,9 @@ class TermValue(FloorValue):
         """This floor value denotes a Python scalar it carries as its own payload."""
         return True
 
+    def python_index_protocol(self) -> bool:
+        return isinstance(self.value, int)
+
     def python_isinstance(self, type_name: str, type_term, site):
         del type_term
         from sugar_lift_py_tests.outcome import Complete

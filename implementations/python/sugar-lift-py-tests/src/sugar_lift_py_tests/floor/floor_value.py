@@ -560,6 +560,15 @@ class FloorValue:
             ),
         )
 
+    def python_index_protocol(self) -> bool | None:
+        """Whether this value's source-decided type implements ``__index__``.
+
+        ``None`` is the third value: construction has not authenticated the
+        runtime type or its index protocol. Receiver floors may emit TypeError
+        only for ``False``; they must keep ``None`` named-loud.
+        """
+        return None
+
     def attribute(self, name, site):
         # Default: this value does not stand on the attribute floor -- it cannot
         # answer what it yields at `.name`. A symbolic receiver stays the

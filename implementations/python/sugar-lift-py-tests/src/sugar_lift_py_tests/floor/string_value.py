@@ -22,6 +22,9 @@ class StringValue(GuardStableValue):
         """This floor value denotes a ``str``."""
         return True
 
+    def python_index_protocol(self) -> bool:
+        return False
+
     def python_isinstance(self, type_name: str, type_term, site):
         del type_term
         from sugar_lift_py_tests.outcome import Complete
@@ -284,7 +287,7 @@ class StringValue(GuardStableValue):
                 length=n,
                 site=site,
             )
-        if type(index) is TermValue:
+        if index.python_index_protocol() is False:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
