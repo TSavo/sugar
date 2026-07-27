@@ -421,17 +421,11 @@ class SymbolicValue(FloorValue):
         return self._runtime_bitwise_coordinate(other, site, "<<")
 
     def _runtime_bitwise_coordinate(self, other, site, operator):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
-                )
-            )
+        from sugar_lift_py_tests.floor.undecided_binary_value import (
+            undecided_binary_operation,
         )
+
+        return undecided_binary_operation(self, other, site, operator)
 
     def matrix_multiply(self, other, site):
         return self._runtime_bitwise_coordinate(other, site, "@")

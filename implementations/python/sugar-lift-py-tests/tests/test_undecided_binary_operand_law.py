@@ -34,6 +34,10 @@ from sugar_lift_py_tests.floor.set_value import SetValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
+from sugar_lift_py_tests.floor.undecided_binary_value import (
+    UndecidedBinaryOperationValue,
+)
+from sugar_lift_py_tests.floor.floor_value import ExceptionalDispositionV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, _Lambda, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
@@ -68,7 +72,8 @@ def _comprehension() -> ComprehensionValue:
 
 def _coordinate(outcome, operator: str):
     assert isinstance(outcome, Complete), outcome
-    assert type(outcome.value) is SymbolicValue
+    assert type(outcome.value) is UndecidedBinaryOperationValue
+    assert outcome.value.exceptional_disposition() is ExceptionalDispositionV1.UNDECIDED
     term = outcome.value.term
     assert term.name == operator
     assert len(term.args) == 2

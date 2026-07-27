@@ -39,7 +39,11 @@ from .floor_dispatch_surface import (
     FloorDispatchSurface,
     require_floor_dispatch_surface,
 )
-from .floor_value import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
+from .floor_value import (
+    BASE_CONSTRUCTION_GAP_METHOD_NAMES,
+    ExceptionalDispositionV1,
+    FloorValue,
+)
 from .function_callable import FunctionCallable
 from .partial_function_callable import PartialFunctionCallable
 from .package_source_accounting_value import PackageSourceAccountingValue
@@ -81,6 +85,7 @@ from .slice_value import SliceValue
 from .string_value import StringValue
 from .support_value import SupportValue
 from .symbolic_value import SymbolicValue
+from .undecided_binary_value import UndecidedBinaryOperationValue
 from .term_value import TermValue
 from .testimony_value import TestimonyValue
 from .tuple_literal_value import TupleLiteralValue
@@ -131,6 +136,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ObjectMethodValue,
     ObjectValue,
     OpaqueOpCallsite,
+    UndecidedBinaryOperationValue,
     PredicateValue,
     RaiseValue,
     RaisesWithValue,

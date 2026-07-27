@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import mmap
+from pathlib import Path
+import subprocess
+import tempfile
 from types import MappingProxyType
 
 import pytest
@@ -36,6 +41,7 @@ from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -291,6 +297,152 @@ def test_effect_boundary_with_formal_expected_type_stays_symbolic(tmp_path):
     assert len(outcome.exits) >= 2
     assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
     assert any(isinstance(exit_, Halted) for exit_ in outcome.exits)
+
+
+def test_pandas_assertion_binop_keeps_undecided_raise_loud() -> None:
+    """The real ``s_0123 & np.nan`` assertion body is not a completed value.
+
+    pandas uses this native operator shape to provoke ``TypeError``.  The
+    receiver's runtime type is unresolved at lift time, so operator dispatch
+    may complete or raise.  Collapsing that third value to a completed symbolic
+    coordinate makes ``pytest.raises`` report ExpectationNotMet -- a false
+    decision.  The assertion boundary must instead keep the undecided dispatch
+    loud until native operator testimony can choose an exit face.
+
+    The lying twin replaces ``np.nan`` with ``0``.  pandas executes that shape
+    successfully, so any mechanism that upgrades the shared native syntax to a
+    matching TypeError would accept a lie.  Both shapes must refuse as
+    undecided; neither may be coerced to False or promoted to RaiseEffect.
+    """
+    import pandas
+
+    corpus_path = (
+        Path(pandas.__file__).resolve().parent / "tests/series/test_logical_ops.py"
+    )
+    truthful = corpus_path.read_text(encoding="utf-8")
+    assert hashlib.sha256(truthful.encode("utf-8")).hexdigest() == (
+        "14698f3356d531b1cb87761c57be48737cb547b7ac97f7a6406c16336d5e2f5f"
+    )
+    assert truthful.count("s_0123 & np.nan") == 1
+
+    # Runtime discrimination: the enrolled body raises, while the same native
+    # operator shape with a ground supported operand completes.
+    series = pandas.Series(range(4), dtype="int64")
+    with pytest.raises(TypeError):
+        series & float("nan")
+    assert (series & 0).tolist() == [0, 0, 0, 0]
+
+    for label, source in (
+        ("truthful", truthful),
+        ("lying", truthful.replace("s_0123 & np.nan", "s_0123 & 0")),
+    ):
+        source_cid = blake3_512_of(source.encode("utf-8"))
+        identity = (source, str(corpus_path), source_cid)
+        probe = SourceFile(identity)
+        function = next(
+            fn
+            for fn in probe.functions()
+            if fn.name == "test_logical_operators_int_dtype_with_float"
+        )
+        coordinates = [
+            _coordinate(node.items[0].context_expr)
+            for node in function.walk()
+            if node.kind == "With"
+        ]
+        rows = {coordinate: _effect_resolved(coordinate) for coordinate in coordinates}
+        constructed = SourceFile(
+            identity,
+            construction_context=TreeConstructionContextV1(
+                ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+            ),
+        )
+        sugar = next(
+            fn
+            for fn in constructed.functions()
+            if fn.name == "test_logical_operators_int_dtype_with_float"
+        ).sugar()
+        boundary = next(
+            statement
+            for statement in sugar.statements
+            if isinstance(statement, WithEffectBoundarySugar)
+        )
+        assert type(boundary.body[0]).__name__ == "ExprStatementSugar"
+        with pytest.raises(
+            SugarNotWritten,
+            match="undecided binary operator dispatch inside an assertion boundary",
+        ) as raised:
+            boundary.desugar()
+        assert (
+            raised.value.owner == "WithEffectBoundarySugar.completed_raise_projection"
+        )
+        assert label in {"truthful", "lying"}
+
+
+def test_shared_demand_table_enrolls_the_exact_pandas_binop_manager() -> None:
+    """Consume #6464 by content key; never rebuild a private demand table."""
+    import pandas
+
+    corpus_path = (
+        Path(pandas.__file__).resolve().parent / "tests/series/test_logical_ops.py"
+    )
+    source = corpus_path.read_text(encoding="utf-8")
+    assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
+        "14698f3356d531b1cb87761c57be48737cb547b7ac97f7a6406c16336d5e2f5f"
+    )
+    table_key = (
+        "blake3-512:e225fcd0991f7c9011107521516e513390e448cc78ec4ce2da5eceb7116e1d89"
+        "6cba3f8d9f19c1b5375692117a8395aa9f1529a63b768387ce9aeb43d8323499"
+    )
+    repo = Path(__file__).resolve().parents[4]
+    with tempfile.TemporaryDirectory() as scratch:
+        table_path = Path(scratch) / "python-demand-table.json"
+        pulled = subprocess.run(
+            [
+                str(repo / "bin/sugarbin"),
+                "artifact",
+                "pull",
+                "--kind",
+                "python-demand-table",
+                "--content-key",
+                table_key,
+                "--output",
+                str(table_path),
+                "--runtime",
+                "cpython-3.14.4",
+            ],
+            cwd=repo,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert pulled.returncode == 0, pulled.stderr
+        with table_path.open("rb") as table_file, mmap.mmap(
+            table_file.fileno(), 0, access=mmap.ACCESS_READ
+        ) as table:
+            assert table.find(table_key.encode()) >= 0
+            assert (
+                table.find(
+                    b"sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+                )
+                >= 0
+            )
+            source_cid = blake3_512_of(source.encode("utf-8"))
+            cursor = 0
+            rows = []
+            while True:
+                cursor = table.find(b'"startLine": 95', cursor)
+                if cursor < 0:
+                    break
+                window = table[max(0, cursor - 5000) : cursor + 5000]
+                if (
+                    source_cid.encode() in window
+                    and b'"kind": "context-manager-demand"' in window
+                    and b'"targetSymbol": "pytest.raises"' in window
+                    and b'"gapKind": null' in window
+                ):
+                    rows.append(cursor)
+                cursor += 1
+            assert len(rows) >= 1
 
 
 def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(

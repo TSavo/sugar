@@ -884,9 +884,9 @@ class CallSiteValue(FloorValue):
         Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor.undecided_binary_value import (
+            undecided_binary_operation,
+        )
 
         if isinstance(other, GuardedValue):
             return other.map_from_left(floor_method, self, site)
@@ -900,17 +900,7 @@ class CallSiteValue(FloorValue):
             if callable(method):
                 return method(other, site)
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    op,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return undecided_binary_operation(self, other, site, op)
 
     def edge_contribution(self, source_contract):
         # Project one call-edge row: the coordinates this value already carries.
