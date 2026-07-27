@@ -23,7 +23,12 @@ import shutil
 
 import pytest
 
-from sugar_lift_py_tests.demand_table_identity import demand_table_identity
+from sugar_lift_py_tests.demand_table_identity import (
+    CorpusManifestIdentityMismatch,
+    corpus_manifest_digest_aliases,
+    demand_table_identity,
+    require_corpus_manifest_alias,
+)
 
 _SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src"
 
@@ -304,3 +309,37 @@ def test_the_reason_the_first_answer_was_wrong_is_recorded() -> None:
 
     assert "version-dependent node stream" in doc
     assert "answered the wrong question" in doc
+
+
+def test_pandas_303_path_shape_digest_is_not_a_content_manifest_alias() -> None:
+    """Artifact consumption refuses the circulating path-only SHA-256.
+
+    Both accepted aliases are computed over one ordered manifest of relative
+    path plus content CID.  The historical ``a223...`` value covered path
+    shape only, so accepting it would make changed bytes look authenticated.
+    """
+    import importlib.metadata
+
+    from sugar_source_tree.tree import SourceTree
+
+    distribution = importlib.metadata.distribution("pandas")
+    root = pathlib.Path(distribution.locate_file("pandas")).resolve()
+    assert distribution.version == "3.0.3"
+
+    aliases = corpus_manifest_digest_aliases(root, SourceTree(root).paths())
+
+    assert aliases.file_count == 1421
+    assert aliases.sha256 == (
+        "sha256:0ee4e945d69e60941f74ad064215a44d9f02a0b23b081e2a507d893bdd22a938"
+    )
+    assert aliases.blake3_512 == (
+        "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604ed"
+        "a1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+    )
+    require_corpus_manifest_alias(aliases, aliases.sha256)
+    require_corpus_manifest_alias(aliases, aliases.blake3_512)
+    with pytest.raises(CorpusManifestIdentityMismatch, match="not an alias"):
+        require_corpus_manifest_alias(
+            aliases,
+            "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0",
+        )
