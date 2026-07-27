@@ -20,6 +20,51 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _boolop_wrapped_pair
 
+_BOOL_OPERATOR_COORDINATE = {
+    "And": "and",
+    "Or": "or",
+}
+
+
+def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
+    """Keep undecided ``bool(operand)`` dispatch loud at the BoolOp producer.
+
+    Python evaluates ``a and b`` / ``a or b`` by first taking the truth of an
+    operand.  When that operand denotes a value but its runtime type is
+    undecided, native ``__bool__`` / ``__len__`` may complete or raise
+    (``Series`` raises ``ValueError``).  Emitting ``py.truthy`` invents a total
+    completion; inventing ``ValueError`` invents an exception identity.  Both
+    stay refused until source-visible type testimony decides.
+    """
+    denotes = getattr(value, "denotes_value", None)
+    decided = getattr(value, "runtime_type_is_decided", None)
+    if not callable(denotes) or not callable(decided):
+        return
+    if not denotes() or decided():
+        return
+
+    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    operator = _BOOL_OPERATOR_COORDINATE[op_kind]
+    construction_panic_gap(
+        owner="boolean_operation_exception_floor",
+        blame=site,
+        observed=f"{type(value).__name__} {operator}",
+        requested=(
+            "source-visible native truth testimony selecting completion "
+            "or an authenticated exceptional exit"
+        ),
+        fix=(
+            "preserve the undecided third value at the BoolOp producer; "
+            "resolve native operand types and their __bool__/__len__ bodies "
+            "from source, or retain this named refusal without inventing an "
+            "exception identity"
+        ),
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
+
 
 @dataclass(frozen=True)
 class BoolOpSugar(Sugar):
@@ -58,9 +103,12 @@ class BoolOpSugar(Sugar):
 
         def reduce_from(index: int):
             operand = self.values[index]
-            standing = factored_operand(operand.desugar(ctx)).and_then(
-                lambda value: Complete(predicate_formula(value, self.site))
-            )
+
+            def project_truth(value):
+                refuse_undecided_boolean_truth(value, self.site, self.op_kind)
+                return Complete(predicate_formula(value, self.site))
+
+            standing = factored_operand(operand.desugar(ctx)).and_then(project_truth)
 
             def continue_from(formula):
                 last = index == len(self.values) - 1
