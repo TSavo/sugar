@@ -98,6 +98,11 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
 
 
 def _equals_with_derived_residue(left, right, site, ctx):
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+        refuse_undecided_comparison,
+    )
+
+    refuse_undecided_comparison(left, right, site, "Eq")
     outcome = left.equals(right, site)
 
     from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue
