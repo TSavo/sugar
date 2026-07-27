@@ -73,11 +73,50 @@ def test_second_yield_stays_typed_loud_on_normal_exit():
         sugar.desugar()
 
 
-def test_premature_return_stays_typed_loud_on_enter():
-    sugar = _with_sugar("    return 7\n    yield 8")
+def test_premature_return_on_enter_is_the_observed_manager_raise():
+    """Return-before-yield at enter is RuntimeError("generator didn't yield").
 
-    with pytest.raises(SugarNotWritten, match="terminated before first yield"):
-        sugar.desugar()
+    Not a SugarNotWritten refusal of a real Python outcome: the consumer
+    routes GeneratorTerminationV1 through the observed entry refusal into
+    a Halted RaiseEffect arm that exitset_to_outcome projects as Incomplete
+    inside the block.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    sugar = _with_sugar("    return 7\n    yield 8", bind_entered=False)
+    outcome = sugar.desugar()
+    assert isinstance(outcome, Complete)
+    raises = [
+        entry
+        for entry in outcome.value.statements
+        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
+    ]
+    assert len(raises) == 1, outcome.value.statements
+    refusal = observed_entry_refusal()
+    assert raises[0].effect.exception_name == refusal.exception_name
+    assert raises[0].effect.raised_value == refusal.message
+
+
+def test_never_yield_on_enter_is_the_observed_manager_raise():
+    """``if False: yield`` never suspends — same enter raise as premature return."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    sugar = _with_sugar("    if False:\n        yield 1", bind_entered=False)
+    outcome = sugar.desugar()
+    assert isinstance(outcome, Complete)
+    raises = [
+        entry
+        for entry in outcome.value.statements
+        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
+    ]
+    assert len(raises) == 1
+    refusal = observed_entry_refusal()
+    assert raises[0].effect.exception_name == refusal.exception_name
+    assert raises[0].effect.raised_value == refusal.message
 
 
 def test_opaque_transition_stays_typed_loud():

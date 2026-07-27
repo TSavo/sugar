@@ -58,10 +58,17 @@ class GeneratorWithSugar(Sugar):
                 )
             entered = machine.resume()
             if isinstance(entered, GeneratorTerminationV1):
-                self._loud(
-                    "generator terminated before first yield",
-                    "terminated before first yield",
+                # Never-yield / premature-return at enter: Python's manager
+                # protocol raises. Type and message come from the observed
+                # vendor conversion (generator_entry_refusal), not a transcribed
+                # string and not a SugarNotWritten refusal of a real outcome.
+                routed.append(
+                    self._entry_refusal_exit(
+                        manager_exit,
+                        entered,
+                    )
                 )
+                continue
             if isinstance(entered, GeneratorTransitionGapV1):
                 self._loud(entered.observed, "opaque generator transition")
             if not isinstance(entered, YieldEffect):
@@ -103,6 +110,37 @@ class GeneratorWithSugar(Sugar):
         for part in routed[1:]:
             result = result.union(part)
         return exitset_to_outcome(result)
+
+    @staticmethod
+    def _entry_refusal_exit(manager_exit, termination: GeneratorTerminationV1):
+        """Turn first-resume termination into the authenticated raise ExitSet arm.
+
+        Observation lives in ``generator_entry_refusal`` (vendor conversion).
+        This consumer only asks for it — no vendor module name here
+        (``generator_construction_law``).
+        """
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
+        from sugar_lift_py_tests.outcome.exit_set import Halted
+
+        refusal = observed_entry_refusal()
+        blame = str(manager_exit.value.instance_coordinate)
+        effect = RaiseEffect(
+            exception_name=refusal.exception_name,
+            blame=blame,
+            occurrence=f"generator-entry-refusal:{blame}",
+            raised_value=refusal.message,
+        )
+        return ExitSet(
+            (
+                Halted(
+                    manager_exit.guard,
+                    effect,
+                    termination,
+                    manager_exit.faces,
+                ),
+            )
+        )
 
     @staticmethod
     def _loud(observed: str, label: str):

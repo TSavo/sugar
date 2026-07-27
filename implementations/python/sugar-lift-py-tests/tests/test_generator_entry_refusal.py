@@ -19,10 +19,9 @@ hand would be a second copy of a spec that already exists and executes; the
 vendor is the spec, so a runtime change must move the lift rather than silently
 diverge from it.
 
-THIS LANDS THE OBSERVATION ONLY. The consumer that will ask it -- the
-`with` entry path that today refuses this outcome -- is not wired here.
-The vendor spelling lives in this module and not in that consumer, which
-`generator_construction_law` independently enforces.
+Observation lives here; ``GeneratorWithSugar`` asks it on enter-time
+termination and projects the raise into the block ExitSet. Vendor spelling
+stays out of the consumer (``generator_construction_law``).
 """
 
 from __future__ import annotations
@@ -93,3 +92,18 @@ def test_a_different_exception_spelling_would_flip_the_twin() -> None:
 
     for wrong in ("StopAsyncIteration", "ValueError", "generator did not yield"):
         assert wrong not in source or wrong == "StopIteration"
+
+
+# -- consumer arm: observation reaches the final ExitSet / block -----------
+
+
+def test_lying_consumer_would_still_refuse_rather_than_emit_the_raise() -> None:
+    """Discrimination: if GeneratorWithSugar still loud-refused termination at
+    enter, the With would panic instead of presenting Incomplete(RaiseEffect).
+
+    The productive twin lives in sugar-source-tree construction tests; this
+    pins the observation contract the consumer must use (same type, same text).
+    """
+    refusal = observed_entry_refusal()
+    assert refusal.exception_name == "RuntimeError"
+    assert "didn't yield" in refusal.message
