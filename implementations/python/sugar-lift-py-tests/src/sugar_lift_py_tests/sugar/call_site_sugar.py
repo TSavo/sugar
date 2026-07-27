@@ -53,9 +53,9 @@ class CallSiteSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         if self.contract_resolution_gap is not None:
-            from sugar_source_tree.panic import SugarNotWritten
+            from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
-            raise SugarNotWritten(
+            raise OpaqueSourceCallResolutionGap(
                 owner="CallSiteSugar.desugar",
                 observed=self.contract_resolution_gap,
                 requested="authenticated resolved-call contract reference",

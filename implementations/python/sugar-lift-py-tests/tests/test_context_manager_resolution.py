@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 
 import pytest
@@ -5,11 +6,40 @@ import pytest
 from sugar_lift_py_tests import lift_rpc
 from sugar_lift_py_tests.context_manager_resolution import (
     ContractRefProtocolError,
+    OpaqueSourceCallObligationV1,
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
+    TreeConstructionContextV1,
     _hash_json,
     decode_resolved_contract_refs,
 )
+
+
+def test_opaque_source_call_obligation_transport_is_frozen_and_inspectable():
+    coordinate = SourceFragmentCoordinateV1(
+        "blake3-512:" + "a" * 128,
+        7,
+        8,
+        7,
+        19,
+    )
+    owner_cid = "blake3-512:" + "b" * 128
+    obligation = OpaqueSourceCallObligationV1(coordinate, "func", owner_cid)
+    table = {coordinate: obligation}
+    context = TreeConstructionContextV1.for_source_call_construction(
+        opaque_source_call_obligations=table
+    )
+
+    assert context.opaque_source_call_obligations is table
+    assert context.opaque_source_call_obligations[coordinate] == obligation
+    assert obligation.coordinate == coordinate
+    assert obligation.target_name == "func"
+    assert obligation.resolved_object_cid == owner_cid
+    with pytest.raises(FrozenInstanceError):
+        obligation.target_name = "other"
+
+    empty = TreeConstructionContextV1.for_source_call_construction()
+    assert empty.opaque_source_call_obligations == {}
 
 
 def unresolved_table():

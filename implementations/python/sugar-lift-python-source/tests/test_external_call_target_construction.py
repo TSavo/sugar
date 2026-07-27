@@ -47,6 +47,7 @@ from sugar_lift_python_source.manager_construction import (
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.nodes import Call, Constant
+from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 from sugar_source_tree.tree import SourceFile
 
 # No hermetic-frames fixture: there is no process state left to clear.  Every
@@ -113,6 +114,12 @@ def _construct(root: Path, *, factory_source: str, support_source: str):
         ),
         value,
     )
+
+
+def _opaque_gap(root: Path, *, factory_source: str, support_source: str):
+    with pytest.raises(OpaqueSourceCallResolutionGap) as raised:
+        _construct(root, factory_source=factory_source, support_source=support_source)
+    return raised.value
 
 
 _CROSS_MODULE_CLASS_FACTORY = (
@@ -216,7 +223,7 @@ def test_cross_module_function_hop_then_class_reduces(tmp_path):
 
 def test_reexport_chain_call_target_reduces(tmp_path):
     """POSITIVE: the callee name is reached through a re-export hop, not a definition."""
-    result, value = _construct(
+    gap = _opaque_gap(
         tmp_path,
         factory_source=(
             "from arbitrary import ScopedSlot\n"
@@ -229,11 +236,7 @@ def test_reexport_chain_call_target_reduces(tmp_path):
     # ``arbitrary/__init__.py`` written by the fixture only re-exports
     # make_guard, so ``arbitrary.ScopedSlot`` is NOT statically exported.
     # This is the honest negative face of the re-export door.
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    # The KEY names the condition and carries no spelling.
-    assert ":" not in result.kind
-    assert result.detail == "ScopedSlot"
+    assert gap.observed == "call-target-source-absent:ScopedSlot"
 
 
 def test_unavailable_callee_stays_typed_loud(tmp_path):
@@ -242,7 +245,7 @@ def test_unavailable_callee_stays_typed_loud(tmp_path):
     ``pathlib`` is not part of this distribution's authenticated file
     manifest.  No source, no contract -- and specifically no fabricated one.
     """
-    result, _ = _construct(
+    gap = _opaque_gap(
         tmp_path,
         factory_source=(
             "from pathlib import Path\n"
@@ -253,16 +256,12 @@ def test_unavailable_callee_stays_typed_loud(tmp_path):
         support_source="MARKER = 1\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    # The KEY names the condition and carries no spelling.
-    assert ":" not in result.kind
-    assert result.detail == "Path"
+    assert gap.observed == "call-target-source-absent:Path"
 
 
 def test_absent_module_callee_stays_typed_loud(tmp_path):
     """REQUIRED LOUD TWIN: import of a module absent from the artifact."""
-    result, _ = _construct(
+    gap = _opaque_gap(
         tmp_path,
         factory_source=(
             "from arbitrary.missing import ScopedSlot\n"
@@ -273,16 +272,12 @@ def test_absent_module_callee_stays_typed_loud(tmp_path):
         support_source="MARKER = 1\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    # The KEY names the condition and carries no spelling.
-    assert ":" not in result.kind
-    assert result.detail == "ScopedSlot"
+    assert gap.observed == "call-target-source-absent:ScopedSlot"
 
 
 def test_undefined_free_name_call_stays_typed_loud(tmp_path):
     """REQUIRED LOUD TWIN: no import, no definition -- nothing to authenticate."""
-    result, _ = _construct(
+    gap = _opaque_gap(
         tmp_path,
         factory_source=(
             "def make_guard(expected):\n    return unbound_helper(expected)\n"
@@ -290,11 +285,7 @@ def test_undefined_free_name_call_stays_typed_loud(tmp_path):
         support_source="MARKER = 1\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    assert result.kind == "call-target-source-absent"
-    # The KEY names the condition and carries no spelling.
-    assert ":" not in result.kind
-    assert result.detail == "unbound_helper"
+    assert gap.observed == "call-target-source-absent:unbound_helper"
 
 
 def _resolved_pair(root: Path, *, factory_source: str, support_source: str):
@@ -381,7 +372,7 @@ def test_external_call_frame_is_the_callee_defining_source_not_the_caller(tmp_pa
 
 def test_mutually_recursive_cross_module_call_stays_typed_loud(tmp_path):
     """REQUIRED LOUD TWIN: a cross-module cycle must not loop or fabricate."""
-    result, _ = _construct(
+    gap = _opaque_gap(
         tmp_path,
         factory_source=(
             "from arbitrary.support import build_slot\n"
@@ -397,11 +388,4 @@ def test_mutually_recursive_cross_module_call_stays_typed_loud(tmp_path):
         ),
     )
 
-    assert isinstance(result, ManagerConstructionGapV1), result
-    # Recursion is a different condition from an unresolvable callee: the
-    # cycle is reported as itself even though it is reached through the
-    # export door, and it carries NO symbol.
-    assert result.kind == "call-graph-cycle"
-    assert ":" not in result.kind
-    # detail is DATA: which callee's projection cycled.  It is never the key.
-    assert result.detail == "build_slot"
+    assert gap.observed == "call-graph-cycle:make_guard"

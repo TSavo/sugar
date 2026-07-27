@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
+    OpaqueSourceCallObligationV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
@@ -34,6 +35,7 @@ from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
     BindingCoordinateRefSugar,
 )
+from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -106,6 +108,36 @@ class _ReduceCtx:
 
     def __init__(self, temporal: TemporalContext) -> None:
         self.temporal = temporal
+
+
+# ---------------------------------------------------------------------------
+# 0. Opaque source calls refuse only at their reached coordinate.
+# ---------------------------------------------------------------------------
+
+
+def test_opaque_source_call_obligation_precedes_spread_selection() -> None:
+    context, _, calls = _tree("func(*[1], **{})\nordinary(2)\n")
+    opaque_call, ordinary_call = calls
+    coordinate = _coordinate(opaque_call)
+    obligation = OpaqueSourceCallObligationV1(
+        coordinate,
+        "func",
+        "blake3-512:" + "c" * 128,
+    )
+    context.opaque_source_call_obligations[coordinate] = obligation
+
+    opaque = opaque_call.sugar()
+
+    assert isinstance(opaque, CallSiteSugar)
+    assert opaque.contract_resolution_gap == "opaque-call-target:func"
+    with pytest.raises(SugarNotWritten) as raised:
+        opaque.desugar()
+    assert raised.value.observed == "opaque-call-target:func"
+    assert context.opaque_source_call_obligations[coordinate] is obligation
+
+    ordinary = ordinary_call.sugar()
+    assert isinstance(ordinary, CallSiteSugar)
+    assert ordinary.contract_resolution_gap is None
 
 
 # ---------------------------------------------------------------------------

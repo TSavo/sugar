@@ -60,6 +60,16 @@ class SourceFragmentCoordinateV1:
 
 
 @dataclass(frozen=True)
+class OpaqueSourceCallObligationV1:
+    """Authenticated unresolved callee testimony parked at one source call."""
+
+    coordinate: SourceFragmentCoordinateV1
+    target_name: str
+    resolved_object_cid: str
+    resolution_kind: str = "opaque-call-target"
+
+
+@dataclass(frozen=True)
 class ContextManagerContractRefV1:
     resolution_cid: str
     demand_cid: str
@@ -175,6 +185,9 @@ class TreeConstructionContextV1:
     # installed only beside a successful authenticated row; every other row is
     # a typed loud classification consumed by census/linking.
     source_call_resolutions: dict = field(default_factory=dict)
+    # Unresolved named calls parked at exact source coordinates. Ordinary Sugar
+    # construction consumes the testimony only when execution reaches the call.
+    opaque_source_call_obligations: dict = field(default_factory=dict)
     source_derived_contract_refs: dict = field(default_factory=dict)
     # Runtime-only, prebound class-base Sugar children keyed by the exact
     # subclass definition coordinate.  These are never serialized; the class
@@ -192,6 +205,7 @@ class TreeConstructionContextV1:
         cls,
         *,
         source_call_frames: dict | None = None,
+        opaque_source_call_obligations: dict | None = None,
         call_contract_refs: object | None = None,
         workspace_root: str | None = None,
         frame_projection: bool = False,
@@ -203,6 +217,11 @@ class TreeConstructionContextV1:
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
             frame_projection=frame_projection,
+            opaque_source_call_obligations=(
+                {}
+                if opaque_source_call_obligations is None
+                else opaque_source_call_obligations
+            ),
         )
 
 

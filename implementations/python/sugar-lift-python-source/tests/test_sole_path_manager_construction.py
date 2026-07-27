@@ -19,7 +19,11 @@ from sugar_lift_python_source.manager_construction import (
     ConstructedCallActualV1,
     ConstructedManagerBehaviorV1,
     ManagerConstructionGapV1,
+    _call_coordinate,
+    _install_opaque_call_obligation,
+    _install_source_call_frame,
     construct_manager_behavior,
+    resolve_source_visible_frame,
 )
 from sugar_lift_python_source.manager_protocol_construction import (
     ConstructedManagerProtocolV1,
@@ -34,7 +38,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import BindingEntryV1
-from sugar_source_tree.nodes import Call, ClassDef, Constant
+from sugar_source_tree.nodes import Call, ClassDef, Constant, Name
 from sugar_source_tree.tree import SourceFile
 
 
@@ -162,14 +166,90 @@ def test_free_name_call_stays_typed_loud(tmp_path):
         tmp_path, "def make_guard(expected):\n    return missing_helper(expected)\n"
     )
 
-    result = construct_manager_behavior(
-        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(
+        SugarNotWritten, match="call-target-source-absent:missing_helper"
+    ):
+        construct_manager_behavior(
+            resolved, graph=graph, actuals=(actual,), call_site=call_site
+        )
+
+
+def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
+    graph, resolved, _, _ = _resolved(
+        tmp_path,
+        "def make_guard(expected):\n"
+        "    if expected:\n"
+        "        return expected\n"
+        "    return missing_helper(expected)\n",
     )
 
-    assert isinstance(result, ManagerConstructionGapV1)
-    assert result.kind == "call-target-source-absent"
-    assert ":" not in result.kind
-    assert result.detail == "missing_helper"
+    projected = resolve_source_visible_frame(resolved, graph=graph)
+
+    assert isinstance(projected, tuple), projected
+    _, target = projected
+    context = target.unit.construction_context
+    missing_call = next(
+        node
+        for node in target.walk()
+        if isinstance(node, Call)
+        and isinstance(node.func, Name)
+        and node.func.id == "missing_helper"
+    )
+    coordinate = _call_coordinate(missing_call)
+    obligation = context.opaque_source_call_obligations[coordinate]
+    assert obligation.coordinate == coordinate
+    assert obligation.target_name == "missing_helper"
+    assert obligation.resolved_object_cid == resolved.cid
+    assert obligation.resolution_kind == "call-target-source-absent"
+
+
+def test_source_call_coordinate_rejects_conflicting_testimony():
+    source = "missing_helper(1)\n"
+    from sugar_lift_py_tests.context_manager_resolution import (
+        OpaqueSourceCallObligationV1,
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, "conflict.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
+    )
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    coordinate = _call_coordinate(call)
+    from sugar_source_tree.panic import BackendDefect
+
+    obligation = OpaqueSourceCallObligationV1(
+        coordinate,
+        "missing_helper",
+        "blake3-512:" + "1" * 128,
+    )
+    _install_opaque_call_obligation(context, call, obligation)
+    _install_opaque_call_obligation(context, call, obligation)
+
+    with pytest.raises(BackendDefect, match="conflicting opaque-call obligation"):
+        _install_opaque_call_obligation(
+            context,
+            call,
+            OpaqueSourceCallObligationV1(
+                coordinate,
+                "other_helper",
+                "blake3-512:" + "2" * 128,
+            ),
+        )
+    with pytest.raises(BackendDefect, match="frame/obligation collision"):
+        _install_source_call_frame(context, call, object())
+
+    context.opaque_source_call_obligations.clear()
+    frame = object()
+    _install_source_call_frame(context, call, frame)
+    _install_source_call_frame(context, call, frame)
+    with pytest.raises(BackendDefect, match="frame/obligation collision"):
+        _install_opaque_call_obligation(context, call, obligation)
+    with pytest.raises(BackendDefect, match="conflicting source-call frame"):
+        _install_source_call_frame(context, call, object())
 
 
 def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
@@ -1081,19 +1161,16 @@ def test_call_result_attribute_keeps_the_exact_constructed_call_coordinate():
     assert projected.value.term.args[1].value == "__name__"
 
 
-def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_path):
+def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
     consumer = (
         "import pytest\n"
         "def use_boundary():\n"
-        "    with pytest.raises(ValueError):\n"
-        "        raise ValueError('boom')\n"
+        f"    with {manager_call}:\n"
+        f"        {body}\n"
     )
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerResolutionGapV1,
-        TreeConstructionContextV1,
-    )
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
@@ -1101,31 +1178,63 @@ def test_installed_source_boundary_with_opaque_builtin_verdict_stays_loud(tmp_pa
         construction_context=context,
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    return tree, context
 
-    resolution = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(resolution, ContextManagerResolutionGapV1)
-    # Stage-keyed residual — not a silent generic no-derived-contract, and not
-    # a resource-membrane admission. pytest.raises stays typed-loud until its
-    # free-name / force-floor chain constructs without vendor arms.
-    assert resolution.kind != "derived-contract"
-    assert resolution.target_symbol and "raises" in resolution.target_symbol
-    # EXACT membership, not `startswith`: the kind is now the whole key, so a
-    # prefix match would pass on a fused `kind:symbol` string too -- which is
-    # precisely the shape this control has to refuse.
-    assert resolution.kind in (
-        _CALL_TARGET_GAP_KINDS
-        | {
-            "force-floor",
-            "non-manager-result",
-            "no-derived-contract",
-            "enter-missing",
-            "exit-missing",
-            "method-construction",
-            "enter-may-halt",
-            "exit-may-halt",
-            "opaque-exit-truthiness",
-        }
-    ), resolution.kind
+
+def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
+    tmp_path,
+):
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
+
+    tree, context = _installed_pytest_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, match="boom")',
+        'raise ValueError("boom")',
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    with pytest.raises(WithConstructionGap) as caught:
+        with_node.sugar()
+
+    assert caught.value.gap_kind is WithConstructionGapKind.ENTER_MAY_HALT
+    assert (
+        caught.value.coordinate.start_line,
+        caught.value.coordinate.start_col,
+        caught.value.coordinate.end_line,
+        caught.value.coordinate.end_col,
+    ) == (3, 9, 3, 48)
+
+
+def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
+    tmp_path,
+):
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
+
+    tree, context = _installed_pytest_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, int, "bad")',
+        "pass",
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    with pytest.raises(WithConstructionGap) as caught:
+        with_node.sugar()
+
+    assert caught.value.gap_kind is WithConstructionGapKind.ENTER_MAY_HALT
+    assert (
+        caught.value.coordinate.start_line,
+        caught.value.coordinate.start_col,
+        caught.value.coordinate.end_line,
+        caught.value.coordinate.end_col,
+    ) == (3, 9, 3, 46)
 
 
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):
@@ -1378,8 +1487,9 @@ def _guarded_literal_boundary(tmp_path, *, exit_body: str):
         "        self.expected = expected\n"
         "    def __enter__(self):\n"
         "        return self\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n" + exit_body +
-        "def make_guard(expected):\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        + exit_body
+        + "def make_guard(expected):\n"
         "    return ArbitraryBoundary(expected)\n",
     )
     behavior = construct_manager_behavior(
@@ -1592,7 +1702,9 @@ _BOUNDARY_IMPLEMENTATION = (
 def _route_boundary_with_binding(
     tmp_path, *, body: str, as_clause: str = " as info", following: str = ""
 ):
-    distribution = _distribution(tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary")
+    distribution = _distribution(
+        tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary"
+    )
     consumer = (
         "import arbitrary\n"
         "def use_boundary():\n"
