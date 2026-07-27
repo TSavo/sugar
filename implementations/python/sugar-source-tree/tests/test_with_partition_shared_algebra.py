@@ -1013,19 +1013,21 @@ def test_expected_observation_with_no_constructed_occurrence_stays_loud(tmp_path
     ``ExpectationNotMet`` halt, which would assert the opposite. Both are facts
     about an observation nobody constructed. The site stays loud instead.
 
-    The refusal lands one rung earlier than a desugar gap: the contract never
-    installs a boundary sugar at all, so there is no object that could later be
-    routed into a completion by a hopeful arm.
+    The typed warning boundary now constructs, but routing still refuses: this
+    body has no authenticated warning occurrence on its completed face.  That
+    is the useful distinction from an unsupported-manager refusal -- the
+    manager contract is understood, while the observation remains undecided.
     """
-    from sugar_source_tree.panic import UnsupportedContextManagerSemantics
+    from sugar_source_tree.panic import SugarNotWritten
 
-    with pytest.raises(UnsupportedContextManagerSemantics) as raised:
-        _with_statement(
-            tmp_path, MATCHING_BODY, OBSERVATION_SEMANTICS, stem="observation"
-        )
-    assert raised.value.owner == "With._construct_sugar"
-    # The refusal names the observation as the missing thing, not the manager.
-    assert "semantics" in raised.value.observed
+    boundary = _with_statement(
+        tmp_path, MATCHING_BODY, OBSERVATION_SEMANTICS, stem="observation"
+    )
+    assert isinstance(boundary, WithEffectBoundarySugar)
+    with pytest.raises(SugarNotWritten) as raised:
+        boundary.desugar()
+    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
+    assert raised.value.observed == "warning boundary carries an unprojected message pattern"
 
 
 def test_discrimination_the_same_site_routes_under_a_constructed_effect_kind(tmp_path):
