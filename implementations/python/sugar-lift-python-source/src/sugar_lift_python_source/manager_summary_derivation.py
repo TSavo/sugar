@@ -652,6 +652,26 @@ def populate_source_derived_resource_refs(
             kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue
+        # A source-owned suspension is already the native manager testimony
+        # consumed by With._generator_manager_frame.  Install that exact frame
+        # before attempting object-protocol derivation: forcing a generator
+        # function's intentionally empty ordinary body only manufactures the
+        # misleading residual ``non-manager-result:BlockValue``.  The generator
+        # transition remains independently loud when its steps are opaque.
+        from .manager_construction import (
+            ManagerConstructionGapV1,
+            _install_source_call_frame,
+            resolve_source_visible_frame,
+        )
+
+        frame_result = resolve_source_visible_frame(
+            resolved, graph=graph, session=session
+        )
+        if not isinstance(frame_result, ManagerConstructionGapV1):
+            frame, _ = frame_result
+            if frame.generator_steps is not None:
+                _install_source_call_frame(context, call, frame)
+                continue
         actuals = []
         for node in call.args:
             outcome = node.sugar().desugar()
