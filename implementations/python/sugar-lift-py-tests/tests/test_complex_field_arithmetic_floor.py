@@ -211,19 +211,15 @@ def test_no_folded_result_ever_projects_a_non_numeric_real() -> None:
         assert abs(float(arg.value)) != float("inf")
 
 
-def test_a_symbolic_operand_keeps_its_own_symbolic_door() -> None:
+def test_an_opaque_operand_keeps_the_undecided_third_value_loud() -> None:
     """A complex plus an opaque callsite is not a field member; the complex
     floor must not swallow it into a fabricated concrete complex.
 
     What this arm pinned was the REFUSAL to fabricate a complex, and that is
     unchanged: the outcome below is not a ``ComplexValue``. What it also
-    asserted -- that the pair panics -- was the state before the undecided
-    binary-operand law existed, and is superseded by it. An unexecuted call's
-    result type is undecided, so Python's own operator dispatch for the pair is
-    undecided, and the exact denotation is the symbolic coordinate. This is the
-    SAME answer ``test_an_integer_plus_a_symbolic_operand_is_still_symbolic``
-    below already pinned for ``int + symbolic``; the law states it once for
-    every field member instead of once per left class.
+    asserted -- a completed symbolic coordinate -- erased the exceptional face.
+    An unexecuted call's result type is undecided, so Python's own operator
+    dispatch for the pair is undecided and remains a named producer gap.
 
     See ``tests/test_undecided_binary_operand_law.py``.
     """
@@ -231,21 +227,18 @@ def test_a_symbolic_operand_keeps_its_own_symbolic_door() -> None:
 
     assert complex_field_coordinate(opaque) is None
 
-    outcome = ComplexValue(0.0, 1.0).add(opaque, SITE)
-
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is SymbolicValue
-    assert outcome.value.term.name == "+"
+    with pytest.raises(ConstructionPanic) as raised:
+        ComplexValue(0.0, 1.0).add(opaque, SITE)
+    assert raised.value.info.owner == "binary_operation_exception_floor"
 
 
-def test_an_integer_plus_a_symbolic_operand_is_still_symbolic() -> None:
+def test_an_integer_plus_a_symbolic_operand_is_still_undecided() -> None:
     """The complex arm sits AFTER the symbolic arms and stole none of them."""
     symbolic = SymbolicValue(TermValue(2).to_term(owner=SITE))
 
-    outcome = TermValue(1).add(symbolic, SITE)
-
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is SymbolicValue
+    with pytest.raises(ConstructionPanic) as raised:
+        TermValue(1).add(symbolic, SITE)
+    assert raised.value.info.owner == "binary_operation_exception_floor"
 
 
 # -- the field coordinate is read from the value, not from a name -------------

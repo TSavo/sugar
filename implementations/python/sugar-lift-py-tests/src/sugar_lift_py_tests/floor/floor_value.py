@@ -879,10 +879,10 @@ class FloorValue:
         THIS right operand, falling through to the pair gap. Most of those
         pairs are not eight separate arms to write. They are one law: when at
         least one operand's runtime TYPE is undecided, Python's own operator
-        dispatch for the pair is undecided, so the exact denotation of the
-        operation is the symbolic coordinate ``operator(left, right)`` -- the
-        same coordinate ``SymbolicValue`` already constructs, hoisted off that
-        one class and onto the law it was always stating.
+        dispatch for the pair is undecided. That is a third value, not a
+        completed symbolic coordinate: without source-visible native dispatch
+        testimony this law refuses to choose completion or manufacture an
+        exception identity.
 
         Two refusals are deliberate and stay loud:
 
@@ -901,20 +901,25 @@ class FloorValue:
         if self.runtime_type_is_decided() and other.runtime_type_is_decided():
             return None
 
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
+        construction_panic_gap(
+            owner="binary_operation_exception_floor",
+            blame=site,
+            observed=f"{type(self).__name__} {operator} {type(other).__name__}",
+            requested=(
+                "source-visible native operator testimony selecting completion "
+                "or an authenticated exceptional exit"
+            ),
+            fix=(
+                "preserve the undecided third value at the BinOp producer; "
+                "resolve native operand types and their operator bodies from "
+                "source, or retain this named refusal without inventing an "
+                "exception identity"
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
 
     def _binary_floor_gap(self, other, site, owner, floor):

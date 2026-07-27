@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.ir import Term
 
-from .floor_value import FloorValue
+from .floor_value import _BINARY_OPERATOR_COORDINATE, FloorValue
 
 
 def _pep604_type_union_leaves(term: Term) -> tuple[Term, ...] | None:
@@ -53,9 +53,9 @@ class SymbolicValue(FloorValue):
         """Undecided: this is an unresolved term: nothing names its Python type.
 
         Which ``__op__``/``__rop__`` Python would select for an
-        operation over this value is therefore undecided too, so a
-        binary operation with it constructs a symbolic coordinate
-        rather than standing on a ground field law.
+        operation over this value is therefore undecided too, so a binary
+        operation reaches the named producer refusal rather than standing on a
+        ground field law or claiming completion.
         """
         return False
 
@@ -294,147 +294,69 @@ class SymbolicValue(FloorValue):
         if type(other) is ListValue:
             return other.multiply(self, site)
 
-        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        if isinstance(other, GuardedValue):
-            return other.map_from_left("multiply", self, site)
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "*",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_refusal(other, site, "*")
 
     def power(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "**",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_refusal(other, site, "**")
 
     def add(self, other, site):
-        # Symbolic / EUF addition: emit ``+(self, other)``. CallSiteValue dig
-        # redispatches here when body is opaque; never invent a concrete sum.
-        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        if isinstance(other, GuardedValue):
-            return other.map_from_left("add", self, site)
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "+",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_refusal(other, site, "+")
 
     def subtract(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "-",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_refusal(other, site, "-")
 
     def divide(self, other, site):
-        return self._arithmetic_coordinate(other, site, "/")
+        return self._arithmetic_refusal(other, site, "/")
 
     def floor_divide(self, other, site):
-        return self._arithmetic_coordinate(other, site, "//")
+        return self._arithmetic_refusal(other, site, "//")
 
     def modulo(self, other, site):
-        return self._arithmetic_coordinate(other, site, "%")
+        return self._arithmetic_refusal(other, site, "%")
 
-    def _arithmetic_coordinate(self, other, site, operator):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+    def _arithmetic_refusal(self, other, site, operator):
+        return self._runtime_binary_refusal(other, site, operator)
 
     def right_shift(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    ">>",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_refusal(other, site, ">>")
 
     def bitwise_and(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "&")
+        return self._runtime_bitwise_refusal(other, site, "&")
 
     def bitwise_xor(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "^")
+        return self._runtime_bitwise_refusal(other, site, "^")
 
     def bitwise_or(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "|")
+        return self._runtime_bitwise_refusal(other, site, "|")
 
     def left_shift(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "<<")
+        return self._runtime_bitwise_refusal(other, site, "<<")
 
-    def _runtime_bitwise_coordinate(self, other, site, operator):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+    def _runtime_bitwise_refusal(self, other, site, operator):
+        return self._runtime_binary_refusal(other, site, operator)
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
-                )
-            )
+    def _runtime_binary_refusal(self, other, site, operator):
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+
+        owner = next(
+            method
+            for method, coordinate in _BINARY_OPERATOR_COORDINATE.items()
+            if coordinate == operator
+        )
+        if isinstance(other, GuardedValue):
+            return other.map_from_left(owner, self, site)
+        refused = self._undecided_binary_law(other, site, operator)
+        if refused is not None:
+            return refused
+        return self._binary_floor_gap(
+            other,
+            site,
+            owner,
+            f"runtime binary operator {operator}",
         )
 
     def matrix_multiply(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "@")
+        return self._runtime_bitwise_refusal(other, site, "@")
 
     def unary_plus(self, site):
         # Unary plus on a symbolic is identity (symbolic_term UAdd returns the

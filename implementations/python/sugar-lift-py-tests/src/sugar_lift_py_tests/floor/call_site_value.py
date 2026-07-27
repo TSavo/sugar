@@ -135,9 +135,9 @@ class CallSiteValue(FloorValue):
         """Undecided: no citation fixes an unexecuted call's result type.
 
         Which ``__op__``/``__rop__`` Python would select for an operation
-        over this value is undecided too, so a binary operation with it
-        constructs a symbolic coordinate rather than standing on a ground
-        field law.
+        over this value is undecided too, so a binary operation reaches the
+        named producer refusal rather than standing on a ground field law or
+        claiming completion.
         """
         return False
 
@@ -784,60 +784,35 @@ class CallSiteValue(FloorValue):
         return Complete(self.linear_method_call("__format__", (spec,), site))
 
     def add(self, other, site):
-        """Addition floor via interface dispatch: dig then redispatch, else EUF +.
+        """Addition floor via interface dispatch: dig, redispatch, or refuse.
 
         AddOpSugar calls left.add(right) — not binary_operator_with. Without this
         totalizer, dig of `want_bytes(x) + self.sep` construction_panics mid-body.
         """
-        return self._dig_or_symbolic_binop(other, site, op="+", floor_method="add")
+        return self._dig_or_refuse_binop(other, site, op="+", floor_method="add")
 
     def subtract(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="-", floor_method="subtract")
+        return self._dig_or_refuse_binop(other, site, op="-", floor_method="subtract")
 
     def multiply(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="*", floor_method="multiply")
+        return self._dig_or_refuse_binop(other, site, op="*", floor_method="multiply")
 
     def power(self, other, site):
-        """Dig a proved return body, otherwise retain runtime ``__pow__`` dispatch."""
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.power")
-        if dug is not None and dug is not self:
-            return dug.power(other, site)
-
-        from sugar_lift_py_tests.effect import (
-            PowerRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        operand = ctor(
-            "**",
-            [
-                self.to_term(owner=str(site)),
-                other.to_term(owner=str(site)),
-            ],
-        )
-        return Incomplete(
-            PowerRuntimeEffect(
-                "power dispatch depends on the runtime call result's __pow__; "
-                f"owner=CallSiteValue.power site={site}",
-                **runtime_effect_evidence("py.power", operand, site),
-            )
-        )
+        return self._dig_or_refuse_binop(other, site, op="**", floor_method="power")
 
     def divide(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="/", floor_method="divide")
+        return self._dig_or_refuse_binop(other, site, op="/", floor_method="divide")
 
     def modulo(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="%", floor_method="modulo")
+        return self._dig_or_refuse_binop(other, site, op="%", floor_method="modulo")
 
     def floor_divide(self, other, site):
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op="//", floor_method="floor_divide"
         )
 
     def left_shift(self, other, site):
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op="<<", floor_method="left_shift"
         )
 
@@ -845,48 +820,37 @@ class CallSiteValue(FloorValue):
         # Base64 / alphabet index math: `ord(c) >> 2` on call results.
         # Without this, FloorValue.right_shift panics (A2 mint-failed on
         # python-literal-base64 / base64-federation).
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op=">>", floor_method="right_shift"
         )
 
     def bitwise_and(self, other, site):
         # Same family as left_shift / bitwise_or: dig then redispatch, else
-        # EUF `&`. Base20 / base64 nibble masks (`b0 & 15`) hit CallSiteValue.
-        return self._dig_or_symbolic_binop(
+        # retain the named undecided-dispatch refusal.
+        return self._dig_or_refuse_binop(
             other, site, op="&", floor_method="bitwise_and"
         )
 
     def bitwise_xor(self, other, site):
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.bitwise_xor")
-        if dug is not None and dug is not self:
-            return dug.bitwise_xor(other, site)
-        if self.body is not None:
-            return super().bitwise_xor(other, site)
-
-        from sugar_lift_py_tests.effect import runtime_bitwise_xor
-
-        return runtime_bitwise_xor(self, other, site)
-
-    def bitwise_or(self, other, site):
-        return self._dig_or_symbolic_binop(
-            other, site, op="|", floor_method="bitwise_or"
+        return self._dig_or_refuse_binop(
+            other, site, op="^", floor_method="bitwise_xor"
         )
 
+    def bitwise_or(self, other, site):
+        return self._dig_or_refuse_binop(other, site, op="|", floor_method="bitwise_or")
+
     def matrix_multiply(self, other, site):
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op="@", floor_method="matrix_multiply"
         )
 
-    def _dig_or_symbolic_binop(self, other, site, *, op: str, floor_method: str):
-        """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
+    def _dig_or_refuse_binop(self, other, site, *, op: str, floor_method: str):
+        """Dig source body when present; otherwise retain undecided dispatch.
 
         No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
         Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
 
         if isinstance(other, GuardedValue):
             return other.map_from_left(floor_method, self, site)
@@ -900,17 +864,10 @@ class CallSiteValue(FloorValue):
             if callable(method):
                 return method(other, site)
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    op,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        refused = self._undecided_binary_law(other, site, op)
+        if refused is not None:
+            return refused
+        return getattr(super(), floor_method)(other, site)
 
     def edge_contribution(self, source_contract):
         # Project one call-edge row: the coordinates this value already carries.
