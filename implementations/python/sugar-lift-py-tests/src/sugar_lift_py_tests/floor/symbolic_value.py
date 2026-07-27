@@ -375,20 +375,24 @@ class SymbolicValue(FloorValue):
         return Complete(SymbolicValue(ctor("py.invert", [self.term])))
 
     def subscript(self, index, site):
-        built = self.py_subscript_coordinate(index, site)
-        if self.formal_coordinate is None:
-            return built
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            ContractConditionalConstructionV1,
-        )
-        from sugar_lift_py_tests.ir import atomic
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                ContractConditionalConstructionV1,
+            )
+            from sugar_lift_py_tests.ir import atomic
 
-        return ContractConditionalConstructionV1.mint(
-            site=site,
-            candidate=built.value.to_term(owner=str(site)),
-            demand_formula=atomic("python:indexable", [self.term]),
-            value=built.value,
-            coordinate=self.formal_coordinate,
+            built = self.py_subscript_coordinate(index, site)
+            return ContractConditionalConstructionV1.mint(
+                site=site,
+                candidate=built.value.to_term(owner=str(site)),
+                demand_formula=atomic("python:indexable", [self.term]),
+                value=built.value,
+                coordinate=self.formal_coordinate,
+            )
+        return self.undecided_subscript(
+            index,
+            site,
+            owner="SymbolicValue.subscript",
         )
 
     def attribute(self, name, site):

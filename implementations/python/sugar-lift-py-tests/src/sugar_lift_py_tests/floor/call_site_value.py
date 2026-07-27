@@ -418,8 +418,9 @@ class CallSiteValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        # A callsite receiver stays the py.subscript coordinate regardless of index.
-        return self.py_subscript_coordinate(index, site)
+        return self.undecided_subscript(
+            index, site, owner="CallSiteValue.subscript"
+        )
 
     def setitem(self, index, value, site):
         """Rebind an opaque mapping/list-shaped callsite after ``xs[k] = v``.

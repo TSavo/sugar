@@ -1,11 +1,10 @@
 """Member access on an OPAQUE object is a symbolic read, not a gap.
 
 `OpaqueObjectStateV1` is an authenticated call-result identity with no field
-testimony: statically we know only WHICH call produced it, never its fields --
-those come into existence at runtime, observed by the witness. So `opaque.attr`
-and `opaque[key]` must NOT raise SugarNotWritten (the old withhold); they
-construct the honest EUF coordinate `py.getattr(recv, "attr")` /
-`py.subscript(recv, key)`, carrying the opaque call term and nothing invented.
+testimony: statically we know only WHICH call produced it, never its fields.
+Attribute reads retain their honest coordinate. A subscript is also an effect
+producer, however, and an opaque result cannot authenticate whether lookup
+succeeds or which exception it raises, so that operation stays named-loud.
 
 A free-function call `g(x)` is the deterministic opaque receiver (no vendor,
 no numpy): its result has no field testimony, exactly like `np.asarray(...)`.
@@ -20,7 +19,6 @@ from sugar_lift_py_tests.ir import (
     atomic as _atomic,
     ctor as _ctor,
     make_var,
-    num,
     str_const,
     eq as _eq,
 )
@@ -45,14 +43,16 @@ def test_opaque_attribute_is_getattr_not_gap():
     assert post == expected, f"post was {post!r}"
 
 
-def test_opaque_subscript_is_subscript_not_gap():
-    # `g(x)[0]` -- subscript on an opaque call result -- projects py.subscript.
-    post = _post_of("def f(x):\n    return g(x)[0]\n")
-    expected = _eq(
-        make_var("out"),
-        _ctor("py.subscript", [_ctor("call:g", [make_var("x")]), num(0)]),
-    )
-    assert post == expected, f"post was {post!r}"
+def test_opaque_subscript_is_named_undecided():
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    try:
+        _post_of("def f(x):\n    return g(x)[0]\n")
+    except ConstructionPanic as panic:
+        assert panic.info.owner == "CallSiteValue.subscript"
+        assert "undecided receiver runtime type" in panic.info.observed
+    else:  # pragma: no cover - the lying arm
+        raise AssertionError("opaque subscript invented a completed coordinate")
 
 
 def test_opaque_member_access_no_longer_raises():

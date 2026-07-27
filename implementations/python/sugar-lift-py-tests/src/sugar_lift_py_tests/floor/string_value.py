@@ -240,11 +240,11 @@ class StringValue(GuardStableValue):
         )
 
     def subscript(self, index, site):
-        # Concrete string + in-range TermValue int folds to the one-char string;
-        # out of range is IndexError. Non-concrete index stays py.subscript.
+        # Concrete string + integer index is fully decided. A known non-integer
+        # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         if type(index) is SliceValue:
             bounds = (index.lower, index.upper, index.step)
@@ -268,7 +268,7 @@ class StringValue(GuardStableValue):
                     )
                 return Complete(StringValue(self.value[slice(lower, upper, step)]))
 
-        if type(index) is TermValue and type(index.value) is int:
+        if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.value)
             if -n <= i < n:
@@ -284,7 +284,13 @@ class StringValue(GuardStableValue):
                 length=n,
                 site=site,
             )
-        return self.py_subscript_coordinate(index, site)
+        if type(index) is TermValue:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="StringValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="StringValue.subscript")
 
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
