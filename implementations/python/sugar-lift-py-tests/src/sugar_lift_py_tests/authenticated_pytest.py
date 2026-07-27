@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 import sys
 import sysconfig
@@ -12,7 +10,9 @@ from dataclasses import dataclass
 from importlib import import_module, metadata
 from pathlib import Path
 from types import ModuleType
-from typing import Sequence
+from typing import Iterable, Sequence
+
+from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
 
 
 class ExecutionEnvironmentMismatch(RuntimeError):
@@ -95,14 +95,28 @@ def authenticate_lift(module: ModuleType, repo_root: Path) -> ImportIdentity:
     return ImportIdentity("sugar_lift_py_tests", "checkout-source", loaded_from)
 
 
-def corpus_manifest_cid(files: Sequence[str]) -> str:
-    ordered = sorted(str(path) for path in files)
-    if not ordered:
+def authenticate_corpus_manifest(
+    root: Path, paths: Iterable[Path], expected_cid: str
+) -> tuple[str, int]:
+    """Authenticate relative paths AND bytes using the shared manifest CID.
+
+    This deliberately reuses ``demand_table_identity.corpus_manifest_cid``.
+    The former path-only SHA-256 proved only which files existed, so identical
+    paths with edited, truncated, or partially synchronized bytes passed as an
+    authenticated corpus. Reading the pinned 1,421 files costs a measured
+    median 1.255 seconds (max 1.591 seconds over five workstation runs), which
+    is acceptable once before pytest collection; false authentication is not.
+    """
+    observed_cid, file_count = corpus_manifest_cid(root, paths)
+    if file_count == 0:
         raise ExecutionEnvironmentMismatch("pandas corpus manifest is empty")
-    if len(set(ordered)) != len(ordered):
-        raise ExecutionEnvironmentMismatch("pandas corpus manifest contains duplicates")
-    preimage = json.dumps(ordered, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+    if observed_cid != expected_cid:
+        raise ExecutionEnvironmentMismatch(
+            "pandas corpus content manifest CID mismatch: "
+            f"observed {observed_cid} over {file_count} files; "
+            f"required {expected_cid}"
+        )
+    return observed_cid, file_count
 
 
 def activate_checkout_import_roots(repo_root: Path, search_path: list[str]) -> None:
@@ -186,17 +200,8 @@ def authenticate_environment() -> (
     from sugar_source_tree.tree import SourceTree
 
     pandas_root = pandas_identity.loaded_from.parent
-    files = [
-        path.resolve().relative_to(pandas_root).as_posix()
-        for path in SourceTree(pandas_root).paths()
-    ]
-    observed_cid = corpus_manifest_cid(files)
-    if observed_cid != expected_cid:
-        raise ExecutionEnvironmentMismatch(
-            "pandas corpus manifest CID mismatch: "
-            f"observed {observed_cid} over {len(files)} files; "
-            f"required {expected_cid}"
-        )
+    files = list(SourceTree(pandas_root).paths())
+    observed_cid, _ = authenticate_corpus_manifest(pandas_root, files, expected_cid)
     return pandas_identity, numpy_identity, lift_identity, observed_cid
 
 
