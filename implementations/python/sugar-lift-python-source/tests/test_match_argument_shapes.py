@@ -354,10 +354,16 @@ CORPUS_AGGREGATE_HASH = (
     "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
 )
 
-#: The SHAPE identity the table carries in its own authentication block. It is
-#: a sha256 over the sorted relative path strings and nothing else -- no file
-#: bytes, no version -- so it reproduces exactly from filenames alone and a
-#: tree with these 1,421 names and every byte rewritten still matches it.
+#: The content manifest the regenerated table carries in its authentication
+#: block: ordered relative paths plus each file's BLAKE3-512 content CID.
+DEMAND_TABLE_CORPUS_MANIFEST_CID = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
+    "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+
+#: Historical SHAPE digest: sha256 over sorted relative path strings only.
+#: It remains solely as the refusal twin proving that identical paths with
+#: changed bytes are not authenticated corpus identity.
 #:
 #: It is kept because it is a different question, not because it adds
 #: detection: ``CORPUS_AGGREGATE_HASH`` already subsumes the path set. Checked
@@ -365,16 +371,7 @@ CORPUS_AGGREGATE_HASH = (
 #: shape alone failing means the file list moved, shape passing while the
 #: aggregate fails means the bytes drifted under a stable list.
 #:
-#: This value is a property of the PINNED ARTIFACT, not of current producer
-#: code. ``#6482`` retired the paths-only ``authenticated_pytest``
-#: ``corpus_manifest_cid`` in favour of ``authenticate_corpus_manifest``, which
-#: reuses the content-addressed ``demand_table_identity.corpus_manifest_cid``.
-#: The pinned table predates that fix, so its authentication block still
-#: carries the paths-only digest and this row still describes it correctly --
-#: but a reader looking for the function that produced it will not find one.
-#: That is why ``_paths_only_manifest_cid`` reproduces the preimage here rather
-#: than importing it.
-DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID = (
+HISTORICAL_PATH_SHAPE_DIGEST = (
     "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
 
@@ -440,7 +437,7 @@ def _pinned_demand_table() -> dict:
     assert payload["authentication"]["python"] == "cpython-3.12.13"
     assert (
         payload["authentication"]["authenticatedCorpusManifestCid"]
-        == DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID
+        == DEMAND_TABLE_CORPUS_MANIFEST_CID
     )
 
     enrolled = {
@@ -717,25 +714,20 @@ def test_computed_class_patterns_cross_the_authenticated_generic_base(
 
 
 def test_corpus_identity_is_checked_on_content_not_on_the_file_list() -> None:
-    """Two named axes, so a refusal says WHICH identity moved.
+    """Content identity plus a historical shape refusal twin.
 
-    The table's own ``authenticatedCorpusManifestCid`` is a sha256 over the
-    sorted relative path strings and nothing else. It reproduces from
-    filenames alone, which means it authenticates the file *list*: a tree
-    carrying these 1,421 names with every byte rewritten satisfies it. Relying
-    on it as the corpus identity is the same species as reading a version
-    string -- it answers a question nobody asked.
+    The regenerated table authenticates ordered relative paths and file bytes
+    with ``DEMAND_TABLE_CORPUS_MANIFEST_CID``. The historical sha256 shape
+    digest remains independently reproducible only to prove why path names
+    alone are insufficient corpus testimony.
 
     ``corpus_pin.aggregate_hash`` is the identity that refuses. It folds the
     distribution and version into the preimage alongside per-file path, sha256
     and size, so it also refuses the case a byte-only content hash cannot: an
     identical file set relabelled as a different pandas version.
 
-    Both are asserted, separately, and the messages name which one failed --
-    shape alone failing means the file list moved, shape passing while the
-    aggregate fails means the bytes drifted under a stable list. Fusing them
-    into one assertion would make the reader re-derive that at the moment they
-    can least afford to.
+    The independent aggregate pin also includes distribution/version labels;
+    it refuses an identical byte tree relabelled as a different distribution.
     """
     from sugar_lift_py_tests.corpus_pin import pin_corpus
 
@@ -751,11 +743,11 @@ def test_corpus_identity_is_checked_on_content_not_on_the_file_list() -> None:
     )
 
     shape = _paths_only_manifest_cid(_corpus_root())
-    assert shape == DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID, (
+    assert shape == HISTORICAL_PATH_SHAPE_DIGEST, (
         "CORPUS SHAPE DRIFT: the enrolled file LIST moved -- a truncated "
         "enrolment, an extra vendored file, or a rename.\n"
         f"  observed shape cid:  {shape}\n"
-        f"  enrolled shape cid:  {DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID}"
+        f"  enrolled shape cid:  {HISTORICAL_PATH_SHAPE_DIGEST}"
     )
 
 
