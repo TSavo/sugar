@@ -53,11 +53,36 @@ def matches_raise_effect(effect, expected) -> "MessageVerdict":
             effect.raised_value, owner=owner, role="raised exception"
         )
     if handler_term is None or raised_term is None:
+        # THIS REFUSAL IS CORRECT OUTPUT, NOT OWED WORK.
+        #
+        # The retained atom is `adt.is_python_type(raised, handler)`, and
+        # `raised` is the raised VALUE. An operand that cannot produce a value
+        # term has nothing to state that predicate over, so there is no
+        # question to retain and nothing to construct.
+        #
+        # A SOURCE COORDINATE IS NOT ADMISSIBLE AS THE SUBJECT. The effect
+        # carries an `occurrence` (`file:line:col`) and it is tempting to hand
+        # that over as the raised term, because it is authenticated and
+        # deterministic and it makes the refusal disappear. It designates WHERE
+        # THE RAISE IS WRITTEN, not WHAT WAS RAISED, so
+        # `adt.is_python_type(<coordinate>, Handler)` is a predicate about the
+        # wrong kind of thing. Emitting it would fabricate a fact about a
+        # runtime type nobody testified to -- the same shape as weakening a
+        # carried value under a guard: giving a construct a semantics it does
+        # not have. The earlier `fix:` line here read "resolve both exception
+        # operands through their lexical coordinates", which invited exactly
+        # that repair; it cost one owner three rounds and nearly landed.
         raise SugarNotWritten(
             owner="matches_raise_effect",
             observed="handler or raised exception has no term to state the test over",
-            requested="an authenticated identity or an emittable operand term",
-            fix="resolve both exception operands through their lexical coordinates",
+            requested="an authenticated exception identity or an emittable VALUE term",
+            fix=(
+                "authenticate the operand's exception identity, or give it a "
+                "value term; a source coordinate designates the raise SITE, "
+                "not the raised value, and is not admissible as the subject. "
+                "Where neither exists this refusal is correct output and the "
+                "row is accounted semantics, not owed work"
+            ),
         )
     return MatchRetained(atomic("adt.is_python_type", [raised_term, handler_term]))
 
@@ -191,6 +216,4 @@ def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
             MatchDecided(re.search(ground_pattern, ground_message) is not None)
         )
 
-    return _conjoin(
-        MatchRetained(atomic("py.re_search", [pattern_term, message_term]))
-    )
+    return _conjoin(MatchRetained(atomic("py.re_search", [pattern_term, message_term])))
