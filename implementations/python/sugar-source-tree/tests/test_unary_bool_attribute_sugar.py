@@ -30,9 +30,22 @@ def _invs(src):
 # ---- UnaryOp -----------------------------------------------------------------
 
 
-def test_unary_minus_and_invert_emit_symbolic_ops():
-    assert _post("def A(z):\n    return -z\n").args[1].name == "py.neg"
-    assert _post("def A(z):\n    return ~z\n").args[1].name == "py.invert"
+def test_undecided_unary_ops_are_named_refusals():
+    """``-z`` / ``~z`` / ``+z`` cannot invent a success face without z's type."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    for source, operator in (
+        ("def A(z):\n    return -z\n", "-"),
+        ("def A(z):\n    return ~z\n", "~"),
+        ("def A(z):\n    return +z\n", "+"),
+    ):
+        try:
+            _post(source)
+        except ConstructionPanic as panic:
+            assert panic.info.owner == "unary_operation_exception_floor"
+            assert panic.info.observed == f"SymbolicValue {operator}"
+        else:
+            raise AssertionError(f"undecided unary {operator} invented a completion")
 
 
 def test_not_is_truth_then_negate():
@@ -60,10 +73,17 @@ def test_or_disjoins_operand_truthiness():
     assert invs[0].kind == "or"
 
 
-def test_bare_operands_use_py_truthy():
-    invs = _invs("def A(a, b):\n    assert a and b\n    return a\n")
-    assert invs[0].kind == "and"
-    assert all(op.name == "py.truthy" for op in invs[0].operands)
+def test_bare_operands_refuse_undecided_truth():
+    """``a and b`` cannot invent ``py.truthy`` when operand runtime types are open."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    try:
+        _invs("def A(a, b):\n    assert a and b\n    return a\n")
+    except ConstructionPanic as panic:
+        assert panic.info.owner == "boolean_operation_exception_floor"
+        assert panic.info.observed == "SymbolicValue and"
+    else:
+        raise AssertionError("undecided BoolOp invented py.truthy")
 
 
 # ---- Attribute ---------------------------------------------------------------

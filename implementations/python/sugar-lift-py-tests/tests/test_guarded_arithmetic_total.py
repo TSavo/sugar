@@ -4,7 +4,7 @@ import pytest
 
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import atomic, ctor, make_var
+from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import Complete
 
 
@@ -37,19 +37,18 @@ def test_guarded_arithmetic_preserves_an_undecided_arm_as_a_named_refusal(
     assert raised.value.info.observed == f"SymbolicValue {operator} TermValue"
 
 
-def test_guarded_unary_minus_distributes_to_both_faces() -> None:
+def test_guarded_unary_minus_preserves_an_undecided_arm_as_a_named_refusal() -> None:
     guard = atomic("choose", [])
     value = GuardedValue(
         guard,
         SymbolicValue(make_var("left")),
         SymbolicValue(make_var("right")),
     )
-    outcome = value.unary_minus("t.py:1")
-    assert outcome.value == GuardedValue(
-        guard,
-        SymbolicValue(ctor("py.neg", [make_var("left")])),
-        SymbolicValue(ctor("py.neg", [make_var("right")])),
-    )
+    with pytest.raises(ConstructionPanic) as raised:
+        value.unary_minus("t.py:1")
+
+    assert raised.value.info.owner == "unary_operation_exception_floor"
+    assert raised.value.info.observed == "SymbolicValue -"
 
 
 def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:

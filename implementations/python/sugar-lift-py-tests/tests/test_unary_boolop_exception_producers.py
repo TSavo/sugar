@@ -119,13 +119,24 @@ def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -
     assert {(BOOLOP_SOURCE_CID, 151), (BOOLOP_SOURCE_CID, 153)} <= sites
 
 
-def test_unary_invert_unknown_operand_is_named_undecided() -> None:
+@pytest.mark.parametrize(
+    ("method", "operator"),
+    (
+        ("bitwise_invert", "~"),
+        ("unary_minus", "-"),
+        ("unary_plus", "+"),
+    ),
+)
+def test_undecided_unary_operand_is_named_refusal(method: str, operator: str) -> None:
+    """Success versus TypeError is undecidable without the operand's runtime type."""
     with pytest.raises(ConstructionPanic) as caught:
-        SymbolicValue(make_var("ser")).bitwise_invert(_Site())
+        getattr(SymbolicValue(make_var("ser")), method)(_Site())
 
-    assert caught.value.info.owner == "bitwise_invert"
-    assert caught.value.info.observed == "SymbolicValue"
-    assert "TypeError" not in str(caught.value.info)
+    info = caught.value.info
+    assert info.owner == "unary_operation_exception_floor"
+    assert info.observed == f"SymbolicValue {operator}"
+    assert "authenticated exceptional exit" in info.requested
+    assert "TypeError" not in str(info)
 
 
 def test_unary_invert_concrete_integer_truthful_twin_folds() -> None:
@@ -143,6 +154,31 @@ def test_unary_invert_concrete_float_lying_twin_has_typed_effect() -> None:
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, RaiseValue)
     assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_unary_minus_concrete_integer_truthful_twin_folds() -> None:
+    outcome = TermValue(5).unary_minus(_Site())
+    assert outcome == Complete(TermValue(-5))
+
+
+def test_unary_plus_concrete_integer_truthful_twin_folds() -> None:
+    outcome = TermValue(5).unary_plus(_Site())
+    assert outcome == Complete(TermValue(5))
+
+
+def test_undecided_not_operand_refuses_invented_truth() -> None:
+    """``not obj`` cannot invent ``py.truthy`` when ``bool(obj)`` is undecided."""
+    from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
+
+    with pytest.raises(ConstructionPanic) as caught:
+        UnaryOpSugar("Not", NameSugar("obj1", _Site()), _Site()).desugar(None)
+
+    info = caught.value.info
+    assert info.owner == "unary_operation_exception_floor"
+    assert info.observed == "SymbolicValue not"
+    assert "authenticated exceptional exit" in info.requested
+    assert "TypeError" not in str(info)
+    assert "ValueError" not in str(info)
 
 
 class _EffectSugar:
@@ -289,4 +325,60 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
         assert info.owner == "boolean_operation_exception_floor"
         assert info.observed == f"SymbolicValue {operator}"
         assert "authenticated exceptional exit" in info.requested
+        assert "ValueError" not in str(info)
+
+
+def test_pandas_unary_sites_stay_source_undecided() -> None:
+    """Truthful pandas unary raises at runtime; producer refuses without inventing.
+
+    Sites under authenticated pandas 3.0.3:
+    - ``tests/extension/base/ops.py`` ``~ser`` / ``~data`` (TypeError)
+    - ``tests/frame/test_unary.py`` ``-df`` / ``+df`` (TypeError)
+    - ``tests/generic/test_generic.py`` ``not obj1`` (ValueError)
+    - ``tests/scalar/test_na_scalar.py`` ``not NA`` (TypeError)
+    Source does not state the operand runtime type at the UnaryOp, so the
+    producer cannot mint the exception identity — only the named refusal.
+    """
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import UnaryOp
+    from sugar_source_tree.tree import SourceFile
+
+    corpus = authenticated_pandas_corpus()
+    assert corpus.manifest_cid == MANIFEST_CID
+
+    cases = (
+        ("tests/extension/base/ops.py", 258, "~"),
+        ("tests/extension/base/ops.py", 260, "~"),
+        ("tests/frame/test_unary.py", 56, "-"),
+        ("tests/frame/test_unary.py", 133, "+"),
+        ("tests/indexes/test_old_base.py", 861, "~"),
+        ("tests/scalar/timedelta/test_timedelta.py", 290, "~"),
+        ("tests/generic/test_generic.py", 156, "not"),
+        ("tests/scalar/test_na_scalar.py", 48, "not"),
+    )
+    for rel, line, operator in cases:
+        path = corpus.root / rel
+        source = path.read_text(encoding="utf-8")
+        source_cid = blake3_512_of(source.encode("utf-8"))
+        tree = SourceFile(
+            (source, str(path), source_cid),
+            construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        )
+        matches = tuple(
+            node
+            for node in tree.nodes()
+            if isinstance(node, UnaryOp) and node.line_col_span().start_line == line
+        )
+        assert len(matches) == 1, (rel, line, matches)
+        with pytest.raises(ConstructionPanic) as raised:
+            matches[0].sugar().desugar(None)
+        info = raised.value.info
+        assert info.owner == "unary_operation_exception_floor", (rel, line, info.owner)
+        assert info.observed == f"SymbolicValue {operator}", (rel, line, info.observed)
+        assert "authenticated exceptional exit" in info.requested
+        assert "TypeError" not in str(info)
         assert "ValueError" not in str(info)
