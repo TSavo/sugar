@@ -4664,6 +4664,7 @@ class With(Statement):
             ExpectsModeV1,
             SuppressesModeV1,
             RaiseEffectKindV1,
+            WarningEffectKindV1,
             NeverSuppressesDispositionV1,
             ProtocolResourceSemanticsV1,
             TotalCompletionV1,
@@ -4702,7 +4703,9 @@ class With(Statement):
             isinstance(semantics, EffectBoundarySemanticsV1)
             and semantics.schema_version == "1"
             and isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
-            and isinstance(semantics.effect_kind, RaiseEffectKindV1)
+            and isinstance(
+                semantics.effect_kind, (RaiseEffectKindV1, WarningEffectKindV1)
+            )
         )
         if not (admitted_resource or admitted_boundary):
             panic = UnsupportedContextManagerSemantics(
@@ -4713,7 +4716,10 @@ class With(Statement):
                     "authenticated CM member carries unsupported enter/exit semantics "
                     f"at {resolution.contract_cid}"
                 ),
-                requested="total Value/NeverSuppresses resource or typed Expects/Raise boundary",
+                requested=(
+                    "total Value/NeverSuppresses resource or typed "
+                    "Expects/Suppresses Raise/Warning boundary"
+                ),
                 fix="leave unsupported authenticated semantics loud; never upgrade testimony",
             )
             self.reporter.report_gap(self, panic)

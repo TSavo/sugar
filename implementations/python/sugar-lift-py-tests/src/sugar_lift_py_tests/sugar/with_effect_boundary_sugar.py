@@ -38,6 +38,7 @@ class WithEffectBoundarySugar(Sugar):
             NoMessagePatternV1,
             RaiseEffectKindV1,
             SuppressesModeV1,
+            WarningEffectKindV1,
             project_formal_selector_v1,
         )
         from sugar_lift_py_tests.effect import ExpectationNotMetEffect
@@ -56,12 +57,14 @@ class WithEffectBoundarySugar(Sugar):
         if (
             not isinstance(semantics, EffectBoundarySemanticsV1)
             or not isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
-            or not isinstance(semantics.effect_kind, RaiseEffectKindV1)
+            or not isinstance(
+                semantics.effect_kind, (RaiseEffectKindV1, WarningEffectKindV1)
+            )
         ):
             raise SugarNotWritten(
                 owner="WithEffectBoundarySugar.desugar",
                 observed="unsupported authenticated EffectBoundary mode/effect",
-                requested="EffectBoundaryV1 Expects/Raise",
+                requested="EffectBoundaryV1 Expects/Suppresses over Raise or Warning",
                 fix="keep other effect-boundary variants loud until their typed router exists",
             )
 
@@ -97,6 +100,25 @@ class WithEffectBoundarySugar(Sugar):
                     variadic_positional_actuals={},
                     variadic_keyword_actuals={},
                 )
+            if isinstance(semantics.effect_kind, WarningEffectKindV1):
+                if pattern is not None:
+                    raise SugarNotWritten(
+                        owner="WithEffectBoundarySugar.warning_observation",
+                        observed="warning boundary carries an unprojected message pattern",
+                        requested="authenticated warning message matcher",
+                        fix="keep message-bearing warning assertions loud until their matcher is constructed",
+                    )
+                routed.append(
+                    _route_completed_warning_boundary(
+                        body=tuple(self.body),
+                        ctx=ctx,
+                        manager_exit=manager_exit,
+                        expected=expected,
+                        mode=semantics.mode,
+                        site=self.site,
+                    )
+                )
+                continue
 
             body_es = promote_raise_halts(
                 reduce_block_to_exitset(self.body, ctx)
@@ -193,3 +215,117 @@ def _bind_real_actuals(signature, manager_value):
             "call actual does not fit authenticated signature"
         )
     return fixed
+
+
+def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode, site):
+    """Route authenticated warning testimony carried by a COMPLETED body face.
+
+    Warnings never become halted exits.  Their producer contributes a
+    ``WarningObservationValue`` to the completed block record.  The manager
+    consumes a matching observation; an authenticated mismatch fails an
+    Expects boundary; and missing identity/occurrence testimony stays a named
+    refusal.  In particular, an empty record is not evidence that no warning
+    occurred.
+    """
+    from sugar_lift_py_tests.context_manager_contract import ExpectsModeV1
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.warning_observation_value import (
+        WarningObservationValue,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import (
+        promote_raise_halts,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    # Python warning categories are exception classes.  The ordinary lexical
+    # class authenticator therefore owns their identity too; no warning/vendor
+    # name table is needed.
+    identity_projection = getattr(expected, "exception_type_identity", None)
+    if not callable(identity_projection):
+        raise SugarNotWritten(
+            owner="WithEffectBoundarySugar.warning_observation",
+            observed="expected warning operand has no authenticated category identity",
+            requested="source-authenticated warning category operand",
+            fix="keep the completed observation undecided; never match category spelling",
+        )
+    expected_identity = identity_projection()
+    body_es = promote_raise_halts(reduce_block_to_exitset(body, ctx)).guarded(
+        manager_exit.guard
+    )
+    exits = []
+    for face in body_es.exits:
+        if isinstance(face, Halted):
+            exits.append(face)
+            continue
+        entries = getattr(face.value, "entries", None)
+        if not isinstance(entries, tuple):
+            raise SugarNotWritten(
+                owner="WithEffectBoundarySugar.warning_observation",
+                observed=f"completed face carries {type(face.value).__name__}, not a reduced block record",
+                requested="completed reduced block carrying authenticated warning observations",
+                fix="preserve the completed face until its record is constructed",
+            )
+        observations = tuple(
+            (index, entry)
+            for index, entry in enumerate(entries)
+            if isinstance(entry, WarningObservationValue)
+        )
+        unauthenticated = tuple(
+            entry
+            for _, entry in observations
+            if entry.effect.category_identity is None
+        )
+        if unauthenticated or not observations:
+            unresolved = any(
+                isinstance(entry, CallSiteValue) for entry in entries
+            )
+            raise SugarNotWritten(
+                owner="WithEffectBoundarySugar.warning_observation",
+                observed=(
+                    "completed face has unresolved warning producers"
+                    if unresolved or not observations
+                    else "warning occurrence has no authenticated category identity"
+                ),
+                requested="one source-authenticated WarningObservationValue on the completed face",
+                fix="construct producer-owned warning testimony; never infer absence or category from spelling",
+            )
+        match = next(
+            (
+                pair
+                for pair in observations
+                if pair[1].effect.category_identity == expected_identity
+            ),
+            None,
+        )
+        if match is not None and len(observations) == 1:
+            index, _ = match
+            remaining = entries[:index] + entries[index + 1 :]
+            exits.append(
+                Completed(
+                    face.guard,
+                    replace(face.value, entries=remaining),
+                    face.faces,
+                    face.pending_contracts,
+                )
+            )
+            continue
+        if isinstance(mode, ExpectsModeV1):
+            exits.append(
+                Halted(
+                    face.guard,
+                    ExpectationNotMetEffect("warning", site),
+                    face.value,
+                    face.faces,
+                    face.pending_contracts,
+                )
+            )
+        else:
+            exits.append(face)
+    return ExitSet(tuple(exits)).normalize()
