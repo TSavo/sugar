@@ -51,11 +51,16 @@ authenticated at execution and artifact boundaries.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
+from sugar_lift_python_source.canonical import (
+    blake3_512_of,
+    canonical_json_bytes,
+    cid_of_json,
+)
 
 # Bump when the demand table's SHAPE changes -- a new row kind, a changed
 # field, a different join. A consumer holding an artifact built under an older
@@ -102,13 +107,30 @@ class DemandTableIdentityV1:
         }
 
 
-def corpus_manifest_cid(
-    root: pathlib.Path, paths: Iterable[pathlib.Path]
-) -> tuple[str, int]:
-    """Content-address a corpus by its RELATIVE paths and file bytes.
+@dataclass(frozen=True)
+class CorpusManifestDigestAliasesV1:
+    """Digest aliases over one canonical path-plus-content manifest."""
 
-    Sorted by relative path so enumeration order cannot enter the address, and
-    relative so the same corpus at a different location is the same corpus.
+    sha256: str
+    blake3_512: str
+    file_count: int
+
+    def accepts(self, digest: str) -> bool:
+        return digest in (self.sha256, self.blake3_512)
+
+
+class CorpusManifestIdentityMismatch(ValueError):
+    """A presented digest is not an alias of the canonical corpus manifest."""
+
+
+def corpus_manifest_digest_aliases(
+    root: pathlib.Path, paths: Iterable[pathlib.Path]
+) -> CorpusManifestDigestAliasesV1:
+    """Hash one ordered relative-path/content-CID manifest two ways.
+
+    Algorithm choice does not create a second corpus identity. Both aliases
+    cover the exact same canonical bytes; ordering, path membership, file
+    count, or file bytes therefore move both together.
     """
     rows = []
     for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):
@@ -118,7 +140,36 @@ def corpus_manifest_cid(
                 "contentCid": blake3_512_of(path.read_bytes()),
             }
         )
-    return cid_of_json({"kind": "corpus-manifest", "files": rows}), len(rows)
+    manifest = canonical_json_bytes({"kind": "corpus-manifest", "files": rows})
+    return CorpusManifestDigestAliasesV1(
+        sha256="sha256:" + hashlib.sha256(manifest).hexdigest(),
+        blake3_512=blake3_512_of(manifest),
+        file_count=len(rows),
+    )
+
+
+def require_corpus_manifest_alias(
+    aliases: CorpusManifestDigestAliasesV1, presented: str
+) -> None:
+    """Refuse artifact consumption under a digest from another preimage."""
+    if aliases.accepts(presented):
+        return
+    raise CorpusManifestIdentityMismatch(
+        f"{presented} is not an alias of canonical corpus manifest "
+        f"({aliases.sha256}, {aliases.blake3_512}); stop artifact consumption"
+    )
+
+
+def corpus_manifest_cid(
+    root: pathlib.Path, paths: Iterable[pathlib.Path]
+) -> tuple[str, int]:
+    """Content-address a corpus by its RELATIVE paths and file bytes.
+
+    Sorted by relative path so enumeration order cannot enter the address, and
+    relative so the same corpus at a different location is the same corpus.
+    """
+    aliases = corpus_manifest_digest_aliases(root, paths)
+    return aliases.blake3_512, aliases.file_count
 
 
 def producer_source_cid(source_root: pathlib.Path) -> str:
