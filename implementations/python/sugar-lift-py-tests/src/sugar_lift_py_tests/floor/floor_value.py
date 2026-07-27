@@ -755,12 +755,10 @@ class FloorValue:
         if not denotes() or decided():
             return None
 
-        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_source_tree.panic import SugarNotWritten
 
-        construction_panic_gap(
+        raise SugarNotWritten(
             owner="unary_operation_exception_floor",
-            blame=site,
             observed=f"{type(self).__name__} {operator}",
             requested=(
                 "source-visible native unary-operator testimony selecting "
@@ -772,8 +770,6 @@ class FloorValue:
                 "from source, or retain this named refusal without inventing an "
                 "exception identity"
             ),
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
         )
 
     def unary_minus(self, site):
