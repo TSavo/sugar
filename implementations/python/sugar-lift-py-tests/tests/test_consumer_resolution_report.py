@@ -17,7 +17,13 @@ from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
 
 
 STAMP = "blake3-512_" + "b" * 128
-MANIFEST = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+MANIFEST = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604ed"
+    "a1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+HISTORICAL_PATH_SHAPE_DIGEST = (
+    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+)
 
 
 def _matching_testimony():
@@ -123,3 +129,22 @@ def test_consumer_refuses_unverified_artifact_instead_of_printing_a_hit():
             request, replace(binary, artifact_verified=False), demand, launcher
         )
     assert caught.value.coordinate == "artifact verification"
+
+
+def test_historical_path_shape_digest_is_a_named_corpus_identity_miss():
+    """Even unanimous testimony cannot upgrade a non-corpus preimage."""
+    request, binary, demand, launcher = _matching_testimony()
+    request = replace(request, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST)
+    demand = replace(
+        demand,
+        identity=replace(
+            demand.identity, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST
+        ),
+    )
+    launcher = replace(
+        launcher, corpus_manifest_cid=HISTORICAL_PATH_SHAPE_DIGEST
+    )
+    with pytest.raises(ConsumerResolutionMiss) as caught:
+        resolve_consumer_hit(request, binary, demand, launcher)
+    assert caught.value.coordinate == "corpus identity"
+    assert HISTORICAL_PATH_SHAPE_DIGEST in str(caught.value)
