@@ -1181,7 +1181,7 @@ def _installed_pytest_boundary(tmp_path, manager_call: str, body: str):
     return tree, context
 
 
-def test_installed_pytest_raises_truthful_route_keeps_missing_derivation_typed(
+def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     tmp_path,
 ):
     from sugar_source_tree.panic import (
@@ -1189,20 +1189,24 @@ def test_installed_pytest_raises_truthful_route_keeps_missing_derivation_typed(
         WithConstructionGapKind,
     )
 
-    with pytest.raises(WithConstructionGap) as caught:
-        _installed_pytest_boundary(
-            tmp_path,
-            'pytest.raises(ValueError, match="boom")',
-            'raise ValueError("boom")',
-        )
+    tree, context = _installed_pytest_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, match="boom")',
+        'raise ValueError("boom")',
+    )
 
-    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+    assert len(context.source_derived_contract_refs) == 1
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    with pytest.raises(WithConstructionGap) as caught:
+        with_node.sugar()
+
+    assert caught.value.gap_kind is WithConstructionGapKind.ENTER_MAY_HALT
     assert (
         caught.value.coordinate.start_line,
         caught.value.coordinate.start_col,
         caught.value.coordinate.end_line,
         caught.value.coordinate.end_col,
-    ) == (295, 9, 295, 38)
+    ) == (3, 9, 3, 48)
 
 
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
@@ -1213,20 +1217,24 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
         WithConstructionGapKind,
     )
 
-    with pytest.raises(WithConstructionGap) as caught:
-        _installed_pytest_boundary(
-            tmp_path,
-            'pytest.raises(ValueError, int, "bad")',
-            "pass",
-        )
+    tree, context = _installed_pytest_boundary(
+        tmp_path,
+        'pytest.raises(ValueError, int, "bad")',
+        "pass",
+    )
 
-    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+    assert len(context.source_derived_contract_refs) == 1
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    with pytest.raises(WithConstructionGap) as caught:
+        with_node.sugar()
+
+    assert caught.value.gap_kind is WithConstructionGapKind.ENTER_MAY_HALT
     assert (
         caught.value.coordinate.start_line,
         caught.value.coordinate.start_col,
         caught.value.coordinate.end_line,
         caught.value.coordinate.end_col,
-    ) == (295, 9, 295, 38)
+    ) == (3, 9, 3, 46)
 
 
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):

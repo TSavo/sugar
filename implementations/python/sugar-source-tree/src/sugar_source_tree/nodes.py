@@ -4624,6 +4624,7 @@ class With(Statement):
             kind=resolution.kind,
             demand_cid=resolution.demand_cid,
             candidate_member_cids=resolution.candidate_member_cids,
+            coordinate=resolution.use_site,
             owner="With._construct_sugar",
             observed=(
                 f"authenticated preconstruction resolution gap: {resolution.kind}"

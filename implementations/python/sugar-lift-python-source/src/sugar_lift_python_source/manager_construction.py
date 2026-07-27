@@ -589,8 +589,13 @@ def construct_manager_behavior(
     except Exception as exc:
         # BindingCoordinateRefSugar and other SugarNotWritten arms are Exception,
         # not ConstructionPanic — still stage-keyed residuals for derivation.
-        from sugar_source_tree.panic import SugarNotWritten
+        from sugar_source_tree.panic import (
+            OpaqueSourceCallResolutionGap,
+            SugarNotWritten,
+        )
 
+        if isinstance(exc, OpaqueSourceCallResolutionGap):
+            raise
         if isinstance(exc, SugarNotWritten):
             owner = getattr(exc, "owner", None) or type(exc).__name__
             observed = getattr(exc, "observed", None) or str(exc)

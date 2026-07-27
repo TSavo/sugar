@@ -88,6 +88,12 @@ class SugarNotWritten(SourceTreePanic):
     _LABEL = "SUGAR NOT WRITTEN"
 
 
+class OpaqueSourceCallResolutionGap(SugarNotWritten):
+    """A reached source-call obligation whose target stayed unresolved."""
+
+    _LABEL = "OPAQUE SOURCE CALL RESOLUTION GAP"
+
+
 class RuntimeSelectedContextManager(SugarNotWritten):
     """A `with` whose manager has no authenticated exit-suppression contract.
 
