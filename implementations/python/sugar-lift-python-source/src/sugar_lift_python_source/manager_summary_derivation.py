@@ -573,6 +573,7 @@ def populate_source_derived_resource_refs(
     distribution_index=None,
     artifact_graph_cache: dict | None = None,
     session=None,
+    selected_coordinates: frozenset | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows.
 
@@ -612,6 +613,12 @@ def populate_source_derived_resource_refs(
         module_identities={},
     )
     uses = _projected_manager_call_uses(source_file)
+    if selected_coordinates is not None:
+        uses = {
+            key: value
+            for key, value in uses.items()
+            if value[0] in selected_coordinates
+        }
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     for receipt in receipts:
         raw_site = receipt.use["useSite"]
