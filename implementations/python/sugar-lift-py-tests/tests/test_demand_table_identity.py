@@ -23,10 +23,7 @@ import shutil
 
 import pytest
 
-from sugar_lift_py_tests.demand_table_identity import (
-    DEMAND_TABLE_SCHEMA_VERSION,
-    demand_table_identity,
-)
+from sugar_lift_py_tests.demand_table_identity import demand_table_identity
 
 _SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src"
 
@@ -74,11 +71,16 @@ _FILES = {
 }
 
 
-def _identity(root: pathlib.Path, **kwargs):
+def _identity(
+    root: pathlib.Path,
+    *,
+    source_root: pathlib.Path = _SOURCE_ROOT,
+    **kwargs,
+):
     return demand_table_identity(
         root,
         sorted(root.rglob("*.py")),
-        source_root=_SOURCE_ROOT,
+        source_root=source_root,
         **kwargs,
     )
 
@@ -151,18 +153,32 @@ def test_a_changed_resolution_config_changes_the_key(tmp_path) -> None:
     assert _identity(root).content_key != _identity(root, config={"k": "v"}).content_key
 
 
-def test_the_schema_version_is_in_the_preimage(tmp_path) -> None:
+def test_a_changed_schema_version_changes_the_key(tmp_path, monkeypatch) -> None:
     """A consumer holding an older-schema artifact must MISS, not decode it."""
+    import sugar_lift_py_tests.demand_table_identity as module
+
     root = _corpus(tmp_path / "corpus", _FILES)
+    before = _identity(root).content_key
 
-    assert _identity(root).preimage()["schemaVersion"] == DEMAND_TABLE_SCHEMA_VERSION
+    monkeypatch.setattr(module, "DEMAND_TABLE_SCHEMA_VERSION", "python-demand-table/v2")
+
+    assert _identity(root).content_key != before
 
 
-def test_the_producer_source_is_in_the_preimage(tmp_path) -> None:
+def test_a_changed_producer_source_changes_the_key(tmp_path) -> None:
     """A change to the code that builds the table changes the table."""
     root = _corpus(tmp_path / "corpus", _FILES)
+    producer = tmp_path / "producer"
+    shutil.copytree(_SOURCE_ROOT, producer)
+    before = _identity(root, source_root=producer).content_key
 
-    assert _identity(root).preimage()["producerSourceCid"]
+    lift_rpc = producer / "sugar_lift_py_tests" / "lift_rpc.py"
+    lift_rpc.write_text(
+        lift_rpc.read_text(encoding="utf-8") + "\n# producer source mutation\n",
+        encoding="utf-8",
+    )
+
+    assert _identity(root, source_root=producer).content_key != before
 
 
 # -- the key is reproducible from its preimage alone --------------------------
