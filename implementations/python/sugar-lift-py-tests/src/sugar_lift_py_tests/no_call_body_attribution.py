@@ -5,6 +5,10 @@ module owns the closed accounting algebra: every enrolled body is attributed
 to exactly one producer family and exactly one of three outcomes.  A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.  A
 ``ConstructionPanic`` remains a separate loud axis.
+
+The producer family is the body's root expression. Calls used to construct an
+Attribute receiver remain children of that Attribute producer; they do not
+reclassify the raising operation as a Call.
 """
 
 from __future__ import annotations
@@ -324,6 +328,11 @@ def discover_no_call_body_probes(
     Every resolved context-manager demand participates.  The native body root
     selects the producer family; no manager or vendor spelling selects it or
     grants semantic behavior to a producer.
+
+    A resolved ``context-manager-demand`` row is authenticated preconstruction
+    testimony from the shared table. ``targetSymbol`` is deliberately ignored:
+    it grants neither population membership nor semantic behavior to a manager
+    or producer.
     """
     import ast
 
@@ -499,7 +508,9 @@ def require_expected_denominators(
 ) -> tuple[BodyProbe, ...]:
     """Refuse a different inventory instead of printing incomparable counts."""
     materialized = tuple(probes)
-    selected_families = tuple(ProducerFamily) if families is None else tuple(families)
+    selected_families = tuple(
+        family for family in ProducerFamily if families is None or family in families
+    )
     observed = {
         family: sum(probe.family is family for probe in materialized)
         for family in selected_families

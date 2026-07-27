@@ -249,9 +249,7 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
     package.mkdir()
     sources = {
         "attribute_body.py": (
-            "def f(series):\n"
-            "    with boundary(AttributeError):\n"
-            "        series.bad\n"
+            "def f():\n    with boundary(AttributeError):\n        factory().bad\n"
         ),
         "subscript_body.py": (
             "def g(value):\n    with boundary(IndexError):\n        value[2]\n"
@@ -275,7 +273,11 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
             {
                 "kind": "context-manager-demand",
                 "gapKind": None,
-                "targetSymbol": "pytest.raises",
+                "targetSymbol": (
+                    "authenticated.boundary"
+                    if filename == "attribute_body.py"
+                    else "authenticated.resource"
+                ),
                 "useSite": {
                     "sourceCid": source_cid,
                     "startLine": span.start_line,

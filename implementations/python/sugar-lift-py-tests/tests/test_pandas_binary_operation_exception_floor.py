@@ -89,6 +89,20 @@ def _binop_at(source: str, path: Path, *, line: int, kind: str):
     return matches[0]
 
 
+def _assert_named_refusal(node, *, owner: str, observed_contains: str) -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten) as raised:
+        node.sugar().desugar(None)
+    refusal = raised.value
+    assert refusal.owner == owner
+    assert observed_contains in refusal.observed
+    assert "AttributeError" not in refusal.observed
+    assert "AttributeError" not in refusal.requested
+    assert "RuntimeEffect" not in refusal.observed
+    assert "RuntimeEffect" not in refusal.requested
+
+
 def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> None:
     """Truthful/lying runtime twins cannot license invented source testimony.
 
@@ -114,14 +128,11 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
     assert (series & 0).tolist() == [0, 0, 0, 0]
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
-    _assert_named_panic(
+    _assert_named_refusal(
         _line_96_bitand(truthful, path),
         owner="SymbolicValue.attribute",
-        observed=(
+        observed_contains=(
             "undecided receiver runtime type or member semantics: SymbolicValue.nan"
-        ),
-        requested_contains=(
-            "source-authenticated attribute success or exceptional exit"
         ),
     )
     _assert_named_panic(
