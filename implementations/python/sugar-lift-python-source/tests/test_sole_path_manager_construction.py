@@ -166,14 +166,14 @@ def test_free_name_call_stays_typed_loud(tmp_path):
         tmp_path, "def make_guard(expected):\n    return missing_helper(expected)\n"
     )
 
-    result = construct_manager_behavior(
-        resolved, graph=graph, actuals=(actual,), call_site=call_site
-    )
+    from sugar_source_tree.panic import SugarNotWritten
 
-    assert isinstance(result, ManagerConstructionGapV1)
-    assert result.kind == "call-target-source-absent"
-    assert ":" not in result.kind
-    assert result.detail == "missing_helper"
+    with pytest.raises(
+        SugarNotWritten, match="call-target-source-absent:missing_helper"
+    ):
+        construct_manager_behavior(
+            resolved, graph=graph, actuals=(actual,), call_site=call_site
+        )
 
 
 def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
@@ -202,6 +202,7 @@ def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
     assert obligation.coordinate == coordinate
     assert obligation.target_name == "missing_helper"
     assert obligation.resolved_object_cid == resolved.cid
+    assert obligation.resolution_kind == "call-target-source-absent"
 
 
 def test_source_call_coordinate_rejects_conflicting_testimony():
@@ -1196,6 +1197,12 @@ def test_installed_pytest_raises_truthful_route_keeps_missing_derivation_typed(
         )
 
     assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+    assert (
+        caught.value.coordinate.start_line,
+        caught.value.coordinate.start_col,
+        caught.value.coordinate.end_line,
+        caught.value.coordinate.end_col,
+    ) == (295, 9, 295, 38)
 
 
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
@@ -1214,6 +1221,12 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
         )
 
     assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+    assert (
+        caught.value.coordinate.start_line,
+        caught.value.coordinate.start_col,
+        caught.value.coordinate.end_line,
+        caught.value.coordinate.end_col,
+    ) == (295, 9, 295, 38)
 
 
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):

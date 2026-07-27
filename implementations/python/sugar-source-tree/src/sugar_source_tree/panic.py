@@ -199,6 +199,7 @@ class WithConstructionGap(SugarNotWritten):
         demand_cid: str | None = None,
         candidate_member_cids: tuple[str, ...] = (),
         member_cid: str | None = None,
+        coordinate: object | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -207,6 +208,7 @@ class WithConstructionGap(SugarNotWritten):
         self.demand_cid = demand_cid
         self.candidate_member_cids = candidate_member_cids
         self.member_cid = member_cid
+        self.coordinate = coordinate
 
 
 class ContextManagerResolutionConstructionGap(WithConstructionGap):

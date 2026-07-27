@@ -4601,6 +4601,7 @@ class With(Statement):
 
             panic = WithConstructionGap(
                 gap_kind=WithConstructionGapKind.NO_DERIVED_CONTRACT,
+                coordinate=coordinate,
                 owner="With._construct_sugar",
                 observed=(
                     "no context-manager derivation for source coordinate "
