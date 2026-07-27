@@ -156,9 +156,7 @@ def test_written_none_pattern_consumes_without_a_regex_obligation():
     """The helper's explicit ``match=None`` reaches the native None floor."""
     from sugar_lift_py_tests.floor import NoneValue, StringValue
 
-    body = ExitSet(
-        (_raise("ValueError", "written-none", message=StringValue("boom")),)
-    )
+    body = ExitSet((_raise("ValueError", "written-none", message=StringValue("boom")),))
 
     routed = _route(body, pattern=NoneValue())
 
@@ -171,14 +169,87 @@ def test_string_none_pattern_does_not_impersonate_written_none():
     """Lying twin: the string ``"None"`` remains an actual regex constraint."""
     from sugar_lift_py_tests.floor import StringValue
 
-    body = ExitSet(
-        (_raise("ValueError", "string-none", message=StringValue("boom")),)
-    )
+    body = ExitSet((_raise("ValueError", "string-none", message=StringValue("boom")),))
 
     routed = _route(body, pattern=StringValue("None"))
 
     assert len(routed.exits) == 1
     assert isinstance(routed.exits[0], Halted)
+
+
+def test_empty_pattern_decides_only_for_the_empty_message():
+    """Corpus shape: ``match="^$"`` at pandas json normalize line 175.
+
+    The boundary consumes a matching empty-message raise and leaves a
+    nonempty message halted -- never treats written ``^$`` as absence.
+    """
+    from sugar_lift_py_tests.floor import StringValue
+
+    empty_body = ExitSet((_raise("ValueError", "empty-msg", message=StringValue("")),))
+    nonempty_body = ExitSet(
+        (_raise("ValueError", "nonempty-msg", message=StringValue("boom")),)
+    )
+    pattern = StringValue("^$")
+
+    empty_routed = _route(empty_body, pattern=pattern)
+    nonempty_routed = _route(nonempty_body, pattern=pattern)
+
+    assert len(empty_routed.exits) == 1
+    assert isinstance(empty_routed.exits[0], Completed)
+    assert _marker(empty_routed.exits[0]) == "empty-msg"
+    assert len(nonempty_routed.exits) == 1
+    assert isinstance(nonempty_routed.exits[0], Halted)
+    assert _marker(nonempty_routed.exits[0]) == "nonempty-msg"
+
+
+def test_ordinary_pattern_decides_ground_re_search():
+    """Corpus shape: ``match="whoops"`` at pandas register_accessor line 103."""
+    from sugar_lift_py_tests.floor import StringValue
+
+    matching = ExitSet(
+        (_raise("ValueError", "ordinary-hit", message=StringValue("whoops")),)
+    )
+    missing = ExitSet(
+        (_raise("ValueError", "ordinary-miss", message=StringValue("other")),)
+    )
+    pattern = StringValue("whoops")
+
+    assert isinstance(_route(matching, pattern=pattern).exits[0], Completed)
+    assert isinstance(_route(missing, pattern=pattern).exits[0], Halted)
+
+
+def test_accumulated_alternation_retains_re_search_on_the_boundary():
+    """Corpus shape: ``msg = "|".join(msgs)`` at pandas indexing line 108/111.
+
+    A join-built alternation is a constructed call-site value. The boundary
+    retains ``py.re_search`` over both faces rather than inventing a decision.
+    """
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    pattern = CallSiteValue(
+        "join",
+        (StringValue("|"), SymbolicValue(make_var("msgs"))),
+        (),
+        ctor("call:join", []),
+        None,
+    )
+    body = ExitSet(
+        (
+            _raise(
+                "ValueError",
+                "accum-open",
+                message=StringValue("positional indexers are out-of-bounds"),
+            ),
+        )
+    )
+
+    routed = _route(body, pattern=pattern)
+
+    assert len(routed.exits) == 2
+    assert {type(face).__name__ for face in routed.exits} == {"Completed", "Halted"}
+    assert all("py.re_search" in str(face.guard) for face in routed.exits)
 
 
 @pytest.mark.parametrize("exception_name", ["ValueError", "TypeError"])

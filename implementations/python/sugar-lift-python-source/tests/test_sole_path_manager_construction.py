@@ -1572,7 +1572,12 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
         with_node.sugar()
 
     assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    assert "Try.sugar:Try at _pytest/raises.py:" in caught.value.observed
+    # Soft-Try for re.compile is past; the live named floor is the f-string
+    # binary pair inside an inherited RaisesExc method body (BinOp-owned).
+    assert (
+        "binary_operation_exception_floor:SymbolicValue + CallSiteValue"
+        in caught.value.observed
+    )
     assert "ExitSet with 3 arms" not in caught.value.observed
     assert (
         caught.value.coordinate.start_line,
@@ -1602,7 +1607,10 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
         with_node.sugar()
 
     assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    assert "Try.sugar:Try at _pytest/raises.py:" in caught.value.observed
+    assert (
+        "binary_operation_exception_floor:SymbolicValue + CallSiteValue"
+        in caught.value.observed
+    )
     assert "ExitSet with 4 arms" not in caught.value.observed
     assert (
         caught.value.coordinate.start_line,
@@ -1768,9 +1776,7 @@ def test_installed_plain_expected_halt_completes(tmp_path):
     """TRUTHFUL: the expected native halt is the assertion's passing face."""
     from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
 
-    outcome = _installed_plain_expected_halt(
-        tmp_path, "raise ValueError('expected')"
-    )
+    outcome = _installed_plain_expected_halt(tmp_path, "raise ValueError('expected')")
     exits = outcome_to_exitset(outcome).exits
     assert len(exits) == 1
     assert isinstance(exits[0], Completed), exits
@@ -2260,9 +2266,7 @@ def _route_boundary_with_binding(
     prefix: str = "",
     manager: str = "arbitrary.boundary(ValueError)",
 ):
-    distribution = _distribution(
-        tmp_path, implementation, exported="boundary"
-    )
+    distribution = _distribution(tmp_path, implementation, exported="boundary")
     consumer = "import arbitrary\ndef use_boundary():\n"
     if prefix:
         consumer += textwrap.indent(textwrap.dedent(prefix), "    ")

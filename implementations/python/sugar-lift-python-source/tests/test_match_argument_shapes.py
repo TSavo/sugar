@@ -618,14 +618,222 @@ def test_construction_names_value_call_target_at_the_opaque_coordinate() -> None
     assert _CALL_TARGET_GAP_PRECEDENCE.index("value-call-target") == 1
 
 
-def test_name_pattern_reaches_authenticated_base_try_gap() -> None:
-    """The line-16 manager now reaches its generic base, then stays loud.
+#: The three ``match=`` *pattern* shapes -- what the predicate *means*, once a
+#: value is in hand. Distinct from the four argument *expression* shapes above.
+#:
+#: ``empty-pattern``
+#:     ``match="^$"`` -- written empty-message regex. Ground
+#:     ``StringValue("^$")`` decides true only for the empty message.
+#: ``ordinary-pattern``
+#:     ``match="whoops"`` -- an ordinary ground string. ``re.search`` settles
+#:     at lift against a ground message.
+#: ``accumulated-alternation``
+#:     ``msg = "|".join(msgs)`` bound into ``match=msg``. The join is a
+#:     constructed ``CallSiteValue``; the message half leaves as
+#:     ``MatchRetained(py.re_search(...))``, never as a false predicate.
+@dataclass(frozen=True)
+class MatchPatternSite:
+    """One enrolled pattern-semantic shape with a concrete corpus coordinate."""
+
+    shape: str
+    relative_path: str
+    line: int
+    expression: str
+    file_sha256: str
+    #: How the pattern value is obtained from the enrolled file.
+    construction: str
+    #: Authoritative message-predicate disposition for a ground raise.
+    disposition: str
+
+
+ENROLLED_PATTERN_SITES: tuple[MatchPatternSite, ...] = (
+    MatchPatternSite(
+        shape="empty-pattern",
+        relative_path="tests/io/json/test_normalize.py",
+        line=175,
+        expression='"^$"',
+        file_sha256="d8fe146f21dfe51e39b21aa233cdf416e5337efede0938d2930b783dd6a89909",
+        construction="literal-string-value",
+        disposition="match-decided",
+    ),
+    MatchPatternSite(
+        shape="ordinary-pattern",
+        relative_path="tests/test_register_accessor.py",
+        line=103,
+        expression='"whoops"',
+        file_sha256="4d2599448c6b329af3822dbc2295fafe142d9ce84e49821c435d9b1c11fea793",
+        construction="literal-string-value",
+        disposition="match-decided",
+    ),
+    MatchPatternSite(
+        shape="accumulated-alternation",
+        relative_path="tests/indexing/test_indexing.py",
+        line=111,
+        expression="msg",
+        file_sha256="00d2e0ab8b75c16942df2c6cf7b3fc0a0aec02dfe39792d78b5c83d8f973e409",
+        construction="join-call-site-value",
+        disposition="match-retained",
+    ),
+)
+
+#: Binding site for the accumulated-alternation pattern: ``msg = "|".join(msgs)``.
+ACCUMULATED_ALTERNATION_BINDING_LINE = 108
+
+#: First named gap on the manager-construction path for enrolled match=
+#: managers. Soft-Try for ``re.compile`` is past; the live floor is the
+#: f-string binary pair inside an inherited method body. Named, not mere
+#: refusal -- BinOp owns the pair, Match owns the pattern half above.
+MANAGER_FORCE_FLOOR_DETAIL = (
+    "binary_operation_exception_floor:SymbolicValue + CallSiteValue"
+)
+
+
+def _pattern_value_for_site(site: MatchPatternSite):
+    """Construct the enrolled pattern value from the real corpus coordinate.
+
+    Empty and ordinary patterns desugar the ``match=`` keyword itself. The
+    accumulated alternation desugars the binding that produces ``msg`` -- the
+    keyword is a bare name, and the join that builds the alternation is the
+    shape under test.
+    """
+    from sugar_source_tree.nodes import Assign
+
+    path = _corpus_root() / site.relative_path
+    source_file = _source_file(path)
+    if site.shape == "accumulated-alternation":
+        binding = next(
+            node
+            for node in source_file.nodes()
+            if isinstance(node, Assign)
+            and node.line_col_span().start_line == ACCUMULATED_ALTERNATION_BINDING_LINE
+            and "join" in node.segment()
+        )
+        outcome = binding.value.sugar().desugar()
+    else:
+        argument = _match_argument(_raises_call_on_line(source_file, site.line))
+        outcome = argument.sugar().desugar()
+    assert type(outcome).__name__ == "Complete", (
+        f"{site.shape} at {site.relative_path}:{site.line} did not complete: "
+        f"{outcome!r}"
+    )
+    return outcome.value
+
+
+def _raise_effect_with_message(message: str):
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import ctor
+
+    identity = TermValue(1).to_term(owner="match-pattern-identity")
+    raised = CallSiteValue(
+        "ValueError",
+        (StringValue(message),),
+        ("message",),
+        ctor("call:ValueError", []),
+        None,
+    )
+
+    class _Handler:
+        def exception_type_identity(self):
+            return identity
+
+    return (
+        RaiseEffect(
+            exception_name="ValueError",
+            exception_type_coordinate=identity,
+            occurrence=f"{message}@match-pattern",
+            raised_value=raised,
+        ),
+        _Handler(),
+    )
+
+
+@pytest.mark.parametrize(
+    "site",
+    ENROLLED_PATTERN_SITES,
+    ids=[site.shape for site in ENROLLED_PATTERN_SITES],
+)
+def test_enrolled_pattern_site_still_holds_its_match_argument(
+    site: MatchPatternSite,
+) -> None:
+    """Content pin: the enrolled pattern coordinate still spells this expression."""
+    path = _corpus_root() / site.relative_path
+    assert path.is_file(), f"enrolled pattern site missing: {path}"
+    observed = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert observed == site.file_sha256, (
+        f"{site.relative_path} is not the file this pattern row enrolled "
+        f"(observed {observed}, enrolled {site.file_sha256})"
+    )
+    argument = _match_argument(_raises_call_on_line(_source_file(path), site.line))
+    assert argument.segment().strip() == site.expression
+
+
+@pytest.mark.parametrize(
+    "site",
+    ENROLLED_PATTERN_SITES,
+    ids=[site.shape for site in ENROLLED_PATTERN_SITES],
+)
+def test_enrolled_pattern_constructs_authoritative_message_verdict(
+    site: MatchPatternSite,
+) -> None:
+    """Each pattern shape produces a named verdict -- never mere silence.
+
+    Before this tooth, empty / ordinary / accumulated were only measured as
+    manager force-floor refusals. The pattern half is independent of that
+    floor: the real argument constructs a value, and
+    ``raise_effect_message_verdict`` settles or retains it.
+    """
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
+        MatchRetained,
+        raise_effect_message_verdict,
+    )
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+
+    pattern = _pattern_value_for_site(site)
+    effect, expected = _raise_effect_with_message("whoops")
+
+    if site.shape == "empty-pattern":
+        assert isinstance(pattern, StringValue) and pattern.value == "^$"
+        empty_effect, _ = _raise_effect_with_message("")
+        assert raise_effect_message_verdict(
+            empty_effect, expected, pattern
+        ) == MatchDecided(True)
+        assert raise_effect_message_verdict(effect, expected, pattern) == MatchDecided(
+            False
+        )
+        return
+
+    if site.shape == "ordinary-pattern":
+        assert isinstance(pattern, StringValue) and pattern.value == "whoops"
+        assert raise_effect_message_verdict(effect, expected, pattern) == MatchDecided(
+            True
+        )
+        other, _ = _raise_effect_with_message("other")
+        assert raise_effect_message_verdict(other, expected, pattern) == MatchDecided(
+            False
+        )
+        return
+
+    assert site.shape == "accumulated-alternation"
+    assert isinstance(pattern, CallSiteValue)
+    assert pattern.target_name == "join"
+    verdict = raise_effect_message_verdict(effect, expected, pattern)
+    assert isinstance(verdict, MatchRetained)
+    assert verdict.obligation.name == "py.re_search"
+
+
+def test_name_pattern_reaches_authenticated_base_force_floor() -> None:
+    """The line-16 manager crosses the generic base, then names the live floor.
 
     ``RaisesExc(AbstractRaises[T])`` inherits its initializer from a local,
-    source-authenticated generic base.  Construction must cross that edge and
-    name the first unsupported statement in the inherited body.  It must not
-    keep reporting the earlier synthetic ``ExitSet with 3 arms`` manager-face
-    gap, and it must not assume the regex-compilation ``try`` succeeds.
+    source-authenticated generic base. Soft-Try for ``re.compile`` is past;
+    construction now names the f-string binary pair inside an inherited
+    method body. It must not regress to the synthetic ``ExitSet with 3 arms``
+    manager-face gap.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
@@ -655,29 +863,23 @@ def test_name_pattern_reaches_authenticated_base_try_gap() -> None:
     )
     assert isinstance(row, ContextManagerResolutionGapV1)
     assert row.kind == "force-floor"
-    assert row.detail.startswith("Try.sugar:")
-    assert "has no sugar written" in row.detail
+    assert row.detail == MANAGER_FORCE_FLOOR_DETAIL
     assert "ExitSet with 3 arms" not in row.detail
 
 
 @pytest.mark.parametrize(
-    ("relative_path", "line", "expression"),
-    [
-        ("tests/indexing/test_indexing.py", 111, "msg"),
-        ("tests/io/json/test_normalize.py", 175, '"^$"'),
-        ("tests/indexes/multi/test_analytics.py", 247, "msg"),
-    ],
+    "site",
+    ENROLLED_PATTERN_SITES,
+    ids=[site.shape for site in ENROLLED_PATTERN_SITES],
 )
-def test_computed_class_patterns_cross_the_authenticated_generic_base(
-    relative_path: str, line: int, expression: str
+def test_pattern_sites_manager_floor_is_named_not_synthetic(
+    site: MatchPatternSite,
 ) -> None:
-    """Four-arm constructors cross ``AbstractRaises[T]`` and stop at Try.
+    """Manager construction at each pattern site names the live binary floor.
 
-    These real sites cover an accumulated alternation plus tuple exception
-    classes, a parametrized exception class plus the corpus's written ``^$``
-    predicate, and a source-bound constant exception class.  Their argument
-    values differ; their provider inherits through the same authenticated
-    generic base.  None may regress to the synthetic four-arm floor.
+    The pattern half above constructs authoritatively. The manager half still
+    stops at a named force-floor owned by BinOp's undecided pair law -- not at
+    a synthetic ExitSet arm count and not at an unnamed refusal.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
@@ -687,16 +889,16 @@ def test_computed_class_patterns_cross_the_authenticated_generic_base(
         populate_source_derived_resource_refs,
     )
 
-    path = _corpus_root() / relative_path
+    path = _corpus_root() / site.relative_path
     source = path.read_text(encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
     source_file = SourceFile(
         (source, str(path), blake3_512_of(source.encode("utf-8"))),
         construction_context=context,
     )
-    call = _raises_call_on_line(source_file, line)
+    call = _raises_call_on_line(source_file, site.line)
     argument = _match_argument(call)
-    assert argument.segment().strip() == expression
+    assert argument.segment().strip() == site.expression
 
     populate_source_derived_resource_refs(
         source_file, root=_corpus_root().parent, path=path
@@ -705,12 +907,13 @@ def test_computed_class_patterns_cross_the_authenticated_generic_base(
     row = next(
         result
         for coordinate, result in context.source_derived_contract_refs.items()
-        if coordinate.start_line == line
+        if coordinate.start_line == site.line
     )
     assert isinstance(row, ContextManagerResolutionGapV1)
     assert row.kind == "force-floor"
-    assert row.detail.startswith("Try.sugar:")
+    assert row.detail == MANAGER_FORCE_FLOOR_DETAIL
     assert "ExitSet with 4 arms" not in row.detail
+    assert "ExitSet with 3 arms" not in row.detail
 
 
 def test_corpus_identity_is_checked_on_content_not_on_the_file_list() -> None:
