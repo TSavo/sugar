@@ -32,13 +32,17 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.authenticated_exception_matching import (
+    MatchDecided,
     MatchRetained,
     matches_raise_effect,
     raise_effect_message_verdict,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.string_value import StringValue
+from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
+from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_source_tree.panic import SugarNotWritten
 
 OCCURRENCE = "renamed_module.py:402:19"
@@ -212,3 +216,60 @@ def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
 
     assert raised.value.owner == "authenticated_exception_matching._message_term"
     assert OCCURRENCE not in str(raised.value)
+
+
+def _effect_with_message(message: str) -> tuple[RaiseEffect, _AuthenticatedHandler]:
+    identity = TermValue(1).to_term(owner="exception identity")
+    raised_value = CallSiteValue(
+        "ValueError",
+        (StringValue(message),),
+        ("message",),
+        ctor("call:ValueError", []),
+        None,
+    )
+    return (
+        RaiseEffect(
+            exception_name="ValueError",
+            exception_type_coordinate=identity,
+            occurrence=OCCURRENCE,
+            raised_value=raised_value,
+        ),
+        _AuthenticatedHandler(identity),
+    )
+
+
+def test_written_empty_message_regex_is_not_an_absent_predicate() -> None:
+    """Truthful: ``^$`` decides true only for the ground empty message."""
+    effect, expected = _effect_with_message("")
+
+    verdict = raise_effect_message_verdict(effect, expected, StringValue("^$"))
+
+    assert verdict == MatchDecided(True)
+
+
+def test_written_empty_message_regex_rejects_a_nonempty_message() -> None:
+    """Lying twin: treating written ``^$`` as absent would consume this halt."""
+    effect, expected = _effect_with_message("boom")
+
+    constrained = raise_effect_message_verdict(
+        effect, expected, StringValue("^$")
+    )
+    absent = raise_effect_message_verdict(effect, expected, None)
+
+    assert constrained == MatchDecided(False)
+    assert absent == MatchDecided(True)
+
+
+def test_accumulated_pattern_remains_an_owed_regex_predicate() -> None:
+    """A branch-built alternation is a runtime value, not a false predicate."""
+    effect, expected = _effect_with_message("boom")
+    pattern = SymbolicValue(make_var("accumulated_pattern"))
+
+    verdict = raise_effect_message_verdict(effect, expected, pattern)
+
+    assert isinstance(verdict, MatchRetained)
+    assert verdict.obligation.name == "py.re_search"
+    assert verdict.obligation.args == (
+        make_var("accumulated_pattern"),
+        str_const("boom"),
+    )
