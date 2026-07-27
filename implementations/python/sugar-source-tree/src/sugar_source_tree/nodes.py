@@ -2029,12 +2029,38 @@ class FunctionDef(Statement):
             return None
         from sugar_lift_py_tests.generator_construction import (
             FinallyStepV1,
+            IfStepV1,
             OpaqueStepV1,
             ReturnStepV1,
             YieldStepV1,
         )
 
         steps = []
+
+        def branch_steps(body):
+            """Steps for one branch, or None if any shape is unnameable.
+
+            None keeps the whole `If` opaque. A partially-nameable branch is
+            not provable: `x = yield v` resumes to a value that reaches no
+            name, so naming the branch holding it would claim an execution we
+            cannot perform. An honest `OpaqueStepV1` is the better answer.
+            """
+            collected = []
+            for nested in body:
+                if isinstance(nested, Expr) and isinstance(nested.value, Yield):
+                    value = nested.value.value
+                    collected.append(
+                        YieldStepV1(None if value is None else value.sugar())
+                    )
+                elif isinstance(nested, Return):
+                    collected.append(
+                        ReturnStepV1(
+                            None if nested.value is None else nested.value.sugar()
+                        )
+                    )
+                else:
+                    return None
+            return tuple(collected)
 
         def append_statement(statement):
             if isinstance(statement, Expr) and isinstance(statement.value, Yield):
@@ -2058,6 +2084,31 @@ class FunctionDef(Statement):
                 steps.append(
                     FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
+            elif isinstance(statement, If) and self._owns_yield((statement,)):
+                # A BRANCH IS A TWO-FACE PARTITION and this producer owns it.
+                # Admitted only when BOTH branches are wholly nameable: a
+                # branch holding a shape the machine cannot resume keeps the
+                # whole `If` opaque and loud rather than half-named.
+                #
+                # The partition is NOT minted here. Its key needs the machine's
+                # `instance_coordinate`, which `allocate` mints AFTER these
+                # steps exist, so the mint happens at transition time and this
+                # step stays instance-agnostic -- which is what lets one
+                # generator's steps be shared by every instance over it while
+                # each mints its own partition.
+                then_body = branch_steps(statement.body)
+                else_body = branch_steps(statement.orelse)
+                if then_body is None or else_body is None:
+                    steps.append(OpaqueStepV1(statement.kind))
+                else:
+                    steps.append(
+                        IfStepV1(
+                            statement.test.sugar(),
+                            then_body,
+                            else_body,
+                            statement.fragment.seal().cid,
+                        )
+                    )
             else:
                 steps.append(OpaqueStepV1(statement.kind))
 
