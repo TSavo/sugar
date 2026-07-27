@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import MappingProxyType
 
 from sugar_lift_py_tests.context_manager_contract import (
     CallParameterV1,
     EffectBoundarySemanticsV1,
+    EnterResultContractV1,
     ExceptionInfoBindingV1,
+    ExitContractV1,
     ExpectsModeV1,
     FormalArgumentProjectionV1,
     KeywordOnlyV1,
     LiteralDefaultV1,
+    NeverSuppressesDispositionV1,
     NoDefaultV1,
     OptionalFormalArgumentProjectionV1,
     PositionalOrKeywordV1,
+    ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
     WarningEffectKindV1,
     WarningObservationBindingV1,
@@ -33,6 +38,8 @@ from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
+from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -116,6 +123,17 @@ def _ref(use_site, semantics, salt: str) -> ContextManagerContractRefV1:
         exit_testimony_cid=_cid("2"),
         import_signature=SIGNATURE,
         semantics=semantics,
+    )
+
+
+def _resource_ref(use_site, salt: str) -> ContextManagerContractRefV1:
+    return _ref(
+        use_site,
+        ProtocolResourceSemanticsV1(
+            enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
+            exit=ExitContractV1(disposition=NeverSuppressesDispositionV1()),
+        ),
+        salt,
     )
 
 
@@ -230,3 +248,172 @@ def test_reassigned_local_import_head_has_no_exception_identity(tmp_path):
         if node.kind == "Attribute" and node.attr == "ArrowNotImplementedError"
     )
     assert tree.root.unit.imported_exception_type_identity(expected) is None
+
+
+PINNED_PANDAS_ROOT = Path(
+    "/Users/tsavo/sugar-defect-drain/.venv/lib/python3.14/site-packages/pandas"
+)
+PINNED_DATETIMELIKE_CID = (
+    "blake3-512:a8a3afcef87a93452db841a304673c4bca0a52e29e5a63932580a3b638f39300"
+    "2003a95d615bfd1bec91d03c90f792b2600a007f5e5c98120c8ca56bb8b79f00"
+)
+PINNED_INVALID_ARG_CID = (
+    "blake3-512:1a2b00ed9faeb66823b5bf57d534f5ec309cdf5201045bf43b199fabd931e597f"
+    "f0d207c885c936577ec06e599da93a29f8497c97c1e03b94f3224923e997889"
+)
+def _real_resource_outer_boundary_inner():
+    root = PINNED_PANDAS_ROOT
+    if not root.is_dir():
+        import pandas
+
+        root = Path(pandas.__file__).resolve().parent
+    path = root / "tests/arrays/test_datetimelike.py"
+    source = path.read_bytes()
+    source_cid = blake3_512_of(source)
+    assert source_cid == PINNED_DATETIMELIKE_CID
+    identity = (source.decode("utf-8"), str(path), source_cid)
+    probe = SourceFile(identity)
+    function = next(
+        node
+        for node in probe.functions()
+        if node.name == "test_searchsorted_castable_strings"
+    )
+    with_nodes = {
+        node.line_col_span().start_line: node
+        for node in function.walk()
+        if node.kind == "With"
+    }
+    assert set(with_nodes) == {327, 342, 343}
+    raise_semantics = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        ExceptionInfoBindingV1(),
+    )
+    rows = {}
+    for line, node in with_nodes.items():
+        coordinate = _coordinate(node.items[0].context_expr)
+        rows[coordinate] = (
+            _resource_ref(coordinate, "o")
+            if line == 342
+            else _ref(coordinate, raise_semantics, "e")
+        )
+    context = TreeConstructionContextV1(
+        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+    )
+    built = next(
+        node
+        for node in SourceFile(identity, construction_context=context).functions()
+        if node.name == function.name
+    ).sugar()
+    outer = None
+
+    def walk(sugar):
+        nonlocal outer
+        if isinstance(sugar, WithResourceSugar) and sugar.site.line == 342:
+            outer = sugar
+            return
+        for field in ("body", "statements", "entries", "then_body", "else_body"):
+            for child in getattr(sugar, field, ()) or ():
+                walk(child)
+
+    walk(built)
+    assert outer is not None
+    inner = next(
+        child for child in outer.body if isinstance(child, WithEffectBoundarySugar)
+    )
+    return outer, inner
+
+
+def test_pinned_resource_outer_assertion_inner_uses_two_authenticated_demands():
+    """The concrete 3.0.3 site, never a historical or synthetic substitute."""
+    outer, inner = _real_resource_outer_boundary_inner()
+    assert isinstance(outer, WithResourceSugar)
+    assert isinstance(inner, WithEffectBoundarySugar)
+    assert inner in outer.body
+
+
+def test_pinned_resource_outer_order_is_not_assertion_outer():
+    """Lying: swapping the two structural roles must bite on the real site."""
+    outer, inner = _real_resource_outer_boundary_inner()
+    assert not isinstance(outer, WithEffectBoundarySugar)
+    assert not isinstance(inner, WithResourceSugar)
+
+
+def _real_assertion_outer_resource_inner():
+    root = PINNED_PANDAS_ROOT
+    if not root.is_dir():
+        import pandas
+
+        root = Path(pandas.__file__).resolve().parent
+    path = root / "tests/apply/test_invalid_arg.py"
+    source = path.read_bytes()
+    source_cid = blake3_512_of(source)
+    assert source_cid == PINNED_INVALID_ARG_CID
+    identity = (source.decode("utf-8"), str(path), source_cid)
+    probe = SourceFile(identity)
+    function = next(
+        node
+        for node in probe.functions()
+        if node.name == "test_transform_and_agg_err_agg"
+    )
+    with_nodes = {
+        node.line_col_span().start_line: node
+        for node in function.walk()
+        if node.kind == "With"
+    }
+    assert set(with_nodes) == {309, 310}
+    raise_semantics = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        ExceptionInfoBindingV1(),
+    )
+    rows = {}
+    for line, node in with_nodes.items():
+        coordinate = _coordinate(node.items[0].context_expr)
+        rows[coordinate] = (
+            _ref(coordinate, raise_semantics, "x")
+            if line == 309
+            else _resource_ref(coordinate, "r")
+        )
+    context = TreeConstructionContextV1(
+        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+    )
+    built = next(
+        node
+        for node in SourceFile(identity, construction_context=context).functions()
+        if node.name == function.name
+    ).sugar()
+    outer = None
+
+    def walk(sugar):
+        nonlocal outer
+        if isinstance(sugar, WithEffectBoundarySugar) and sugar.site.line == 309:
+            outer = sugar
+            return
+        for field in ("body", "statements", "entries", "then_body", "else_body"):
+            for child in getattr(sugar, field, ()) or ():
+                walk(child)
+
+    walk(built)
+    assert outer is not None
+    inner = next(child for child in outer.body if isinstance(child, WithResourceSugar))
+    return outer, inner
+
+
+def test_pinned_assertion_outer_resource_inner_uses_two_authenticated_demands():
+    """The inverse order composes by nesting through the same constructors."""
+    outer, inner = _real_assertion_outer_resource_inner()
+    assert isinstance(outer, WithEffectBoundarySugar)
+    assert isinstance(inner, WithResourceSugar)
+    assert inner in outer.body
+
+
+def test_pinned_inverse_order_is_not_resource_outer():
+    """Lying: contract kind cannot reorder the two real source occurrences."""
+    outer, inner = _real_assertion_outer_resource_inner()
+    assert not isinstance(outer, WithResourceSugar)
+    assert not isinstance(inner, WithEffectBoundarySugar)
