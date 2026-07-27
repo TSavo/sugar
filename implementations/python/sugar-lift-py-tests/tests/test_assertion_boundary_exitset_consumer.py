@@ -152,6 +152,35 @@ def test_match_predicate_remains_owed_without_message_evidence():
     assert all("py.re_search" in str(face.guard) for face in routed.exits)
 
 
+def test_written_none_pattern_consumes_without_a_regex_obligation():
+    """The helper's explicit ``match=None`` reaches the native None floor."""
+    from sugar_lift_py_tests.floor import NoneValue, StringValue
+
+    body = ExitSet(
+        (_raise("ValueError", "written-none", message=StringValue("boom")),)
+    )
+
+    routed = _route(body, pattern=NoneValue())
+
+    assert len(routed.exits) == 1
+    assert isinstance(routed.exits[0], Completed)
+    assert "py.re_search" not in str(routed.exits[0].guard)
+
+
+def test_string_none_pattern_does_not_impersonate_written_none():
+    """Lying twin: the string ``"None"`` remains an actual regex constraint."""
+    from sugar_lift_py_tests.floor import StringValue
+
+    body = ExitSet(
+        (_raise("ValueError", "string-none", message=StringValue("boom")),)
+    )
+
+    routed = _route(body, pattern=StringValue("None"))
+
+    assert len(routed.exits) == 1
+    assert isinstance(routed.exits[0], Halted)
+
+
 @pytest.mark.parametrize("exception_name", ["ValueError", "TypeError"])
 def test_nested_resource_cleanup_executes_on_matching_and_nonmatching_exits(
     exception_name,
