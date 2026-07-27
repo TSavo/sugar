@@ -37,4 +37,16 @@ if [[ -z "$repo_root" ]]; then
 fi
 repo_root="$(cd "$repo_root" && pwd -P)"
 
-exec "$sugarbin" run --host bx --task python-unit -- "$@"
+pytest_args=()
+sugarbin_args=()
+for arg in "$@"; do
+  if [[ "$arg" == "-u" ]]; then
+    export PYTHONUNBUFFERED=1
+    sugarbin_args=(--env PYTHONUNBUFFERED)
+  else
+    pytest_args+=("$arg")
+  fi
+done
+
+exec "$sugarbin" run --host bx "${sugarbin_args[@]}" \
+  --task authenticated-python-lift -- "${pytest_args[@]}"

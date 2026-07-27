@@ -47,6 +47,12 @@ test = [
     "pandas==3.0.3",
 ]
 
+[tool.sugar.measured-corpus]
+# SourceTree(pandas_root).paths(), sorted and JSON-canonicalized before sha256.
+# This is the 1,421-file pandas 3.0.3 denominator in the immutable managed
+# closure. Older 1,415-file receipts have a different CID and cannot mix.
+pandas-manifest-cid = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+
 [project.scripts]
 sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"
 sugar-python-factory-floor-idd = "sugar_lift_py_tests.idd.cli:main"
