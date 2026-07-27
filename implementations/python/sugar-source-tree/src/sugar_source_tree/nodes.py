@@ -78,7 +78,24 @@ _LEXICALLY_BOUND_NAMES = object()
 _SCOPE_OWNER_CID = object()
 _SUBSTITUTION_TRACE_BUILDER = object()
 _BINDING_ENTRY_FACTORY = object()
+_RECEIVER_FIELD_PROJECTIONS = object()
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class _ReceiverFieldProjection:
+    receiver_coordinate_cid: str
+    selector: str
+    store_occurrence: object
+    value: "Node"
+
+
+def _receiver_coordinate_cid(receiver) -> str | None:
+    if isinstance(receiver, BindingCoordinateRef):
+        return receiver.coordinate.cid
+    if isinstance(receiver, ConstructedReceiverRef):
+        return receiver.binding_coordinate_cid
+    return None
 
 
 @dataclass(frozen=True)
@@ -1211,6 +1228,9 @@ class Node(Typed):
             return binding
         wrapped: BindingMap = {}
         for local_index, (name, state) in enumerate(binding.items()):
+            if not isinstance(name, str):
+                wrapped[name] = state
+                continue
             if isinstance(state, BindingEntryV1):
                 wrapped[name] = state
                 continue
@@ -3053,6 +3073,24 @@ def _store_target_binding(statement, target, scope):
     }
 
 
+def _receiver_field_projection_binding(statement, target, scope):
+    if not isinstance(target, Attribute):
+        return None
+    receiver_coordinate_cid = _receiver_coordinate_cid(target.value)
+    if receiver_coordinate_cid is None:
+        return None
+    prior = scope.get(_RECEIVER_FIELD_PROJECTIONS)
+    projections = dict(prior) if isinstance(prior, dict) else {}
+    key = (receiver_coordinate_cid, target.attr)
+    projections[key] = _ReceiverFieldProjection(
+        receiver_coordinate_cid=receiver_coordinate_cid,
+        selector=target.attr,
+        store_occurrence=statement.fragment,
+        value=statement.value,
+    )
+    return {_RECEIVER_FIELD_PROJECTIONS: projections}
+
+
 class Assign(Statement):
     targets: Tuple[Expression, ...]
     value: Expression
@@ -3254,6 +3292,9 @@ class Assign(Statement):
                     return threaded
                 if isinstance(target.value, ObjectPlaceStateV1):
                     return None
+                projected = _receiver_field_projection_binding(self, target, scope)
+                if projected is not None:
+                    return projected
             # Name-only nested/flat display unpack.
             name_only = self._destructured_binding()
             if name_only is not None:
@@ -3762,7 +3803,10 @@ class AnnAssign(Statement):
         if isinstance(self.target, Name):
             return {self.target.id: self.value}
         if isinstance(self.target, (Attribute, Subscript)):
-            return _store_target_binding(self, self.target, scope)
+            threaded = _store_target_binding(self, self.target, scope)
+            if threaded is not None:
+                return threaded
+            return _receiver_field_projection_binding(self, self.target, scope)
         return None
 
     def _construct_sugar(self):
@@ -8153,6 +8197,12 @@ class Attribute(Expression):
         from .shadow import rewrite
 
         receiver, changed = self._substitute_field(self.value, scope)
+        receiver_coordinate_cid = _receiver_coordinate_cid(receiver)
+        projections = scope.get(_RECEIVER_FIELD_PROJECTIONS, {})
+        if receiver_coordinate_cid is not None and isinstance(projections, dict):
+            projection = projections.get((receiver_coordinate_cid, self.attr))
+            if isinstance(projection, _ReceiverFieldProjection):
+                return projection.value
         if (
             isinstance(receiver, IfExp)
             and isinstance(receiver.body, ObjectPlaceStateV1)
