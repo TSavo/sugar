@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.floor import OpaqueOpCallsite, TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, num
+from sugar_source_tree.panic import SugarNotWritten
 
 
 @pytest.mark.parametrize(
@@ -31,11 +31,11 @@ def test_opaque_operator_arithmetic_cites_coordinates(method, operator) -> None:
 def test_opaque_operator_unary_minus_is_named_refusal() -> None:
     """An opaque call result has no decided runtime type for unary ``-``."""
     value = OpaqueOpCallsite("len", TermValue(9), computed=None)
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         value.unary_minus("t.py:1")
 
-    assert raised.value.info.owner == "unary_operation_exception_floor"
-    assert raised.value.info.observed == "SymbolicValue -"
+    assert raised.value.owner == "unary_operation_exception_floor"
+    assert raised.value.observed == "SymbolicValue -"
 
 
 def test_opaque_operator_declares_full_arithmetic_surface() -> None:
