@@ -565,13 +565,11 @@ def populate_source_derived_resource_refs(
 
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceDerivedContextManagerRefV1,
-        SourceFragmentCoordinateV1,
     )
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
     from sugar_lift_py_tests.ir import _term_content_cid
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
-    from sugar_source_tree.nodes import Call, With
 
     from .dependency_artifact import (
         ResolvedPythonObjectV1,
@@ -595,27 +593,7 @@ def populate_source_derived_resource_refs(
         source_file.unit.source_cid,
         module_identities={},
     )
-    uses = {}
-    for node in source_file.nodes():
-        if not isinstance(node, With):
-            continue
-        for item in node.items:
-            expr = item.context_expr
-            if not isinstance(expr, Call):
-                continue
-            span = expr.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                expr.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
-            uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
-                coordinate,
-                expr,
-                item._exit_face_id(),
-            )
+    uses = _projected_manager_call_uses(source_file)
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     for receipt in receipts:
         raw_site = receipt.use["useSite"]
@@ -757,6 +735,83 @@ def populate_source_derived_resource_refs(
                 protocol,
             )
         )
+
+
+def _projected_manager_call_uses(source_file):
+    """Project ordinary reaching assignments into context-manager call uses.
+
+    ``WithItem.substitute`` retains the consumer's immutable use coordinate
+    while the existing block substitution transaction replaces a bare Name
+    with its reaching value.  Reading that projection preserves shadowing and
+    undecided values without creating a second binding mechanism here.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_source_tree.nodes import Call, With
+
+    uses = {}
+
+    def collect(root, *, projected_names: bool) -> None:
+        for node in root.walk():
+            if not isinstance(node, With):
+                continue
+            for item in node.items:
+                expr = item.context_expr
+                if not isinstance(expr, Call):
+                    continue
+                if not projected_names and hasattr(item, "manager_use_site_start_line"):
+                    continue
+                span = expr.line_col_span()
+                start_line, start_col, end_line, end_col = (
+                    item._manager_use_site_span()
+                )
+                if projected_names and (
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                ) == (
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                ):
+                    # The projected frame also contains ordinary direct-call
+                    # managers.  Their existing source node is authoritative;
+                    # only a call borrowed from another locus is an assigned
+                    # manager projection.
+                    continue
+                coordinate = SourceFragmentCoordinateV1(
+                    expr.unit.source_cid,
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                )
+                uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
+                    coordinate,
+                    expr,
+                    item._exit_face_id(),
+                )
+
+    # Preserve the original direct-call route exactly.
+    collect(source_file.root, projected_names=False)
+
+    # Project only frames that actually contain the new bare-Name shape.  A
+    # module-wide substitution would enter unrelated functions and demand
+    # contracts for sites outside this population pass.
+    for function in source_file.functions():
+        if not any(
+            isinstance(node, With)
+            and len(node.items) > 1
+            and any(item.context_expr.kind == "Name" for item in node.items)
+            for node in function.walk()
+        ):
+            continue
+        collect(function.substitute({}), projected_names=True)
+
+    return uses
 
 
 def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
