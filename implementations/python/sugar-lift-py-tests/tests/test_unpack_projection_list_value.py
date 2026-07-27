@@ -94,9 +94,7 @@ def test_direct_submit_binds_from_the_value_s_own_members() -> None:
     asserts the narrower thing it actually shows: submitted directly, the list
     answers from the members it holds and does not consult anything else.
     """
-    outcome = _operation("a", "b").submit(
-        ListValue((TermValue(7), TermValue(8))), None
-    )
+    outcome = _operation("a", "b").submit(ListValue((TermValue(7), TermValue(8))), None)
     assert isinstance(outcome, Complete), outcome
     assert outcome.value == ScopeRebinds((("a", TermValue(7)), ("b", TermValue(8))))
 

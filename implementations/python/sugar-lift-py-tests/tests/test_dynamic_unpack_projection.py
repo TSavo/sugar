@@ -298,3 +298,15 @@ def test_unwritten_projection_floor_stays_loud() -> None:
     info = raised.value.info
     assert info.requested == "project_sequence_with"
     assert info.observed == "UnwrittenFloorValue"
+    # The third axis the old row carried: a frontier named without an owner is
+    # half a diagnostic. The synthetic form cannot make the old claim -- there is
+    # no sugar in this row, so `owner` is whatever the submitting operation was
+    # built with, and asserting the module helper's own string back would be an
+    # echo, not a test. It asserts the weaker thing it actually shows: the gap
+    # PROPAGATES the submitter's owner rather than losing it or inventing one.
+    probe = SequenceProjectionOperation(
+        target_names=("a", "b"), owner="unwritten-floor-probe", blame="probe-site"
+    )
+    with pytest.raises(ConstructionPanic) as probed:
+        probe.submit(UnwrittenFloorValue(), None)
+    assert probed.value.info.owner == "unwritten-floor-probe"
