@@ -192,6 +192,32 @@ def test_effect_boundary_projects_real_call_actuals_and_routes_exitset(
         assert isinstance(face.effect, effect_type)
 
 
+def test_effect_boundary_as_name_exports_through_assign(tmp_path, monkeypatch):
+    """The post-With binding uses Assign's one lexical binding algebra."""
+    path = tmp_path / "observed.py"
+    path.write_text(
+        "from pytest import raises\n"
+        "def f():\n"
+        "    with raises(ValueError) as info:\n"
+        "        raise ValueError('cannot convert')\n"
+        "    return info.value\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.nodes import Assign
+
+    seen = []
+    original = Assign.substitution_binding
+
+    def observe(self, scope):
+        if self.value.kind == "ObservationRef":
+            seen.append((self.targets[0].kind, self.value.projection))
+        return original(self, scope)
+
+    monkeypatch.setattr(Assign, "substitution_binding", observe)
+    _function_sugar(path_source(str(path)), _effect_resolved)
+    assert seen == [("Name", "exception_info")]
+
+
 def _effect_boundary_face(tmp_path, source):
     path = tmp_path / "identity_boundary.py"
     path.write_text(source)
