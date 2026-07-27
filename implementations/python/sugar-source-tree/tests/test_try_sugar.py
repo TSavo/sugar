@@ -834,6 +834,37 @@ def test_except_as_binds_matching_raise_witness_in_handler():
     assert origins[0].args[1].name == "python:raise_effect_occurrence"
 
 
+def test_except_as_bound_name_observes_the_routed_effect_identity():
+    """``as error`` observes the same RaiseEffect the handler routed.
+
+    Nested raise under an active handler installs ``context_effect`` on the
+    inner halt. Returning ``error.__context__`` is only well-defined when
+    EffectRef projected that exact routed effect (ObservedEffectValue), not a
+    pure EffectCoordinate. The lying path (coordinate without preimage) is
+    pinned unit-side; here the truthful source path must complete.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    v = _val(
+        "def A():\n"
+        "    try:\n"
+        "        raise ImportError\n"
+        "    except ImportError:\n"
+        "        try:\n"
+        "            raise ValueError\n"
+        "        except ValueError as error:\n"
+        "            return error.__context__\n"
+    )
+    assert _incompletes(v) == []
+    post = v.post()
+    # __context__ of the routed ValueError is the handled ImportError's
+    # raised value — a constructed exception coordinate, not the slot itself.
+    assert post.args[0].name == "out"
+    assert post.args[1].name != "python:effect_slot"
+    # No residual incomplete from a missing context preimage.
+    assert not any(isinstance(e, Incomplete) for e in v.record.contribution())
+
+
 def test_except_as_does_not_bind_on_uncaught_path():
     # Wrong-type handler is unreachable; its EffectRef is never authenticated.
     # Body raise propagates (mismatch twin).

@@ -153,9 +153,7 @@ def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
         if isinstance(exit_, Completed):
             enrolled.append(Completed(exit_.guard, widened, exit_.faces, ()))
         else:
-            enrolled.append(
-                Halted(exit_.guard, exit_.effect, widened, exit_.faces, ())
-            )
+            enrolled.append(Halted(exit_.guard, exit_.effect, widened, exit_.faces, ()))
     return ExitSet(tuple(enrolled)).normalize()
 
 
@@ -242,6 +240,12 @@ def reduce_block_to_exitset(
                 return ExitSet.completed(state)
             active_ctx = state.context if state.context is not None else ctx
             statement_ctx = active_ctx
+            # ObservedEffectBinding rows are producer testimony for a consumed
+            # slot (Try/With routing). Thread them into the next statement's
+            # reduction context so EffectRef / ObservationRef project the same
+            # RaiseEffect the boundary routed — not a pure unauthenticated
+            # coordinate. Handler bodies also receive this via
+            # TrySugar.with_observed_effect before their first statement.
             from sugar_lift_py_tests.effect_router import ObservedEffectBinding
 
             observed = tuple(
@@ -347,9 +351,7 @@ def reduce_block_to_exitset(
                         nested_fall_through = value.fall_through
                         nested_transforms = value.transforms
                         next_context = (
-                            value.context
-                            if value.context is not None
-                            else active_ctx
+                            value.context if value.context is not None else active_ctx
                         )
                     else:
                         linear = Complete(value)

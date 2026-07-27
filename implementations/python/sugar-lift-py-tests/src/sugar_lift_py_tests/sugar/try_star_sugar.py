@@ -93,6 +93,10 @@ class TryStarSugar(Sugar):
                 matched = regroup_except_star(residual, matched_parts)
                 residual = handler_residual
                 handler_ctx = bind_in_flight_effect(ctx, slot_id, matched)
+                if slot_id is not None:
+                    observer = getattr(handler_ctx, "with_observed_effect", None)
+                    if observer is not None:
+                        handler_ctx = observer(slot_id, matched)
                 handler_exits = promote_raise_halts(
                     reduce_block_to_exitset(handler_body, handler_ctx)
                 )
