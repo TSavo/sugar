@@ -90,12 +90,32 @@ def derive_manager_summary(
     and every exit face completes with exact Python ``False`` or ``None``.
     Symbolic truthiness remains loud; it is never interpreted by target name.
     """
-    enter = outcome_to_exitset(protocol.enter_outcome())
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    try:
+        enter = outcome_to_exitset(protocol.enter_outcome())
+    except ConstructionPanic as panic:
+        owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
+        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        return DerivedManagerSummaryGapV1(
+            "enter-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
     if not enter.exits or any(not isinstance(face, Completed) for face in enter.exits):
         return DerivedManagerSummaryGapV1(
             "enter-may-halt", protocol.protocol_construction_cid, "__enter__ ExitSet"
         )
-    exit_ = outcome_to_exitset(protocol.exit_outcome())
+    try:
+        exit_ = outcome_to_exitset(protocol.exit_outcome())
+    except ConstructionPanic as panic:
+        owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
+        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        return DerivedManagerSummaryGapV1(
+            "exit-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
     boundary = (
         _derive_effect_boundary(exit_, protocol, behavior)
         if behavior is not None

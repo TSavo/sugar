@@ -10,6 +10,7 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
     FloorValue,
+    GuardedReturn,
     ObjectValue,
     ReturnValue,
 )
@@ -174,6 +175,266 @@ class ManagerConstructionGapV1:
     detail: str
 
 
+def _factory_return_faces_from_entries(
+    entries: tuple,
+) -> tuple[FloorValue, ...]:
+    """ReturnValue / GuardedReturn faces in a statement or reduced-entry sequence."""
+    return tuple(
+        item for item in entries if isinstance(item, (ReturnValue, GuardedReturn))
+    )
+
+
+def _entries_of_factory_payload(value: object) -> tuple | None:
+    """Statement/entry sequence carried by a factory force_floor payload."""
+    if isinstance(value, BlockValue):
+        return value.statements
+    entries = getattr(value, "entries", None)
+    if isinstance(entries, tuple):
+        return entries
+    statements = getattr(value, "statements", None)
+    if isinstance(statements, tuple):
+        return statements
+    return None
+
+
+def _project_return_faces_to_manager(
+    faces: tuple[FloorValue, ...],
+    *,
+    non_return_prefix: tuple[FloorValue, ...],
+    factory_prefix: tuple[FloorValue, ...],
+    seen_calls: set[int],
+    resolved_cid: str,
+) -> tuple[FloorValue, tuple[FloorValue, ...]] | ManagerConstructionGapV1 | None:
+    """Project ReturnValue/GuardedReturn faces to a sole manager ObjectValue.
+
+    Returns None when no face force_floors to ObjectValue yet (caller may try
+    nested hops). Returns a gap when multi-manager identities refuse.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    managers: list[tuple[FloorValue, ObjectValue, CallSiteValue | None]] = []
+    nested: list[tuple[FloorValue, FloorValue, CallSiteValue | None]] = []
+    for face in faces:
+        returned = face.value
+        if isinstance(returned, ObjectValue):
+            managers.append((face, returned, None))
+            continue
+        if not isinstance(returned, CallSiteValue):
+            continue
+        if id(returned) in seen_calls:
+            # Same CallSiteValue often appears on several ExitSet arms after
+            # GuardedFaces sequencing (Halted validation arms carry the CM
+            # GuardedReturn in prefix state). Already projected — skip, do not
+            # invent a call-graph-cycle residual for a peer harvest.
+            continue
+        try:
+            floor = returned.force_floor(
+                None,
+                owner="construct_manager_behavior returned object",
+            )
+        except ConstructionPanic:
+            # Missing body / later-stage force-floor on this face — try peers.
+            continue
+        if isinstance(floor, ObjectValue):
+            managers.append((face, floor, returned))
+            seen_calls.add(id(returned))
+        else:
+            nested.append((face, floor, returned))
+
+    if managers:
+        # Sole manager identity wins. Multiple distinct receivers: prefer a
+        # field-wise refinement (more bound fields, equal where both bound)
+        # — complementary ``if x is None: return CM() else: return CM(x)``
+        # faces construct both; the refined arm is the callsite's manager.
+        # Incomparable multi-receivers stay loud.
+        identities = {item[1].identity for item in managers}
+        if len(identities) > 1:
+            refined = _sole_refined_manager(tuple(item[1] for item in managers))
+            if refined is None:
+                return ManagerConstructionGapV1(
+                    "non-manager-result",
+                    resolved_cid,
+                    f"GuardedReturn with {len(identities)} manager receivers",
+                )
+            managers = [
+                item for item in managers if item[1].identity == refined.identity
+            ]
+        _face, obj, call = managers[0]
+        return obj, factory_prefix + non_return_prefix
+
+    if len(nested) == 1:
+        _face, floor, call = nested[0]
+        if call is not None:
+            seen_calls.add(id(call))
+        # Nested hop: recurse via _project_factory_manager on the floor.
+        return _project_factory_manager(
+            floor,
+            factory_prefix=factory_prefix + non_return_prefix,
+            seen_calls=seen_calls,
+            resolved_cid=resolved_cid,
+        )
+
+    if len(faces) == 1:
+        return faces[0].value, factory_prefix + non_return_prefix
+
+    return None
+
+
+def _project_factory_manager(
+    result: FloorValue,
+    *,
+    factory_prefix: tuple[FloorValue, ...],
+    seen_calls: set[int],
+    resolved_cid: str,
+) -> tuple[FloorValue, tuple[FloorValue, ...]] | ManagerConstructionGapV1:
+    """Unwrap factory block returns (bare or guarded) to a manager ObjectValue.
+
+    ``if not args: return CM(...)`` yields GuardedReturn, not ReturnValue.  A
+    factory body may also carry several guarded return faces; project every
+    face that force_floors to ObjectValue and keep a sole manager receiver.
+    """
+    while True:
+        entries = _entries_of_factory_payload(result)
+        if entries is None:
+            break
+        faces = _factory_return_faces_from_entries(entries)
+        if not faces:
+            break
+        non_return_prefix = tuple(
+            item
+            for item in entries
+            if not isinstance(item, (ReturnValue, GuardedReturn))
+        )
+        projected = _project_return_faces_to_manager(
+            faces,
+            non_return_prefix=non_return_prefix,
+            factory_prefix=factory_prefix,
+            seen_calls=seen_calls,
+            resolved_cid=resolved_cid,
+        )
+        if projected is None:
+            break
+        return projected
+
+    return result, factory_prefix
+
+
+def _project_manager_from_exitset(
+    outcome,
+    *,
+    factory_prefix: tuple[FloorValue, ...],
+    seen_calls: set[int],
+    resolved_cid: str,
+) -> tuple[FloorValue, tuple[FloorValue, ...]] | ManagerConstructionGapV1:
+    """Project a multi-arm factory ExitSet to its manager return face.
+
+    Dual-mode factories keep validation raises and CM returns as sibling faces.
+    After GuardedFaces sequencing, the CM ``GuardedReturn`` often rides in the
+    *prefix state* of a Halted raise arm rather than on a Completed arm alone.
+    Harvest ReturnValue/GuardedReturn from every arm's payload and state;
+    validation Halted effects without a manager return do not block the CM face.
+    """
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
+    managers: list[tuple[ObjectValue, tuple[FloorValue, ...]]] = []
+
+    def _collect_from_payload(payload) -> ManagerConstructionGapV1 | None:
+        projected = _project_factory_manager(
+            payload,
+            factory_prefix=(),
+            seen_calls=seen_calls,
+            resolved_cid=resolved_cid,
+        )
+        if isinstance(projected, ManagerConstructionGapV1):
+            return projected
+        mgr, prefix = projected
+        if isinstance(mgr, ObjectValue):
+            managers.append((mgr, prefix))
+        return None
+
+    for exit_ in outcome.exits:
+        if isinstance(exit_, Completed):
+            gap = _collect_from_payload(exit_.value)
+            if gap is not None:
+                return gap
+            continue
+        if isinstance(exit_, Halted) and exit_.state is not None:
+            # GuardedReturn on the CM face is often only preserved here after
+            # IfSugar flattens multi-exit then-bodies into GuardedFaces and the
+            # fall-through polarity continues into later raise validation.
+            gap = _collect_from_payload(exit_.state)
+            if gap is not None:
+                return gap
+
+    if not managers:
+        return ManagerConstructionGapV1(
+            "force-floor",
+            resolved_cid,
+            f"ExitSet with {len(outcome.exits)} arms",
+        )
+    identities = {item[0].identity for item in managers}
+    if len(identities) > 1:
+        refined = _sole_refined_manager(tuple(item[0] for item in managers))
+        if refined is None:
+            return ManagerConstructionGapV1(
+                "non-manager-result",
+                resolved_cid,
+                f"ExitSet with {len(identities)} manager receivers",
+            )
+        managers = [item for item in managers if item[0].identity == refined.identity]
+    obj, prefix = managers[0]
+    return obj, factory_prefix + prefix
+
+
+def _sole_refined_manager(
+    managers: tuple[ObjectValue, ...],
+) -> ObjectValue | None:
+    """Return the unique manager that field-wise refines every peer, else None.
+
+    Manager A refines B when they share field names, every non-None field of B
+    equals the same field on A, and A has at least one additional non-None
+    field. Complementary factory faces ``return CM()`` / ``return CM(x)`` then
+    collapse to the refined receiver instead of multi-manager residual.
+    """
+    from sugar_lift_py_tests.floor import NoneValue
+
+    def fields_of(obj: ObjectValue) -> dict[str, FloorValue]:
+        return {field.name: field.value for field in obj.fields}
+
+    def is_none(value: FloorValue) -> bool:
+        return isinstance(value, NoneValue)
+
+    def refines(a: ObjectValue, b: ObjectValue) -> bool:
+        if a.identity == b.identity:
+            return False
+        fa, fb = fields_of(a), fields_of(b)
+        if set(fa) != set(fb):
+            return False
+        gained = False
+        for name, vb in fb.items():
+            va = fa[name]
+            if is_none(vb):
+                if not is_none(va):
+                    gained = True
+                continue
+            if is_none(va) or va != vb:
+                return False
+        return gained
+
+    candidates = [
+        candidate
+        for candidate in managers
+        if all(
+            candidate.identity == peer.identity or refines(candidate, peer)
+            for peer in managers
+        )
+    ]
+    identities = {item.identity for item in candidates}
+    if len(identities) != 1:
+        return None
+    return candidates[0]
+
+
 def construct_manager_behavior(
     resolved: ResolvedPythonObjectV1,
     *,
@@ -254,6 +515,14 @@ def construct_manager_behavior(
     # refused its own cycles at resolution; a repeated call identity is still
     # reported as a typed gap rather than looped on.
     #
+    # raises-style factories gate the CM on `if not args: return CM(...)`.
+    # That return is a GuardedReturn under the branch polarity, not a bare
+    # ReturnValue.  Multi-arm ExitSet factories (if/raise faces) similarly
+    # carry manager returns on Completed arms while Halted RaiseValue arms
+    # are non-manager exits.  Both shapes must project the ObjectValue return
+    # face — never demand truth of a raise terminal and never stall as
+    # non-manager-result:BlockValue solely because the return was guarded.
+    #
     # Every force_floor in the chain -- the factory call and each unwrapped hop
     # -- projects under ONE typed membrane: a ConstructionPanic raised by the
     # floor is the force-floor STAGE refusing, and becomes the stage-keyed
@@ -267,41 +536,83 @@ def construct_manager_behavior(
         result = call.force_floor(
             None, owner="construct_manager_behavior", project_callsite=False
         )
-        while (
-            isinstance(result, BlockValue)
-            and result.statements
-            and isinstance(result.statements[-1], ReturnValue)
-        ):
-            factory_prefix = factory_prefix + result.statements[:-1]
-            returned = result.statements[-1].value
-            if not isinstance(returned, CallSiteValue):
-                result = returned
-                break
-            if id(returned) in seen_calls:
-                return ManagerConstructionGapV1(
-                    "call-graph-cycle", resolved.cid, "recursive source call graph"
-                )
-            seen_calls.add(id(returned))
-            result = returned.force_floor(
-                None, owner="construct_manager_behavior returned object"
-            )
+        projected = _project_factory_manager(
+            result,
+            factory_prefix=factory_prefix,
+            seen_calls=seen_calls,
+            resolved_cid=resolved.cid,
+        )
+        if isinstance(projected, ManagerConstructionGapV1):
+            return projected
+        result, factory_prefix = projected
     except ConstructionPanic as panic:
         # Typed floor projection failure — not a bare crash, not soft silence.
-        # Surface as a construction gap so derivation can install a stage-keyed
-        # residual (opaque-call vs force-floor) for assertion-membrane census.
+        # Multi-arm ExitSet is still a factory with Completed return arms: dig
+        # the source outcome and project manager returns from those arms.
         owner = getattr(getattr(panic, "info", None), "owner", None) or "force-floor"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        return ManagerConstructionGapV1(
-            "force-floor", resolved.cid, f"{owner}:{observed}"
-        )
+        if "ExitSet" in str(observed):
+            from sugar_lift_py_tests.outcome import Complete, ExitSet
+
+            outcome = call.reduce_source_outcome(None)
+            if isinstance(outcome, ExitSet):
+                projected = _project_manager_from_exitset(
+                    outcome,
+                    factory_prefix=factory_prefix,
+                    seen_calls=seen_calls,
+                    resolved_cid=resolved.cid,
+                )
+                if isinstance(projected, ManagerConstructionGapV1):
+                    return projected
+                result, factory_prefix = projected
+            elif isinstance(outcome, Complete):
+                projected = _project_factory_manager(
+                    outcome.value,
+                    factory_prefix=factory_prefix,
+                    seen_calls=seen_calls,
+                    resolved_cid=resolved.cid,
+                )
+                if isinstance(projected, ManagerConstructionGapV1):
+                    return projected
+                result, factory_prefix = projected
+            else:
+                return ManagerConstructionGapV1(
+                    "force-floor", resolved.cid, f"{owner}:{observed}"
+                )
+        else:
+            return ManagerConstructionGapV1(
+                "force-floor", resolved.cid, f"{owner}:{observed}"
+            )
+    except Exception as exc:
+        # BindingCoordinateRefSugar and other SugarNotWritten arms are Exception,
+        # not ConstructionPanic — still stage-keyed residuals for derivation.
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if isinstance(exc, SugarNotWritten):
+            owner = getattr(exc, "owner", None) or type(exc).__name__
+            observed = getattr(exc, "observed", None) or str(exc)
+            return ManagerConstructionGapV1(
+                "force-floor", resolved.cid, f"{owner}:{observed}"
+            )
+        raise
     if not isinstance(result, ObjectValue):
         return ManagerConstructionGapV1(
             "non-manager-result", resolved.cid, type(result).__name__
         )
     bindings = frame.runtime_entries
-    prefix_cids = tuple(
-        _term_content_cid(item.to_term(owner=resolved.cid)) for item in factory_prefix
-    )
+    # BranchResultAuthentication / other control-metadata faces ride in the
+    # linearized if-block but are not term-projectable factory prefix work.
+    # Keep only prefix entries that mint a content CID; never panic the door.
+    prefix_cids_list: list[str] = []
+    kept_prefix: list[FloorValue] = []
+    for item in factory_prefix:
+        try:
+            prefix_cids_list.append(_term_content_cid(item.to_term(owner=resolved.cid)))
+            kept_prefix.append(item)
+        except ConstructionPanic:
+            continue
+    factory_prefix = tuple(kept_prefix)
+    prefix_cids = tuple(prefix_cids_list)
     preimage = {
         "kind": "constructed-manager-behavior",
         "schemaVersion": "1",
@@ -406,7 +717,11 @@ def _resolve_source_visible_frame_uncached(
     module,
     session: SourceResolutionSession,
 ) -> tuple[object, Node, object] | ManagerConstructionGapV1:
-    context = TreeConstructionContextV1.for_source_call_construction()
+    # frame_projection: dual-mode factories may nest With only on non-CM
+    # branches; soft-require those so call-frame projection can complete.
+    context = TreeConstructionContextV1.for_source_call_construction(
+        frame_projection=True
+    )
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
@@ -512,6 +827,14 @@ def _resolve_source_visible_frame_uncached(
                     # traversal verdict to an unrelated one.
                     external_opaque[name] = declined
             blocked.setdefault(declined, set()).add(name)
+        # Dual-mode EffectBoundary factories return a concrete manager
+        # (``return RaisesExc(...)``) without requiring every frame-bound
+        # callee on the function-form branch (``func = args[0]; func(...)``).
+        # Only drop value-call-target when some return is NOT higher-order
+        # ``return helper()`` — pure higher-order sole returns and methods
+        # with no return (``self.x = helper()``) still block (see twins).
+        if _has_non_higher_order_return(function, binders):
+            blocked.pop("value-call-target", None)
         for kind in _CALL_TARGET_GAP_PRECEDENCE:
             if kind in blocked:
                 return kind, tuple(sorted(blocked[kind]))
@@ -801,6 +1124,42 @@ def _local_named_calls(function: FunctionDef):
             yield node
         children = [child for _, _, child in node.children()]
         stack.extend(reversed(children))
+
+
+def _has_non_higher_order_return(
+    function: FunctionDef, binders: frozenset[str]
+) -> bool:
+    """True when some ``return`` is not ``return <frame-bound-name>(...)``.
+
+    Dual-mode EffectBoundary factories return a free/local constructor on the
+    CM path (``return RaisesExc(...)``) while the function-form branch may call
+    a formal. Pure higher-order (``return helper()`` only) and methods with no
+    return statement keep value-call-target blocked.
+    """
+    from sugar_source_tree.nodes import Return
+
+    returns: list = []
+    stack = list(reversed(function.body))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (FunctionDef, ClassDef)):
+            continue
+        if isinstance(node, Return):
+            returns.append(node)
+            continue
+        children = [child for _, _, child in node.children()]
+        stack.extend(reversed(children))
+    if not returns:
+        return False
+    for ret in returns:
+        value = ret.value
+        if not (
+            isinstance(value, Call)
+            and isinstance(value.func, Name)
+            and value.func.id in binders
+        ):
+            return True
+    return False
 
 
 def _call_coordinate(call: Call):
