@@ -22,7 +22,37 @@ class ReturnStepV1:
 
 @dataclass(frozen=True)
 class OpaqueStepV1:
+    """A body statement the step vocabulary cannot yet name.
+
+    ``carries_suspension`` is the discrimination that makes this row
+    dispatchable. Without it, ``x = 1`` and ``x = yield 1`` are the SAME row --
+    ``OpaqueStepV1("Assign")`` -- and they are not the same obligation:
+
+    * an opaque statement that owns NO suspension owes ordinary statement
+      execution inside a generator frame;
+    * an opaque statement that OWNS one owes a generator-protocol law (the
+      resumed value's binding, a branched suspension's partition).
+
+    Bucketing them together is why the two suspension owners read as one
+    undifferentiated mass. The flag is read from ``_owns_yield``, the same
+    authenticated predicate the step builder already uses to decide whether a
+    body is a generator at all -- never from the statement's spelling.
+    """
+
     observed: str
+    carries_suspension: bool = False
+
+    def gap_observed(self) -> str:
+        """What the transition gap should NAME as unconsumed.
+
+        The statement kind alone (``Assign``, ``If``, ``Expr``) names the
+        shape of the container, not the thing that could not be consumed, so a
+        board keyed on it cannot tell generator-protocol work from ordinary
+        unsupported statements.
+        """
+        if not self.carries_suspension:
+            return self.observed
+        return f"{self.observed} carrying a suspension"
 
 
 @dataclass(frozen=True)
@@ -141,7 +171,7 @@ class GeneratorConstructionV1:
             return GeneratorTerminationV1(None, self.binding_state)
         step = self.steps[self.cursor]
         if isinstance(step, OpaqueStepV1):
-            return self._gap(requested, step.observed)
+            return self._gap(requested, step.gap_observed())
         if isinstance(step, FinallyStepV1):
             cleanup = self._reduce_finally(step)
             from sugar_lift_py_tests.outcome import Completed, Halted
