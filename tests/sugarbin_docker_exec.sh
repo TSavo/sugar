@@ -100,6 +100,11 @@ if grep -F 'bin/sugarbin --platform' "$tmp/ssh.log" | grep -Fvq "'docker' 'run'"
 fi
 [[ "$line" == *"'$python_test_ref'"* ]] || fail "python-unit did not select managed test closure"
 [[ "$line" == *"'python' '-m' 'pytest' '-q'"* ]] || fail "python-unit command did not always execute"
+
+: >"$tmp/docker.log"
+SUGAR_BINARY_ALLOW_BUILD=0 run run --host bx --env SUGAR_BINARY_ALLOW_BUILD --task python-unit -- -q >/dev/null
+build_line="$(head -1 "$tmp/docker.log")"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=0'"* ]] || fail "managed artifact resolver did not inherit fail-fast binary policy: $build_line"
 : >"$tmp/docker.log"
 solver_ref="$(python3 "$repo/tools/sugar-build/contract.py" resolve-environment docker:solver-z3 | python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])')"
 [[ "$solver_ref" == *@sha256:* && "$solver_ref" != "$core_ref" ]] || fail "solver closure did not select its own fixture image"

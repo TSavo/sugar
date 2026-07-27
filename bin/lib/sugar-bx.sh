@@ -7,6 +7,7 @@ exclude_args=(
   --exclude='target/' --exclude='.git/' --exclude='.jj/' --exclude='.worktrees/'
   --exclude='.claude/' --exclude='.ruff_cache/' --exclude='.venv-test-rust/'
   --exclude='.understand-anything/' --exclude='node_modules/' --exclude='bazel-bin'
+  --exclude='__pycache__/' --exclude='*.py[cod]' --exclude='.pytest_cache/'
   --exclude='bazel-out' --exclude='bazel-sugar' --exclude='bazel-testlogs'
   --exclude='sugar-warnings/' --exclude='sugar-worktrees/'
   --exclude='.sugar/runs/' --exclude='.sugar/witnesses/'
@@ -216,7 +217,13 @@ sugar_bx_build_artifacts_docker() {
     --mount "type=bind,src=$artifacts_source,dst=/out"
     --mount "type=bind,src=$cache_source,dst=/root/.cache/sugar/binaries"
     --mount "type=bind,src=$target_source,dst=/managed-target"
-    "$image" bash -lc "$build_script")
+  )
+  local name
+  for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
+    [[ "$name" != SUGAR_BINARY_ALLOW_BUILD || ${!name+x} != x ]] \
+      || docker_args+=(--env "$name=${!name}")
+  done
+  docker_args+=("$image" bash -lc "$build_script")
   local arg command=""
   for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
   sugar_bx_ssh "exec${command}"

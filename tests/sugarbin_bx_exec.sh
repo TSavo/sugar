@@ -49,6 +49,9 @@ status=0
 BX_FAKE_REMOTE_STATUS=41 run_bx -- "$repo_root/tools/check.sh" "two words" >/dev/null || status=$?
 [[ "$status" -eq 41 ]] || fail "remote exit status was $status, want 41"
 [[ "$(grep -c -- '-azR --delete' "$rsync_log")" -eq 1 ]] || fail "workspace must use exactly one rsync"
+grep -Fq -- '--exclude=__pycache__/' "$rsync_log" || fail "workspace sync admitted interpreter-specific __pycache__ output"
+grep -Fq -- '--exclude=*.py[cod]' "$rsync_log" || fail "workspace sync admitted compiled Python bytecode"
+grep -Fq -- '--exclude=.pytest_cache/' "$rsync_log" || fail "workspace sync admitted local pytest cache output"
 inner="$(grep -F 'exec ' "$ssh_log" || true)"
 [[ "$inner" == *"/sugar/implementations/rust"* ]] || fail "repo-relative cwd not preserved: $inner"
 [[ "$inner" == *"/sugar/tools/check.sh"* ]] || fail "repo path not translated: $inner"

@@ -38,11 +38,12 @@ fi
 repo_root="$(cd "$repo_root" && pwd -P)"
 
 pytest_args=()
-sugarbin_args=()
+export SUGAR_BINARY_ALLOW_BUILD=0
+sugarbin_args=(--env SUGAR_BINARY_ALLOW_BUILD)
 for arg in "$@"; do
   if [[ "$arg" == "-u" ]]; then
     export PYTHONUNBUFFERED=1
-    sugarbin_args=(--env PYTHONUNBUFFERED)
+    sugarbin_args+=(--env PYTHONUNBUFFERED)
   else
     pytest_args+=("$arg")
   fi
