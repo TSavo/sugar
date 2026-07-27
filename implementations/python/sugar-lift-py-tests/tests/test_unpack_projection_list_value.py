@@ -2,12 +2,16 @@
 
 ``ListValue`` had no ``project_sequence_with`` arm, so it fell to the
 ``FloorValue`` default and panicked with ``requested='project_sequence_with'``.
-The reachable path is narrow and worth naming exactly, because the obvious
-statement of the gap is wrong: a bare ``a, b = [1, 2]`` submits NO projection
+The reachable set is worth naming exactly, because the obvious statement of the
+gap is wrong in BOTH directions. A bare ``a, b = [1, 2]`` submits NO projection
 demand -- the unpack sugar reads the display's members directly and the port is
-never entered -- so constructed lists are not broadly broken. The one path that
-reaches the port is a list UNDER A GUARD, where ``GuardedValue`` distributes the
-operation into each face and the list face is asked the question directly.
+never entered -- so constructed lists are not broadly broken. But the gap is
+also not guard-only, which is what an earlier draft of this file claimed: two
+paths reach the port. A list UNDER A GUARD, where ``GuardedValue`` distributes
+the operation into each face and the list face is asked directly; and a list
+reached through a SUBSCRIPT, ``a, b = xs[0]`` over a list of lists, which is
+the row asserted in ``test_dynamic_unpack_projection.py`` and is where this gap
+was first written down as an unwritten floor.
 
 The guarded-TUPLE twin below is the control: same shape, same distribution, one
 face-type answered and its twin panicked. That asymmetry is the finding.
@@ -82,13 +86,13 @@ def test_guarded_tuple_twin_answers_identically() -> None:
     assert from_list.value == from_tuple.value
 
 
-def test_unguarded_list_rhs_never_reaches_the_port() -> None:
-    """Scoping the finding: this is why the gap is guard-only.
+def test_direct_submit_binds_from_the_value_s_own_members() -> None:
+    """The unguarded submit, asserted at the port rather than from source.
 
-    ``ListValue`` answers the port now, so the bug is not observable here --
-    but the reason a bare ``a, b = [1, 2]`` was never broken is that the sugar
-    reads the display directly. Asserting the direct submit still keeps this
-    row honest about which member testimony is used.
+    A bare ``a, b = [1, 2]`` never reaches the port -- the sugar reads the
+    display directly -- so this row does not claim a source-level path. It
+    asserts the narrower thing it actually shows: submitted directly, the list
+    answers from the members it holds and does not consult anything else.
     """
     outcome = _operation("a", "b").submit(
         ListValue((TermValue(7), TermValue(8))), None
