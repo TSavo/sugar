@@ -195,12 +195,12 @@ class ListValue(FloorValue):
         return super().matrix_multiply(other, site)
 
     def subscript(self, index, site):
-        # Concrete list + in-range TermValue int folds to the element; out of
-        # range is IndexError. Non-concrete index stays the py.subscript coordinate.
+        # Concrete list + integer index is fully decided. A known non-integer
+        # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
-        if type(index) is TermValue and type(index.value) is int:
+        if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -216,7 +216,13 @@ class ListValue(FloorValue):
                 length=n,
                 site=site,
             )
-        return self.py_subscript_coordinate(index, site)
+        if type(index) is TermValue:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="ListValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
     def setitem(self, index, value, site):
         from sugar_lift_py_tests.floor.term_value import TermValue

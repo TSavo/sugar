@@ -542,6 +542,24 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def undecided_subscript(self, index, site, *, owner: str):
+        """Refuse a lookup whose runtime dispatch is not source-decided."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner=owner,
+            blame=site,
+            observed=(
+                "undecided receiver runtime type or index semantics: "
+                f"{type(self).__name__}[{type(index).__name__}]"
+            ),
+            requested="a source-authenticated subscript success or exceptional exit",
+            fix=(
+                "carry receiver-type and index testimony to its native floor; "
+                "do not guess KeyError, IndexError, or a generic runtime effect"
+            ),
+        )
+
     def attribute(self, name, site):
         # Default: this value does not stand on the attribute floor -- it cannot
         # answer what it yields at `.name`. A symbolic receiver stays the

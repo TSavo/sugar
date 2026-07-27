@@ -286,12 +286,12 @@ class TupleValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        # Concrete tuple + in-range TermValue int folds to the element; out of
-        # range is IndexError. Non-concrete index stays the py.subscript coordinate.
+        # Concrete tuple + integer index is fully decided. A known non-integer
+        # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
-        if type(index) is TermValue and type(index.value) is int:
+        if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -307,4 +307,10 @@ class TupleValue(FloorValue):
                 length=n,
                 site=site,
             )
-        return self.py_subscript_coordinate(index, site)
+        if type(index) is TermValue:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="TupleValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="TupleValue.subscript")
