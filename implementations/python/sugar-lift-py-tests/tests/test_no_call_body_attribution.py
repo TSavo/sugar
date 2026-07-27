@@ -13,9 +13,11 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     BodyProbe,
     DemandTableRefusal,
     ProducerFamily,
+    attribute_body_probe,
     attribute_body_probes,
     discover_no_call_body_probes,
     require_expected_denominators,
+    summarize_attribution_outcomes,
     validate_shared_demand_table,
 )
 from sugar_lift_py_tests.outcome import Complete
@@ -75,6 +77,21 @@ def test_named_refusal_is_not_counted_as_a_failure() -> None:
     assert row.construction_panics == 0
     assert row.failures == 0
     assert report.bodies[0].outcome is AttributionOutcome.NAMED_REFUSAL
+
+
+def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:
+    bodies = (
+        attribute_body_probe(_probe(ProducerFamily.BINOP, _named_refusal)),
+        attribute_body_probe(_probe(ProducerFamily.BINOP, _construction_panic)),
+        attribute_body_probe(_probe(ProducerFamily.BINOP, _raise_value)),
+    )
+
+    summary = summarize_attribution_outcomes(bodies)
+
+    assert summary.enrolled == 3
+    assert summary.authenticated_exceptional_exits == 1
+    assert summary.named_refusals == 1
+    assert summary.construction_panics == 1
 
 
 def test_report_keeps_all_six_families_separate() -> None:

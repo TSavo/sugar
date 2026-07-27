@@ -29,6 +29,13 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.no_call_body_attribution import (
+    AttributionOutcome,
+    BodyProbe,
+    attribute_body_probe,
+    summarize_attribution_outcomes,
+)
+from sugar_lift_python_source.canonical import blake3_512_of
 
 
 _SOURCE_CID = (
@@ -177,6 +184,164 @@ def test_external_error_raised_population_is_the_authenticated_47_with_sites() -
             "endCol": 48,
         }
         for row in rows
+    )
+
+
+@cache
+def _external_error_attributions():
+    """Construct each authenticated demand without entering unrelated managers."""
+    from collections import defaultdict
+
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_lift_python_source.manager_summary_derivation import (
+        populate_source_derived_resource_refs,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_source_tree.nodes import With
+    from sugar_source_tree.tree import SourceFile, SourceTree
+
+    corpus = authenticated_pandas_corpus()
+    rows = _external_error_demand_rows()
+    paths = {
+        blake3_512_of(path.read_bytes()): path
+        for path in SourceTree(corpus.root).paths()
+    }
+    by_source = defaultdict(list)
+    for row in rows:
+        by_source[row["useSite"]["sourceCid"]].append(row)
+
+    graph_cache = {}
+    session = SourceResolutionSession()
+    attributed = []
+    for source_cid, selected_rows in sorted(by_source.items()):
+        path = paths[source_cid]
+        refs = {}
+        for row in selected_rows:
+            site = SourceFragmentCoordinateV1.decode(row["useSite"])
+            refs[site] = ContextManagerResolutionGapV1(
+                row["authenticatedImportUse"]["cid"],
+                site,
+                row["targetSymbol"],
+                row.get("gapKind") or "runtime-selected",
+                (),
+            )
+        context = TreeConstructionContextV1(
+            ResolvedContractRefsV1(
+                _CATALOG_CID, _TABLE_CID, MappingProxyType(refs)
+            ),
+            workspace_root=str(corpus.root.parent),
+        )
+        tree = SourceFile(
+            (path.read_text(encoding="utf-8"), str(path), source_cid),
+            construction_context=context,
+        )
+        for row in selected_rows:
+            site = SourceFragmentCoordinateV1.decode(row["useSite"])
+            manager = next(
+                node
+                for node in tree.nodes()
+                if isinstance(node, With)
+                and any(
+                    item._manager_use_site_span()
+                    == (
+                        site.start_line,
+                        site.start_col,
+                        site.end_line,
+                        site.end_col,
+                    )
+                    for item in node.items
+                )
+            )
+
+            def evaluate(manager=manager, path=path, site=site):
+                populate_source_derived_resource_refs(
+                    tree,
+                    root=corpus.root.parent,
+                    path=path,
+                    artifact_graph_cache=graph_cache,
+                    session=session,
+                    selected_coordinates=frozenset({site}),
+                )
+                reference = context.source_derived_contract_refs.get(site)
+                if isinstance(reference, ContextManagerResolutionGapV1):
+                    return manager.sugar().desugar()
+                assert isinstance(reference, SourceDerivedContextManagerRefV1)
+                boundary = manager.sugar()
+                return reduce_block_to_exitset(boundary.body, None)
+
+            relative = path.relative_to(corpus.root).as_posix()
+            attributed.append(
+                attribute_body_probe(
+                    BodyProbe(
+                        body_id=f"{relative}:{site.start_line}",
+                        family="ReturnedManager",
+                        evaluator=evaluate,
+                    )
+                )
+            )
+    return tuple(attributed)
+
+
+def test_external_error_raised_47_site_outcome_partition() -> None:
+    summary = summarize_attribution_outcomes(_external_error_attributions())
+
+    assert summary.enrolled == 47
+    assert summary.authenticated_exceptional_exits == 0
+    assert summary.named_refusals == 42
+    assert summary.construction_panics == 5
+
+
+def test_external_error_raised_refusal_and_gap_twins_are_concrete_sites() -> None:
+    by_id = {body.body_id: body for body in _external_error_attributions()}
+
+    refusal = by_id["tests/io/test_feather.py:40"]
+    gap = by_id["tests/extension/test_arrow.py:1715"]
+    assert refusal.outcome is AttributionOutcome.NAMED_REFUSAL
+    assert refusal.detail == "With._construct_sugar"
+    assert gap.outcome is AttributionOutcome.CONSTRUCTION_PANIC
+    assert gap.detail == "SymbolicValue.attribute"
+
+
+def test_external_error_raised_emits_complete_consumer_testimony() -> None:
+    from sugar_lift_py_tests.consumer_resolution_report import (
+        CallerAttribution,
+        CallerReportTestimony,
+        ConsumerHitReport,
+    )
+    from sugar_lift_py_tests.source_provenance import source_stamp_for_sugar_cli
+
+    source_stamp = source_stamp_for_sugar_cli()
+    assert source_stamp is not None
+    report = ConsumerHitReport(
+        source_stamp=source_stamp,
+        runtime="cpython-3.12.13",
+        corpus_manifest_cid=_CORPUS_MANIFEST_CID,
+        demand_table_content_key=_DEMAND_TABLE_CONTENT_KEY,
+        caller=CallerReportTestimony(
+            concrete_source_site="pandas/tests/io/test_feather.py:40:13",
+            before_outcome="context-manager-demand:resolved-import",
+            after_outcome="named-refusal",
+            surviving=(
+                CallerAttribution(
+                    AttributionOutcome.NAMED_REFUSAL,
+                    "force-floor:binary_operation_exception_floor:"
+                    "SymbolicValue + CallSiteValue",
+                ),
+            ),
+        ),
+    )
+
+    assert len(report.lines()) == 8
+    assert report.lines()[4].endswith("pandas/tests/io/test_feather.py:40:13")
+    assert report.lines()[-1].startswith(
+        "survivingTypedGapsOrReattributions reported"
     )
 
 

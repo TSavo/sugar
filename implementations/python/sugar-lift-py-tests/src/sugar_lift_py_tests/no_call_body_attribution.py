@@ -74,14 +74,14 @@ class DemandTableRefusal(RuntimeError):
 @dataclass(frozen=True)
 class BodyProbe:
     body_id: str
-    family: ProducerFamily
+    family: ProducerFamily | str
     evaluator: Callable[[], object]
 
 
 @dataclass(frozen=True)
 class BodyAttribution:
     body_id: str
-    family: ProducerFamily
+    family: ProducerFamily | str
     outcome: AttributionOutcome
     detail: str
 
@@ -98,6 +98,14 @@ class FamilyAttribution:
     def failures(self) -> int:
         """Only the hard construction-panic axis is a harness failure."""
         return self.construction_panics
+
+
+@dataclass(frozen=True)
+class AttributionOutcomeSummary:
+    enrolled: int
+    authenticated_exceptional_exits: int
+    named_refusals: int
+    construction_panics: int
 
 
 @dataclass(frozen=True)
@@ -144,7 +152,7 @@ def _exceptional_exit_present(outcome: object) -> bool:
     return False
 
 
-def _attribute(probe: BodyProbe) -> BodyAttribution:
+def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -173,13 +181,35 @@ def _attribute(probe: BodyProbe) -> BodyAttribution:
             type(outcome).__name__,
         )
     raise AttributionInvariantError(
-        f"{probe.body_id} ({probe.family.value}) completed without an "
+        f"{probe.body_id} "
+        f"({getattr(probe.family, 'value', probe.family)}) completed without an "
         "authenticated exceptional exit, named refusal, or construction panic"
     )
 
 
+def summarize_attribution_outcomes(
+    bodies: Iterable[BodyAttribution],
+) -> AttributionOutcomeSummary:
+    """One closed split; a refusal never leaks into the failure axis."""
+    materialized = tuple(bodies)
+    return AttributionOutcomeSummary(
+        enrolled=len(materialized),
+        authenticated_exceptional_exits=sum(
+            body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
+            for body in materialized
+        ),
+        named_refusals=sum(
+            body.outcome is AttributionOutcome.NAMED_REFUSAL for body in materialized
+        ),
+        construction_panics=sum(
+            body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
+            for body in materialized
+        ),
+    )
+
+
 def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
-    bodies = tuple(_attribute(probe) for probe in probes)
+    bodies = tuple(attribute_body_probe(probe) for probe in probes)
     rows = {}
     for family in ProducerFamily:
         selected = tuple(body for body in bodies if body.family is family)

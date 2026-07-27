@@ -1453,6 +1453,58 @@ def test_preconstruction_populates_resource_ref_from_authenticated_import(tmp_pa
     )
 
 
+def test_preconstruction_can_bound_derivation_to_one_authenticated_use(tmp_path):
+    """A family probe must not construct unrelated managers in the same file."""
+    implementation = (
+        "class Resource:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_resource():\n"
+        "    return Resource()\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="make_resource")
+    consumer = (
+        "import arbitrary\n"
+        "with arbitrary.make_resource():\n"
+        "    pass\n"
+        "with arbitrary.make_resource():\n"
+        "    pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    selected_call = tuple(node for node in tree.nodes() if node.kind == "Call")[1]
+    span = selected_call.line_col_span()
+    selected = SourceFragmentCoordinateV1(
+        tree.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+        selected_coordinates=frozenset({selected}),
+    )
+
+    assert tuple(context.source_derived_contract_refs) == (selected,)
+
+
 def test_preconstruction_populates_renamed_effect_boundary_from_source(tmp_path):
     implementation = (
         "class RenamedBoundary:\n"
