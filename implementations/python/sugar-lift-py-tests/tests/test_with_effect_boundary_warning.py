@@ -19,7 +19,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     WarningObservationBindingV1,
 )
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect, WarningEffect
-from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, TermValue
+from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, NoneValue, TermValue
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
 from sugar_lift_py_tests.outcome import Complete
@@ -69,8 +69,9 @@ SEMANTICS = EffectBoundarySemanticsV1(
 )
 
 
-def _boundary(*entries):
-    expected = _ExpectedCategory(_identity("FutureWarning"))
+def _boundary(*entries, expected=None):
+    if expected is None:
+        expected = _ExpectedCategory(_identity("FutureWarning"))
     manager_value = CallSiteValue(
         target_name="scope",
         arg_values=(expected,),
@@ -146,3 +147,42 @@ def test_unresolved_completed_face_is_undecided_not_false():
         _boundary(unresolved).desugar()
     assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
     assert "unresolved" in raised.value.observed
+
+
+def test_truthful_no_warning_contract_completes_over_multi_statement_body():
+    routed = _boundary(TermValue(1), TermValue(2), expected=NoneValue()).desugar()
+    assert len(routed.exits) == 1
+    face = routed.exits[0]
+    assert isinstance(face, Completed)
+    assert face.value.entries == (TermValue(1), TermValue(2))
+
+
+def test_warning_arriving_at_no_warning_contract_fails_assertion():
+    routed = _boundary(_warning("FutureWarning"), expected=NoneValue()).desugar()
+    assert len(routed.exits) == 1
+    face = routed.exits[0]
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, ExpectationNotMetEffect)
+
+
+def test_no_warning_contract_with_unresolved_producer_is_undecided():
+    unresolved = CallSiteValue(
+        target_name="f",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call", []),
+        body=None,
+    )
+    with pytest.raises(SugarNotWritten) as raised:
+        _boundary(unresolved, expected=NoneValue()).desugar()
+    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
+    assert raised.value.observed == "completed face has unresolved warning producers"
+
+
+def test_two_no_warning_boundaries_do_not_share_observations():
+    first = _boundary(TermValue("first"), expected=NoneValue()).desugar()
+    second = _boundary(_warning("FutureWarning"), expected=NoneValue()).desugar()
+
+    assert isinstance(first.exits[0], Completed)
+    assert isinstance(second.exits[0], Halted)
+    assert isinstance(second.exits[0].effect, ExpectationNotMetEffect)

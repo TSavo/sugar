@@ -259,6 +259,7 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
     from dataclasses import replace
 
     from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.warning_observation_value import (
         WarningObservationValue,
     )
@@ -270,6 +271,17 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
         reduce_block_to_exitset,
     )
     from sugar_source_tree.panic import SugarNotWritten
+
+    # Exact ``None`` is the manager's inverted contract: no warning may arrive.
+    # NoneValue is the literal's floor type, not a placeholder warning class.
+    if isinstance(expected, NoneValue):
+        return _route_completed_no_warning_boundary(
+            body=body,
+            ctx=ctx,
+            manager_exit=manager_exit,
+            mode=mode,
+            site=site,
+        )
 
     # Python warning categories are exception classes.  The ordinary lexical
     # class authenticator therefore owns their identity too; no warning/vendor
@@ -367,4 +379,68 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
             )
         else:
             exits.append(face)
+    return ExitSet(tuple(exits)).normalize()
+
+
+def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
+    """Accept a completed face only when warning absence is decidable."""
+    from sugar_lift_py_tests.context_manager_contract import ExpectsModeV1
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.warning_observation_value import (
+        WarningObservationValue,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    body_es = promote_raise_halts(reduce_block_to_exitset(body, ctx)).guarded(
+        manager_exit.guard
+    )
+    exits = []
+    for face in body_es.exits:
+        if isinstance(face, Halted):
+            exits.append(face)
+            continue
+        entries = getattr(face.value, "entries", None)
+        if not isinstance(entries, tuple):
+            raise SugarNotWritten(
+                owner="WithEffectBoundarySugar.warning_observation",
+                observed=(
+                    f"completed face carries {type(face.value).__name__}, "
+                    "not a reduced block record"
+                ),
+                requested=(
+                    "completed reduced block carrying authenticated warning observations"
+                ),
+                fix="preserve the completed face until its record is constructed",
+            )
+        if any(isinstance(entry, WarningObservationValue) for entry in entries):
+            if isinstance(mode, ExpectsModeV1):
+                exits.append(
+                    Halted(
+                        face.guard,
+                        ExpectationNotMetEffect("warning", site),
+                        face.value,
+                        face.faces,
+                        face.pending_contracts,
+                    )
+                )
+            else:
+                exits.append(face)
+            continue
+        if any(isinstance(entry, CallSiteValue) for entry in entries):
+            raise SugarNotWritten(
+                owner="WithEffectBoundarySugar.warning_observation",
+                observed="completed face has unresolved warning producers",
+                requested="authenticated absence of warning observations",
+                fix=(
+                    "construct every producer on the completed face; never infer "
+                    "absence from an empty observation set"
+                ),
+            )
+        exits.append(face)
     return ExitSet(tuple(exits)).normalize()
