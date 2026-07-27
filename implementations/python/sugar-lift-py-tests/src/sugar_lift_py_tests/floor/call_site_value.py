@@ -409,9 +409,7 @@ class CallSiteValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        return self.undecided_subscript(
-            index, site, owner="CallSiteValue.subscript"
-        )
+        return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
 
     def setitem(self, index, value, site):
         """Rebind an opaque mapping/list-shaped callsite after ``xs[k] = v``.
@@ -1246,6 +1244,51 @@ class CallSiteValue(FloorValue):
             self.formal_coordinate_cids,
         )
         return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
+
+    def producer_outcome(self, ctx: Any = None):
+        """Publish authenticated source-body halts at the Call expression.
+
+        A completed source body still denotes this ordinary call coordinate;
+        later consumers may demand its returned floor exactly as before.  A
+        halted body is already the Call producer's authenticated exceptional
+        face and must not wait for an assertion (or any other consumer) to dig
+        it out.  Mixed bodies retain every guard and arm testimony while only
+        replacing completed block records with the call coordinate they
+        compute.
+        """
+        if self.body is None:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(self)
+
+        from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        outcome = self.reduce_source_outcome(ctx)
+        if isinstance(outcome, Complete):
+            return Complete(self)
+        exits = outcome_to_exitset(outcome)
+        return ExitSet(
+            tuple(
+                (
+                    Completed(
+                        exit_.guard,
+                        self,
+                        exit_.faces,
+                        exit_.pending_contracts,
+                    )
+                    if isinstance(exit_, Completed)
+                    else Halted(
+                        exit_.guard,
+                        exit_.effect,
+                        exit_.state,
+                        exit_.faces,
+                        exit_.pending_contracts,
+                    )
+                )
+                for exit_ in exits.exits
+            )
+        ).normalize()
 
 
 def force_floor(
