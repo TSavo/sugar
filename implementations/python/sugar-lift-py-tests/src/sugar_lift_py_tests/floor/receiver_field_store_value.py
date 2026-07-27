@@ -11,6 +11,15 @@ class ReceiverFieldStoreValue(FloorValue):
     attr: str
     value: FloorValue
 
+    def guarded(self, formula):
+        from .guarded_receiver_field_store_value import (
+            GuardedReceiverFieldStoreValue,
+        )
+
+        return GuardedReceiverFieldStoreValue(
+            self.receiver, self.attr, self.value, formula
+        )
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
 

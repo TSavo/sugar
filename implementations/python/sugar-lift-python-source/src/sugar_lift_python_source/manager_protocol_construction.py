@@ -5,13 +5,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from sugar_lift_py_tests.floor import CallSiteValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    CallSiteValue,
+    ObjectField,
+    ObjectValue,
+    ReceiverFieldStoreValue,
+    ReceiverStatePartitionValue,
+)
 from sugar_lift_py_tests.floor.manager_coordinate import (
     ExitTracebackCoordinate,
     ExitTypeCoordinate,
     ExitValueCoordinate,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import Complete, Completed
 
 from .canonical import cid_of_json
 from .manager_construction import ConstructedManagerBehaviorV1
@@ -26,6 +33,7 @@ class ConstructedManagerProtocolV1:
     enter_frame_cid: str
     exit_frame_cid: str
     exit_face_id: str
+    receiver_state: ObjectValue | ReceiverStatePartitionValue = field(compare=False)
 
     @property
     def preimage(self):
@@ -43,10 +51,131 @@ class ConstructedManagerProtocolV1:
             raise ValueError("manager protocol CID does not match its preimage")
 
     def enter_outcome(self, ctx: object = None):
-        return self.enter_call.reduce_source_outcome(ctx)
+        if isinstance(self.receiver_state, ObjectValue):
+            return self.enter_call.reduce_source_outcome(ctx)
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+        return self.receiver_state.exits.sequence(
+            lambda receiver: outcome_to_exitset(
+                _call_protocol_method(
+                    receiver,
+                    "__enter__",
+                    (),
+                    self.exit_face_id,
+                    ctx,
+                ).reduce_source_outcome(ctx)
+            )
+        )
 
     def exit_outcome(self, ctx: object = None):
-        return self.exit_call.reduce_source_outcome(ctx)
+        def run_exit(receiver):
+            enter = _call_protocol_method(
+                receiver, "__enter__", (), self.exit_face_id, ctx
+            ).reduce_source_outcome(ctx)
+            entered = _receiver_state_after_enter(receiver, enter)
+            return _call_protocol_method(
+                entered,
+                "__exit__",
+                (
+                    ExitTypeCoordinate(self.exit_face_id, None),
+                    ExitValueCoordinate(self.exit_face_id, None),
+                    ExitTracebackCoordinate(self.exit_face_id, None),
+                ),
+                self.exit_face_id,
+                ctx,
+            ).reduce_source_outcome(ctx)
+
+        if isinstance(self.receiver_state, ObjectValue):
+            return run_exit(self.receiver_state)
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+        return self.receiver_state.exits.sequence(
+            lambda receiver: outcome_to_exitset(run_exit(receiver))
+        )
+
+
+def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
+    from sugar_source_tree.panic import SugarNotWritten
+
+    call = receiver.call_method_value(
+        name,
+        arguments,
+        owner="ConstructedManagerProtocolV1.protocol_method",
+        blame=exit_face_id,
+        ctx=ctx,
+    )
+    if not isinstance(call, Complete) or not isinstance(call.value, CallSiteValue):
+        raise SugarNotWritten(
+            owner="ConstructedManagerProtocolV1.protocol_method",
+            observed=type(call).__name__,
+            requested=f"authenticated {name} call over projected receiver state",
+            fix="preserve the exact receiver method frame or keep protocol loud",
+        )
+    return call.value
+
+
+def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectValue:
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_source_tree.panic import SugarNotWritten
+
+    exits = outcome_to_exitset(enter_outcome).exits
+    completed = tuple(face for face in exits if isinstance(face, Completed))
+    observed_stores = tuple(
+        statement
+        for face in completed
+        if isinstance(face.value, BlockValue)
+        for statement in face.value.statements
+        if isinstance(statement, ReceiverFieldStoreValue)
+    )
+    if not observed_stores:
+        return receiver
+    if not exits or len(completed) != len(exits):
+        raise SugarNotWritten(
+            owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
+            observed="non-completed __enter__ face",
+            requested="total completed enter testimony before __exit__",
+            fix="derive exit state only after every authenticated enter face completes",
+        )
+    projected_faces = []
+    for face in completed:
+        block = face.value
+        if not isinstance(block, BlockValue):
+            raise SugarNotWritten(
+                owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
+                observed=type(block).__name__,
+                requested="completed enter block carrying exact receiver stores",
+                fix="preserve the ordinary enter block or keep receiver state loud",
+            )
+        fields = {field.name: field.value for field in receiver.fields}
+        for statement in block.statements:
+            if not isinstance(statement, ReceiverFieldStoreValue):
+                continue
+            if statement.receiver.identity != receiver.identity:
+                raise SugarNotWritten(
+                    owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
+                    observed="receiver coordinate mismatch",
+                    requested="stores from the exact authenticated manager receiver",
+                    fix="preserve ObjectValue.identity across protocol method binding",
+                )
+            fields[statement.attr] = statement.value
+        projected_faces.append(
+            tuple(ObjectField(name, fields[name]) for name in sorted(fields))
+        )
+    first = projected_faces[0]
+    if any(fields != first for fields in projected_faces[1:]):
+        raise SugarNotWritten(
+            owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
+            observed="guarded enter faces disagree on receiver fields",
+            requested="one exact post-enter ObjectValue.fields projection",
+            fix="carry guarded object-state testimony before reducing __exit__",
+        )
+    return ObjectValue(
+        receiver.class_name,
+        first,
+        methods=receiver.methods,
+        class_fields=receiver.class_fields,
+        identity=receiver.identity,
+    )
 
 
 @dataclass(frozen=True)
@@ -68,18 +197,34 @@ def construct_manager_protocol(
     and the typed exit-face operands to those bodies.
     """
     receiver = behavior.receiver_state
-    if not receiver.has_method("__enter__"):
+    receivers = (
+        (receiver,)
+        if isinstance(receiver, ObjectValue)
+        else tuple(
+            face.value
+            for face in receiver.exits.exits
+            if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
+        )
+    )
+    if not receivers:
+        return ManagerProtocolConstructionGapV1(
+            "method-construction",
+            behavior.manager_construction_cid,
+            "constructor partition has no completed receiver face",
+        )
+    if any(not item.has_method("__enter__") for item in receivers):
         return ManagerProtocolConstructionGapV1(
             "enter-missing", behavior.manager_construction_cid, "source-visible method"
         )
-    if not receiver.has_method("__exit__"):
+    if any(not item.has_method("__exit__") for item in receivers):
         return ManagerProtocolConstructionGapV1(
             "exit-missing", behavior.manager_construction_cid, "source-visible method"
         )
-    enter = receiver.call_method_value(
+    representative = receivers[0]
+    enter = representative.call_method_value(
         "__enter__", (), owner="construct_manager_protocol", blame=exit_face_id
     )
-    exit_ = receiver.call_method_value(
+    exit_ = representative.call_method_value(
         "__exit__",
         (
             ExitTypeCoordinate(exit_face_id, None),
@@ -97,8 +242,18 @@ def construct_manager_protocol(
         return ManagerProtocolConstructionGapV1(
             "method-construction", behavior.manager_construction_cid, "__exit__"
         )
-    enter_frame_cid = _method_frame_cid(receiver, "__enter__")
-    exit_frame_cid = _method_frame_cid(receiver, "__exit__")
+    enter_frame_cid = _method_frame_cid(representative, "__enter__")
+    exit_frame_cid = _method_frame_cid(representative, "__exit__")
+    if any(
+        _method_frame_cid(item, "__enter__") != enter_frame_cid
+        or _method_frame_cid(item, "__exit__") != exit_frame_cid
+        for item in receivers[1:]
+    ):
+        return ManagerProtocolConstructionGapV1(
+            "method-construction",
+            behavior.manager_construction_cid,
+            "constructor faces disagree on protocol method frames",
+        )
     preimage = {
         "kind": "constructed-manager-protocol",
         "schemaVersion": "1",
@@ -115,6 +270,7 @@ def construct_manager_protocol(
         enter_frame_cid,
         exit_frame_cid,
         exit_face_id,
+        receiver,
     )
 
 

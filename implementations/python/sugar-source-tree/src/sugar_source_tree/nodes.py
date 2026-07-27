@@ -2736,7 +2736,7 @@ class ClassDef(Statement):
         initializer = next(
             (
                 item
-                for item in self.body
+                for item in reversed(self.body)
                 if isinstance(item, FunctionDef) and item.name == "__init__"
             ),
             None,
@@ -2810,7 +2810,7 @@ class ClassDef(Statement):
         initializer = next(
             (
                 item
-                for item in self.body
+                for item in reversed(self.body)
                 if isinstance(item, FunctionDef) and item.name == "__init__"
             ),
             None,

@@ -32,8 +32,14 @@ class ClassConstructorBodySugar(Sugar):
                     )
                 )
             from sugar_lift_py_tests.floor import BlockValue
+            from sugar_lift_py_tests.floor import (
+                EllipsisValue,
+                ReceiverStatePartitionValue,
+            )
             from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.outcome import Completed, Halted
             from sugar_lift_py_tests.outcome.exit_set import ExitSet
+            from sugar_source_tree.panic import SugarNotWritten
 
             # The outer CallSiteValue.force_floor already curried constructor
             # formals into ``ctx`` (formal_coordinate_cids → actuals). Reduce the
@@ -46,10 +52,28 @@ class ClassConstructorBodySugar(Sugar):
             if isinstance(outcome, Incomplete):
                 return outcome
             if isinstance(outcome, ExitSet):
-                collapsed = outcome.collapse()
-                if not isinstance(collapsed, Complete):
-                    return outcome
-                outcome = collapsed
+                projected = []
+                for face in outcome.exits:
+                    if isinstance(face, Halted):
+                        projected.append(face)
+                        continue
+                    assert isinstance(face, Completed)
+                    block = face.value
+                    if not isinstance(block, BlockValue):
+                        block = BlockValue((block,), can_fall_through=True)
+                    projected.append(
+                        Completed(
+                            face.guard,
+                            value.construct_receiver_state_from_block(
+                                block, self.receiver_coordinate_cid
+                            ),
+                            face.faces,
+                            face.pending_contracts,
+                        )
+                    )
+                return Complete(
+                    ReceiverStatePartitionValue(ExitSet(tuple(projected)).normalize())
+                )
             if not isinstance(outcome, Complete):
                 return outcome
             block = outcome.value
@@ -58,6 +82,15 @@ class ClassConstructorBodySugar(Sugar):
                 block = BlockValue(
                     (block,),
                     can_fall_through=True,
+                )
+            if block.statements and all(
+                isinstance(statement, EllipsisValue) for statement in block.statements
+            ):
+                raise SugarNotWritten(
+                    owner="ClassConstructorBodySugar.desugar",
+                    observed="initializer body is EllipsisValue only",
+                    requested="one source-visible runtime initializer implementation",
+                    fix="keep overload-only or stub-only constructors typed loud",
                 )
             return Complete(
                 value.construct_receiver_state_from_block(

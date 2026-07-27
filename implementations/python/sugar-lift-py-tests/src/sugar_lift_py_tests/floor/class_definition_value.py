@@ -46,12 +46,22 @@ class ClassDefinitionValue(GuardStableValue):
 
     def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
         from sugar_lift_py_tests.floor import (
+            GuardedReceiverFieldStoreValue,
             ObjectField,
             ObjectMethodValue,
             ObjectValue,
             ReceiverFieldStoreValue,
+            ReceiverStatePartitionValue,
         )
-        from sugar_lift_py_tests.ir import _term_content_cid, ctor, str_const
+        from sugar_lift_py_tests.ir import (
+            _term_content_cid,
+            and_,
+            ctor,
+            not_,
+            str_const,
+        )
+        from sugar_lift_py_tests.outcome import Completed, ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import partition, true_guard
 
         receiver = ObjectValue(
             self.class_name,
@@ -62,6 +72,64 @@ class ClassDefinitionValue(GuardStableValue):
         )
         if block is None:
             return receiver
+        guarded_stores = tuple(
+            statement
+            for statement in block.statements
+            if isinstance(statement, GuardedReceiverFieldStoreValue)
+        )
+        if guarded_stores:
+            states = [(true_guard(), (), frozenset())]
+            for statement in block.statements:
+                if isinstance(statement, ReceiverFieldStoreValue) and not isinstance(
+                    statement, GuardedReceiverFieldStoreValue
+                ):
+                    states = [
+                        (guard, (*stores, statement), faces)
+                        for guard, stores, faces in states
+                    ]
+                    continue
+                if not isinstance(statement, GuardedReceiverFieldStoreValue):
+                    continue
+                store = statement
+                then_face, else_face = partition(
+                    (
+                        "receiver-field-store",
+                        store.to_term(owner=self.class_definition_cid),
+                    )
+                )
+                next_states = []
+                for guard, stores, faces in states:
+                    next_states.append(
+                        (
+                            and_([guard, store.guard]),
+                            (
+                                *stores,
+                                ReceiverFieldStoreValue(
+                                    store.receiver, store.attr, store.value
+                                ),
+                            ),
+                            faces | {then_face},
+                        )
+                    )
+                    next_states.append(
+                        (
+                            and_([guard, not_(store.guard)]),
+                            stores,
+                            faces | {else_face},
+                        )
+                    )
+                states = next_states
+            exits = tuple(
+                Completed(
+                    guard,
+                    self.construct_receiver_state_from_block(
+                        type(block)(stores), receiver_coordinate_cid
+                    ),
+                    faces,
+                )
+                for guard, stores, faces in states
+            )
+            return ReceiverStatePartitionValue(ExitSet(exits).normalize())
         fields: dict[str, object] = {}
         for statement in block.statements:
             if not isinstance(statement, ReceiverFieldStoreValue):
