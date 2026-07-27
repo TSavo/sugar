@@ -261,6 +261,147 @@ PINNED_INVALID_ARG_CID = (
     "blake3-512:1a2b00ed9faeb66823b5bf57d534f5ec309cdf5201045bf43b199fabd931e597f"
     "f0d207c885c936577ec06e599da93a29f8497c97c1e03b94f3224923e997889"
 )
+PINNED_IO_COMMON_CID = (
+    "blake3-512:bb8ffaae9d8a417b4054f7688905c4eb405c54ec80fe72daa62ba8394b2fde393"
+    "9e11e9ea25977d357b872820e3e46f6c8c267e7be3cf09889dbb9f04b83a3a9"
+)
+PINNED_ERRORS_CID = (
+    "blake3-512:e0c0e46661f4028ee20659af69bba7b9f87b047b6b1126491bfd5d5c941119c1"
+    "113df8ed9daeb5413832a45b7434689a4768068013d513dc0f634e683b212a33"
+)
+
+
+def _pinned_identity(relative_path: str, expected_cid: str):
+    root = PINNED_PANDAS_ROOT
+    if not root.is_dir():
+        import pandas
+
+        root = Path(pandas.__file__).resolve().parent
+    path = root / relative_path
+    source = path.read_bytes()
+    source_cid = blake3_512_of(source)
+    assert source_cid == expected_cid
+    return source.decode("utf-8"), str(path), source_cid
+
+
+def _raise_semantics():
+    return EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        ExceptionInfoBindingV1(),
+    )
+
+
+def _warning_semantics():
+    return EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        WarningEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        WarningObservationBindingV1(),
+    )
+
+
+def _built_function(identity, name, rows):
+    context = TreeConstructionContextV1(
+        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+    )
+    return next(
+        node
+        for node in SourceFile(identity, construction_context=context).functions()
+        if node.name == name
+    ).sugar()
+
+
+def _with_routers(sugar):
+    routers = []
+
+    def walk(node):
+        if isinstance(node, (WithEffectBoundarySugar, WithResourceSugar)):
+            routers.append(node)
+        for field in ("body", "statements", "entries", "then_body", "else_body"):
+            for child in getattr(node, field, ()) or ():
+                walk(child)
+
+    walk(sugar)
+    return tuple(routers)
+
+
+def _real_three_deep_assertion_resource_chain():
+    identity = _pinned_identity("tests/io/test_common.py", PINNED_IO_COMMON_CID)
+    probe = SourceFile(identity)
+    function = next(node for node in probe.functions() if node.name == "test_close_on_error")
+    with_nodes = sorted(
+        (node for node in function.walk() if node.kind == "With"),
+        key=lambda node: node.line_col_span().start_line,
+    )
+    assert [node.line_col_span().start_line for node in with_nodes] == [638, 639, 640]
+    rows = {}
+    for index, node in enumerate(with_nodes):
+        coordinate = _coordinate(node.items[0].context_expr)
+        rows[coordinate] = (
+            _ref(coordinate, _raise_semantics(), "h")
+            if index == 0
+            else _resource_ref(coordinate, str(index))
+        )
+    return _with_routers(_built_function(identity, function.name, rows))
+
+
+def _real_juxtaposed_assertion_resource_chain():
+    identity = _pinned_identity("tests/test_errors.py", PINNED_ERRORS_CID)
+    probe = SourceFile(identity)
+    function = next(
+        node for node in probe.functions() if node.name == "test_pandas_warnings_filter"
+    )
+    with_nodes = [node for node in function.walk() if node.kind == "With"]
+    assert len(with_nodes) == 1
+    node = with_nodes[0]
+    assert node.line_col_span().start_line == 142
+    assert len(node.items) == 2
+    first = _coordinate(node.items[0].context_expr)
+    second = _coordinate(node.items[1].context_expr)
+    rows = {
+        first: _ref(first, _warning_semantics(), "w"),
+        second: _resource_ref(second, "z"),
+    }
+    return _with_routers(_built_function(identity, function.name, rows))
+
+
+def test_pinned_three_deep_assertion_over_two_resources_preserves_source_order():
+    """Truthful: the subject manager stays inside both outer boundaries."""
+    outer, middle, inner = _real_three_deep_assertion_resource_chain()
+    assert isinstance(outer, WithEffectBoundarySugar)
+    assert isinstance(middle, WithResourceSugar)
+    assert isinstance(inner, WithResourceSugar)
+    assert middle in outer.body
+    assert inner in middle.body
+
+
+def test_pinned_three_deep_chain_cannot_move_the_assertion_inside_cleanup():
+    """Lying: contract kind cannot reorder authenticated source occurrences."""
+    outer, middle, inner = _real_three_deep_assertion_resource_chain()
+    assert not isinstance(outer, WithResourceSugar)
+    assert not isinstance(middle, WithEffectBoundarySugar)
+    assert not isinstance(inner, WithEffectBoundarySugar)
+
+
+def test_pinned_juxtaposed_assertion_and_resource_nest_left_to_right():
+    """Two items use Python nesting and the same routers as nested source."""
+    outer, inner = _real_juxtaposed_assertion_resource_chain()
+    assert isinstance(outer, WithEffectBoundarySugar)
+    assert isinstance(outer.semantics.effect_kind, WarningEffectKindV1)
+    assert isinstance(inner, WithResourceSugar)
+    assert inner in outer.body
+
+
+def test_pinned_juxtaposition_cannot_swap_the_two_item_occurrences():
+    """Lying: the right-hand resource cannot become the outer assertion."""
+    outer, inner = _real_juxtaposed_assertion_resource_chain()
+    assert not isinstance(outer, WithResourceSugar)
+    assert not isinstance(inner, WithEffectBoundarySugar)
+
 def _real_resource_outer_boundary_inner():
     root = PINNED_PANDAS_ROOT
     if not root.is_dir():
