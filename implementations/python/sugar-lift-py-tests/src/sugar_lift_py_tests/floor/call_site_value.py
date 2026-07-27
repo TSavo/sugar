@@ -145,17 +145,8 @@ class CallSiteValue(FloorValue):
         return self.exception_type_coordinate
 
     def attribute(self, name, site):
-        """Retain attribute lookup on this exact constructed call result.
-
-        Construction does not execute the call or invent the attribute value;
-        downstream source construction receives the stable projection term.
-        """
-        del site
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
+        """Keep an unexecuted call result's member lookup a named third value."""
+        return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
 
     def _identity(self) -> tuple:
         """Authenticate this immutable callsite's finite coordinate once.

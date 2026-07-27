@@ -581,6 +581,24 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def undecided_attribute(self, name, site, *, owner: str):
+        """Refuse lookup when source testimony decides neither outgoing edge."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner=owner,
+            blame=site,
+            observed=(
+                "undecided receiver runtime type or member semantics: "
+                f"{type(self).__name__}.{name}"
+            ),
+            requested="a source-authenticated attribute success or exceptional exit",
+            fix=(
+                "carry receiver-type and member testimony to the attribute floor; "
+                "do not guess AttributeError or invent a completed projection"
+            ),
+        )
+
     def contains(self, item, site):
         # Default: this value does not stand on the membership floor -- it cannot
         # answer whether it holds `item`. A symbolic container stays the py.in

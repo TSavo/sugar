@@ -8321,11 +8321,10 @@ class Attribute(Expression):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
         The attr name is a static identifier carried onto the coordinate.
 
-        An OpaqueObjectStateV1 receiver is NOT withheld: `.attr` on an opaque
-        call result is a symbolic read the witness resolves at runtime, not a
-        gap. It reduces to the honest `py.getattr(recv, "attr")` EUF coordinate
-        (SymbolicValue.attribute), carrying whatever the call term guarantees and
-        nothing invented. Withholding it here was the gap, not the construct."""
+        An opaque receiver still constructs this native operation. Its floor
+        decides whether source testimony supplies a value or exceptional exit;
+        when neither is known, the producer refuses instead of inventing a
+        completed ``py.getattr`` projection or guessing ``AttributeError``."""
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
