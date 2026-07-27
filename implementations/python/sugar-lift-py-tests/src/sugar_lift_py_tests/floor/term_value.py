@@ -568,6 +568,17 @@ class TermValue(FloorValue):
             owner="TermValue.bitwise_invert",
         )
 
+    def subscript(self, index, site):
+        """Numbers are never subscriptable: exact ground TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="TermValue.subscript",
+        )
+
     def to_term(self, *, owner: str):
         del owner
         if type(self.value) is float:

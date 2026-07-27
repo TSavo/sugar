@@ -14,7 +14,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
 
-def _refusal(src):
+def _attribute_refusal(src):
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     directory = tempfile.mkdtemp()
@@ -29,8 +29,23 @@ def _refusal(src):
     raise AssertionError("opaque member operation invented a completed coordinate")
 
 
+def _subscript_refusal(src):
+    from sugar_source_tree.panic import SugarNotWritten
+
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as source_file:
+        source_file.write(src)
+    function = next(SourceFile(path_source(path)).functions())
+    try:
+        function.sugar().desugar(None)
+    except SugarNotWritten as refusal:
+        return refusal
+    raise AssertionError("opaque subscript invented a completed coordinate or panic")
+
+
 def test_opaque_attribute_is_named_undecided():
-    info = _refusal("def f(x):\n    return g(x).foo\n")
+    info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
 
     assert info.owner == "CallSiteValue.attribute"
     assert info.observed.endswith("CallSiteValue.foo")
@@ -40,14 +55,16 @@ def test_opaque_attribute_is_named_undecided():
 
 
 def test_opaque_subscript_is_named_undecided():
-    info = _refusal("def f(x):\n    return g(x)[0]\n")
+    refusal = _subscript_refusal("def f(x):\n    return g(x)[0]\n")
 
-    assert info.owner == "CallSiteValue.subscript"
-    assert "undecided receiver runtime type" in info.observed
+    assert refusal.owner == "CallSiteValue.subscript"
+    assert "undecided receiver runtime type" in refusal.observed
+    assert "KeyError" not in refusal.observed
+    assert "IndexError" not in refusal.observed
 
 
 def test_opaque_attribute_uses_the_typed_construction_refusal():
-    info = _refusal("def f(x):\n    return g(x).foo\n")
+    info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
 
     assert info.gap_locus.value == "Construction"
     assert "AttributeError" not in info.observed
@@ -55,8 +72,8 @@ def test_opaque_attribute_uses_the_typed_construction_refusal():
 
 
 def test_opaque_attribute_refusal_is_reproducible():
-    first = _refusal("def f(x):\n    return g(x).foo\n")
-    second = _refusal("def f(x):\n    return g(x).foo\n")
+    first = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+    second = _attribute_refusal("def f(x):\n    return g(x).foo\n")
 
     assert (first.owner, first.observed, first.requested) == (
         second.owner,
@@ -66,8 +83,8 @@ def test_opaque_attribute_refusal_is_reproducible():
 
 
 def test_opaque_attribute_name_is_carried_verbatim():
-    foo = _refusal("def f(x):\n    return g(x).foo\n")
-    bar = _refusal("def f(x):\n    return g(x).bar\n")
+    foo = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+    bar = _attribute_refusal("def f(x):\n    return g(x).bar\n")
 
     assert foo.observed.endswith(".foo")
     assert bar.observed.endswith(".bar")

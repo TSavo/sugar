@@ -137,11 +137,22 @@ class DictValue(FloorValue):
 
     def subscript(self, index, site):
         # Concrete key match returns the value; concrete miss is KeyError.
-        # Symbolic index (or non-ground key compare) stays the py.subscript
-        # coordinate when the sides can project to terms.
+        # Source-decided unhashable keys are TypeError. An index whose
+        # hash/eq semantics are not source-decided stays the named refusal.
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
+
+        if type(index) in (ListValue, DictValue, SetValue):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError",
+                site=site,
+                owner="DictValue.subscript",
+            )
 
         concrete = type(index) is StringValue or type(index) is TermValue
         if concrete:
@@ -151,20 +162,14 @@ class DictValue(FloorValue):
                         return Complete(value)
                     if type(key) is TermValue and key.value == index.value:
                         return Complete(value)
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-            construction_panic_gap(
-                owner="dict.subscript",
-                blame=site,
-                observed=f"missing concrete key {index!r}",
-                requested="exact dictionary post-state or exceptional exit",
-                fix=(
-                    "carry exact dictionary provenance and intervening mutation "
-                    "testimony before deciding KeyError; otherwise keep the "
-                    "missing post-state construction loud"
-                ),
+            return ground_exceptional_exit(
+                exception_name="KeyError",
+                site=site,
+                owner="DictValue.subscript",
             )
-        return self.py_subscript_coordinate(index, site)
+        return self.undecided_subscript(index, site, owner="DictValue.subscript")
 
     def setitem(self, index, value, site):
         from sugar_lift_py_tests.floor.string_value import StringValue
