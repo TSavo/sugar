@@ -437,7 +437,27 @@ def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site)
                 ),
                 fix="preserve the completed face until its record is constructed",
             )
-        if any(isinstance(entry, WarningObservationValue) for entry in entries):
+        observations = tuple(
+            entry for entry in entries if isinstance(entry, WarningObservationValue)
+        )
+        # A conditional occurrence decides NEITHER side of a no-warning
+        # contract. The producer says the warning happens WHEN a branch guard
+        # holds; reading that as a met assertion drops the warning, and reading
+        # it as a failed one -- which is what an unguarded `any(...)` does --
+        # asserts a violation the source never states. Both directions are the
+        # same defect, and the matching-category router above already refuses
+        # this shape by name. Undecided, not present and not absent.
+        if any(entry.guards for entry in observations):
+            raise SugarNotWritten(
+                owner="WithEffectBoundarySugar.warning_observation",
+                observed="warning occurrence is reached only under a branch guard",
+                requested="a decidable warning surface on the completed face",
+                fix=(
+                    "keep the conditional occurrence undecided; never settle a "
+                    "no-warning contract from a guarded occurrence"
+                ),
+            )
+        if observations:
             if isinstance(mode, ExpectsModeV1):
                 exits.append(
                     Halted(
@@ -451,8 +471,9 @@ def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site)
             else:
                 exits.append(face)
             continue
-        if any(isinstance(entry, CallSiteValue) for entry in entries):
-            raise SugarNotWritten(
+        unresolved_members = _unresolved_producer_coordinates(entries)
+        if unresolved_members:
+            refusal = SugarNotWritten(
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed="completed face has unresolved warning producers",
                 requested="authenticated absence of warning observations",
@@ -461,5 +482,10 @@ def _route_completed_no_warning_boundary(*, body, ctx, manager_exit, mode, site)
                     "absence from an empty observation set"
                 ),
             )
+            # Same enumeration the matching-category router carries: a bucket
+            # that only names itself cannot be told apart from one nothing was
+            # ever routed into.
+            refusal.unresolved_warning_producers = unresolved_members
+            raise refusal
         exits.append(face)
     return ExitSet(tuple(exits)).normalize()
