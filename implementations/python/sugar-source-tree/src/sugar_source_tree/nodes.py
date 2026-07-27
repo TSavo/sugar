@@ -7507,6 +7507,14 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
             )
         if isinstance(self.func, Attribute):
+            # Lexical import binding is the ONLY door to a closed callee
+            # coordinate. `None` here means the head is a parameter, a local, a
+            # shadowed or ambiguous name -- and it must REFUSE, falling through
+            # to the ordinary method-call construction below. Do not "helpfully"
+            # fall back to the dotted spelling: that is precisely the defect the
+            # With census carries (keyed on `pytest.raises` as a string, 6353
+            # rows of spelling), and it would let a local named `warnings` mint
+            # authenticated warning testimony it has no authority for.
             closed_symbol = self._import_bound_callee_symbol()
             if closed_symbol is not None:
                 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
@@ -7516,9 +7524,18 @@ class Call(Expression):
                 # the whole dotted spelling exactly as it does for a Name
                 # callee. No receiver constructs, so no module alias is minted
                 # as a universe Var it was never declared as.
+                from sugar_lift_py_tests.sugar.warning_observation_producer import (
+                    WARNING_OCCURRENCE_SYMBOL,
+                )
+
+                args_sugar = tuple(a.sugar() for a in self.args)
+                if closed_symbol == WARNING_OCCURRENCE_SYMBOL:
+                    args_sugar, keyword_sugars = self._authenticate_warning_category(
+                        args_sugar, keyword_sugars
+                    )
                 return CallSiteSugar(
                     target_name=closed_symbol,
-                    args=tuple(a.sugar() for a in self.args),
+                    args=args_sugar,
                     site=self.fragment,
                     keywords=keyword_sugars,
                 )
@@ -7590,6 +7607,62 @@ class Call(Expression):
             chain = chain.value
         module = target[len("python:") :] if target.startswith("python:") else target
         return ".".join([module, *reversed(attributes)])
+
+    def _authenticate_warning_category(self, args_sugar, keyword_sugars):
+        """Attach the floor-owned class identity to a ``warnings.warn`` category.
+
+        The category operand of a warning occurrence is an ordinary Python
+        exception class, so the SAME lexical authenticator that owns ``raise``
+        and ``except`` operands owns it -- no warning name table is minted. The
+        operand position comes from CPython's own fixed ``warnings.warn``
+        signature, not from a vendor convention.
+
+        An operand that is not a bare ``Name``, or a ``Name`` with no closed
+        class identity, is left exactly as constructed: the call then stays an
+        ordinary unresolved call site and the consuming boundary reports it as
+        an unresolved warning producer. Absent identity is never inferred.
+        """
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            AuthenticatedExceptionTypeSugar,
+        )
+        from sugar_lift_py_tests.sugar.warning_observation_producer import (
+            WARNING_CATEGORY_PARAMETER_INDEX,
+            WARNING_CATEGORY_PARAMETER_NAME,
+        )
+
+        location = None
+        if len(self.args) > WARNING_CATEGORY_PARAMETER_INDEX:
+            actual = self.args[WARNING_CATEGORY_PARAMETER_INDEX]
+            location = ("arg", WARNING_CATEGORY_PARAMETER_INDEX)
+        else:
+            actual = None
+            for keyword in self.keywords:
+                if keyword.arg == WARNING_CATEGORY_PARAMETER_NAME:
+                    actual, location = keyword.value, ("keyword", keyword.arg)
+                    break
+        if not isinstance(actual, Name):
+            return args_sugar, keyword_sugars
+        identity = self.unit.exception_type_identity(actual)
+        if identity is None:
+            return args_sugar, keyword_sugars
+        mro = self.unit.exception_type_mro(actual)
+        if location[0] == "arg":
+            args = list(args_sugar)
+            args[location[1]] = AuthenticatedExceptionTypeSugar(
+                args[location[1]], identity, mro, site=actual.fragment
+            )
+            return tuple(args), keyword_sugars
+        keywords = list(keyword_sugars)
+        for position, (name, sugar) in enumerate(keywords):
+            if name == location[1]:
+                keywords[position] = (
+                    name,
+                    AuthenticatedExceptionTypeSugar(
+                        sugar, identity, mro, site=actual.fragment
+                    ),
+                )
+                break
+        return args_sugar, tuple(keywords)
 
     def _spread_source_call_frame(self):
         """Authenticated source frame for a ``*``/``**`` call, when enrolled.

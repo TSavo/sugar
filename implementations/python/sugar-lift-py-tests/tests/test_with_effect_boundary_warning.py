@@ -48,7 +48,16 @@ class _ExpectedCategory(TermValue):
 
 
 def _identity(name: str):
-    return ctor("python:warning_category_identity", [str_const("builtins"), str_const(name)])
+    # ``python:exception_type_identity`` -- the SAME term the raise/except
+    # projection mints (``SourceUnit.exception_type_identity``) and the same one
+    # ``project_warning_observation`` emits. These twins previously spelled a
+    # ``python:warning_category_identity`` that exists at no revision outside
+    # this file, so they were green against a vocabulary of their own making:
+    # the production path could never have emitted the term under test.
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const(name)],
+    )
 
 
 SEMANTICS = EffectBoundarySemanticsV1(

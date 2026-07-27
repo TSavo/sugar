@@ -217,6 +217,33 @@ def _bind_real_actuals(signature, manager_value):
     return fixed
 
 
+def _unresolved_producer_coordinates(entries):
+    """The MEMBERS of the "unresolved warning producers" bucket, by coordinate.
+
+    Every call that survived to the completed face unreduced is a call this
+    boundary could not rule out as the warning it is looking for -- including
+    the three shapes the producer deliberately refuses (no explicit category, a
+    category that is not a closed class coordinate, and a shadowed or parameter
+    head).  Each is named ``file:line`` from its own pinned fragment, never from
+    the spelling of its head.  A call whose fragment is absent still counts as a
+    member and says so; dropping it would let the bucket under-report.
+    """
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    members = []
+    for entry in entries:
+        if not isinstance(entry, CallSiteValue):
+            continue
+        fragment = entry.site
+        filename = getattr(fragment, "filename", None)
+        line = getattr(fragment, "line", None)
+        if filename is None or line is None:
+            members.append(f"<unlocated>:{entry.target_name}")
+        else:
+            members.append(f"{filename}:{line}")
+    return tuple(members)
+
+
 def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode, site):
     """Route authenticated warning testimony carried by a COMPLETED body face.
 
@@ -280,22 +307,34 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
         unauthenticated = tuple(
             entry
             for _, entry in observations
-            if entry.effect.category_identity is None
+            if entry.effect.category_identity is None or entry.guards
         )
         if unauthenticated or not observations:
-            unresolved = any(
-                isinstance(entry, CallSiteValue) for entry in entries
-            )
-            raise SugarNotWritten(
+            unresolved_members = _unresolved_producer_coordinates(entries)
+            unresolved = bool(unresolved_members)
+            if unresolved or not observations:
+                observed = "completed face has unresolved warning producers"
+            elif any(entry.guards for entry in unauthenticated):
+                # The producer says the warning happens WHEN a branch guard
+                # holds. Consuming it here would restate that as "the warning
+                # happens", which is a strictly stronger claim than the source
+                # makes. Undecided, not absent, and not present.
+                observed = "warning occurrence is reached only under a branch guard"
+            else:
+                observed = "warning occurrence has no authenticated category identity"
+            refusal = SugarNotWritten(
                 owner="WithEffectBoundarySugar.warning_observation",
-                observed=(
-                    "completed face has unresolved warning producers"
-                    if unresolved or not observations
-                    else "warning occurrence has no authenticated category identity"
-                ),
+                observed=observed,
                 requested="one source-authenticated WarningObservationValue on the completed face",
                 fix="construct producer-owned warning testimony; never infer absence or category from spelling",
             )
+            # The bucket ENUMERATES its members.  A refusal that only names a
+            # bucket is indistinguishable from a producer that was never wired:
+            # both leave the produced set empty, and a test can only assert
+            # absence, which the never-wired case satisfies too.  A caller can
+            # now require a specific coordinate to be PRESENT here.
+            refusal.unresolved_warning_producers = unresolved_members
+            raise refusal
         match = next(
             (
                 pair
