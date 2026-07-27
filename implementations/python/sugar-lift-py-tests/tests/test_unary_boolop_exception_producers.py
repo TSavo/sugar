@@ -184,22 +184,109 @@ def test_or_true_short_circuits_rhs_effect_truthful_twin() -> None:
 @pytest.mark.parametrize(
     ("kind", "rhs_guard"),
     (
-        ("And", atomic("py.truthy", [make_var("left")])),
-        ("Or", not_(atomic("py.truthy", [make_var("left")]))),
+        ("And", atomic("py.gt", [make_var("left"), make_var("zero")])),
+        ("Or", not_(atomic("py.gt", [make_var("left"), make_var("zero")]))),
     ),
 )
-def test_undecided_left_makes_rhs_effect_conditional(kind, rhs_guard) -> None:
-    temporal = TemporalContext.empty().bind_value(
-        "left", SymbolicValue(make_var("left_truth"))
-    )
+def test_predicate_left_makes_rhs_effect_conditional(kind, rhs_guard) -> None:
+    """A decided predicate may guard an RHS halt; an undecided *type* may not.
+
+    ``SymbolicValue`` truth is undecided (``bool`` may raise), so inventing
+    ``py.truthy`` there is refused.  A source-visible comparison predicate is a
+    decided truth formula and still short-circuits its complementary face.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+    positive = atomic("py.gt", [make_var("left"), make_var("zero")])
+
+    @dataclass(frozen=True)
+    class _PredicateSugar(Sugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(PredicateValue(positive, "left"))
+
     outcome = _boolop(
         kind,
-        NameSugar("left", _Site()),
+        _PredicateSugar(),
         _EffectSugar(ExpectationNotMetEffect("rhs")),
-        temporal=temporal,
     )
 
     assert isinstance(outcome, ExitSet)
     halted = [edge for edge in outcome.exits if isinstance(edge, Halted)]
     assert len(halted) == 1
     assert halted[0].guard == rhs_guard
+
+
+@pytest.mark.parametrize("kind", ("And", "Or"))
+def test_undecided_operand_type_refuses_invented_truth(kind: str) -> None:
+    """``obj and obj`` cannot invent ``py.truthy`` when ``bool(obj)`` is undecided."""
+    with pytest.raises(ConstructionPanic) as caught:
+        _boolop(kind, NameSugar("obj1", _Site()), NameSugar("obj2", _Site()))
+
+    info = caught.value.info
+    assert info.owner == "boolean_operation_exception_floor"
+    assert info.observed == f"SymbolicValue {'and' if kind == 'And' else 'or'}"
+    assert "authenticated exceptional exit" in info.requested
+    assert "TypeError" not in str(info)
+    assert "ValueError" not in str(info)
+
+
+def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
+    """Truthful pandas ``obj1 and/or obj2`` raise at runtime; producer refuses.
+
+    Site: ``pandas/tests/generic/test_generic.py`` lines 152/154 under
+    ``pytest.raises(ValueError)``.  Source does not state Series type at the
+    BoolOp, so the producer cannot mint ValueError — only the named refusal.
+    """
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import BoolOp
+    from sugar_source_tree.tree import SourceFile
+
+    corpus = authenticated_pandas_corpus()
+    assert corpus.manifest_cid == MANIFEST_CID
+    path = corpus.root / "tests/generic/test_generic.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
+        "cbc5383e8e1545537baedca85a6c62a487d3bea6942bb56e5e0c7479dd2f188d"
+    )
+    source = path.read_text(encoding="utf-8")
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    assert source_cid == BOOLOP_SOURCE_CID
+
+    import pandas
+
+    obj1 = pandas.Series([1, 1, 1, 1])
+    obj2 = pandas.Series([1, 1, 1, 1])
+    with pytest.raises(ValueError, match="ambiguous"):
+        obj1 and obj2
+    with pytest.raises(ValueError, match="ambiguous"):
+        obj1 or obj2
+
+    tree = SourceFile(
+        (source, str(path), source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    for line, operator in ((152, "and"), (154, "or")):
+        matches = tuple(
+            node
+            for node in tree.nodes()
+            if isinstance(node, BoolOp) and node.line_col_span().start_line == line
+        )
+        assert len(matches) == 1
+        with pytest.raises(ConstructionPanic) as raised:
+            matches[0].sugar().desugar(None)
+        info = raised.value.info
+        assert info.owner == "boolean_operation_exception_floor"
+        assert info.observed == f"SymbolicValue {operator}"
+        assert "authenticated exceptional exit" in info.requested
+        assert "ValueError" not in str(info)

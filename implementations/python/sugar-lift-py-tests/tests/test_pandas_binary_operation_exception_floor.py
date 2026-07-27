@@ -72,6 +72,23 @@ def _assert_named_panic(
     assert "RuntimeEffect" not in str(info)
 
 
+def _binop_at(source: str, path: Path, *, line: int, kind: str):
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    tree = SourceFile(
+        (source, str(path), source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    matches = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp)
+        and node.op.kind == kind
+        and node.line_col_span().start_line == line
+    )
+    assert len(matches) == 1
+    return matches[0]
+
+
 def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> None:
     """Truthful/lying runtime twins cannot license invented source testimony.
 
@@ -111,5 +128,50 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
         _line_96_bitand(lying, path),
         owner="binary_operation_exception_floor",
         observed="SymbolicValue & TermValue",
+        requested_contains="authenticated exceptional exit",
+    )
+
+
+@pytest.mark.parametrize(
+    ("line", "kind", "snippet", "observed", "runtime_right"),
+    (
+        # Same function as :96; ground float right still cannot type the left.
+        (98, "BitAnd", "s_0123 & 3.14", "SymbolicValue & TermValue", 3.14),
+        # List right is decided as a sequence; left Series type is not.
+        (
+            101,
+            "BitAnd",
+            "s_0123 & [0.1, 4, 3.14, 2]",
+            "SymbolicValue & ListValue",
+            [0.1, 4, 3.14, 2],
+        ),
+        # String right is decided; left Series type is not.
+        (117, "BitAnd", 's_1111 & "a"', "SymbolicValue & StringValue", "a"),
+    ),
+)
+def test_pandas_series_bitand_mixed_rights_stay_named_refusals(
+    line: int, kind: str, snippet: str, observed: str, runtime_right
+) -> None:
+    """Additional vertical slices: one operator law, mixed decided rights.
+
+    Each site raises TypeError at CPython on a concrete Series, but the
+    producer only sees a SymbolicValue left.  The shared undecided-binary law
+    must refuse every one without inventing TypeError.
+    """
+    path = _corpus_file()
+    source = path.read_text(encoding="utf-8")
+    assert hashlib.sha256(source.encode("utf-8")).hexdigest() == FILE_SHA256
+    assert source.count(snippet) == 1
+
+    import pandas
+
+    series = pandas.Series(range(4), dtype="int64")
+    with pytest.raises(TypeError):
+        series & runtime_right
+
+    _assert_named_panic(
+        _binop_at(source, path, line=line, kind=kind),
+        owner="binary_operation_exception_floor",
+        observed=observed,
         requested_contains="authenticated exceptional exit",
     )
