@@ -27,6 +27,17 @@ class ClassValue(FloorValue):
 
         return ctor("python:type", [str_const(self.name)])
 
+    def truth(self, site):
+        # Python type objects are always truthy. Dual-mode EffectBoundary
+        # factories gate validation with ``if not expected_exception:``; the
+        # class actual must stand as a condition without force-floor:truth:ClassValue.
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(TrueBoolLiteralSugar(site=site))
+
     def test_python_type(self, value, site):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)
 

@@ -116,14 +116,26 @@ class IfSugar(Sugar):
         cond = self.test.desugar(ctx)
         if not isinstance(cond, Complete):
             return cond
+        # Condition expression itself raised: the if never selects a branch.
+        # Do not demand truth of RaiseValue (that was force-floor:truth:RaiseValue).
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        if isinstance(cond.value, RaiseValue):
+            return Incomplete(cond.value.effect)
         observed_formula = predicate_formula(cond.value, self.site)
         formula = branch_result_guard(self.branch_slot, self.site)
         authentication = BranchResultAuthentication(
             self.branch_slot, observed_formula, self.site
         )
 
-        then_exits = reduce_block_to_exitset(self.then_body)
-        else_exits = reduce_block_to_exitset(self.else_body)
+        # Carry the call-frame temporal into each branch. Formals are
+        # BindingCoordinateRefSugar keyed by coordinate cid; without ctx the
+        # branch suite cannot resolve authenticated actuals and panics as
+        # unspecialized source-call formal (dual-mode EffectBoundary factories
+        # nest further ifs that read those formals).
+        then_exits = reduce_block_to_exitset(self.then_body, ctx)
+        else_exits = reduce_block_to_exitset(self.else_body, ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a

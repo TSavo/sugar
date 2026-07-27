@@ -192,6 +192,155 @@ def test_builtin_named_call_is_not_false_opaque_call_target(tmp_path):
     assert result.kind in {"non-manager-result", "force-floor"}, result
 
 
+def test_raises_style_if_not_args_factory_projects_guarded_return(tmp_path):
+    """Dual-mode EffectBoundary factory: ``if not args: return CM(x)`` constructs.
+
+    Residual without GuardedReturn unwrap was non-manager-result:BlockValue or
+    force-floor:truth:RaiseValue / unspecialized formal. Vendor-neutral shape —
+    no pytest/pandas name branch.
+    """
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return effect_type is self.expected_exception\n\n"
+        "def raises(expected_exception=None, *args):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert "BindingCoordinateRefSugar" not in detail, result
+    assert "unspecialized source-call formal" not in detail, result
+    assert "truth:RaiseValue" not in detail, result
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "non-manager-result"
+        and result.detail == "BlockValue"
+    ), result
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual.value
+
+
+def test_raises_style_kwargs_return_attaches_constructor_body(tmp_path):
+    """General ``return CM(x, **kwargs)`` is not bodyless CallSiteValue."""
+    implementation = (
+        "class RaisesExc:\n"
+        "    def __init__(self, expected_exception=None, match=None, check=None):\n"
+        "        self.expected_exception = expected_exception\n"
+        "        self.match = match\n"
+        "        self.check = check\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def raises(expected_exception=None, *args, **kwargs):\n"
+        "    if not args:\n"
+        "        return RaisesExc(expected_exception, **kwargs)\n"
+    )
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path, implementation, exported="raises"
+    )
+
+    result = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    detail = getattr(result, "detail", None) or ""
+    assert not (
+        isinstance(result, ManagerConstructionGapV1)
+        and result.kind == "non-manager-result"
+        and result.detail == "CallSiteValue"
+    ), result
+    assert "missing callsite body" not in detail, result
+    assert isinstance(result, ConstructedManagerBehaviorV1), (
+        f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
+        f" kind={getattr(result, 'kind', None)} detail={detail!r}"
+    )
+    fields = {field.name: field.value for field in result.receiver_state.fields}
+    assert fields["expected_exception"] is actual.value
+
+
+def test_dual_mode_effect_boundary_installs_with_effect_boundary_sugar(tmp_path):
+    """Vendor-neutral dual-mode factory populates EffectBoundary With sugar."""
+    implementation = (
+        "class RenamedBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n\n"
+        "def make_boundary(expected, *args):\n"
+        "    if not args:\n"
+        "        return RenamedBoundary(expected)\n"
+    )
+    distribution = _distribution(tmp_path, implementation, exported="make_boundary")
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        "    with arbitrary.make_boundary(ValueError):\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(reference.semantics.mode, ExpectsModeV1)
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    boundary = with_node.sugar()
+    assert isinstance(boundary, WithEffectBoundarySugar)
+    # Empty body when expects-raise: red ExpectationNotMet (normal completion
+    # while an effect was required). Matching raise is a separate shape.
+    exits = outcome_to_exitset(boundary.desugar()).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Halted)
+    assert isinstance(exits[0].effect, ExpectationNotMetEffect)
+
+
 def test_renamed_manager_protocol_retains_ordinary_method_call_frames(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,
@@ -560,7 +709,6 @@ def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
         "def make_guard(expected):\n"
         "    return OpaqueBoundary(expected)\n",
     )
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     behavior = construct_manager_behavior(
         resolved, graph=graph, actuals=(actual,), call_site=call_site
@@ -569,8 +717,15 @@ def test_opaque_suppression_predicate_stays_summary_gap(tmp_path):
     protocol = construct_manager_protocol(behavior, exit_face_id="boundary-face")
     assert isinstance(protocol, ConstructedManagerProtocolV1)
 
-    with pytest.raises(ConstructionPanic, match="Python type operand"):
-        derive_manager_summary(protocol)
+    # TermValue expected is not a typed class operand: summary stays a typed gap
+    # (force-floor membrane), never a bare ConstructionPanic or green resource.
+    summary = derive_manager_summary(protocol)
+    assert isinstance(summary, DerivedManagerSummaryGapV1)
+    assert summary.kind in {
+        "exit-may-halt",
+        "opaque-exit-truthiness",
+        "enter-may-halt",
+    }, summary
 
 
 def test_renamed_issubclass_boundary_derives_through_authenticated_floor(tmp_path):
@@ -1107,7 +1262,10 @@ def test_installed_stdlib_suppress_reaches_grouped_unpack_after_graph_authentica
     )
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
-    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        TreeConstructionContextV1,
+    )
 
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
@@ -1115,16 +1273,25 @@ def test_installed_stdlib_suppress_reaches_grouped_unpack_after_graph_authentica
         construction_context=context,
     )
     graphs = {}
-    from sugar_source_tree.panic import SugarNotWritten
-
-    with pytest.raises(SugarNotWritten, match="DynamicUnpackAssignSugar"):
-        populate_source_derived_resource_refs(
-            tree, root=tmp_path, path=path, artifact_graph_cache=graphs
-        )
+    # Graph authentication of stdlib contextlib succeeds. Later-stage residual
+    # (exit method ExitSet / unpack) stays a typed gap — not a bare SugarNotWritten.
+    populate_source_derived_resource_refs(
+        tree, root=tmp_path, path=path, artifact_graph_cache=graphs
+    )
 
     graph = graphs["contextlib"]
     assert graph.artifact_kind == "stdlib"
     assert "contextlib" in graph.modules
+    resolution = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(resolution, ContextManagerResolutionGapV1)
+    assert resolution.kind in {
+        "exit-may-halt",
+        "enter-may-halt",
+        "force-floor",
+        "non-manager-result",
+        "method-construction",
+        "opaque-exit-truthiness",
+    }, resolution.kind
 
 
 @pytest.mark.parametrize(

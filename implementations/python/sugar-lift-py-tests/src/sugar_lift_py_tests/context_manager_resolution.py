@@ -180,6 +180,12 @@ class TreeConstructionContextV1:
     # subclass definition coordinate.  These are never serialized; the class
     # definition projects their sealed CIDs into its own preimage.
     source_class_bases: dict = field(default_factory=dict)
+    # When projecting an authenticated definition into a call frame, dual-mode
+    # factory bodies may contain With sites only on non-manager return paths
+    # (e.g. pytest.raises function form). Soft projection does not require
+    # those nested Withs to already carry a closed CM row — the CM form's
+    # return path is what construct_manager_behavior force_floors.
+    frame_projection: bool = False
 
     @classmethod
     def for_source_call_construction(
@@ -188,6 +194,7 @@ class TreeConstructionContextV1:
         source_call_frames: dict | None = None,
         call_contract_refs: object | None = None,
         workspace_root: str | None = None,
+        frame_projection: bool = False,
     ) -> "TreeConstructionContextV1":
         """Construction context for sole-path source-call frames without CM enrollment."""
         return cls(
@@ -195,6 +202,7 @@ class TreeConstructionContextV1:
             call_contract_refs=call_contract_refs,
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
+            frame_projection=frame_projection,
         )
 
 

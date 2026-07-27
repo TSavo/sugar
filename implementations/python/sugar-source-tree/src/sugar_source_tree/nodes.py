@@ -4854,7 +4854,21 @@ class With(Statement):
                 site=self.fragment,
             )
 
-        resolved_ref = self._require_narrow_cm_ref(item)
+        context = self.unit.construction_context
+        if getattr(context, "frame_projection", False):
+            try:
+                resolved_ref = self._require_narrow_cm_ref(item)
+            except Exception:  # noqa: BLE001 — soft dual-mode factory projection
+                # Nested With only on the function-form branch of dual-mode
+                # EffectBoundary factories (pytest.raises). Leave a soft
+                # incomplete so the CM return path can still project a frame.
+                from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import (
+                    SoftUnresolvedWithSugar,
+                )
+
+                return SoftUnresolvedWithSugar(site=self.fragment)
+        else:
+            resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
@@ -5088,7 +5102,18 @@ class With(Statement):
                     return bound.substitute(scope)
             if item.optional_vars is not None and item.optional_vars.kind == "Name":
                 if self._generator_manager_frame(item) is None:
-                    self._require_narrow_cm_ref(item)
+                    context = self.unit.construction_context
+                    if getattr(context, "frame_projection", False):
+                        # Authenticated dual-mode factories may nest With only
+                        # on the non-CM branch. Soft projection skips closed-row
+                        # enrollment for those sites so the CM return path can
+                        # still project a call frame.
+                        try:
+                            self._require_narrow_cm_ref(item)
+                        except Exception:  # noqa: BLE001 — soft projection only
+                            pass
+                    else:
+                        self._require_narrow_cm_ref(item)
                 enter_slot = f"{item._manager_slot_id()}#enter_result"
                 body_scope[item.optional_vars.id] = item._make_observation_ref(
                     enter_slot, ENTER_RESULT
@@ -5163,7 +5188,14 @@ class With(Statement):
                 return None
             resolved_ref = None
             if self._generator_manager_frame(item) is None:
-                resolved_ref = self._require_narrow_cm_ref(item)
+                context = self.unit.construction_context
+                if getattr(context, "frame_projection", False):
+                    try:
+                        resolved_ref = self._require_narrow_cm_ref(item)
+                    except Exception:  # noqa: BLE001 — soft dual-mode projection
+                        resolved_ref = None
+                else:
+                    resolved_ref = self._require_narrow_cm_ref(item)
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
             )
@@ -7180,11 +7212,18 @@ class Call(Expression):
                 # call-site branch below.
                 self.func.discharge_by_substitution()
             callee_name = self._spread_callee_name(self.func)
+            # Enroll an authenticated source-visible frame when the call is a
+            # local constructor/function use-site. Typed ``**`` actuals then
+            # project onto formals at desugar (SpreadCallSugar) so the manager
+            # factory return `CM(x, **kwargs)` carries a body — the law that
+            # bare CallSiteSugar already obeys for non-spread calls.
+            source_call_frame = self._spread_source_call_frame()
             return SpreadCallSugar(
                 callee_name=callee_name,
                 callee=(None if isinstance(self.func, Name) else self.func.sugar()),
                 arguments=arguments,
                 site=self.fragment,
+                source_call_frame=source_call_frame,
             )
 
         keyword_sugars = tuple(
@@ -7481,6 +7520,62 @@ class Call(Expression):
             chain = chain.value
         module = target[len("python:") :] if target.startswith("python:") else target
         return ".".join([module, *reversed(attributes)])
+
+    def _spread_source_call_frame(self):
+        """Authenticated source frame for a ``*``/``**`` call, when enrolled.
+
+        Looks up the same ``source_call_frames`` table the non-spread Call path
+        uses, then binds non-spread positionals and named keywords onto the
+        frame. Double-star keywords are *not* node-bound here — their FloorValue
+        is projected at desugar via ``bind_actuals`` once the mapping is a
+        constructed DictValue. Star operands leave the frame unbound so
+        SpreadCallSugar stays bodyless (no typed vararg projection yet).
+        """
+        if any(isinstance(arg, Starred) for arg in self.args):
+            return None
+        context = self.unit.construction_context
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+        source_call_frame = None
+        if (
+            isinstance(context, TreeConstructionContextV1)
+            and context.source_call_frames
+        ):
+            span = self.line_col_span()
+            coordinate = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            source_call_frame = context.source_call_frames.get(coordinate)
+        if source_call_frame is None and isinstance(self.func, Name):
+            definition = self.unit.source_allocation_definition_for_call(self)
+            if (
+                definition is not None
+                and self.unit.source_class_has_authenticated_default_attribute_behavior(
+                    definition
+                )
+            ):
+                source_call_frame = definition.source_visible_constructor_frame()
+        if source_call_frame is None:
+            return None
+        try:
+            return source_call_frame.bind_node_actuals(
+                tuple(arg for arg in self.args if not isinstance(arg, Starred)),
+                tuple(
+                    (keyword.arg, keyword.value)
+                    for keyword in self.keywords
+                    if keyword.arg is not None
+                ),
+            )
+        except SourceCallBindingGap:
+            return None
 
     @staticmethod
     def _spread_callee_name(callee: Expression) -> Optional[str]:

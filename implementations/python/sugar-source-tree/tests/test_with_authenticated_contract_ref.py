@@ -236,7 +236,14 @@ def test_effect_boundary_does_not_match_distinct_same_spelling_type(tmp_path):
     assert isinstance(face.effect, RaiseEffect)
 
 
-def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
+def test_effect_boundary_with_formal_expected_type_stays_symbolic(tmp_path):
+    """A formal expected type is not a ground identity — keep both faces.
+
+    ``with raises(expected):`` when ``expected`` is a parameter cannot collapse
+    to a single authenticated exception-type identity. Desugar must stay a
+    multi-arm ExitSet under the symbolic type predicate, never invent a green
+    sole face and never panic as missing identity sugar.
+    """
     path = tmp_path / "unknown_identity.py"
     path.write_text(
         "from pytest import raises\n"
@@ -245,6 +252,7 @@ def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
         "        raise ValueError('boom')\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
     sugar = _function_sugar(path_source(str(path)), _effect_resolved)
     boundary = next(
@@ -252,8 +260,11 @@ def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
         for statement in sugar.statements
         if isinstance(statement, WithEffectBoundarySugar)
     )
-    with pytest.raises(SugarNotWritten, match="authenticated exception-type identity"):
-        boundary.desugar()
+    outcome = boundary.desugar()
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) >= 2
+    assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
+    assert any(isinstance(exit_, Halted) for exit_ in outcome.exits)
 
 
 def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
