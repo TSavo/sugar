@@ -34,8 +34,10 @@ import pytest
 from sugar_lift_py_tests.authenticated_exception_matching import (
     MatchRetained,
     matches_raise_effect,
+    raise_effect_message_verdict,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_source_tree.panic import SugarNotWritten
 
@@ -168,3 +170,45 @@ def test_a_real_value_term_still_retains_the_question() -> None:
 
     assert isinstance(verdict, MatchRetained)
     assert verdict.obligation.name == "adt.is_python_type"
+
+
+def test_matching_halt_without_message_operand_retains_message_obligation() -> None:
+    """Truthful twin: the raised VALUE exists, but its rendered message is open."""
+    identity = TermValue(1).to_term(owner="exception identity")
+    raised_value = TermValue(7)
+    effect = RaiseEffect(
+        exception_name="ValueError",
+        exception_type_coordinate=identity,
+        occurrence=OCCURRENCE,
+        raised_value=raised_value,
+    )
+    expected = _AuthenticatedHandler(identity)
+
+    verdict = raise_effect_message_verdict(
+        effect, expected, StringValue("boom")
+    )
+
+    assert isinstance(verdict, MatchRetained)
+    assert verdict.obligation.name == "py.re_search"
+    assert verdict.obligation.args[0].value == "boom"
+    message = verdict.obligation.args[1]
+    assert message.name == "py.exception_message"
+    assert message.args == (raised_value.to_term(owner="raised value"),)
+
+
+def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
+    """Lying twin: a source coordinate is not a rendered-message operand."""
+    identity = TermValue(1).to_term(owner="exception identity")
+    effect = RaiseEffect(
+        exception_name="ValueError",
+        exception_type_coordinate=identity,
+        occurrence=OCCURRENCE,
+        raised_value=None,
+    )
+    expected = _AuthenticatedHandler(identity)
+
+    with pytest.raises(SugarNotWritten) as raised:
+        raise_effect_message_verdict(effect, expected, StringValue("boom"))
+
+    assert raised.value.owner == "authenticated_exception_matching._message_term"
+    assert OCCURRENCE not in str(raised.value)

@@ -140,29 +140,36 @@ def _ground_string(term):
 
 
 def _message_term(effect, *, owner):
-    """The term of the raised call's message operand, or the ground empty message.
+    """The testified message operand, or rendered-message projection of a value.
 
     ``raise E()`` constructs no argument, and the message of such a value is
-    exactly ``""`` -- a ground fact, not an absence. Anything that is not a
-    constructed call has no authenticated message operand at all and is loud.
+    exactly ``""`` -- a ground fact, not an absence. A non-call raised value
+    can still testify to the value being rendered; its message stays open as
+    ``py.exception_message(value)``. Only a valueless effect is loud, because
+    there is then no admissible subject for the projection.
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_source_tree.panic import SugarNotWritten
 
     raised = effect.raised_value
-    if not isinstance(raised, CallSiteValue):
+    if isinstance(raised, CallSiteValue):
+        args = raised.arg_values
+        return args[0].to_term(owner=owner) if args else str_const("")
+
+    raised_term = _operand_term(raised, owner=owner, role="raised exception")
+    if raised_term is None:
         raise SugarNotWritten(
             owner="authenticated_exception_matching._message_term",
-            observed="raised value is not a constructed call occurrence",
-            requested="a CallSiteValue whose first actual is the message operand",
+            observed="raised exception has no value term to render as a message",
+            requested="a message operand or an emittable raised VALUE term",
             fix=(
-                "construct the raised exception through its call site; never "
-                "read a message off an unconstructed value"
+                "authenticate the raised value or its message operand; a source "
+                "coordinate designates the raise SITE, not the raised value, "
+                "and is not admissible as the rendered-message subject"
             ),
         )
-    args = raised.arg_values
-    return args[0].to_term(owner=owner) if args else str_const("")
+    return ctor("py.exception_message", [raised_term])
 
 
 def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
