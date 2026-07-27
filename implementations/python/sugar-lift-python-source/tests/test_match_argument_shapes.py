@@ -66,6 +66,9 @@ unfalsifiable results.
 from __future__ import annotations
 
 import hashlib
+import json
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,8 +76,20 @@ import pytest
 
 from declared_corpus import require_declared_corpus
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_lift_python_source.manager_construction import _frame_bound_names
-from sugar_source_tree.nodes import Attribute, Call, Constant, FunctionDef, Name
+from sugar_lift_python_source.manager_construction import (
+    CALL_TARGET_GAP_KINDS,
+    _CALL_TARGET_GAP_PRECEDENCE,
+    _classify_named_call_target,
+    _frame_bound_names,
+)
+from sugar_source_tree.nodes import (
+    Attribute,
+    Call,
+    ClassDef,
+    Constant,
+    FunctionDef,
+    Name,
+)
 from sugar_source_tree.tree import SourceFile
 
 
@@ -310,3 +325,234 @@ def test_the_two_call_shapes_are_not_the_same_condition() -> None:
     assert resolvable_callee not in _frame_bound_names(
         _enclosing_function(resolvable_file, resolvable_arg)
     ), "re is frame-bound at the resolvable site; it is no longer a free name"
+
+
+# --------------------------------------------------------------------------
+# The drain, against the shared authenticated table.
+#
+# The table is addressed by CONTENT KEY, never by name. A name lookup returns
+# whatever the shelf happens to hold at test time, which is a moving corpus
+# wearing a pin's clothes; a content key returns one artifact or nothing.
+# --------------------------------------------------------------------------
+
+#: The first authenticated ``python-demand-table``, published through the
+#: ``ee50531eb`` shelf path. Producer ``964dbf95d``, corpus pandas 3.0.3 /
+#: 1,421 files, runtime ``cpython-3.14.4``.
+DEMAND_TABLE_CONTENT_KEY = (
+    "blake3-512:e225fcd0991f7c9011107521516e513390e448cc78ec4ce2da5eceb7116e1d89"
+    "6cba3f8d9f19c1b5375692117a8395aa9f1529a63b768387ce9aeb43d8323499"
+)
+
+#: The corpus the table authenticated itself against.
+DEMAND_TABLE_CORPUS_MANIFEST_CID = (
+    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+)
+
+#: The whole ``gapKind`` vocabulary the table is capable of carrying, read off
+#: the published artifact. ``value-call-target`` is deliberately not in it --
+#: see ``test_table_cannot_testify_about_a_frame_bound_callee``.
+DEMAND_TABLE_GAP_KINDS = frozenset({None, "runtime-selected"})
+
+_TABLE_CACHE: dict[str, object] = {}
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _pinned_demand_table() -> dict:
+    """Pull the pinned table through the shelf and return the enrolled slice.
+
+    Only the rows belonging to the four enrolled files are retained. That is
+    not a filter over the measurement -- every row for those files is kept,
+    and the shapes are enrolled rather than selected -- it is what keeps a
+    232 MB artifact out of the rest of the run.
+    """
+    if "slice" in _TABLE_CACHE:
+        return _TABLE_CACHE["slice"]
+
+    root = _repo_root()
+    with tempfile.TemporaryDirectory() as scratch:
+        output = Path(scratch) / "demand-table.json"
+        completed = subprocess.run(
+            [
+                str(root / "bin" / "sugarbin"),
+                "artifact",
+                "pull",
+                "--kind",
+                "python-demand-table",
+                "--content-key",
+                DEMAND_TABLE_CONTENT_KEY,
+                "--output",
+                str(output),
+                "--runtime",
+                "cpython-3.14.4",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0 or not output.is_file():
+            raise AssertionError(
+                "the pinned python-demand-table is not on this shelf: "
+                f"{DEMAND_TABLE_CONTENT_KEY}\n"
+                f"  sugarbin exit {completed.returncode}\n"
+                f"  {completed.stderr.strip()[:400]}\n"
+                "Publish or fetch that exact key. Do NOT substitute another "
+                "table: two owners reading two tables produce two "
+                "unfalsifiable results."
+            )
+        payload = json.loads(output.read_text(encoding="utf-8"))
+
+    # The shelf is content-addressed, but the artifact says who it is and that
+    # is what gets checked -- never the filename it arrived under.
+    assert payload["contentKey"] == DEMAND_TABLE_CONTENT_KEY
+    assert (
+        payload["authentication"]["authenticatedCorpusManifestCid"]
+        == DEMAND_TABLE_CORPUS_MANIFEST_CID
+    )
+
+    enrolled = {
+        _source_cid(_corpus_root() / site.relative_path): site.shape
+        for site in ENROLLED_SITES
+    }
+    rows: dict[str, list] = {shape: [] for shape in enrolled.values()}
+    for row in payload["rows"]:
+        shape = enrolled.get((row.get("useSite") or {}).get("sourceCid"))
+        if shape is not None:
+            rows[shape].append(row)
+
+    result = {
+        "identity": payload["identity"],
+        "authentication": payload["authentication"],
+        "rowCount": len(payload["rows"]),
+        "gapKinds": frozenset(row.get("gapKind") for row in payload["rows"]),
+        "rows": rows,
+    }
+    _TABLE_CACHE["slice"] = result
+    return result
+
+
+def _source_cid(path: Path) -> str:
+    return blake3_512_of(path.read_text(encoding="utf-8").encode("utf-8"))
+
+
+def _rows_on_line(rows, line: int) -> list:
+    return [row for row in rows if (row.get("useSite") or {}).get("startLine") == line]
+
+
+def test_enrolled_files_are_byte_identical_to_the_tables_corpus() -> None:
+    """The table's pandas and this run's pandas are the same four files.
+
+    The table was produced against a different tree than the one these sites
+    are enrolled from. Both call themselves pandas 3.0.3, which is a version
+    string and not a corpus identity. If the enrolled bytes differ, every row
+    below is testimony about a corpus this run never read.
+    """
+    table = _pinned_demand_table()
+    corpus = _corpus_root()
+    produced_from = Path(table["authentication"]["pandasPath"]).resolve().parent
+    for site in ENROLLED_SITES:
+        here = (corpus / site.relative_path).read_bytes()
+        there_path = produced_from / site.relative_path
+        assert there_path.is_file(), (
+            f"{site.relative_path} is absent from the tree the table was "
+            f"produced from ({produced_from})"
+        )
+        assert hashlib.sha256(here).hexdigest() == site.file_sha256
+        assert here == there_path.read_bytes(), (
+            f"{site.relative_path} differs between this run's corpus and the "
+            "tree the table was produced from; the rows do not attribute"
+        )
+
+
+def test_resolvable_call_drains_against_the_pinned_table() -> None:
+    """``re.escape`` is named at its own coordinate, with a signature.
+
+    This is what draining means for this shape: the table does not merely
+    decline to complain, it produces the callee's symbol and its import
+    signature at the exact inner-call coordinate.
+    """
+    table = _pinned_demand_table()
+    site = next(s for s in ENROLLED_SITES if s.shape == "resolvable-call")
+    rows = _rows_on_line(table["rows"]["resolvable-call"], site.line)
+
+    escape_rows = [row for row in rows if row.get("targetSymbol") == "python:re.escape"]
+    assert len(escape_rows) == 1, (
+        f"expected exactly one re.escape row at {site.relative_path}:{site.line}, "
+        f"got {[row.get('targetSymbol') for row in rows]}"
+    )
+    escape = escape_rows[0]
+    assert escape.get("importSignature"), "the drained row carries no import signature"
+    assert escape.get("gapKind") is None
+
+
+def test_opaque_callee_is_absent_from_every_row_of_its_file() -> None:
+    """``msg`` appears nowhere in the table, and the scope of that is stated.
+
+    The negative is bounded to what was actually searched: every row whose use
+    site is in the enrolled file, not "the table" in general.
+    """
+    table = _pinned_demand_table()
+    rows = table["rows"]["opaque-call"]
+    assert rows, "no rows at all for the opaque-call file; the lookup is broken"
+    naming_msg = [row for row in rows if "msg" in str(row.get("targetSymbol"))]
+    assert naming_msg == [], f"expected no msg row, got {naming_msg}"
+
+
+def test_table_cannot_testify_about_a_frame_bound_callee() -> None:
+    """Absence of a row is not a refusal, and the artifact proves it.
+
+    Across the whole published table ``gapKind`` takes two values, and
+    ``value-call-target`` is not one of them. So the table has no way to say
+    "this callee is a runtime value" -- a frame-bound callee is not an
+    import-bound demand, and the artifact records import-bound demands. That
+    is a boundary of the artifact, not a defect in it.
+
+    The consequence is the point: from the table alone, "correctly refused"
+    and "nobody looked" are the same observation. A drain tooth resting on
+    ``msg`` having no row would stay green with the mechanism deleted.
+    """
+    table = _pinned_demand_table()
+    assert table["gapKinds"] == DEMAND_TABLE_GAP_KINDS
+    assert "value-call-target" not in table["gapKinds"]
+    assert "value-call-target" in CALL_TARGET_GAP_KINDS
+
+
+def test_construction_names_value_call_target_at_the_opaque_coordinate() -> None:
+    """The loudness comes from construction, and the named gap is PRESENT.
+
+    This is the tooth the table cannot supply. The production classifier is
+    asked about the real callee in the real frame, and must answer with the
+    condition that maps onto ``value-call-target`` -- not with silence, and
+    not with a coverage-shaped kind that would send the name to an export door
+    that can never resolve it.
+    """
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_name_temporal,
+    )
+
+    site = next(s for s in ENROLLED_SITES if s.shape == "opaque-call")
+    source_file = _source_file(_corpus_root() / site.relative_path)
+    argument = _match_argument(_raises_call_on_line(source_file, site.line))
+    frame = _enclosing_function(source_file, argument)
+    name = _callee_root_name(argument)
+
+    module_definitions = {
+        node.name
+        for node in source_file.nodes()
+        if isinstance(node, (FunctionDef, ClassDef))
+    }
+    classification = _classify_named_call_target(
+        name,
+        module_definitions,
+        builtin_name_temporal(),
+        frame_binders=_frame_bound_names(frame),
+    )
+    assert classification == "frame-bound-value", (
+        f"{name} at {site.relative_path}:{site.line} classified as "
+        f"{classification!r}; only frame-bound-value parks a "
+        "value-call-target obligation, and every other answer sends the name "
+        "to an export door that cannot resolve it"
+    )
+    assert _CALL_TARGET_GAP_PRECEDENCE.index("value-call-target") == 1
