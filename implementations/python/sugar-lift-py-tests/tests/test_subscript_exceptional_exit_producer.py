@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
-from pathlib import Path
-import subprocess
 
 import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
+from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
@@ -25,24 +23,19 @@ from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
-CORPUS_ROOT = Path(
-    "/Users/tsavo/sugar-defect-drain/.venv/lib/python3.14/site-packages"
-)
-SITE = CORPUS_ROOT / "pandas/tests/test_multilevel.py"
 SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
 MANIFEST_CID = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
-DEMAND_TABLE_KEY = (
-    "blake3-512:e225fcd0991f7c9011107521516e513390e448cc78ec4ce2da5eceb7116e1d89"
-    "6cba3f8d9f19c1b5375692117a8395aa9f1529a63b768387ce9aeb43d8323499"
-)
 
 
 @pytest.fixture(scope="module")
 def authenticated_site():
-    assert hashlib.sha256(SITE.read_bytes()).hexdigest() == SITE_SHA256
+    corpus = authenticated_pandas_corpus()
+    assert corpus.manifest_cid == MANIFEST_CID
+    site = corpus.root / "tests/test_multilevel.py"
+    assert hashlib.sha256(site.read_bytes()).hexdigest() == SITE_SHA256
 
     source = SourceFile(
-        workspace_path_source(str(SITE), root=str(CORPUS_ROOT)),
+        workspace_path_source(str(site), root=str(corpus.root.parent)),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     return next(
@@ -52,33 +45,13 @@ def authenticated_site():
     )
 
 
-def test_shared_table_authenticates_the_exact_corpus(
-    tmp_path: Path,
-) -> None:
-    output = tmp_path / "table.json"
-    root = Path(__file__).resolve().parents[4]
-    pulled = subprocess.run(
-        [
-            str(root / "bin/sugarbin"),
-            "artifact",
-            "pull",
-            "--kind",
-            "python-demand-table",
-            "--content-key",
-            DEMAND_TABLE_KEY,
-            "--output",
-            str(output),
-            "--runtime",
-            "cpython-3.14.4",
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
+def test_launcher_authenticates_the_exact_corpus() -> None:
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
+        "3.0.3",
+        MANIFEST_CID,
+        1421,
     )
-    assert pulled.returncode == 0, pulled.stderr
-    table = json.loads(output.read_text(encoding="utf-8"))
-    assert table["contentKey"] == DEMAND_TABLE_KEY
-    assert table["authentication"]["authenticatedCorpusManifestCid"] == MANIFEST_CID
 
 def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> None:
     receiver = CallSiteValue(

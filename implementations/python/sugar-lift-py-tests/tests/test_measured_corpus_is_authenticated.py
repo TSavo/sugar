@@ -37,6 +37,13 @@ import sysconfig
 
 import pytest
 
+from sugar_lift_py_tests.authenticated_pytest import (
+    ExecutionEnvironmentMismatch,
+    authenticate_corpus_manifest,
+    authenticated_pandas_corpus,
+)
+from sugar_lift_py_tests.demand_table_identity import corpus_manifest_cid
+
 _PYPROJECT = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
 _CORPUS_PACKAGES = ("pandas", "numpy")
 
@@ -169,3 +176,46 @@ def test_a_mismatched_pin_would_fail_this_suite() -> None:
     # The tooth is exactly this comparison; if it were `in` or a prefix match,
     # a 3.0.30 would satisfy a 3.0.3 pin and the denominator would drift again.
     assert ("3.0.3" == "3.0.30") is False
+
+
+def test_same_corpus_content_at_a_different_location_authenticates(tmp_path) -> None:
+    first = tmp_path / "first" / "pandas"
+    second = tmp_path / "second" / "pandas"
+    for root in (first, second):
+        root.mkdir(parents=True)
+        (root / "a.py").write_text("value = 1\n", encoding="utf-8")
+        (root / "nested").mkdir()
+        (root / "nested/b.py").write_text("value = 2\n", encoding="utf-8")
+    paths = (first / "a.py", first / "nested/b.py")
+    expected_cid, expected_count = corpus_manifest_cid(first, paths)
+
+    observed_cid, observed_count = authenticate_corpus_manifest(
+        second,
+        (second / "a.py", second / "nested/b.py"),
+        expected_cid,
+    )
+
+    assert (observed_cid, observed_count) == (expected_cid, expected_count)
+
+
+def test_launcher_exposes_corpus_by_identity_not_machine_path() -> None:
+    corpus = authenticated_pandas_corpus()
+
+    assert corpus.version == "3.0.3"
+    assert corpus.manifest_cid == (
+        "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+    )
+    assert corpus.file_count == 1421
+    assert corpus.root.name == "pandas"
+
+
+def test_same_corpus_path_with_different_content_refuses(tmp_path) -> None:
+    root = tmp_path / "pandas"
+    root.mkdir()
+    file = root / "a.py"
+    file.write_text("value = 1\n", encoding="utf-8")
+    expected_cid, _ = corpus_manifest_cid(root, (file,))
+    file.write_text("value = 2\n", encoding="utf-8")
+
+    with pytest.raises(ExecutionEnvironmentMismatch, match="content manifest CID"):
+        authenticate_corpus_manifest(root, (file,), expected_cid)
