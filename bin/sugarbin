@@ -135,6 +135,20 @@ dispatch_execution_subcommand() {
     fi
   fi
 
+  if [[ "$subcommand" != build ]]; then
+    local elevated_name
+    for elevated_name in ${env_names[@]+"${env_names[@]}"}; do
+      case "$elevated_name" in
+        SUGAR_BINARY_ALLOW_BUILD|SUGAR_BINARY_PUBLISH|SUGAR_BINARY_REQUIRE_PUBLISH)
+          if [[ ${!elevated_name:-0} != 0 ]]; then
+            echo "sugarbin: provisioning authority requires explicit sugarbin build; refusing $subcommand with $elevated_name=${!elevated_name}" >&2
+            return 2
+          fi
+          ;;
+      esac
+    done
+  fi
+
   local route_env="${execution_env%%:*}" docker_image="" core_image=""
   if [[ "$route_env" == docker ]]; then
     local contract_python
@@ -254,7 +268,9 @@ dispatch_execution_subcommand() {
     sugar_bx_write_mount_proof || return $?
     local remote_needs="$needs" has_artifacts=0
     if [[ -n "$remote_needs" ]]; then
-      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" || return $?
+      local provision_artifacts=0
+      [[ "$subcommand" != build ]] || provision_artifacts=1
+      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" "$provision_artifacts" || return $?
       has_artifacts=1
     fi
     if [[ "$subcommand" == build ]]; then
