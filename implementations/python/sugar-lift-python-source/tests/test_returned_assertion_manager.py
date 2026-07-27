@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
+import subprocess
+import tempfile
 from functools import cache
 from pathlib import Path
 from types import MappingProxyType
@@ -14,7 +17,6 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_python_source.canonical import blake3_512_of
-
 
 _TABLE_CID = "blake3-512:" + "t" * 128
 _CATALOG_CID = "blake3-512:" + "c" * 128
@@ -30,6 +32,15 @@ _SOURCE_CID = (
     "blake3-512:3a71aa9c523d26a6a541cb6fdc124d37c364245b959d41873619701b421fbe370"
     "7b50d44f9d87083a783b17ec779000a4480863c8dc8435761e6f17238dd3ee0"
 )
+_DEMAND_TABLE_CONTENT_KEY = (
+    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
+    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
+)
+_CORPUS_MANIFEST_CID = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
+    "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+_EXTERNAL_ERROR_TARGET = "pandas._testing.external_error_raised"
 
 
 def _install_root() -> Path:
@@ -40,11 +51,51 @@ def _install_root() -> Path:
 
 
 @cache
+def _external_error_demand_rows() -> tuple[dict, ...]:
+    """Consume the authenticated table and retain this exact demand family."""
+    root = Path(__file__).resolve().parents[4]
+    with tempfile.TemporaryDirectory() as scratch:
+        output = Path(scratch) / "demand-table.json"
+        completed = subprocess.run(
+            [
+                str(root / "bin" / "sugarbin"),
+                "artifact",
+                "pull",
+                "--kind",
+                "python-demand-table",
+                "--content-key",
+                _DEMAND_TABLE_CONTENT_KEY,
+                "--output",
+                str(output),
+                "--runtime",
+                "cpython-3.12.13",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert payload["contentKey"] == _DEMAND_TABLE_CONTENT_KEY
+    assert payload["authentication"]["python"] == "cpython-3.12.13"
+    assert (
+        payload["authentication"]["authenticatedCorpusManifestCid"]
+        == _CORPUS_MANIFEST_CID
+    )
+    return tuple(
+        row
+        for row in payload["rows"]
+        if row.get("targetSymbol") == _EXTERNAL_ERROR_TARGET
+    )
+
+
+@cache
 def _feather_tree():
     """The pandas helper is a named construction refusal, not an assertion.
 
     The coordinate and CIDs are the exact row consumed from the authenticated
-    demand table at content key ``e225...3499``.  The local import and returned
+    demand table at content key ``0ce7...53ab0``.  The local import and returned
     ``pytest.raises(..., match=None)`` are behind a dynamic export: construction
     may name that missing preimage, but must not invent it from the With head.
     """
@@ -79,14 +130,15 @@ def _feather_tree():
     )
 
 
-def test_external_error_raised_follows_return_to_named_formal_refusal() -> None:
+def test_external_error_raised_follows_return_to_keyword_validation_refusal() -> None:
     """The pandas helper is followed without inventing an assertion boundary.
 
     The coordinate and CIDs are the exact row consumed from the authenticated
-    demand table at content key ``e225...3499``.  The local import and returned
+    demand table at content key ``0ce7...53ab0``.  The local import and returned
     ``pytest.raises(..., match=None)`` is followed from source.  Its returned
-    manager currently stops at an unspecialized formal, before semantics exist;
-    neither the With-head spelling nor the helper name may bridge that refusal.
+    manager currently stops in pytest's source-visible keyword-validation branch,
+    before semantics exist; neither the With-head spelling nor the helper name
+    may bridge that refusal.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
@@ -105,12 +157,37 @@ def test_external_error_raised_follows_return_to_named_formal_refusal() -> None:
     assert isinstance(reference, ContextManagerResolutionGapV1)
     assert reference.kind == "force-floor"
     assert reference.detail == (
-        "BindingCoordinateRefSugar.desugar:unspecialized source-call formal"
+        "binary_operation_exception_floor:SymbolicValue + CallSiteValue"
     )
     with pytest.raises(ContextManagerResolutionConstructionGap) as caught:
         with_node.sugar()
     assert caught.value.kind == "force-floor"
-    assert "unspecialized source-call formal" in caught.value.observed
+    assert "SymbolicValue + CallSiteValue" in caught.value.observed
+
+
+def test_external_error_raised_population_is_the_authenticated_47_with_sites() -> None:
+    """The stated 51 mentions contain exactly 47 manager-demand sites.
+
+    The remaining mentions are the helper definition, its export, and one call
+    assigned to ``ctx``; the fourth non-With mention names the test function
+    containing an ordinary With site.  This test consumes the shared demand
+    table, so the denominator is manager construction sites rather than text.
+    """
+    rows = _external_error_demand_rows()
+    assert len(rows) == 47
+    assert all(row["expectedKind"] == "context-manager-contract" for row in rows)
+    assert all(row["gapKind"] is None for row in rows)
+    assert any(
+        row["useSite"]
+        == {
+            "sourceCid": _SOURCE_CID,
+            "startLine": 40,
+            "startCol": 13,
+            "endLine": 40,
+            "endCol": 48,
+        }
+        for row in rows
+    )
 
 
 def test_adjacent_computed_class_raises_stays_typed_opaque() -> None:
@@ -129,4 +206,4 @@ def test_adjacent_computed_class_raises_stays_typed_opaque() -> None:
 
     assert caught.value.coordinate.start_line == 33
     assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    assert "ExitSet with 4 arms" in caught.value.observed
+    assert "SymbolicValue + CallSiteValue" in caught.value.observed
