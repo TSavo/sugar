@@ -1,15 +1,10 @@
-"""Per-family attribution for assertion bodies whose outer node is not Call.
+"""Per-family attribution for assertion bodies whose root is not a Call.
 
 The authenticated runner owns discovery and shared-table transport.  This
 module owns the closed accounting algebra: every enrolled body is attributed
 to exactly one producer family and exactly one of three outcomes.  A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.  A
 ``ConstructionPanic`` remains a separate loud axis.
-
-Family denominators are the authenticated outer-body inventory on the
-pandas 3.0.3 corpus + #6464 demand table under the outer-node-not-Call law
-(Subscript 386, BinOp 349, Compare 181, Attribute 51, UnaryOp 13, BoolOp 2;
-sum 982). Nested Call descendants do not reclassify an outer producer.
 """
 
 from __future__ import annotations
@@ -48,10 +43,10 @@ class ProducerFamily(str, Enum):
 
 
 FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
-    ProducerFamily.SUBSCRIPT: 386,
-    ProducerFamily.BINOP: 349,
+    ProducerFamily.SUBSCRIPT: 392,
+    ProducerFamily.BINOP: 367,
     ProducerFamily.COMPARE: 181,
-    ProducerFamily.ATTRIBUTE: 51,
+    ProducerFamily.ATTRIBUTE: 53,
     ProducerFamily.UNARYOP: 13,
     ProducerFamily.BOOLOP: 2,
 }
@@ -318,55 +313,6 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
     )
 
 
-def _source_has_selected_family_demand(
-    source: str,
-    demands: Iterable[dict],
-    families: frozenset[ProducerFamily],
-) -> bool:
-    """Cheap fail-closed projection before native Sugar construction.
-
-    The managed CPython parser may only discard a source file that carries no
-    demand whose native body root could belong to ``families``.  Enrollment is
-    still decided by the Sugar tree below, and the fixed family denominator
-    refuses if this projection ever loses a site.
-    """
-    import ast
-
-    selected_names = {family.value for family in families}
-    demands_by_coordinate = {
-        (
-            demand.get("startLine"),
-            demand.get("startCol"),
-            demand.get("endLine"),
-            demand.get("endCol"),
-        )
-        for demand in demands
-    }
-    parsed = ast.parse(source)
-    for node in ast.walk(parsed):
-        if not isinstance(node, (ast.With, ast.AsyncWith)):
-            continue
-        coordinates = {
-            (
-                item.context_expr.lineno,
-                item.context_expr.col_offset,
-                item.context_expr.end_lineno,
-                item.context_expr.end_col_offset,
-            )
-            for item in node.items
-        }
-        if not coordinates.intersection(demands_by_coordinate):
-            continue
-        if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
-            continue
-        expression = node.body[0].value
-        # Outer-node law: nested Calls (values[index()]) do not reclassify
-        # the body. Bare Call roots are excluded by selected_names.
-        if type(expression).__name__ in selected_names:
-            return True
-    return False
-
-
 def discover_no_call_body_probes(
     payload: dict,
     corpus_root: Path,
@@ -375,10 +321,12 @@ def discover_no_call_body_probes(
 ) -> tuple[BodyProbe, ...]:
     """Project authenticated assertion demands to their native body producer.
 
-    ``targetSymbol`` is consumed as authenticated import testimony from the
-    shared table.  It selects the measurement population only; it grants no
-    semantic behavior to a manager or producer.
+    Every resolved context-manager demand participates.  The native body root
+    selects the producer family; no manager or vendor spelling selects it or
+    grants semantic behavior to a producer.
     """
+    import ast
+
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
@@ -403,6 +351,23 @@ def discover_no_call_body_probes(
         UnaryOp: ProducerFamily.UNARYOP,
         BoolOp: ProducerFamily.BOOLOP,
     }
+    selected_families = families or frozenset(ProducerFamily)
+    family_by_type = {
+        node_type: family
+        for node_type, family in family_by_type.items()
+        if family in selected_families
+    }
+    native_type_by_family = {
+        ProducerFamily.SUBSCRIPT: ast.Subscript,
+        ProducerFamily.BINOP: ast.BinOp,
+        ProducerFamily.COMPARE: ast.Compare,
+        ProducerFamily.ATTRIBUTE: ast.Attribute,
+        ProducerFamily.UNARYOP: ast.UnaryOp,
+        ProducerFamily.BOOLOP: ast.BoolOp,
+    }
+    selected_native_types = tuple(
+        native_type_by_family[family] for family in selected_families
+    )
     paths_by_cid = {}
     for path in SourceTree(corpus_root).paths():
         paths_by_cid[blake3_512_of(path.read_bytes())] = path
@@ -412,7 +377,6 @@ def discover_no_call_body_probes(
         if (
             row.get("kind") != "context-manager-demand"
             or row.get("gapKind") is not None
-            or row.get("targetSymbol") != "pytest.raises"
         ):
             continue
         use_site = row.get("useSite") or {}
@@ -429,28 +393,66 @@ def discover_no_call_body_probes(
                 f"demand table names source CID absent from authenticated corpus: {source_cid}"
             )
         source = path.read_text(encoding="utf-8")
-        if families is not None and not _source_has_selected_family_demand(
-            source, demands, families
-        ):
+        candidate_spans = set()
+        for node in ast.walk(ast.parse(source, filename=str(path))):
+            if not isinstance(node, (ast.With, ast.AsyncWith)):
+                continue
+            if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
+                continue
+            if not isinstance(node.body[0].value, selected_native_types):
+                continue
+            for item in node.items:
+                manager = item.context_expr
+                candidate_spans.add(
+                    (
+                        manager.lineno,
+                        manager.col_offset,
+                        manager.end_lineno,
+                        manager.end_col_offset,
+                    )
+                )
+        demands = [
+            use_site
+            for use_site in demands
+            if (
+                use_site.get("startLine"),
+                use_site.get("startCol"),
+                use_site.get("endLine"),
+                use_site.get("endCol"),
+            )
+            in candidate_spans
+        ]
+        if not demands:
             continue
         tree = SourceFile(
             (source, str(path), source_cid),
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
         )
+        managers_by_span: dict[tuple[int, int, int, int], list[With]] = {}
+        for node in tree.nodes():
+            if not isinstance(node, With):
+                continue
+            for item in node.items:
+                span = item.context_expr.line_col_span()
+                managers_by_span.setdefault(
+                    (
+                        span.start_line,
+                        span.start_col,
+                        span.end_line,
+                        span.end_col,
+                    ),
+                    [],
+                ).append(node)
         for use_site in demands:
-            managers = []
-            for node in tree.nodes():
-                if not isinstance(node, With):
-                    continue
-                for item in node.items:
-                    span = item.context_expr.line_col_span()
-                    if (
-                        span.start_line == use_site.get("startLine")
-                        and span.start_col == use_site.get("startCol")
-                        and span.end_line == use_site.get("endLine")
-                        and span.end_col == use_site.get("endCol")
-                    ):
-                        managers.append(node)
+            managers = managers_by_span.get(
+                (
+                    use_site.get("startLine"),
+                    use_site.get("startCol"),
+                    use_site.get("endLine"),
+                    use_site.get("endCol"),
+                ),
+                (),
+            )
             if len(managers) != 1:
                 raise AttributionInvariantError(
                     f"assertion demand resolves to {len(managers)} With nodes: {use_site!r}"
