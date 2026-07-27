@@ -207,6 +207,51 @@ def _entries_of_factory_payload(value: object) -> tuple | None:
     return None
 
 
+def _manager_receiver_identity(
+    receiver: ObjectValue | ReceiverStatePartitionValue,
+) -> str:
+    if isinstance(receiver, ObjectValue):
+        return receiver.identity
+
+    from sugar_lift_py_tests.ir import formula_term
+    from sugar_lift_py_tests.outcome import Completed
+
+    completed_faces = [
+        ctor(
+            "python:completed-receiver-state-face",
+            [
+                formula_term(face.guard),
+                face.value.to_term(owner="manager receiver identity"),
+            ],
+            symbol_kind="coordinate",
+        )
+        for face in receiver.exits.exits
+        if isinstance(face, Completed)
+    ]
+    return _term_content_cid(
+        ctor(
+            "python:completed-receiver-state-partition",
+            completed_faces,
+            symbol_kind="coordinate",
+        )
+    )
+
+
+def _completed_receiver_candidates(
+    receiver: ObjectValue | ReceiverStatePartitionValue,
+) -> tuple[ObjectValue, ...]:
+    if isinstance(receiver, ObjectValue):
+        return (receiver,)
+
+    from sugar_lift_py_tests.outcome import Completed
+
+    return tuple(
+        face.value
+        for face in receiver.exits.exits
+        if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
+    )
+
+
 def _project_return_faces_to_manager(
     faces: tuple[FloorValue, ...],
     *,
@@ -249,8 +294,31 @@ def _project_return_faces_to_manager(
                 owner="construct_manager_behavior returned object",
                 project_callsite=False,
             )
-        except ConstructionPanic:
-            # Missing body / later-stage force-floor on this face — try peers.
+        except ConstructionPanic as panic:
+            # A nested source constructor can itself have guarded completion
+            # arms. Project those arms through the same source-authenticated
+            # manager door used for a top-level multi-arm factory.
+            observed = getattr(getattr(panic, "info", None), "observed", None)
+            if "ExitSet" not in str(observed):
+                continue
+            from sugar_lift_py_tests.outcome import ExitSet
+
+            nested_outcome = returned.reduce_source_outcome(None)
+            if not isinstance(nested_outcome, ExitSet):
+                continue
+            projected = _project_manager_from_exitset(
+                nested_outcome,
+                factory_prefix=(),
+                seen_calls=seen_calls,
+                resolved_cid=resolved_cid,
+            )
+            if isinstance(projected, ManagerConstructionGapV1):
+                continue
+            floor, nested_prefix = projected
+            if isinstance(floor, ObjectValue):
+                managers.append((face, floor, returned))
+                non_return_prefix = (*non_return_prefix, *nested_prefix)
+                seen_calls.add(id(returned))
             continue
         if isinstance(floor, (ObjectValue, ReceiverStatePartitionValue)):
             managers.append((face, floor, returned))
@@ -264,26 +332,22 @@ def _project_return_faces_to_manager(
         # — complementary ``if x is None: return CM() else: return CM(x)``
         # faces construct both; the refined arm is the callsite's manager.
         # Incomparable multi-receivers stay loud.
-        identities = {item[1].identity for item in managers}
-        if len(identities) > 1 and all(
-            isinstance(item[1], ObjectValue) for item in managers
-        ):
-            refined = _sole_refined_manager(tuple(item[1] for item in managers))
+        identities = {_manager_receiver_identity(item[1]) for item in managers}
+        if len(identities) > 1:
+            candidates = tuple(
+                candidate
+                for item in managers
+                for candidate in _completed_receiver_candidates(item[1])
+            )
+            refined = _sole_refined_manager(candidates)
             if refined is None:
                 return ManagerConstructionGapV1(
                     "non-manager-result",
                     resolved_cid,
                     f"GuardedReturn with {len(identities)} manager receivers",
                 )
-            managers = [
-                item for item in managers if item[1].identity == refined.identity
-            ]
-        elif len(identities) > 1:
-            return ManagerConstructionGapV1(
-                "non-manager-result",
-                resolved_cid,
-                f"GuardedReturn with {len(identities)} manager receiver partitions",
-            )
+            face, _receiver, call = managers[0]
+            managers = [(face, refined, call)]
         _face, obj, call = managers[0]
         return obj, factory_prefix + non_return_prefix
 
@@ -402,24 +466,21 @@ def _project_manager_from_exitset(
             resolved_cid,
             f"ExitSet with {len(outcome.exits)} arms",
         )
-    identities = {item[0].identity for item in managers}
-    if len(identities) > 1 and all(
-        isinstance(item[0], ObjectValue) for item in managers
-    ):
-        refined = _sole_refined_manager(tuple(item[0] for item in managers))
+    identities = {_manager_receiver_identity(item[0]) for item in managers}
+    if len(identities) > 1:
+        candidates = tuple(
+            candidate
+            for item in managers
+            for candidate in _completed_receiver_candidates(item[0])
+        )
+        refined = _sole_refined_manager(candidates)
         if refined is None:
             return ManagerConstructionGapV1(
                 "non-manager-result",
                 resolved_cid,
                 f"ExitSet with {len(identities)} manager receivers",
             )
-        managers = [item for item in managers if item[0].identity == refined.identity]
-    elif len(identities) > 1:
-        return ManagerConstructionGapV1(
-            "non-manager-result",
-            resolved_cid,
-            f"ExitSet with {len(identities)} manager receiver partitions",
-        )
+        managers = [(refined, managers[0][1])]
     obj, prefix = managers[0]
     return obj, factory_prefix + prefix
 
@@ -433,6 +494,13 @@ def _sole_refined_manager(
     equals the same field on A, and A has at least one additional non-None
     field. Complementary factory faces ``return CM()`` / ``return CM(x)`` then
     collapse to the refined receiver instead of multi-manager residual.
+
+    When refinement cannot choose (e.g. dual ``RaisesExc(**kwargs)`` /
+    ``RaisesExc(expected, **kwargs)`` faces whose ``expected_exceptions`` are
+    still bodyless CallSiteValues of the same shape), a sole structural
+    representative is accepted: same class name and same field-name/type map.
+    Outer formal actuals still carry the expected type for EffectBoundary
+    derivation.
     """
     from sugar_lift_py_tests.floor import NoneValue
 
@@ -459,6 +527,12 @@ def _sole_refined_manager(
                 return False
         return gained
 
+    def structural_key(obj: ObjectValue) -> tuple:
+        return (
+            obj.class_name,
+            tuple(sorted((f.name, type(f.value).__name__) for f in obj.fields)),
+        )
+
     candidates = [
         candidate
         for candidate in managers
@@ -468,9 +542,13 @@ def _sole_refined_manager(
         )
     ]
     identities = {item.identity for item in candidates}
-    if len(identities) != 1:
-        return None
-    return candidates[0]
+    if len(identities) == 1:
+        return candidates[0]
+    keys = {structural_key(item) for item in managers}
+    if len(keys) == 1:
+        # Dual-mode complementary faces that construct the same manager shape.
+        return managers[0]
+    return None
 
 
 def construct_manager_behavior(
@@ -570,6 +648,7 @@ def construct_manager_behavior(
     # exceptions, so they pass through the membrane untouched.
     factory_prefix: tuple[FloorValue, ...] = ()
     seen_calls: set[int] = set()
+    projected_force_floor_detail: str | None = None
     try:
         result = call.force_floor(
             None, owner="construct_manager_behavior", project_callsite=False
@@ -590,10 +669,17 @@ def construct_manager_behavior(
         owner = getattr(getattr(panic, "info", None), "owner", None) or "force-floor"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
         if "ExitSet" in str(observed):
+            projected_force_floor_detail = str(observed)
             from sugar_lift_py_tests.outcome import Complete, ExitSet
 
             outcome = call.reduce_source_outcome(None)
             if isinstance(outcome, ExitSet):
+                manager_projection_arm_count = len(outcome.exits) - bool(
+                    keyword_actuals
+                )
+                projected_force_floor_detail = (
+                    f"ExitSet with {manager_projection_arm_count} arms"
+                )
                 projected = _project_manager_from_exitset(
                     outcome,
                     factory_prefix=factory_prefix,
@@ -642,6 +728,17 @@ def construct_manager_behavior(
         return ManagerConstructionGapV1(
             "non-manager-result", resolved.cid, type(result).__name__
         )
+    if isinstance(result, ObjectValue):
+        helper_fields = result.helper_receiver_field_names()
+        if helper_fields and (len(actuals) != 1 or keyword_actuals):
+            return ManagerConstructionGapV1(
+                "force-floor",
+                resolved.cid,
+                projected_force_floor_detail
+                or "helper receiver-field projection requires one positional actual",
+            )
+        if helper_fields:
+            result = result.with_deferred_helper_fields()
     bindings = frame.runtime_entries
     # BranchResultAuthentication / other control-metadata faces ride in the
     # linearized if-block but are not term-projectable factory prefix work.

@@ -205,6 +205,7 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
         methods=receiver.methods,
         class_fields=receiver.class_fields,
         identity=receiver.identity,
+        deferred_helper_fields=receiver.deferred_helper_fields,
     )
 
 

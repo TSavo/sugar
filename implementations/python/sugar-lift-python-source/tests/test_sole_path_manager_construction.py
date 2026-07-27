@@ -1712,6 +1712,61 @@ def test_imported_ordinary_factory_cannot_lie_as_generator_manager(tmp_path):
     assert (gap.kind, gap.detail) == ("non-manager-result", "TermValue")
 
 
+def _installed_plain_expected_halt(tmp_path, function_body: str):
+    consumer = (
+        "import pytest\n"
+        "def use_boundary():\n"
+        "    with pytest.raises(ValueError):\n"
+        f"        {function_body}\n"
+    )
+    path = tmp_path / "plain_expected_halt.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
+    reference = next(iter(context.source_derived_contract_refs.values()))
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    boundary = with_node.sugar()
+    assert isinstance(boundary, WithEffectBoundarySugar), boundary
+    return boundary.desugar()
+
+
+def test_installed_plain_expected_halt_completes(tmp_path):
+    """TRUTHFUL: the expected native halt is the assertion's passing face."""
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    outcome = _installed_plain_expected_halt(
+        tmp_path, "raise ValueError('expected')"
+    )
+    exits = outcome_to_exitset(outcome).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Completed), exits
+
+
+def test_installed_plain_expected_halt_lie_fails(tmp_path):
+    """LYING: returning normally cannot satisfy an expected-halt assertion."""
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    outcome = _installed_plain_expected_halt(tmp_path, "pass")
+    exits = outcome_to_exitset(outcome).exits
+    assert len(exits) == 1
+    assert isinstance(exits[0], Halted), exits
+    assert isinstance(exits[0].effect, ExpectationNotMetEffect), exits[0]
+
+
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):
     """Assertion membrane must not admit ProtocolResource managers.
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .floor_value import FloorValue
@@ -63,6 +63,33 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.outcome import Outcome
 
 
+def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
+    """Read authenticated helper-body store shape without executing the helper."""
+    from dataclasses import fields, is_dataclass
+
+    from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+        ReceiverFieldStoreSugar,
+    )
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    if isinstance(value, ReceiverFieldStoreSugar):
+        return {value.attr}
+    if isinstance(value, (tuple, list)):
+        return set().union(*(_sugar_receiver_field_names(item, seen) for item in value))
+    if not isinstance(value, (Sugar, SugarBody)) or not is_dataclass(value):
+        return set()
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return set()
+    seen.add(id(value))
+    return set().union(*(
+        _sugar_receiver_field_names(getattr(value, item.name), seen)
+        for item in fields(value)
+        if item.compare
+    ))
+
+
 @dataclass(frozen=True)
 class ObjectValue(FloorValue):
     class_name: str
@@ -70,6 +97,9 @@ class ObjectValue(FloorValue):
     methods: tuple[ObjectMethodValue, ...] = ()
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
+    deferred_helper_fields: tuple[str, ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
@@ -117,7 +147,44 @@ class ObjectValue(FloorValue):
                 from sugar_lift_py_tests.outcome import Complete
 
                 return Complete(field.value)
+        if name in self.deferred_helper_fields:
+            from sugar_lift_py_tests.floor.getattr_coordinate import (
+                getattr_coordinate,
+            )
+
+            return getattr_coordinate(self, name, owner=str(site))
         return super().attribute(name, site)
+
+    def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
+        """Return this receiver identity after one authenticated field store."""
+        remaining = tuple(field for field in self.fields if field.name != name)
+        return ObjectValue(
+            self.class_name,
+            (*remaining, ObjectField(name, value)),
+            self.methods,
+            self.class_fields,
+            self.identity,
+            self.deferred_helper_fields,
+        )
+
+    def with_deferred_helper_fields(self) -> "ObjectValue":
+        names = self.helper_receiver_field_names()
+        return ObjectValue(
+            self.class_name,
+            self.fields,
+            self.methods,
+            self.class_fields,
+            self.identity,
+            names,
+        )
+
+    def helper_receiver_field_names(self) -> tuple[str, ...]:
+        names = set().union(*(
+            _sugar_receiver_field_names(method.body)
+            for method in self.methods
+            if method.name not in {"__init__", "__enter__", "__exit__"}
+        ))
+        return tuple(sorted(names))
 
     def attribute_assign_with(
         self, operation: AttributeMutationOperation, ctx: FactoryBuildContext | None
