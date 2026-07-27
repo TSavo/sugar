@@ -83,14 +83,14 @@ def test_report_keeps_all_six_families_separate() -> None:
 
     assert tuple(report.by_family) == tuple(ProducerFamily)
     assert FAMILY_DENOMINATORS == {
-        ProducerFamily.SUBSCRIPT: 392,
-        ProducerFamily.BINOP: 367,
+        ProducerFamily.SUBSCRIPT: 386,
+        ProducerFamily.BINOP: 349,
         ProducerFamily.COMPARE: 181,
-        ProducerFamily.ATTRIBUTE: 41,
+        ProducerFamily.ATTRIBUTE: 51,
         ProducerFamily.UNARYOP: 13,
         ProducerFamily.BOOLOP: 2,
     }
-    assert sum(FAMILY_DENOMINATORS.values()) == 996
+    assert sum(FAMILY_DENOMINATORS.values()) == 982
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
@@ -146,7 +146,7 @@ def test_shared_table_accepts_only_the_canonical_content_manifest() -> None:
         )
 
 
-def test_discovery_uses_shared_demand_coordinates_and_excludes_call_bodies(
+def test_discovery_uses_outer_body_producer_and_excludes_bare_call_bodies(
     tmp_path,
 ) -> None:
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -166,11 +166,17 @@ def test_discovery_uses_shared_demand_coordinates_and_excludes_call_bodies(
     call_path = package / "call_body.py"
     call_source = "def g():\n    with boundary(TypeError):\n        opaque()\n"
     call_path.write_text(call_source, encoding="utf-8")
+    nested_call_path = package / "nested_call_subscript_body.py"
+    nested_call_source = (
+        "def h(values):\n" "    with boundary(TypeError):\n" "        values[index()]\n"
+    )
+    nested_call_path.write_text(nested_call_source, encoding="utf-8")
 
     rows = []
     for path, source in (
         (subscript_path, subscript_source),
         (call_path, call_source),
+        (nested_call_path, nested_call_source),
     ):
         source_cid = blake3_512_of(source.encode())
         tree = SourceFile(
@@ -196,9 +202,12 @@ def test_discovery_uses_shared_demand_coordinates_and_excludes_call_bodies(
 
     probes = discover_no_call_body_probes({"rows": rows}, package)
 
-    assert len(probes) == 1
-    assert probes[0].family is ProducerFamily.SUBSCRIPT
-    assert probes[0].body_id == "subscript_body.py:3:Subscript"
+    assert len(probes) == 2
+    assert all(probe.family is ProducerFamily.SUBSCRIPT for probe in probes)
+    assert [probe.body_id for probe in probes] == [
+        "nested_call_subscript_body.py:3:Subscript",
+        "subscript_body.py:3:Subscript",
+    ]
 
 
 def test_discovery_projects_one_family_without_constructing_peer_sources(
@@ -285,7 +294,8 @@ def test_selected_family_denominator_remains_fixed() -> None:
         )
 
 
-def test_attribute_family_denominator_is_measured_no_call_inventory() -> None:
-    """Historical pin 53 included Call-bearing Attribute roots; measured is 41."""
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 41
+def test_attribute_family_denominator_is_outer_body_inventory() -> None:
+    """Outer-body law measures Attribute 51 (historical no-Call-descendant pin was 41)."""
+    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 51
     assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 53
+    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 41

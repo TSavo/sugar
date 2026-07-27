@@ -1,4 +1,4 @@
-"""Per-family attribution for assertion bodies whose root is not a Call.
+"""Per-family attribution for assertion bodies whose outer node is not Call.
 
 The authenticated runner owns discovery and shared-table transport.  This
 module owns the closed accounting algebra: every enrolled body is attributed
@@ -6,10 +6,10 @@ to exactly one producer family and exactly one of three outcomes.  A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.  A
 ``ConstructionPanic`` remains a separate loud axis.
 
-Attribute family denominator is the measured no-Call-descendant Attribute root
-inventory on the authenticated pandas 3.0.3 corpus + #6464 demand table
-(remeasured 41; the historical pin 53 over-counted Call-bearing Attribute
-roots that the no-call enrollment law excludes).
+Family denominators are the authenticated outer-body inventory on the
+pandas 3.0.3 corpus + #6464 demand table under the outer-node-not-Call law
+(Subscript 386, BinOp 349, Compare 181, Attribute 51, UnaryOp 13, BoolOp 2;
+sum 982). Nested Call descendants do not reclassify an outer producer.
 """
 
 from __future__ import annotations
@@ -48,10 +48,10 @@ class ProducerFamily(str, Enum):
 
 
 FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
-    ProducerFamily.SUBSCRIPT: 392,
-    ProducerFamily.BINOP: 367,
+    ProducerFamily.SUBSCRIPT: 386,
+    ProducerFamily.BINOP: 349,
     ProducerFamily.COMPARE: 181,
-    ProducerFamily.ATTRIBUTE: 41,
+    ProducerFamily.ATTRIBUTE: 51,
     ProducerFamily.UNARYOP: 13,
     ProducerFamily.BOOLOP: 2,
 }
@@ -330,8 +330,8 @@ def _source_has_selected_family_demand(
         if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
             continue
         expression = node.body[0].value
-        if any(isinstance(descendant, ast.Call) for descendant in ast.walk(expression)):
-            continue
+        # Outer-node law: nested Calls (values[index()]) do not reclassify
+        # the body. Bare Call roots are excluded by selected_names.
         if type(expression).__name__ in selected_names:
             return True
     return False
@@ -357,7 +357,6 @@ def discover_no_call_body_probes(
         Attribute,
         BinOp,
         BoolOp,
-        Call,
         Compare,
         Expr,
         Subscript,
@@ -427,12 +426,6 @@ def discover_no_call_body_probes(
                     f"assertion demand resolves to {len(managers)} With nodes: {use_site!r}"
                 )
             with_node = managers[0]
-            if any(
-                isinstance(descendant, Call)
-                for statement in with_node.body
-                for descendant in statement.walk()
-            ):
-                continue
             if len(with_node.body) != 1 or not isinstance(with_node.body[0], Expr):
                 continue
             expression = with_node.body[0].value
