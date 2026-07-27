@@ -1250,6 +1250,40 @@ def join_binding_state(
     when_false: BindingState,
     make_ifexp,
 ) -> BindingState:
+    """Join the two branch faces of one binding into a single state.
+
+    THE ``IfExp`` COLLAPSE BELOW IS LOAD-BEARING, NOT A CONVENIENCE. It reads
+    like an optimisation -- both sides are plain values, so express the join as
+    an if-expression instead of a guarded binding -- and it is the single thing
+    keeping the commonest conditional-binding shape in real code away from a
+    source-keyed partition.
+
+    ``GuardedBinding`` is what later mints
+    ``partition(("binding.projection", slot.slot_id))``, and ``slot_id`` is
+    keyed on ``(source_cid, span, fragment_cid)`` with NO execution component
+    (``branch_result_slot``). ``_faces_exclusive`` then proves two arms
+    exclusive from their carried faces alone and never reads their guards. So
+    two arms from DIFFERENT executions that shared one slot would be declared
+    mutually exclusive and collapsed into a single guarded value -- the second
+    execution's value re-attributed to the negation of the first's guard.
+
+    That conflation is not reachable today, and this arm is one of three
+    reasons why: a name bound in BOTH branches never becomes a
+    ``GuardedBinding`` at all, so it never mints the partition. The other two
+    are that ordinary call sites stay opaque (one callee is not reduced twice
+    into one ``ExitSet``) and that loops route through
+    ``LoopGuardedProjection`` instead.
+
+    **Making this symmetric -- returning a ``GuardedBinding`` here for
+    consistency with the arms below -- would hand a source-keyed partition to
+    the most common shape in the corpus.** Do not do it without giving the slot
+    an execution component first.
+
+    Pinned by ``tests/test_binding_partition_execution_conflation.py``
+    (``test_tripwire_a_two_branch_binding_never_mints``), which fails if this
+    arm stops collapsing, and by the tripwires beside it for the other two
+    properties.
+    """
     from sugar_source_tree.nodes import Node
 
     if when_true is when_false or when_true == when_false:
@@ -1257,6 +1291,9 @@ def join_binding_state(
     when_true = unwrap_binding_state(when_true)
     when_false = unwrap_binding_state(when_false)
     if isinstance(when_true, Node) and isinstance(when_false, Node):
+        # Both sides are plain values: the join is an if-expression, and NO
+        # partition is minted. See the docstring -- this is the property that
+        # keeps ordinary conditional bindings off the source-keyed partition.
         return make_ifexp(slot, when_true, when_false)
     if isinstance(when_true, UnboundBinding) and isinstance(when_false, UnboundBinding):
         return UnboundBinding(name=when_true.name, cause=when_true.cause)
