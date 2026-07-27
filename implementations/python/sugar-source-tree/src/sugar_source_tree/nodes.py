@@ -4880,9 +4880,7 @@ class With(Statement):
                 )
 
             manager_slot = item._manager_slot_id()
-            enter_slot = (
-                f"{manager_slot}#enter_result" if binds_enter_result else None
-            )
+            enter_slot = f"{manager_slot}#enter_result" if binds_enter_result else None
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
