@@ -556,3 +556,45 @@ def test_construction_names_value_call_target_at_the_opaque_coordinate() -> None
         "to an export door that cannot resolve it"
     )
     assert _CALL_TARGET_GAP_PRECEDENCE.index("value-call-target") == 1
+
+
+def test_name_pattern_reaches_authenticated_base_try_gap() -> None:
+    """The line-16 manager now reaches its generic base, then stays loud.
+
+    ``RaisesExc(AbstractRaises[T])`` inherits its initializer from a local,
+    source-authenticated generic base.  Construction must cross that edge and
+    name the first unsupported statement in the inherited body.  It must not
+    keep reporting the earlier synthetic ``ExitSet with 3 arms`` manager-face
+    gap, and it must not assume the regex-compilation ``try`` succeeds.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.manager_summary_derivation import (
+        populate_source_derived_resource_refs,
+    )
+
+    site = next(site for site in ENROLLED_SITES if site.shape == "name-ref")
+    path = _corpus_root() / site.relative_path
+    source = path.read_text(encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (source, str(path), blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
+    )
+
+    populate_source_derived_resource_refs(
+        source_file, root=_corpus_root().parent, path=path
+    )
+
+    row = next(
+        result
+        for coordinate, result in context.source_derived_contract_refs.items()
+        if coordinate.start_line == site.line
+    )
+    assert isinstance(row, ContextManagerResolutionGapV1)
+    assert row.kind == "force-floor"
+    assert row.detail.startswith("Try.sugar:")
+    assert "has no sugar written" in row.detail
+    assert "ExitSet with 3 arms" not in row.detail
