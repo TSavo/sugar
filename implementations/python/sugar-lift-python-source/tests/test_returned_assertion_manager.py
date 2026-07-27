@@ -139,6 +139,12 @@ def test_external_error_raised_follows_return_to_keyword_validation_refusal() ->
     manager currently stops in pytest's source-visible keyword-validation branch,
     before semantics exist; neither the With-head spelling nor the helper name
     may bridge that refusal.
+
+    Authenticated CPython 3.12.13 replay at ``b08fdb0b2`` includes
+    ``371a4f99c``, ``7329ce546``, ``a3aedc8a5``, and the #6522 BinOp drain.
+    None reattributes this coordinate: it remains the exact force-floor below.
+    A future FOLLOWS assertion therefore requires a cited production mechanism,
+    not a test-only expectation change.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
