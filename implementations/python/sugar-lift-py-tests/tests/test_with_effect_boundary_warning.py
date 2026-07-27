@@ -14,16 +14,25 @@ from sugar_lift_py_tests.context_manager_contract import (
     ImportSignatureV2,
     NoDefaultV1,
     NoMessagePatternV1,
+    OptionalFormalArgumentProjectionV1,
     PositionalOrKeywordV1,
+    RaiseEffectKindV1,
     WarningEffectKindV1,
     WarningObservationBindingV1,
 )
-from sugar_lift_py_tests.effect import ExpectationNotMetEffect, WarningEffect
-from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, NoneValue, TermValue
+from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect, WarningEffect
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    CallSiteValue,
+    NoneValue,
+    StringValue,
+    TermValue,
+)
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
+from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, true_guard
+from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_source_tree.panic import SugarNotWritten
@@ -45,6 +54,12 @@ class _Fixed(Sugar):
 class _ExpectedCategory(TermValue):
     def exception_type_identity(self):
         return self.value
+
+
+class _SymbolicPattern(StringValue):
+    def to_term(self, *, owner):
+        del owner
+        return make_var("warning_pattern")
 
 
 def _identity(name: str):
@@ -186,3 +201,148 @@ def test_two_no_warning_boundaries_do_not_share_observations():
     assert isinstance(first.exits[0], Completed)
     assert isinstance(second.exits[0], Halted)
     assert isinstance(second.exits[0].effect, ExpectationNotMetEffect)
+
+
+WARNING_WITH_PATTERN = EffectBoundarySemanticsV1(
+    ExpectsModeV1(),
+    WarningEffectKindV1(),
+    FormalArgumentProjectionV1(0),
+    OptionalFormalArgumentProjectionV1(1),
+    WarningObservationBindingV1(),
+)
+
+RAISE_WITH_PATTERN = EffectBoundarySemanticsV1(
+    ExpectsModeV1(),
+    RaiseEffectKindV1(),
+    FormalArgumentProjectionV1(0),
+    OptionalFormalArgumentProjectionV1(1),
+    WarningObservationBindingV1(),
+)
+
+
+def _pattern_boundary(*, semantics, expected, pattern, body):
+    manager_value = CallSiteValue(
+        target_name="renamed_boundary",
+        arg_values=(expected, pattern),
+        parameters=("expected", "match"),
+        term=ctor("call", []),
+        body=None,
+        keyword_names=("match",),
+    )
+    signature = ImportSignatureV2(
+        (
+            CallParameterV1(
+                "expected",
+                PrimitiveSort("Value"),
+                PositionalOrKeywordV1(),
+                True,
+                NoDefaultV1(),
+            ),
+            CallParameterV1(
+                "match",
+                PrimitiveSort("Value"),
+                PositionalOrKeywordV1(),
+                True,
+                NoDefaultV1(),
+            ),
+        )
+    )
+    return WithEffectBoundarySugar(
+        manager=_Fixed(Complete(manager_value)),
+        body=body,
+        semantics=semantics,
+        contract_ref=SimpleNamespace(import_signature=signature),
+        context_manager_edge=None,
+        site="renamed.py:4:4",
+    )
+
+
+def _raise_after_warning(*, warning_message="deprecated operand"):
+    type_identity = _identity("TypeError")
+    raised_value = CallSiteValue(
+        target_name="renamed_error",
+        arg_values=(StringValue("unsupported operand type for &:"),),
+        parameters=("message",),
+        term=ctor("call", []),
+        body=None,
+    )
+    state = _ReducedBlock(
+        entries=(
+            WarningObservationValue(
+                WarningEffect(
+                    "FutureWarning",
+                    message=warning_message,
+                    category_identity=_identity("FutureWarning"),
+                )
+            ),
+        ),
+        can_fall_through=False,
+        fall_through=(),
+    )
+    return ExitSet(
+        (
+            Halted(
+                true_guard(),
+                RaiseEffect(
+                    exception_name="TypeError",
+                    exception_type_coordinate=type_identity,
+                    occurrence="renamed.py:6:8",
+                    raised_value=raised_value,
+                ),
+                state,
+            ),
+        )
+    )
+
+
+def _nested_assertion_boundaries(
+    *, warning_pattern="deprecated", raise_pattern="unsupported operand type"
+):
+    inner = _pattern_boundary(
+        semantics=WARNING_WITH_PATTERN,
+        expected=_ExpectedCategory(_identity("FutureWarning")),
+        pattern=StringValue(warning_pattern),
+        body=(_Fixed(_raise_after_warning()),),
+    )
+    outer = _pattern_boundary(
+        semantics=RAISE_WITH_PATTERN,
+        expected=_ExpectedCategory(_identity("TypeError")),
+        pattern=StringValue(raise_pattern),
+        body=(inner,),
+    )
+    return inner, outer
+
+
+def test_nested_warning_completion_reaches_outer_raise_boundary():
+    """Truthful: the inner completed assertion exposes the original body halt."""
+    _inner, outer = _nested_assertion_boundaries()
+    routed = outer.desugar()
+    assert len(routed.exits) == 1
+    assert isinstance(routed.exits[0], Completed)
+
+
+def test_nested_warning_lie_bites_before_outer_raise_can_consume():
+    """Lying: a false inner warning assertion must not become outer success."""
+    _inner, outer = _nested_assertion_boundaries(warning_pattern="never present")
+    routed = outer.desugar()
+    assert len(routed.exits) == 1
+    face = routed.exits[0]
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, ExpectationNotMetEffect)
+
+
+def test_symbolic_warning_pattern_retains_both_faces():
+    """Undecided is neither success nor failure; both vendor faces survive."""
+    inner = _pattern_boundary(
+        semantics=WARNING_WITH_PATTERN,
+        expected=_ExpectedCategory(_identity("FutureWarning")),
+        pattern=_SymbolicPattern("diagnostic only"),
+        body=(_Fixed(_raise_after_warning()),),
+    )
+    routed = inner.desugar()
+    assert len(routed.exits) == 2
+    assert all(isinstance(face, Halted) for face in routed.exits)
+    assert {type(face.effect) for face in routed.exits} == {
+        RaiseEffect,
+        ExpectationNotMetEffect,
+    }

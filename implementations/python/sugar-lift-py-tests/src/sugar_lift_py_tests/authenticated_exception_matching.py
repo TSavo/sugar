@@ -217,3 +217,52 @@ def raise_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
         )
 
     return _conjoin(MatchRetained(atomic("py.re_search", [pattern_term, message_term])))
+
+
+def warning_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
+    """Match one constructed warning observation without spelling authority.
+
+    Warning categories use the same source-authenticated class coordinates as
+    exception handlers.  A message pattern is the vendor's ``re.search`` over
+    the projected call operand and the producer-carried warning message.  Two
+    ground strings decide it; otherwise the predicate is retained.  A warning
+    without a constructed category identity or message has no predicate
+    preimage and remains loud rather than becoming a false observation.
+    """
+    import re
+
+    from sugar_lift_py_tests.ir import atomic, str_const
+    from sugar_source_tree.panic import SugarNotWritten
+
+    identity_projection = getattr(expected, "exception_type_identity", None)
+    expected_identity = (
+        identity_projection() if callable(identity_projection) else None
+    )
+    observed_identity = getattr(effect, "category_identity", None)
+    if expected_identity is None or observed_identity is None:
+        raise SugarNotWritten(
+            owner="warning_effect_message_verdict",
+            observed="warning category operand or occurrence has no authenticated identity",
+            requested="two source-authenticated warning category coordinates",
+            fix="construct category identity at the producer; never match warning spelling",
+        )
+    if expected_identity != observed_identity:
+        return MatchDecided(False)
+    if pattern is None:
+        return MatchDecided(True)
+
+    owner = "authenticated_exception_matching.warning_effect_message_verdict"
+    pattern_term = pattern.to_term(owner=owner)
+    message = getattr(effect, "message", None)
+    if not isinstance(message, str):
+        raise SugarNotWritten(
+            owner="warning_effect_message_verdict",
+            observed="warning occurrence has no constructed message",
+            requested="producer-carried warning message for the authenticated occurrence",
+            fix="construct the emitted warning message; never treat absence as an empty string",
+        )
+    message_term = str_const(message)
+    ground_pattern = _ground_string(pattern_term)
+    if ground_pattern is not None:
+        return MatchDecided(re.search(ground_pattern, message) is not None)
+    return MatchRetained(atomic("py.re_search", [pattern_term, message_term]))

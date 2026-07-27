@@ -101,19 +101,13 @@ class WithEffectBoundarySugar(Sugar):
                     variadic_keyword_actuals={},
                 )
             if isinstance(semantics.effect_kind, WarningEffectKindV1):
-                if pattern is not None:
-                    raise SugarNotWritten(
-                        owner="WithEffectBoundarySugar.warning_observation",
-                        observed="warning boundary carries an unprojected message pattern",
-                        requested="authenticated warning message matcher",
-                        fix="keep message-bearing warning assertions loud until their matcher is constructed",
-                    )
                 routed.append(
-                    _route_completed_warning_boundary(
+                    _route_warning_boundary(
                         body=tuple(self.body),
                         ctx=ctx,
                         manager_exit=manager_exit,
                         expected=expected,
+                        pattern=pattern,
                         mode=semantics.mode,
                         site=self.site,
                     )
@@ -244,15 +238,15 @@ def _unresolved_producer_coordinates(entries):
     return tuple(members)
 
 
-def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode, site):
-    """Route authenticated warning testimony carried by a COMPLETED body face.
+def _route_warning_boundary(
+    *, body, ctx, manager_exit, expected, pattern, mode, site
+):
+    """Route warning testimony on every face while preserving body control.
 
-    Warnings never become halted exits.  Their producer contributes a
-    ``WarningObservationValue`` to the completed block record.  The manager
-    consumes a matching observation; an authenticated mismatch fails an
-    Expects boundary; and missing identity/occurrence testimony stays a named
-    refusal.  In particular, an empty record is not evidence that no warning
-    occurred.
+    A warning observation can precede a later halt, so consuming the warning
+    must preserve that halt for an enclosing boundary.  Message predicates
+    keep their three-valued result: ground matches decide, symbolic matches
+    partition, and missing producer testimony remains a named refusal.
     """
     from sugar_lift_py_tests.context_manager_contract import ExpectsModeV1
     from sugar_lift_py_tests.effect import ExpectationNotMetEffect
@@ -263,7 +257,19 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
     from sugar_lift_py_tests.floor.warning_observation_value import (
         WarningObservationValue,
     )
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
+        MatchRetained,
+        warning_effect_message_verdict,
+    )
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+        partition,
+    )
     from sugar_lift_py_tests.sugar.exit_set_routing import (
         promote_raise_halts,
     )
@@ -283,33 +289,19 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
             site=site,
         )
 
-    # Python warning categories are exception classes.  The ordinary lexical
-    # class authenticator therefore owns their identity too; no warning/vendor
-    # name table is needed.
-    identity_projection = getattr(expected, "exception_type_identity", None)
-    if not callable(identity_projection):
-        raise SugarNotWritten(
-            owner="WithEffectBoundarySugar.warning_observation",
-            observed="expected warning operand has no authenticated category identity",
-            requested="source-authenticated warning category operand",
-            fix="keep the completed observation undecided; never match category spelling",
-        )
-    expected_identity = identity_projection()
     body_es = promote_raise_halts(reduce_block_to_exitset(body, ctx)).guarded(
         manager_exit.guard
     )
     exits = []
     for face in body_es.exits:
-        if isinstance(face, Halted):
-            exits.append(face)
-            continue
-        entries = getattr(face.value, "entries", None)
+        record = face.value if isinstance(face, Completed) else face.state
+        entries = getattr(record, "entries", None)
         if not isinstance(entries, tuple):
             raise SugarNotWritten(
                 owner="WithEffectBoundarySugar.warning_observation",
-                observed=f"completed face carries {type(face.value).__name__}, not a reduced block record",
-                requested="completed reduced block carrying authenticated warning observations",
-                fix="preserve the completed face until its record is constructed",
+                observed=f"body face carries {type(record).__name__}, not a reduced block record",
+                requested="reduced block carrying authenticated warning observations",
+                fix="preserve the body face until its temporal record is constructed",
             )
         observations = tuple(
             (index, entry)
@@ -347,38 +339,65 @@ def _route_completed_warning_boundary(*, body, ctx, manager_exit, expected, mode
             # now require a specific coordinate to be PRESENT here.
             refusal.unresolved_warning_producers = unresolved_members
             raise refusal
-        match = next(
-            (
-                pair
-                for pair in observations
-                if pair[1].effect.category_identity == expected_identity
-            ),
-            None,
-        )
-        if match is not None and len(observations) == 1:
-            index, _ = match
+        if len(observations) != 1:
+            verdict = MatchDecided(False)
+            index = None
+        else:
+            index, observation = observations[0]
+            verdict = warning_effect_message_verdict(
+                observation.effect, expected, pattern
+            )
+
+        def successful(guard, faces):
+            assert index is not None
             remaining = entries[:index] + entries[index + 1 :]
-            exits.append(
-                Completed(
-                    face.guard,
-                    replace(face.value, entries=remaining),
-                    face.faces,
+            carried = replace(record, entries=remaining)
+            if isinstance(face, Completed):
+                return Completed(guard, carried, faces, face.pending_contracts)
+            return Halted(
+                guard,
+                face.effect,
+                carried,
+                faces,
+                face.pending_contracts,
+            )
+
+        def failed(guard, faces):
+            if isinstance(mode, ExpectsModeV1):
+                return Halted(
+                    guard,
+                    ExpectationNotMetEffect("warning", site),
+                    record,
+                    faces,
                     face.pending_contracts,
+                )
+            return replace(face, guard=guard, faces=faces)
+
+        if isinstance(verdict, MatchDecided):
+            exits.append(
+                successful(face.guard, face.faces)
+                if verdict.value
+                else failed(face.guard, face.faces)
+            )
+            continue
+        if isinstance(verdict, MatchRetained):
+            held, rejected = partition(
+                ("warning-boundary-message", verdict.obligation, face.guard)
+            )
+            exits.extend(
+                (
+                    successful(
+                        and_([face.guard, verdict.obligation]),
+                        face.faces | {held},
+                    ),
+                    failed(
+                        and_([face.guard, complement_guard(verdict.obligation)]),
+                        face.faces | {rejected},
+                    ),
                 )
             )
             continue
-        if isinstance(mode, ExpectsModeV1):
-            exits.append(
-                Halted(
-                    face.guard,
-                    ExpectationNotMetEffect("warning", site),
-                    face.value,
-                    face.faces,
-                    face.pending_contracts,
-                )
-            )
-        else:
-            exits.append(face)
+        raise TypeError(f"unknown warning message verdict {type(verdict).__name__}")
     return ExitSet(tuple(exits)).normalize()
 
 
