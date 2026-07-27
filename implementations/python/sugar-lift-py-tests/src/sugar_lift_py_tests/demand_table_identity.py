@@ -24,20 +24,34 @@ per-checkout cache wearing a CID. That is the discriminating face, and it is
 the one that proves the key was taken over the preimage rather than the
 location.
 
-RUNTIME IS NOT IN THE KEY, AND THAT IS MEASURED. The demand table is a pure
-function of source bytes: `_context_manager_demand_rows` walks
-`SourceTree(root).paths()` and reads source without constructing any Sugar,
-`_call_contract_demand_rows` reads `authenticated_import_uses` over source
-text, and neither they nor the join import, execute, or interrogate the
-interpreter -- `importlib`, `__import__`, `exec(`, `eval(`, `sys.modules` and
-`pkgutil` appear in none of them. `test_demand_table_identity.py` pins that as
-a law, because the moment a producer starts observing the runtime this key is
-wrong and must say so loudly rather than silently share a table across
-incompatible interpreters.
+RUNTIME IS IN THE KEY, AND THE FIRST ANSWER WAS WRONG.
 
-It is also what makes the fixture worth building: the offload host runs Python
-3.12 and the workstations run 3.14. Had runtime entered the key, the artifact
-would have been unshareable across exactly the machines that need it.
+An earlier version of this module excluded runtime identity, on two
+independently-traced verdicts that demand production never CALLS anything
+observing the interpreter. Both verdicts were correct and both answered the
+wrong question. The right question is whether production's OUTPUT can differ
+across interpreters, and it can with no such call at all, because the parse
+itself is version-dependent. `CPythonAstBackend.fingerprint`, in this same
+tree, says so:
+
+    "CPython's `ast` produces a version-dependent node stream (e.g. the empty
+     Constant("") it staples into a nested f-string format spec on 3.12 but
+     not 3.14), so the interpreter IS this backend's version-of-record."
+
+`fingerprint()` exists precisely because this codebase already pins goldens
+per interpreter for that reason, and it names 3.12 and 3.14 -- which is the
+offload host versus the workstations exactly.
+
+So runtime joins the content key until a measurement says it may leave. The
+two failures are not symmetric: a key that is too SPECIFIC costs a rebuild per
+interpreter and announces itself as a cache miss; a key that is too LOOSE
+silently shares a table built under a different parser behind a valid-looking
+CID, and announces nothing. Loudly-lossy over silently-wrong.
+
+RELAXING IS A MEASUREMENT, NOT AN ARGUMENT. Build the table for one corpus on
+3.12 and on 3.14 and compare. If the CIDs match, runtime may leave the key
+WITH a test pinning that they match. If they differ, the key is already right
+and that comparison is its twin. Until one of those exists, it stays.
 """
 
 from __future__ import annotations
@@ -78,6 +92,7 @@ class DemandTableIdentityV1:
     schema_version: str
     producer_source_cid: str
     resolution_config_cid: str
+    parser_identity: str
     file_count: int
 
     def preimage(self) -> Mapping[str, object]:
@@ -87,6 +102,7 @@ class DemandTableIdentityV1:
             "corpusManifestCid": self.corpus_manifest_cid,
             "producerSourceCid": self.producer_source_cid,
             "resolutionConfigCid": self.resolution_config_cid,
+            "parserIdentity": self.parser_identity,
             "fileCount": self.file_count,
         }
 
@@ -141,6 +157,22 @@ def resolution_config_cid(config: Mapping[str, object] | None = None) -> str:
     )
 
 
+def parser_identity() -> str:
+    """The interpreter, as the parser's version-of-record.
+
+    Same shape `CPythonAstBackend.fingerprint` already uses to pin goldens --
+    implementation plus major.minor -- because that is the granularity at
+    which the node stream is documented to change. Patch level is excluded
+    deliberately: the documented differences are minor-version differences,
+    and keying on patch would force a rebuild for changes that provably
+    cannot move the table.
+    """
+    import sys
+
+    version = sys.version_info
+    return f"{sys.implementation.name}-{version.major}.{version.minor}"
+
+
 def demand_table_identity(
     root: pathlib.Path,
     paths: Iterable[pathlib.Path],
@@ -156,6 +188,7 @@ def demand_table_identity(
         schema_version=DEMAND_TABLE_SCHEMA_VERSION,
         producer_source_cid=producer_source_cid(source_root),
         resolution_config_cid=resolution_config_cid(config),
+        parser_identity=parser_identity(),
         file_count=file_count,
     )
     return DemandTableIdentityV1(
@@ -164,5 +197,6 @@ def demand_table_identity(
         schema_version=identity.schema_version,
         producer_source_cid=identity.producer_source_cid,
         resolution_config_cid=identity.resolution_config_cid,
+        parser_identity=identity.parser_identity,
         file_count=identity.file_count,
     )
