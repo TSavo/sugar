@@ -1120,6 +1120,75 @@ def test_renamed_source_visible_exit_derives_expects_raise_boundary(tmp_path):
     assert summary.semantics.expected_type_operand == FormalArgumentProjectionV1(0)
 
 
+def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_path):
+    """The tempting pandas helper spelling has no assertion authority.
+
+    This is the lying twin for the returned-manager reproducer.  It uses the
+    exact helper name but returns an ordinary resource manager; native protocol
+    testimony must keep it out of the EffectBoundary arm.
+    """
+    graph, resolved, actual, call_site = _resolved_type_actual(
+        tmp_path,
+        "class OrdinaryResource:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n"
+        "def external_error_raised(expected):\n"
+        "    return OrdinaryResource(expected)\n",
+        exported="external_error_raised",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="lying-name-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol, behavior=behavior)
+
+    from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
+
+    assert not (
+        isinstance(summary, DerivedManagerSummaryV1)
+        and isinstance(summary.semantics, EffectBoundarySemanticsV1)
+    ), summary
+
+
+def test_renamed_returned_assertion_manager_is_derived_from_protocol(tmp_path):
+    """A source-authenticated returned manager is the truthful native twin."""
+    graph, resolved, actual, call_site = _resolved_type_actual(
+        tmp_path,
+        "class RenamedBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n"
+        "def returned_boundary(expected):\n"
+        "    return RenamedBoundary(expected)\n",
+        exported="returned_boundary",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="truthful-return-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    summary = derive_manager_summary(protocol, behavior=behavior)
+
+    from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
+
+    assert isinstance(summary, DerivedManagerSummaryV1)
+    assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
+
+
 def test_renamed_source_visible_exit_derives_suppresses_mode(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,
