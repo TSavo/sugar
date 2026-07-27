@@ -32,6 +32,49 @@ COMPARE_METHODS: dict[str, str] = {
 # operand: `x in xs` is `xs.contains(x)`).
 COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot", "In", "NotIn"}
 
+_OPERATOR_COORDINATE = {
+    "Eq": "==",
+    "NotEq": "!=",
+    "Lt": "<",
+    "LtE": "<=",
+    "Gt": ">",
+    "GtE": ">=",
+    "In": "in",
+    "NotIn": "not in",
+}
+
+
+def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
+    """Keep an unexecuted call result's native dispatch at its producer."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    if not (left.denotes_value() and right.denotes_value()):
+        return
+    if not isinstance(left, CallSiteValue) and not isinstance(right, CallSiteValue):
+        return
+
+    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    operator = _OPERATOR_COORDINATE[op_kind]
+    construction_panic_gap(
+        owner="comparison_operation_exception_floor",
+        blame=site,
+        observed=(f"{type(left).__name__} {operator} {type(right).__name__}"),
+        requested=(
+            "source-visible native comparison testimony selecting completion "
+            "or an authenticated exceptional exit"
+        ),
+        fix=(
+            "preserve the undecided third value at the Compare producer; "
+            "resolve native operand types and their comparison/containment "
+            "bodies from source, or retain this named refusal without "
+            "inventing an exception identity"
+        ),
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
+
 
 @dataclass(frozen=True)
 class ComparisonOpSugar(Sugar):
@@ -56,7 +99,21 @@ class ComparisonOpSugar(Sugar):
         )
         return left.and_then(right)
 
+    def _membership(self, container, item):
+        """Dispatch membership only when native receiver type is decided.
+
+        An unexecuted call result denotes a Python value, but its runtime type
+        is a third value. Python may select ``__contains__``, fall back through
+        iteration, or raise from either native method. Emitting ``py.in`` there
+        invents completion; choosing TypeError invents an exit. Keep that
+        undecided dispatch loud at the Compare producer.
+        """
+        refuse_undecided_comparison(item, container, self.site, self.op_kind)
+        return container.contains(item, self.site)
+
     def _apply(self, left, right):
+        if self.op_kind not in {"Is", "IsNot", "In", "NotIn"}:
+            refuse_undecided_comparison(left, right, self.site, self.op_kind)
         if self.op_kind == "NotEq":
             # a != b is not (a == b): stand on the equals floor, negate.
             return left.equals(right, self.site).and_then(
@@ -72,10 +129,10 @@ class ComparisonOpSugar(Sugar):
             )
         if self.op_kind == "In":
             # a in b: the CONTAINER (right) owns membership -- b.contains(a).
-            return right.contains(left, self.site)
+            return self._membership(right, left)
         if self.op_kind == "NotIn":
             # a not in b is not (a in b): membership floor, negated.
-            return right.contains(left, self.site).and_then(
+            return self._membership(right, left).and_then(
                 lambda predicate: predicate.negate()
             )
         method = COMPARE_METHODS[self.op_kind]
