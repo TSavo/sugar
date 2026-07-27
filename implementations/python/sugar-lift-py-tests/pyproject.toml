@@ -34,8 +34,17 @@ test = [
     "black==26.5.1",
     "pyright==1.1.411",
     "itsdangerous==2.2.0",
-    "numpy",
-    "pandas",
+    # The measured corpus is PINNED. numpy and pandas are not ordinary test
+    # dependencies -- they ARE the corpus every board, ledger, and residual
+    # count ranges over, so an unpinned spec makes the denominator drift
+    # silently. Three versions were in play on one box before this pin: the
+    # ledgers key to 3.0.3, one venv carried 2.2.3, and a fresh
+    # `pip install -e '.[test]'` on 2026-07-27 resolved 3.0.5 -- installing the
+    # repo exactly as specified got you a different corpus than everyone else
+    # was measuring. The three tools beside them were already pinned exactly;
+    # the two that constitute the measurement were the two that could move.
+    "numpy==2.5.1",
+    "pandas==3.0.3",
 ]
 
 [project.scripts]
