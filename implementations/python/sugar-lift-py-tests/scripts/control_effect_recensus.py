@@ -77,6 +77,13 @@ from __future__ import annotations
 # tests/test_one_authoritative_scoreboard.py: exactly one module may say True.
 SCOREBOARD_AUTHORITY = True
 
+_PANDAS_3_0_3_AGGREGATE_HASH = (
+    "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
+)
+_PANDAS_3_0_3_MANIFEST_SHAPE_CID = (
+    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+)
+
 import argparse
 import json
 import logging
@@ -94,6 +101,30 @@ def _git_commit(root: Path) -> str:
     return subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True
     ).strip()
+
+
+def _authenticate_declared_pandas_corpus(observed_pin, manifest_shape_cid: str) -> None:
+    """Refuse a corpus before source selection on either named pin axis.
+
+    The aggregate covers distribution, version, relative paths, file bytes and
+    sizes.  The shape CID covers only relative path names; it is retained as a
+    separately named diagnostic, never presented as content authentication.
+    """
+    failures: list[str] = []
+    if observed_pin.aggregate_hash != _PANDAS_3_0_3_AGGREGATE_HASH:
+        failures.append(
+            "corpus aggregate hash mismatch: "
+            f"observed {observed_pin.aggregate_hash}; "
+            f"required {_PANDAS_3_0_3_AGGREGATE_HASH}"
+        )
+    if manifest_shape_cid != _PANDAS_3_0_3_MANIFEST_SHAPE_CID:
+        failures.append(
+            "corpus manifest shape CID mismatch: "
+            f"observed {manifest_shape_cid}; "
+            f"required {_PANDAS_3_0_3_MANIFEST_SHAPE_CID}"
+        )
+    if failures:
+        raise ValueError("; ".join(failures))
 
 
 def _silence_console_logging() -> None:
@@ -173,35 +204,103 @@ def _cm_resolution_bucket(resolution) -> str:
 
     kind = getattr(resolution, "kind", None)
     if not isinstance(kind, str) or not kind:
-        return "gap:unstated-kind"
-    # Normalize through the closed vocabulary; an unknown wire kind keeps its
-    # own spelling rather than crashing or collapsing (see #6243 dynamic-export).
+        raise ValueError("With resolution gap has no typed kind")
+    # Normalize through the closed vocabulary. Unknown wire kinds belong to
+    # the vocabulary's explicit sentinel; they never mint an escape bucket.
     parsed = WithConstructionGapKind.parse(kind)
-    if parsed is WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND and (
-        kind != WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND.value
-    ):
-        return f"gap:unrecognized:{kind}"
     return f"gap:{parsed.value}"
 
 
-def _tally_cm_resolutions(context) -> Counter[str]:
+def _tally_cm_resolutions(
+    context,
+) -> tuple[Counter[str], Counter[str]]:
     """Count derived-table rows by structural resolution kind."""
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
         SourceDerivedContextManagerRefV1,
     )
+    from sugar_source_tree.panic import WithConstructionGapKind
 
     buckets: Counter[str] = Counter()
+    unrecognized_kinds: Counter[str] = Counter()
     refs = getattr(context, "source_derived_contract_refs", None) or {}
     for resolution in refs.values():
         if isinstance(resolution, SourceDerivedContextManagerRefV1):
             buckets["derived-contract"] += 1
             continue
         if isinstance(resolution, ContextManagerResolutionGapV1):
-            buckets[_cm_resolution_bucket(resolution)] += 1
+            bucket = _cm_resolution_bucket(resolution)
+            buckets[bucket] += 1
+            if bucket == (
+                f"gap:{WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND.value}"
+            ):
+                unrecognized_kinds[str(resolution.kind)] += 1
             continue
-        buckets["unclassified"] += 1
-    return buckets
+        raise TypeError(
+            "With resolution table contains a value outside the closed "
+            f"derived-contract | ContextManagerResolutionGapV1 union: "
+            f"{type(resolution).__name__}"
+        )
+    return buckets, unrecognized_kinds
+
+
+def _with_census_partition(
+    cm_resolutions: Counter[str],
+    ast_sites: Counter[str],
+    unrecognized_kinds: Counter[str] | None = None,
+) -> dict[str, Any]:
+    """Conserve every synchronous With item into constructed or one typed gap."""
+    from sugar_source_tree.panic import WithConstructionGapKind
+
+    vocabulary = tuple(member.value for member in WithConstructionGapKind)
+    if len(vocabulary) != 39:
+        raise ValueError(
+            "WithConstructionGapKind vocabulary changed: "
+            f"expected 39 members, found {len(vocabulary)}"
+        )
+    allowed = {"derived-contract", *(f"gap:{kind}" for kind in vocabulary)}
+    unexpected = sorted(set(cm_resolutions) - allowed)
+    if unexpected:
+        raise ValueError(
+            "With census contains keys outside its closed vocabulary: "
+            + ", ".join(unexpected)
+        )
+
+    typed_gaps = {
+        kind: int(cm_resolutions.get(f"gap:{kind}", 0)) for kind in vocabulary
+    }
+    unrecognized_kinds = unrecognized_kinds or Counter()
+    unrecognized_total = typed_gaps[
+        WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND.value
+    ]
+    if sum(unrecognized_kinds.values()) != unrecognized_total:
+        raise ValueError(
+            "With census sentinel lacks preserved resolution kinds: "
+            f"sentinel={unrecognized_total} "
+            f"preserved={sum(unrecognized_kinds.values())}"
+        )
+    total = int(ast_sites.get("site:with-item", 0))
+    constructed = int(cm_resolutions.get("derived-contract", 0))
+    accounted = constructed + sum(typed_gaps.values())
+    if accounted != total:
+        raise ValueError(
+            "With census does not conserve: "
+            f"with_items_total={total} constructed={constructed} "
+            f"typed_gaps={sum(typed_gaps.values())} accounted={accounted}"
+        )
+    return {
+        "with_items_total": total,
+        "constructed": constructed,
+        "typed_gap_kinds_total": len(vocabulary),
+        "typed_gaps": typed_gaps,
+        "unrecognized_resolution_kinds": dict(sorted(unrecognized_kinds.items())),
+        "accounted": accounted,
+        "reconciliation": (
+            f"{total} = {constructed} constructed + "
+            f"{sum(typed_gaps.values())} typed gaps"
+        ),
+        "conserves": True,
+    }
 
 
 def _backend_defect_key(exc: object) -> str:
@@ -336,6 +435,7 @@ def _measure_file(
     construction_seen: set[tuple[str, str, object, object]] = set()
     backend_defects: Counter[str] = Counter()
     cm_resolutions: Counter[str] = Counter()
+    unrecognized_cm_kinds: Counter[str] = Counter()
     desugar_axis = DesugarAxis()
     if workspace_root is None:
         # No silent ``path.parent``. That default made a one-file run derive its
@@ -384,7 +484,11 @@ def _measure_file(
             return reporter
         # Resolution partition from the derived table (manager-expression
         # sites, not functions-blocked), keyed by authenticated gap kind.
-        cm_resolutions.update(_tally_cm_resolutions(construction_context))
+        file_cm_resolutions, file_unrecognized_kinds = _tally_cm_resolutions(
+            construction_context
+        )
+        cm_resolutions.update(file_cm_resolutions)
+        unrecognized_cm_kinds.update(file_unrecognized_kinds)
         for function in source_file.functions():
             functions_total += 1
             try:
@@ -430,6 +534,7 @@ def _measure_file(
     # site prevalence (denominator, never R).
     resolution_row = {
         "cmResolutions": dict(cm_resolutions),
+        "unrecognizedCmResolutionKinds": dict(unrecognized_cm_kinds),
         "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
         "astSites": dict(_ast_site_prevalence(path)),
     }
@@ -564,16 +669,6 @@ def main() -> int:
     if corpus != corpus_root and corpus_root not in corpus.parents:
         parser.error(f"corpus {corpus} is not inside --corpus-root {corpus_root}")
 
-    out = args.out_dir
-    out.mkdir(parents=True, exist_ok=True)
-    result_path = args.json or (out / "recensus.json")
-    checkpoint_path = args.checkpoint_jsonl or (out / "checkpoint.jsonl")
-    engine_path = args.engine_log or (out / "engine.jsonl")
-    progress_path = args.progress or (out / "progress.log")
-
-    _silence_console_logging()
-    _configure_engine_log(engine_path)
-
     from sugar_lift_py_tests.corpus_pin import (
         CorpusPinDefect,
         load_pin,
@@ -581,6 +676,7 @@ def main() -> int:
         require_pin,
         write_pin,
     )
+    from sugar_lift_py_tests.authenticated_pytest import corpus_manifest_cid
     from sugar_source_tree.tree import SourceTree
 
     # Pin FIRST. A run that cannot name its corpus has no denominator, and a
@@ -593,9 +689,28 @@ def main() -> int:
         )
         if args.require_corpus_pin is not None:
             require_pin(load_pin(args.require_corpus_pin), observed_pin)
+        manifest_shape_cid = corpus_manifest_cid(
+            [entry.path for entry in observed_pin.files]
+        )
+        _authenticate_declared_pandas_corpus(observed_pin, manifest_shape_cid)
     except CorpusPinDefect as defect:
         print(str(defect), file=sys.stderr, flush=True)
         return 2
+    except ValueError as defect:
+        print(str(defect), file=sys.stderr, flush=True)
+        return 2
+
+    # Authentication precedes every output artifact and every source-selection
+    # pass. A refused tree cannot leave a checkpoint that looks resumable.
+    out = args.out_dir
+    out.mkdir(parents=True, exist_ok=True)
+    result_path = args.json or (out / "recensus.json")
+    checkpoint_path = args.checkpoint_jsonl or (out / "checkpoint.jsonl")
+    engine_path = args.engine_log or (out / "engine.jsonl")
+    progress_path = args.progress or (out / "progress.log")
+
+    _silence_console_logging()
+    _configure_engine_log(engine_path)
     if args.write_corpus_pin is not None:
         write_pin(observed_pin, args.write_corpus_pin)
 
@@ -661,6 +776,7 @@ def main() -> int:
     desugar_by_category_owner: Counter[str] = Counter()
     backend_defects: Counter[str] = Counter()
     cm_resolutions: Counter[str] = Counter()
+    unrecognized_cm_kinds: Counter[str] = Counter()
     ast_sites: Counter[str] = Counter()
     # Three disjoint desugar-layer quantities; the two below are NEVER folded
     # into R_desugar and both make the run red.
@@ -949,6 +1065,7 @@ def main() -> int:
         desugar_by_category_owner.update(row.get("desugarByCategoryOwner") or {})
         backend_defects.update(row.get("backendDefects") or {})
         cm_resolutions.update(row.get("cmResolutions") or {})
+        unrecognized_cm_kinds.update(row.get("unrecognizedCmResolutionKinds") or {})
         ast_sites.update(row.get("astSites") or {})
         desugar_construction_panics.extend(row.get("desugarConstructionPanics") or [])
         desugar_defects.extend(row.get("desugarDefects") or [])
@@ -1002,8 +1119,17 @@ def main() -> int:
     r_construction = sum(families.values())
     r_desugar = sum(desugar_families.values())
     r_backend = sum(backend_defects.values())
+    with_census = _with_census_partition(
+        cm_resolutions, ast_sites, unrecognized_cm_kinds
+    )
     result: dict[str, Any] = {
         "kind": "control-effect-construction-recensus",
+        "corpusAuthentication": {
+            "aggregateHash": observed_pin.aggregate_hash,
+            "requiredAggregateHash": _PANDAS_3_0_3_AGGREGATE_HASH,
+            "manifestShapeCid": manifest_shape_cid,
+            "requiredManifestShapeCid": _PANDAS_3_0_3_MANIFEST_SHAPE_CID,
+        },
         "authority": (
             "sole authoritative Python corpus scoreboard; every other census "
             "output is non-authoritative"
@@ -1087,6 +1213,7 @@ def main() -> int:
             sorted(cm_resolutions.items(), key=lambda item: (-item[1], item[0]))
         ),
         "R_cm_derived_contract": int(cm_resolutions.get("derived-contract", 0)),
+        "withCensus": with_census,
         # AST SITE PREVALENCE — a denominator, NEVER R. Different question,
         # different number: prevalence counts shapes present, R counts
         # authenticated occurrences that failed to construct. Quoting one as
