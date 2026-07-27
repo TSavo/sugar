@@ -20,6 +20,9 @@ class TupleValue(FloorValue):
         """This floor value denotes a ``tuple``."""
         return True
 
+    def python_index_protocol(self) -> bool:
+        return False
+
     def attribute(self, name, site):
         # Bound methods and fields on a constructed tuple (``().count``, ``t.index``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the
@@ -307,7 +310,7 @@ class TupleValue(FloorValue):
                 length=n,
                 site=site,
             )
-        if type(index) is TermValue:
+        if index.python_index_protocol() is False:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(

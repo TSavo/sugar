@@ -13,8 +13,10 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ListValue,
     RaiseValue,
+    StringValue,
     SymbolicValue,
     TermValue,
+    TupleValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, make_var
@@ -45,6 +47,26 @@ def authenticated_site():
     )
 
 
+@pytest.fixture
+def local_site(tmp_path):
+    source_path = tmp_path / "nested_tuple_subscript.py"
+    source_path.write_text(
+        "def nested_tuple_lookup(values):\n"
+        "    key = ((\"foo\", \"bar\", 0), 2)\n"
+        "    return values[key]\n"
+        "\n"
+        "def control(values):\n"
+        "    return values[0]\n",
+        encoding="utf-8",
+    )
+    source = SourceFile(
+        workspace_path_source(str(source_path), root=str(tmp_path)),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    return next(function.fragment for function in source.functions())
+
+
+
 def test_launcher_authenticates_the_exact_corpus() -> None:
     corpus = authenticated_pandas_corpus()
     assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
@@ -73,10 +95,10 @@ def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> 
 
 
 def test_truthful_out_of_range_concrete_list_emits_index_error(
-    authenticated_site,
+    local_site,
 ) -> None:
     outcome = ListValue((TermValue(7),)).subscript(
-        TermValue(1), authenticated_site.fragment
+        TermValue(1), local_site
     )
 
     assert isinstance(outcome, Complete)
@@ -85,10 +107,10 @@ def test_truthful_out_of_range_concrete_list_emits_index_error(
 
 
 def test_lying_in_range_concrete_list_does_not_emit_exception(
-    authenticated_site,
+    local_site,
 ) -> None:
     outcome = ListValue((TermValue(7),)).subscript(
-        TermValue(0), authenticated_site.fragment
+        TermValue(0), local_site
     )
 
     assert isinstance(outcome, Complete)
@@ -96,9 +118,9 @@ def test_lying_in_range_concrete_list_does_not_emit_exception(
     assert outcome.value.value == 7
 
 
-def test_known_non_integer_list_index_emits_type_error(authenticated_site) -> None:
+def test_known_non_integer_list_index_emits_type_error(local_site) -> None:
     outcome = ListValue((TermValue(7),)).subscript(
-        TermValue(1.5), authenticated_site.fragment
+        TermValue(1.5), local_site
     )
 
     assert isinstance(outcome, Complete)
@@ -106,11 +128,51 @@ def test_known_non_integer_list_index_emits_type_error(authenticated_site) -> No
     assert outcome.value.effect.exception_name == "TypeError"
 
 
-def test_unknown_list_index_is_a_named_third_value(authenticated_site) -> None:
+def test_unknown_list_index_is_a_named_third_value(local_site) -> None:
     with pytest.raises(ConstructionPanic) as raised:
         ListValue((TermValue(7),)).subscript(
-            SymbolicValue(make_var("index")), authenticated_site.fragment
+            SymbolicValue(make_var("index")), local_site
         )
 
     assert raised.value.info.owner == "ListValue.subscript"
     assert "undecided" in raised.value.info.observed
+
+
+@pytest.mark.parametrize(
+    "receiver",
+    (
+        ListValue((TermValue(7),)),
+        TupleValue((TermValue(7),)),
+        StringValue("x"),
+    ),
+)
+def test_truthful_nested_tuple_index_emits_type_error(local_site, receiver) -> None:
+    nested_key = TupleValue(
+        (
+            TupleValue((StringValue("foo"), StringValue("bar"), TermValue(0))),
+            TermValue(2),
+        )
+    )
+
+    outcome = receiver.subscript(nested_key, local_site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_lying_nested_tuple_key_must_not_be_guessed_for_unknown_receiver(
+    local_site,
+) -> None:
+    nested_key = TupleValue(
+        (
+            TupleValue((StringValue("foo"), StringValue("bar"), TermValue(0))),
+            TermValue(2),
+        )
+    )
+
+    with pytest.raises(ConstructionPanic) as raised:
+        SymbolicValue(make_var("receiver")).subscript(nested_key, local_site)
+
+    assert raised.value.info.owner == "SymbolicValue.subscript"
+    assert "undecided receiver runtime type" in raised.value.info.observed
