@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 
-def test_real_pandas_plain_halt_advances_to_typed_exit_gap():
+def test_real_pandas_plain_halt_names_constructor_partition_floor():
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
@@ -33,7 +33,7 @@ def test_real_pandas_plain_halt_advances_to_typed_exit_gap():
         function.sugar().desugar()
 
     gap = raised.value
-    assert gap.kind == "exit-may-halt"
+    assert gap.kind == "force-floor"
     assert gap.coordinate.start_line == 84
     assert gap.coordinate.start_col == 9
-    assert "attribute:ObjectValue" in gap.observed
+    assert "ExitSet with 3 arms" in gap.observed

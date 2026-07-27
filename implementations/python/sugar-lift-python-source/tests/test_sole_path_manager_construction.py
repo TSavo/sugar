@@ -460,6 +460,147 @@ def test_renamed_manager_protocol_retains_ordinary_method_call_frames(tmp_path):
     assert exit_block.statements == (ReturnValue(actual.value),)
 
 
+def test_enter_receiver_store_populates_same_identity_for_exit_read(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedGuard:\n"
+        "    def __init__(self, marker):\n"
+        "        ...\n\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        self.after_enter = self.marker\n"
+        "        return self.after_enter\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return self.after_enter\n\n"
+        "def make_guard(marker):\n"
+        "    return RenamedGuard(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="renamed-state-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    exit_ = outcome_to_exitset(protocol.exit_outcome())
+
+    assert len(exit_.exits) == 1
+    assert isinstance(exit_.exits[0], Completed)
+    block = exit_.exits[0].value
+    assert isinstance(block, BlockValue)
+    assert block.statements[-1] == ReturnValue(actual.value)
+
+
+def test_unwritten_receiver_field_stays_typed_loud_across_method_lifetimes(
+    tmp_path,
+):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedGuard:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        return self.marker\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return self.never_written\n\n"
+        "def make_guard(marker):\n"
+        "    return RenamedGuard(marker)\n",
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="missing-state-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as raised:
+        protocol.exit_outcome()
+
+    assert raised.value.info.owner == "attribute"
+    assert raised.value.info.observed == "ObjectValue"
+
+
+def test_constructor_partition_does_not_inherit_store_across_guarded_faces(
+    tmp_path,
+):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedGuard:\n"
+        "    def __init__(self, marker):\n"
+        "        if marker:\n"
+        "            self.maybe_written = marker\n\n"
+        "    def __enter__(self):\n"
+        "        return self\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return self.maybe_written\n\n"
+        "def make_guard(marker):\n"
+        "    return RenamedGuard(marker)\n",
+    )
+    from sugar_lift_py_tests.floor import (
+        ReceiverStatePartitionValue,
+        SymbolicValue,
+    )
+    from sugar_lift_py_tests.ir import _term_content_cid, make_var
+
+    symbolic = SymbolicValue(make_var("constructor-guard"))
+    actual = ConstructedCallActualV1(
+        actual.node,
+        symbolic,
+        ConstructedValueTestimonyV1.mint(
+            actual.node.fragment,
+            _term_content_cid(symbolic.to_term(owner="partition-lying-twin")),
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    assert isinstance(behavior.receiver_state, ReceiverStatePartitionValue)
+    from sugar_lift_py_tests.outcome import Completed
+
+    field_sets = {
+        tuple(field.name for field in face.value.fields)
+        for face in behavior.receiver_state.exits.exits
+        if isinstance(face, Completed)
+    }
+    assert field_sets == {(), ("maybe_written",)}
+
+    protocol = construct_manager_protocol(behavior, exit_face_id="partition-lying-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic):
+        protocol.exit_outcome()
+
+
+def test_ellipsis_only_initializer_stays_typed_loud(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedGuard:\n"
+        "    def __init__(self, marker):\n"
+        "        ...\n\n"
+        "    def __enter__(self):\n"
+        "        return self\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n\n"
+        "def make_guard(marker):\n"
+        "    return RenamedGuard(marker)\n",
+    )
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+
+    assert isinstance(behavior, ManagerConstructionGapV1)
+    assert behavior.kind == "force-floor"
+    assert "EllipsisValue only" in behavior.detail
+
+
 def test_manager_missing_source_protocol_method_stays_typed_loud(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,
@@ -1200,7 +1341,8 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     with pytest.raises(WithConstructionGap) as caught:
         with_node.sugar()
 
-    assert caught.value.gap_kind is WithConstructionGapKind.ENTER_MAY_HALT
+    assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
+    assert "ExitSet with 3 arms" in caught.value.observed
     assert (
         caught.value.coordinate.start_line,
         caught.value.coordinate.start_col,
@@ -1228,7 +1370,8 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     with pytest.raises(WithConstructionGap) as caught:
         with_node.sugar()
 
-    assert caught.value.gap_kind is WithConstructionGapKind.ENTER_MAY_HALT
+    assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
+    assert "ExitSet with 4 arms" in caught.value.observed
     assert (
         caught.value.coordinate.start_line,
         caught.value.coordinate.start_col,
