@@ -440,7 +440,7 @@ def test_async_with_stays_typed_loud_even_with_sync_ref(tmp_path):
     assert type(caught.value).__name__ == "AsyncContextManagerUnsupported"
 
 
-def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
+def test_missing_manager_derivation_is_typed_construction_gap(tmp_path):
     path = tmp_path / "missing_row.py"
     path.write_text(
         "from dependency import manager\n"
@@ -449,7 +449,10 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         "        pass\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.panic import BackendDefect
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
 
     identity = path_source(str(path))
     table = ResolvedContractRefsV1(
@@ -458,8 +461,9 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         by_use_site=MappingProxyType({}),
     )
     source = SourceFile(identity, construction_context=TreeConstructionContextV1(table))
-    with pytest.raises(BackendDefect):
+    with pytest.raises(WithConstructionGap) as caught:
         next(source.functions()).sugar()
+    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
 
 
 def test_selected_with_defers_resolution_validation_until_construction(tmp_path):
@@ -472,7 +476,10 @@ def test_selected_with_defers_resolution_validation_until_construction(tmp_path)
         "        return entered\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.panic import BackendDefect
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
 
     table = ResolvedContractRefsV1(
         catalog_cid=_cid("c"),
@@ -488,13 +495,10 @@ def test_selected_with_defers_resolution_validation_until_construction(tmp_path)
     substituted = with_node.substitute({})
     assert substituted.body[0].value.projection == "enter-result"
 
-    with pytest.raises(BackendDefect) as caught:
+    with pytest.raises(WithConstructionGap) as caught:
         substituted.sugar()
     assert caught.value.owner == "With._construct_sugar"
-    assert (
-        caught.value.observed
-        == "BackendDefect: enrolled context-manager demand missing from resolution table"
-    )
+    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
 
 
 def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):

@@ -1197,6 +1197,7 @@ def test_installed_pytest_raises_truthful_route_keeps_missing_derivation_typed(
 
     assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
 
+
 def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     tmp_path,
 ):

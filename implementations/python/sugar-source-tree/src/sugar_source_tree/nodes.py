@@ -4596,13 +4596,21 @@ class With(Statement):
             return derived
         try:
             return context.contract_refs.require(coordinate)
-        except ContractRefProtocolError as exc:
-            backend_defect(
+        except ContractRefProtocolError:
+            from .panic import WithConstructionGap, WithConstructionGapKind
+
+            panic = WithConstructionGap(
+                gap_kind=WithConstructionGapKind.NO_DERIVED_CONTRACT,
                 owner="With._construct_sugar",
-                observed=str(exc),
-                requested="one contract-resolution row for every enrolled With demand",
-                fix="repair prereq-2 demand/table generation; never search at construction",
+                observed=(
+                    "no context-manager derivation for source coordinate "
+                    f"{coordinate}"
+                ),
+                requested="one resolved authenticated ContextManagerContractRefV1",
+                fix="publish or derive the exact typed CM contract before construction",
             )
+            self.reporter.report_gap(self, panic)
+            raise panic
 
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
