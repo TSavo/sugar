@@ -343,8 +343,36 @@ DEMAND_TABLE_CONTENT_KEY = (
     "6cba3f8d9f19c1b5375692117a8395aa9f1529a63b768387ce9aeb43d8323499"
 )
 
-#: The corpus the table authenticated itself against.
-DEMAND_TABLE_CORPUS_MANIFEST_CID = (
+#: The CONTENT identity of the enrolled corpus: ``corpus_pin.aggregate_hash``
+#: over pandas 3.0.3 / 1,421 files. Distribution and version are inside the
+#: preimage alongside every file's path, sha256 and size, so an identical file
+#: set relabelled as another pandas version does not compare equal. This is
+#: the axis that refuses content drift.
+CORPUS_AGGREGATE_HASH = (
+    "bbb70a76f4032eda3362102c8bd872ca769b6f8143a91f60a36374fa1066b76c"
+)
+
+#: The SHAPE identity the table carries in its own authentication block. It is
+#: a sha256 over the sorted relative path strings and nothing else -- no file
+#: bytes, no version -- so it reproduces exactly from filenames alone and a
+#: tree with these 1,421 names and every byte rewritten still matches it.
+#:
+#: It is kept because it is a different question, not because it adds
+#: detection: ``CORPUS_AGGREGATE_HASH`` already subsumes the path set. Checked
+#: separately and reported separately, the pair gives differential diagnosis --
+#: shape alone failing means the file list moved, shape passing while the
+#: aggregate fails means the bytes drifted under a stable list.
+#:
+#: This value is a property of the PINNED ARTIFACT, not of current producer
+#: code. ``#6482`` retired the paths-only ``authenticated_pytest``
+#: ``corpus_manifest_cid`` in favour of ``authenticate_corpus_manifest``, which
+#: reuses the content-addressed ``demand_table_identity.corpus_manifest_cid``.
+#: The pinned table predates that fix, so its authentication block still
+#: carries the paths-only digest and this row still describes it correctly --
+#: but a reader looking for the function that produced it will not find one.
+#: That is why ``_paths_only_manifest_cid`` reproduces the preimage here rather
+#: than importing it.
+DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID = (
     "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
 
@@ -409,7 +437,7 @@ def _pinned_demand_table() -> dict:
     assert payload["contentKey"] == DEMAND_TABLE_CONTENT_KEY
     assert (
         payload["authentication"]["authenticatedCorpusManifestCid"]
-        == DEMAND_TABLE_CORPUS_MANIFEST_CID
+        == DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID
     )
 
     enrolled = {
@@ -651,3 +679,62 @@ def test_computed_class_patterns_cross_the_authenticated_generic_base(
     assert row.kind == "force-floor"
     assert row.detail.startswith("Try.sugar:")
     assert "ExitSet with 4 arms" not in row.detail
+
+
+def test_corpus_identity_is_checked_on_content_not_on_the_file_list() -> None:
+    """Two named axes, so a refusal says WHICH identity moved.
+
+    The table's own ``authenticatedCorpusManifestCid`` is a sha256 over the
+    sorted relative path strings and nothing else. It reproduces from
+    filenames alone, which means it authenticates the file *list*: a tree
+    carrying these 1,421 names with every byte rewritten satisfies it. Relying
+    on it as the corpus identity is the same species as reading a version
+    string -- it answers a question nobody asked.
+
+    ``corpus_pin.aggregate_hash`` is the identity that refuses. It folds the
+    distribution and version into the preimage alongside per-file path, sha256
+    and size, so it also refuses the case a byte-only content hash cannot: an
+    identical file set relabelled as a different pandas version.
+
+    Both are asserted, separately, and the messages name which one failed --
+    shape alone failing means the file list moved, shape passing while the
+    aggregate fails means the bytes drifted under a stable list. Fusing them
+    into one assertion would make the reader re-derive that at the moment they
+    can least afford to.
+    """
+    from sugar_lift_py_tests.corpus_pin import pin_corpus
+
+    pin = pin_corpus(_corpus_root())
+
+    assert pin.aggregate_hash == CORPUS_AGGREGATE_HASH, (
+        "CORPUS CONTENT DRIFT: the enrolled pandas has the same shape but "
+        f"different bytes or a different version label.\n"
+        f"  observed aggregate:  {pin.aggregate_hash}\n"
+        f"  enrolled aggregate:  {CORPUS_AGGREGATE_HASH}\n"
+        "Every row and site in this module testifies about the enrolled "
+        "corpus. Re-pin deliberately; do not follow the drift."
+    )
+
+    shape = _paths_only_manifest_cid(_corpus_root())
+    assert shape == DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID, (
+        "CORPUS SHAPE DRIFT: the enrolled file LIST moved -- a truncated "
+        "enrolment, an extra vendored file, or a rename.\n"
+        f"  observed shape cid:  {shape}\n"
+        f"  enrolled shape cid:  {DEMAND_TABLE_CORPUS_MANIFEST_SHAPE_CID}"
+    )
+
+
+def _paths_only_manifest_cid(root: Path) -> str:
+    """Reproduce the table's shape CID from path names alone.
+
+    Deliberately recomputed here rather than read back out of the artifact:
+    comparing the artifact's field to itself would be an echo. The preimage is
+    the sorted relative paths, exactly as ``authenticated_pytest`` builds it,
+    and the fact that no file is read in this function is the point being
+    made.
+    """
+    from sugar_source_tree.tree import SourceTree
+
+    ordered = sorted(str(path.relative_to(root)) for path in SourceTree(root).paths())
+    preimage = json.dumps(ordered, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
