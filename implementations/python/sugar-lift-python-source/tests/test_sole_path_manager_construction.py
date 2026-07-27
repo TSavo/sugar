@@ -578,6 +578,105 @@ def test_constructor_partition_does_not_inherit_store_across_guarded_faces(
         protocol.exit_outcome()
 
 
+def test_resource_enter_partition_does_not_inherit_unacquired_state(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedResource:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        if self.marker:\n"
+        "            self.acquired = self.marker\n"
+        "        return self\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return self.acquired\n\n"
+        "def make_resource(marker):\n"
+        "    return RenamedResource(marker)\n",
+        exported="make_resource",
+    )
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import _term_content_cid, make_var
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    symbolic = SymbolicValue(make_var("resource-acquisition-guard"))
+    actual = ConstructedCallActualV1(
+        actual.node,
+        symbolic,
+        ConstructedValueTestimonyV1.mint(
+            actual.node.fragment,
+            _term_content_cid(symbolic.to_term(owner="resource-lying-twin")),
+        ),
+    )
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="resource-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    transitions = outcome_to_exitset(protocol.enter_resource_outcome())
+    completed = tuple(face for face in transitions.exits if isinstance(face, Completed))
+    assert {
+        tuple(field.name for field in face.value.receiver_state.fields)
+        for face in completed
+    } == {("marker",), ("acquired", "marker")}
+
+    written = next(
+        face.value
+        for face in completed
+        if any(field.name == "acquired" for field in face.value.receiver_state.fields)
+    )
+    unwritten = next(
+        face.value
+        for face in completed
+        if all(field.name != "acquired" for field in face.value.receiver_state.fields)
+    )
+    assert protocol.exit_outcome_for(written) is not None
+
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    with pytest.raises(ConstructionPanic) as raised:
+        protocol.exit_outcome_for(unwritten)
+    assert raised.value.info.owner == "attribute"
+    assert raised.value.info.observed == "ObjectValue"
+
+
+def test_resource_enter_state_reaches_exit_without_second_enter(tmp_path):
+    graph, resolved, actual, call_site = _resolved(
+        tmp_path,
+        "class RenamedResource:\n"
+        "    def __init__(self, marker):\n"
+        "        self.marker = marker\n\n"
+        "    def __enter__(self):\n"
+        "        self.acquired = self.marker\n"
+        "        return self.acquired\n\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return self.acquired\n\n"
+        "def make_resource(marker):\n"
+        "    return RenamedResource(marker)\n",
+        exported="make_resource",
+    )
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    behavior = construct_manager_behavior(
+        resolved, graph=graph, actuals=(actual,), call_site=call_site
+    )
+    assert isinstance(behavior, ConstructedManagerBehaviorV1)
+    protocol = construct_manager_protocol(behavior, exit_face_id="resource-face")
+    assert isinstance(protocol, ConstructedManagerProtocolV1)
+
+    transitions = outcome_to_exitset(protocol.enter_resource_outcome())
+    assert len(transitions.exits) == 1
+    transition = transitions.exits[0]
+    assert isinstance(transition, Completed)
+    assert transition.value.enter_value.statements[-1] == ReturnValue(actual.value)
+
+    exit_ = outcome_to_exitset(protocol.exit_outcome_for(transition.value))
+    assert len(exit_.exits) == 1
+    assert isinstance(exit_.exits[0], Completed)
+    assert exit_.exits[0].value.statements[-1] == ReturnValue(actual.value)
+
+
 def test_ellipsis_only_initializer_stays_typed_loud(tmp_path):
     graph, resolved, actual, call_site = _resolved(
         tmp_path,
