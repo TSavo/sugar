@@ -250,9 +250,10 @@ def test_reassigned_local_import_head_has_no_exception_identity(tmp_path):
     assert tree.root.unit.imported_exception_type_identity(expected) is None
 
 
-PINNED_PANDAS_ROOT = Path(
-    "/Users/tsavo/sugar-defect-drain/.venv/lib/python3.14/site-packages/pandas"
-)
+def _pinned_pandas_root() -> Path:
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+
+    return authenticated_pandas_corpus().root
 PINNED_DATETIMELIKE_CID = (
     "blake3-512:a8a3afcef87a93452db841a304673c4bca0a52e29e5a63932580a3b638f39300"
     "2003a95d615bfd1bec91d03c90f792b2600a007f5e5c98120c8ca56bb8b79f00"
@@ -272,11 +273,7 @@ PINNED_ERRORS_CID = (
 
 
 def _pinned_identity(relative_path: str, expected_cid: str):
-    root = PINNED_PANDAS_ROOT
-    if not root.is_dir():
-        import pandas
-
-        root = Path(pandas.__file__).resolve().parent
+    root = _pinned_pandas_root()
     path = root / relative_path
     source = path.read_bytes()
     source_cid = blake3_512_of(source)
@@ -403,11 +400,7 @@ def test_pinned_juxtaposition_cannot_swap_the_two_item_occurrences():
     assert not isinstance(inner, WithEffectBoundarySugar)
 
 def _real_resource_outer_boundary_inner():
-    root = PINNED_PANDAS_ROOT
-    if not root.is_dir():
-        import pandas
-
-        root = Path(pandas.__file__).resolve().parent
+    root = _pinned_pandas_root()
     path = root / "tests/arrays/test_datetimelike.py"
     source = path.read_bytes()
     source_cid = blake3_512_of(source)
@@ -483,11 +476,7 @@ def test_pinned_resource_outer_order_is_not_assertion_outer():
 
 
 def _real_assertion_outer_resource_inner():
-    root = PINNED_PANDAS_ROOT
-    if not root.is_dir():
-        import pandas
-
-        root = Path(pandas.__file__).resolve().parent
+    root = _pinned_pandas_root()
     path = root / "tests/apply/test_invalid_arg.py"
     source = path.read_bytes()
     source_cid = blake3_512_of(source)

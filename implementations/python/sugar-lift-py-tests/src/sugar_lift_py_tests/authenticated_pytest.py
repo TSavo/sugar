@@ -7,6 +7,7 @@ import sys
 import sysconfig
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib import import_module, metadata
 from pathlib import Path
 from types import ModuleType
@@ -31,6 +32,16 @@ class InterpreterIdentity:
     implementation: str
     version: str
     executable: Path
+
+
+@dataclass(frozen=True)
+class AuthenticatedPandasCorpus:
+    """Machine-local seat for one machine-independent authenticated corpus."""
+
+    root: Path
+    version: str
+    manifest_cid: str
+    file_count: int
 
 
 def interpreter_identity() -> InterpreterIdentity:
@@ -203,6 +214,35 @@ def authenticate_environment() -> (
     files = list(SourceTree(pandas_root).paths())
     observed_cid, _ = authenticate_corpus_manifest(pandas_root, files, expected_cid)
     return pandas_identity, numpy_identity, lift_identity, observed_cid
+
+
+@lru_cache(maxsize=1)
+def authenticated_pandas_corpus() -> AuthenticatedPandasCorpus:
+    """Return the launcher's pandas seat only after content authentication.
+
+    Semantic tests may use ``root`` to open enrolled files, but identity is the
+    manifest CID and file count.  The path is deliberately absent from the
+    authentication preimage, so relocating byte-identical site-packages is
+    harmless while editing bytes in place refuses.
+    """
+    pandas_identity, _, _, manifest_cid = authenticate_environment()
+    from sugar_source_tree.tree import SourceTree
+
+    root = pandas_identity.loaded_from.parent
+    _, expected_cid = _declared_corpus(Path(__file__).resolve().parents[2])
+    observed_cid, file_count = authenticate_corpus_manifest(
+        root, SourceTree(root).paths(), expected_cid
+    )
+    if observed_cid != manifest_cid:
+        raise ExecutionEnvironmentMismatch(
+            "launcher corpus identity changed between authentication projections"
+        )
+    return AuthenticatedPandasCorpus(
+        root=root,
+        version=pandas_identity.version,
+        manifest_cid=observed_cid,
+        file_count=file_count,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
