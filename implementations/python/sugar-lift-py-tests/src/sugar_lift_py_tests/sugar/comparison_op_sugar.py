@@ -45,13 +45,39 @@ _OPERATOR_COORDINATE = {
 
 
 def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
-    """Keep an unexecuted call result's native dispatch at its producer."""
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    """Keep undecided native comparison/containment dispatch at the producer.
 
-    if not (left.denotes_value() and right.denotes_value()):
+    Ordering and membership are not total over undecided runtime types:
+    Python may select a rich method that completes or raises (``Series`` vs
+    ``str`` raises ``TypeError``; unknown containers may raise from
+    ``__contains__``). Emitting ``py.lt`` / ``py.in`` invents completion;
+    inventing ``TypeError`` invents an exception identity. Both stay refused
+    until native operand types are source-authenticated — the same producer
+    law BinOp/BoolOp already own.
+
+    Equality is different: ``==`` / ``!=`` remain total solver coordinates for
+    symbolic and ground pairs (``py.eq``), so equality only refuses an
+    unexecuted call result whose ``__eq__`` body is itself undecided.
+    """
+    denotes_left = getattr(left, "denotes_value", None)
+    denotes_right = getattr(right, "denotes_value", None)
+    if not callable(denotes_left) or not callable(denotes_right):
         return
-    if not isinstance(left, CallSiteValue) and not isinstance(right, CallSiteValue):
+    if not (denotes_left() and denotes_right()):
         return
+
+    if op_kind in {"Eq", "NotEq"}:
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if not isinstance(left, CallSiteValue) and not isinstance(right, CallSiteValue):
+            return
+    else:
+        decided_left = getattr(left, "runtime_type_is_decided", None)
+        decided_right = getattr(right, "runtime_type_is_decided", None)
+        if not callable(decided_left) or not callable(decided_right):
+            return
+        if decided_left() and decided_right():
+            return
 
     from sugar_lift_py_tests.gap.info import GapKind, GapLocus
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -100,13 +126,13 @@ class ComparisonOpSugar(Sugar):
         return left.and_then(right)
 
     def _membership(self, container, item):
-        """Dispatch membership only when native receiver type is decided.
+        """Dispatch membership only when native operand types are decided.
 
-        An unexecuted call result denotes a Python value, but its runtime type
-        is a third value. Python may select ``__contains__``, fall back through
-        iteration, or raise from either native method. Emitting ``py.in`` there
-        invents completion; choosing TypeError invents an exit. Keep that
-        undecided dispatch loud at the Compare producer.
+        An undecided container or needle denotes a Python value, but which
+        ``__contains__`` / iteration path Python would select — and whether it
+        raises — is a third value. Emitting ``py.in`` invents completion;
+        inventing ``TypeError`` invents an exit. Keep that undecided dispatch
+        loud at the Compare producer.
         """
         refuse_undecided_comparison(item, container, self.site, self.op_kind)
         return container.contains(item, self.site)
