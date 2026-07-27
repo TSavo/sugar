@@ -165,6 +165,35 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
     assert receiver.identity.startswith("blake3-512:")
 
 
+def test_repeated_initializer_uses_the_last_class_binding() -> None:
+    """A later same-name definition is the executable Python class binding."""
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedGuard:\n"
+        "    def __init__(self, expected):\n"
+        "        ...\n\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n\n"
+        "RenamedGuard(11)\n",
+        context=context,
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    context.source_call_frames[_coordinate(call)] = (
+        class_node.source_visible_constructor_frame()
+    )
+
+    receiver = (
+        call.sugar()
+        .desugar()
+        .value.force_floor(None, owner="last-class-binding", project_callsite=False)
+    )
+
+    assert {field.name: field.value for field in receiver.fields} == {
+        "expected": TermValue(11)
+    }
+
+
 def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(

@@ -148,6 +148,22 @@ class _ConditionalRaiseRoute:
 _NESTED_COMPREHENSION_TEMPLATE = object()
 
 
+def _ordered_binding_keys(names):
+    internal_names = (
+        _LEXICALLY_BOUND_NAMES,
+        _SCOPE_OWNER_CID,
+        _SUBSTITUTION_TRACE_BUILDER,
+        _BINDING_ENTRY_FACTORY,
+        _RECEIVER_FIELD_PROJECTIONS,
+    )
+    ordered = sorted(name for name in names if isinstance(name, str))
+    ordered.extend(name for name in internal_names if name in names)
+    if len(ordered) != len(names):
+        unknown = next(name for name in names if name not in ordered)
+        raise TypeError(f"unsupported binding-map key: {type(unknown).__name__}")
+    return ordered
+
+
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -4516,7 +4532,7 @@ class If(Statement):
         names = set(then_net) | set(else_net)
         phis = []
         availability: BindingMap = {}
-        for name in sorted(names):
+        for name in _ordered_binding_keys(names):
             incoming = _explicit_state(name, scope)
             then_val = then_net.get(name, incoming)
             else_val = else_net.get(name, incoming)
@@ -5811,7 +5827,7 @@ class Try(Statement):
             return dict(nets[0])
         names = set().union(*(net.keys() for net in nets))
         merged: BindingMap = {}
-        for name in sorted(names):
+        for name in _ordered_binding_keys(names):
             states = [net.get(name, _explicit_state(name, scope)) for net in nets]
             if any(state is _MISSING for state in states):
                 continue
@@ -5888,6 +5904,17 @@ class Try(Statement):
                 return super()._construct_sugar()  # empty tuple: no honest matcher
             for type_node in type_nodes:
                 if not isinstance(type_node, Name):
+                    # ``except re.error`` / dotted types are not bare Names.
+                    # Under dual-mode factory frame projection, soft-incomplete
+                    # so class bases (AbstractRaises) can still project; full
+                    # reduction of that arm remains CoverageGap, never green.
+                    context = self.unit.construction_context
+                    if getattr(context, "frame_projection", False):
+                        from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import (
+                            SoftUnresolvedTrySugar,
+                        )
+
+                        return SoftUnresolvedTrySugar(site=self.fragment)
                     return super()._construct_sugar()
                 identity = self.unit.exception_type_identity(type_node)
                 if identity is None:

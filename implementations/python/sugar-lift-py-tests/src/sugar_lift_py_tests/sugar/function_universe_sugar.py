@@ -40,6 +40,18 @@ class _ReducedBlock:
     can_fall_through: bool
     fall_through: tuple
     transforms: tuple = ()
+    context: object = dataclass_field(default=None, compare=False, repr=False)
+
+
+def _extend_receiver_store_scope(value, ctx):
+    from sugar_lift_py_tests.floor import ReceiverFieldStoreValue
+
+    candidate = getattr(value, "value", value)
+    return (
+        candidate.extend_scope(ctx)
+        if isinstance(candidate, ReceiverFieldStoreValue)
+        else ctx
+    )
 
 
 def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
@@ -136,6 +148,7 @@ def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
             block.can_fall_through,
             block.fall_through,
             block.transforms,
+            block.context,
         )
         if isinstance(exit_, Completed):
             enrolled.append(Completed(exit_.guard, widened, exit_.faces, ()))
@@ -165,6 +178,7 @@ def _prefixed(state: _ReducedBlock, inner: object) -> object:
         getattr(inner, "can_fall_through", False),
         (),
         state.transforms,
+        getattr(inner, "context", state.context),
     )
 
 
@@ -214,7 +228,7 @@ def reduce_block_to_exitset(
 ) -> ExitSet[_ReducedBlock]:
     """Reduce a suite to guarded exits before the linear compatibility view."""
     exits = ExitSet.completed(
-        _ReducedBlock(entries=(), can_fall_through=True, fall_through=())
+        _ReducedBlock(entries=(), can_fall_through=True, fall_through=(), context=ctx)
     )
 
     for index, head in enumerate(statements):
@@ -226,7 +240,8 @@ def reduce_block_to_exitset(
                 # but its source tail is unreachable and must not be reduced
                 # into a contradictory second post-state.
                 return ExitSet.completed(state)
-            outcome = head.desugar(ctx)
+            active_ctx = state.context if state.context is not None else ctx
+            outcome = head.desugar(active_ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
             if (
@@ -269,6 +284,7 @@ def reduce_block_to_exitset(
                     faces.can_fall_through,
                     (),
                     state.transforms,
+                    active_ctx,
                 )
                 if faces.can_fall_through:
                     exits.append(
@@ -308,23 +324,34 @@ def reduce_block_to_exitset(
                         continues = value.can_fall_through
                         nested_fall_through = value.fall_through
                         nested_transforms = value.transforms
+                        next_context = (
+                            value.context
+                            if value.context is not None
+                            else active_ctx
+                        )
                     else:
                         linear = Complete(value)
                         contribution = linear.contribution()
                         continues = linear.follow().continues
                         nested_fall_through = ()
                         nested_transforms = ()
+                        next_context = _extend_receiver_store_scope(
+                            linear.value, active_ctx
+                        )
                     for transform in reversed(state.transforms):
                         contribution = transform(contribution)
                     entries = (*state.entries, *contribution)
                     if not continues:
-                        return ExitSet.completed(_ReducedBlock(entries, False, ()))
+                        return ExitSet.completed(
+                            _ReducedBlock(entries, False, (), context=next_context)
+                        )
                     return ExitSet.completed(
                         _ReducedBlock(
                             entries,
                             True,
                             (*state.fall_through, *nested_fall_through),
                             (*state.transforms, *nested_transforms),
+                            next_context,
                         )
                     )
 
@@ -363,6 +390,7 @@ def reduce_block_to_exitset(
             for transform in reversed(state.transforms):
                 contribution = transform(contribution)
             entries = (*state.entries, *contribution)
+            next_context = _extend_receiver_store_scope(outcome, active_ctx)
 
             follow = outcome.follow()
             if follow.continues and follow.halt_guard is not None:
@@ -391,6 +419,7 @@ def reduce_block_to_exitset(
                                 True,
                                 state.fall_through,
                                 state.transforms,
+                                next_context,
                             ),
                         ),
                     )
@@ -410,7 +439,12 @@ def reduce_block_to_exitset(
                         )
                     return ExitSet.halted(outcome.effect, state=state)
                 return ExitSet.completed(
-                    _ReducedBlock(entries, can_fall_through=False, fall_through=())
+                    _ReducedBlock(
+                        entries,
+                        can_fall_through=False,
+                        fall_through=(),
+                        context=next_context,
+                    )
                 )
 
             transforms = state.transforms
@@ -420,7 +454,7 @@ def reduce_block_to_exitset(
             if follow.continuation_guard is not None:
                 fall_through = (*fall_through, follow.continuation_guard)
             return ExitSet.completed(
-                _ReducedBlock(entries, True, fall_through, transforms)
+                _ReducedBlock(entries, True, fall_through, transforms, next_context)
             )
 
         exits = exits.sequence(reduce_next)

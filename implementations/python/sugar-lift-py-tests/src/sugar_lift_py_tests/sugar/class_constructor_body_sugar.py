@@ -48,7 +48,13 @@ class ClassConstructorBodySugar(Sugar):
             # wrapper; after store ExitSet composition, that path left
             # BindingCoordinateRef formals unbound and raised bare
             # SugarNotWritten during source-derived manager construction.
-            outcome = self.initializer_body.desugar(ctx)
+            receiver = value.construct_receiver_state_from_block(
+                None, self.receiver_coordinate_cid
+            )
+            initializer_ctx = ctx.with_temporal(
+                ctx.temporal.bind_value(self.receiver_coordinate_cid, receiver)
+            )
+            outcome = self.initializer_body.desugar(initializer_ctx)
             if isinstance(outcome, Incomplete):
                 return outcome
             if isinstance(outcome, ExitSet):
