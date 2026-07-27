@@ -1487,8 +1487,9 @@ def _guarded_literal_boundary(tmp_path, *, exit_body: str):
         "        self.expected = expected\n"
         "    def __enter__(self):\n"
         "        return self\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n" + exit_body +
-        "def make_guard(expected):\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        + exit_body
+        + "def make_guard(expected):\n"
         "    return ArbitraryBoundary(expected)\n",
     )
     behavior = construct_manager_behavior(
@@ -1701,7 +1702,9 @@ _BOUNDARY_IMPLEMENTATION = (
 def _route_boundary_with_binding(
     tmp_path, *, body: str, as_clause: str = " as info", following: str = ""
 ):
-    distribution = _distribution(tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary")
+    distribution = _distribution(
+        tmp_path, _BOUNDARY_IMPLEMENTATION, exported="boundary"
+    )
     consumer = (
         "import arbitrary\n"
         "def use_boundary():\n"

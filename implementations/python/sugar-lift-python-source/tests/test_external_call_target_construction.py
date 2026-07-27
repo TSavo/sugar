@@ -118,9 +118,7 @@ def _construct(root: Path, *, factory_source: str, support_source: str):
 
 def _opaque_gap(root: Path, *, factory_source: str, support_source: str):
     with pytest.raises(OpaqueSourceCallResolutionGap) as raised:
-        _construct(
-            root, factory_source=factory_source, support_source=support_source
-        )
+        _construct(root, factory_source=factory_source, support_source=support_source)
     return raised.value
 
 

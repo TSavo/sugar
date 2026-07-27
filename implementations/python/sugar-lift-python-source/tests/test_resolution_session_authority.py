@@ -362,9 +362,7 @@ def test_disablement_preserves_parked_obligation_verdicts(tmp_path: Path) -> Non
     def answer(session):
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         assert isinstance(resolved, ResolvedPythonObjectV1)
-        projected = resolve_source_visible_frame(
-            resolved, graph=graph, session=session
-        )
+        projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
         assert isinstance(projected, tuple), projected
         frame, target = projected
         obligations = tuple(

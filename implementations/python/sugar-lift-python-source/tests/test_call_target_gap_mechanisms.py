@@ -63,7 +63,9 @@ from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 from sugar_source_tree.tree import SourceFile
 
 
-def _distribution(root: Path, modules: dict[str, str]) -> importlib.metadata.Distribution:
+def _distribution(
+    root: Path, modules: dict[str, str]
+) -> importlib.metadata.Distribution:
     """One authenticated distribution whose file manifest is exactly ``modules``."""
     package = root / "arbitrary"
     package.mkdir(parents=True)
