@@ -8,6 +8,7 @@ cell: Python runtime authority is testified by the demand cell and launcher.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.demand_table_identity import DemandTableIdentityV1
@@ -99,6 +100,17 @@ def _runtime_parser_identity(runtime: str) -> str:
     return f"{implementation}-{components[0]}.{components[1]}"
 
 
+def _is_primary_corpus_coordinate(value: str) -> bool:
+    """The demand identity owns one primary CID; SHA-256 is only an alias.
+
+    ``demand_table_identity.corpus_manifest_cid`` returns the BLAKE3-512
+    coordinate.  Artifact transport may authenticate the SHA-256 alias over
+    the same canonical bytes, but that alias does not replace the primary
+    coordinate consumed by the demand table and launcher.
+    """
+    return re.fullmatch(r"blake3-512:[0-9a-f]{128}", value) is not None
+
+
 def resolve_consumer_hit(
     request: ConsumerResolutionRequest,
     binary: BinaryCellTestimony,
@@ -138,7 +150,9 @@ def resolve_consumer_hit(
         (launcher.corpus_manifest_cid, launcher.corpus_files),
     )
     requested_corpus = (request.corpus_manifest_cid, request.corpus_files)
-    if any(coordinate != requested_corpus for coordinate in corpus_coordinates):
+    if not _is_primary_corpus_coordinate(request.corpus_manifest_cid) or any(
+        coordinate != requested_corpus for coordinate in corpus_coordinates
+    ):
         _miss("corpus identity", requested_corpus, corpus_coordinates)
 
     if launcher.selected_demand_content_key != demand.identity.content_key:
