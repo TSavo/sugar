@@ -2,6 +2,17 @@
 set -euo pipefail
 
 repo="${1:?usage: sugarbin_build_identity_target.sh REPO_ROOT}"
+
+# The executable cell is keyed by Rust build matter only. Keep this source
+# ratchet beside sugarbin's identity tests because bin/sugarbin delegates the
+# preimage to this tool; Python runtime sources must never re-enter that stream.
+stamp_tool="$repo/tools/sugar_source_stamp.py"
+grep -Fq "cargo package local dependency FS" "$stamp_tool"
+if grep -Eq 'PYTHON_PROTOCOL_SRC|protocol-python-(root|path)' "$stamp_tool"; then
+  echo 'Rust sourceStamp still includes Python runtime sources' >&2
+  exit 1
+fi
+
 tmp_root="${SUGARBIN_EXEC_TMPDIR:-$repo/.sugar/test-tmp}"
 mkdir -p "$tmp_root"
 tmp="$(mktemp -d "$tmp_root/sugarbin-build-identity.XXXXXX")"

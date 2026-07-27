@@ -4,16 +4,7 @@ fn main() {
     for path in git_paths_to_watch() {
         println!("cargo:rerun-if-changed={path}");
     }
-    // Rebuild when protocol Python sources change (they are part of sourceStamp
-    // for sugar-cli via tools/sugar_source_stamp.py).
-    for rel in [
-        "../../python/sugar-lift-py-tests/src",
-        "../../python/sugar-lift-python-source/src",
-        "../../python/sugar-source-tree/src",
-        "../../../tools/sugar_source_stamp.py",
-    ] {
-        println!("cargo:rerun-if-changed={rel}");
-    }
+    println!("cargo:rerun-if-changed=../../../tools/sugar_source_stamp.py");
     println!("cargo:rerun-if-env-changed=SUGAR_BUILD_STAMP");
     println!("cargo:rerun-if-env-changed=SUGAR_BUILD_GIT_HEAD");
     // Git HEAD is informational attestation only — never default for identity.

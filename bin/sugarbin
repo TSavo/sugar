@@ -605,7 +605,8 @@ require_b3sum() {
 }
 
 rust_build_input_stream() {
-  # Shared preimage with tools/sugar_source_stamp.py (kit + binary identity).
+  # Shared preimage with tools/sugar_source_stamp.py: the Cargo package's
+  # local Rust dependency closure only.
   python3 "$repo_root/tools/sugar_source_stamp.py" --stream \
     --repo-root "$repo_root" \
     --rust-workspace "$rust_workspace" \
