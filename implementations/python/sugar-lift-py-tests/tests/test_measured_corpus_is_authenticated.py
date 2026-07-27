@@ -226,7 +226,8 @@ def test_launcher_exposes_corpus_by_identity_not_machine_path() -> None:
 
     assert corpus.version == "3.0.3"
     assert corpus.manifest_cid == (
-        "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+        "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604ed"
+        "a1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
     )
     assert corpus.file_count == 1421
     assert corpus.root.name == "pandas"
