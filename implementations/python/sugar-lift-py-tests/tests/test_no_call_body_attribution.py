@@ -15,6 +15,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     ProducerFamily,
     attribute_body_probes,
     discover_no_call_body_probes,
+    require_expected_denominators,
     validate_shared_demand_table,
 )
 from sugar_lift_py_tests.outcome import Complete
@@ -85,11 +86,11 @@ def test_report_keeps_all_six_families_separate() -> None:
         ProducerFamily.SUBSCRIPT: 392,
         ProducerFamily.BINOP: 367,
         ProducerFamily.COMPARE: 181,
-        ProducerFamily.ATTRIBUTE: 53,
+        ProducerFamily.ATTRIBUTE: 41,
         ProducerFamily.UNARYOP: 13,
         ProducerFamily.BOOLOP: 2,
     }
-    assert sum(FAMILY_DENOMINATORS.values()) == 1008
+    assert sum(FAMILY_DENOMINATORS.values()) == 996
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
@@ -198,3 +199,93 @@ def test_discovery_uses_shared_demand_coordinates_and_excludes_call_bodies(
     assert len(probes) == 1
     assert probes[0].family is ProducerFamily.SUBSCRIPT
     assert probes[0].body_id == "subscript_body.py:3:Subscript"
+
+
+def test_discovery_projects_one_family_without_constructing_peer_sources(
+    tmp_path, monkeypatch
+) -> None:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import With
+    from sugar_source_tree.tree import SourceFile
+
+    package = tmp_path / "pandas"
+    package.mkdir()
+    sources = {
+        "attribute_body.py": (
+            "def f(series):\n"
+            "    with boundary(AttributeError):\n"
+            "        series.bad\n"
+        ),
+        "subscript_body.py": (
+            "def g(value):\n    with boundary(IndexError):\n        value[2]\n"
+        ),
+    }
+    rows = []
+    subscript_cid = None
+    for filename, source in sources.items():
+        path = package / filename
+        path.write_text(source, encoding="utf-8")
+        source_cid = blake3_512_of(source.encode())
+        if filename == "subscript_body.py":
+            subscript_cid = source_cid
+        tree = SourceFile(
+            (source, str(path), source_cid),
+            construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        )
+        node = next(item for item in tree.nodes() if isinstance(item, With))
+        span = node.items[0].context_expr.line_col_span()
+        rows.append(
+            {
+                "kind": "context-manager-demand",
+                "gapKind": None,
+                "targetSymbol": "pytest.raises",
+                "useSite": {
+                    "sourceCid": source_cid,
+                    "startLine": span.start_line,
+                    "startCol": span.start_col,
+                    "endLine": span.end_line,
+                    "endCol": span.end_col,
+                },
+            }
+        )
+
+    original = SourceFile.__init__
+
+    def refuse_peer_construction(self, source, *args, **kwargs):
+        if source[2] == subscript_cid:
+            raise AssertionError("peer producer source was constructed")
+        return original(self, source, *args, **kwargs)
+
+    monkeypatch.setattr(SourceFile, "__init__", refuse_peer_construction)
+    probes = discover_no_call_body_probes(
+        {"rows": rows}, package, families=frozenset({ProducerFamily.ATTRIBUTE})
+    )
+
+    assert [probe.body_id for probe in probes] == ["attribute_body.py:3:Attribute"]
+
+
+def test_selected_family_denominator_remains_fixed() -> None:
+    probes = tuple(
+        _probe(ProducerFamily.ATTRIBUTE, _named_refusal)
+        for _ in range(FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE])
+    )
+    assert (
+        require_expected_denominators(
+            probes, families=frozenset({ProducerFamily.ATTRIBUTE})
+        )
+        == probes
+    )
+
+    with pytest.raises(AttributionInvariantError, match="inventory differs"):
+        require_expected_denominators(
+            probes[:-1], families=frozenset({ProducerFamily.ATTRIBUTE})
+        )
+
+
+def test_attribute_family_denominator_is_measured_no_call_inventory() -> None:
+    """Historical pin 53 included Call-bearing Attribute roots; measured is 41."""
+    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 41
+    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] != 53

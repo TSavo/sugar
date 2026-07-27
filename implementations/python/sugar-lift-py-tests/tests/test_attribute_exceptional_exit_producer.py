@@ -187,3 +187,111 @@ def test_replacing_bad_with_known_member_still_cannot_invent_an_exit() -> None:
     assert "pd.Series([], dtype=object).__class__" in lying
 
     _assert_undecided(_site_attribute(source), _call_result(), name="__class__")
+
+
+# --- No-call Attribute family corpus pins (denominator 41) -----------------
+# Bare desugar without bindings yields SymbolicValue receivers; the producer
+# must keep the third value as ConstructionPanic(owner=SymbolicValue.attribute)
+# rather than invent AttributeError. These sites are enrolled Attribute bodies
+# under the no-Call-descendant law.
+
+
+def _authenticated_corpus_file(relative: str) -> Path:
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
+        "3.0.3",
+        MANIFEST_CID,
+        1421,
+    )
+    return corpus.root / relative
+
+
+def _line_attribute(source: str, path: Path, *, line: int, attr: str) -> Attribute:
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    tree = SourceFile(
+        (source, str(path), source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    matches = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Attribute)
+        and node.attr == attr
+        and node.line_col_span().start_line == line
+    )
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _assert_bare_desugar_symbolic_attribute(node: Attribute) -> None:
+    """Production door: expression.sugar().desugar(None) with no bindings."""
+    with pytest.raises(ConstructionPanic) as raised:
+        node.sugar().desugar(None)
+    info = raised.value.info
+    assert info.owner == "SymbolicValue.attribute"
+    assert "undecided" in info.observed
+    assert "source-authenticated attribute success or exceptional exit" in (
+        info.requested
+    )
+    assert "AttributeError" not in info.observed
+    assert "AttributeError" not in info.requested
+    assert "RuntimeEffect" not in info.observed
+    assert "RuntimeEffect" not in info.requested
+
+
+@pytest.mark.parametrize(
+    "relative,line,attr,snippet",
+    [
+        ("tests/series/test_api.py", 175, "foo", "ser.foo"),
+        ("tests/series/test_api.py", 195, "weekday", "ser.weekday"),
+        ("tests/api/test_api.py", 491, "foo", "pd.util.foo"),
+        ("tests/strings/test_api.py", 88, "str", "mi.str"),
+        ("tests/series/accessors/test_cat_accessor.py", 65, "cat", "invalid.cat"),
+        ("tests/arrays/sparse/test_accessor.py", 97, "density", "ser.sparse.density"),
+    ],
+)
+def test_no_call_attribute_corpus_sites_stay_symbolic_undecided(
+    relative: str, line: int, attr: str, snippet: str
+) -> None:
+    path = _authenticated_corpus_file(relative)
+    source = path.read_text(encoding="utf-8")
+    assert snippet in source
+    node = _line_attribute(source, path, line=line, attr=attr)
+    _assert_bare_desugar_symbolic_attribute(node)
+
+
+def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
+    """BinOp ``s_0123 & np.nan`` child-evaluates ``.nan`` on SymbolicValue.
+
+    That panic is Attribute-family coordinate (owner SymbolicValue.attribute),
+    not binary_operation_exception_floor. Keep the owner name honest when a
+    BinOp site is a parent of Attribute evaluation.
+    """
+    path = _authenticated_corpus_file("tests/series/test_logical_ops.py")
+    source = path.read_text(encoding="utf-8")
+    assert source.count("s_0123 & np.nan") == 1
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    tree = SourceFile(
+        (source, str(path), source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    from sugar_source_tree.nodes import BinOp
+
+    matches = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp)
+        and node.op.kind == "BitAnd"
+        and node.line_col_span().start_line == 96
+    )
+    assert len(matches) == 1
+    with pytest.raises(ConstructionPanic) as raised:
+        matches[0].sugar().desugar(None)
+    info = raised.value.info
+    assert info.owner == "SymbolicValue.attribute"
+    assert "SymbolicValue.nan" in info.observed
+    assert "source-authenticated attribute success or exceptional exit" in (
+        info.requested
+    )

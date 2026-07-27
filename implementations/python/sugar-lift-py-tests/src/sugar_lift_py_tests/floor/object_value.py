@@ -83,11 +83,13 @@ def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]
     if id(value) in seen:
         return set()
     seen.add(id(value))
-    return set().union(*(
-        _sugar_receiver_field_names(getattr(value, item.name), seen)
-        for item in fields(value)
-        if item.compare
-    ))
+    return set().union(
+        *(
+            _sugar_receiver_field_names(getattr(value, item.name), seen)
+            for item in fields(value)
+            if item.compare
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -97,9 +99,7 @@ class ObjectValue(FloorValue):
     methods: tuple[ObjectMethodValue, ...] = ()
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
-    deferred_helper_fields: tuple[str, ...] = dataclass_field(
-        default=(), compare=False
-    )
+    deferred_helper_fields: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
@@ -153,7 +153,12 @@ class ObjectValue(FloorValue):
             )
 
             return getattr_coordinate(self, name, owner=str(site))
-        return super().attribute(name, site)
+        # Missing field with no deferred helper: the receiver type/member set
+        # is only partially constructed. Stay on the Attribute producer law
+        # with an honest owner name — do not fall through to the generic
+        # FloorValue.attribute owner="attribute" panic, and do not invent
+        # AttributeError for a member table that is not source-complete.
+        return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
 
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
         """Return this receiver identity after one authenticated field store."""
@@ -179,11 +184,13 @@ class ObjectValue(FloorValue):
         )
 
     def helper_receiver_field_names(self) -> tuple[str, ...]:
-        names = set().union(*(
-            _sugar_receiver_field_names(method.body)
-            for method in self.methods
-            if method.name not in {"__init__", "__enter__", "__exit__"}
-        ))
+        names = set().union(
+            *(
+                _sugar_receiver_field_names(method.body)
+                for method in self.methods
+                if method.name not in {"__init__", "__enter__", "__exit__"}
+            )
+        )
         return tuple(sorted(names))
 
     def attribute_assign_with(
