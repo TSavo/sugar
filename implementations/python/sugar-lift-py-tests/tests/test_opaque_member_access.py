@@ -1,13 +1,10 @@
-"""Member access on an OPAQUE object is a symbolic read, not a gap.
+"""Opaque member operations refuse until a producer owns their runtime edges.
 
-`OpaqueObjectStateV1` is an authenticated call-result identity with no field
-testimony: statically we know only WHICH call produced it, never its fields.
-Attribute reads retain their honest coordinate. A subscript is also an effect
-producer, however, and an opaque result cannot authenticate whether lookup
-succeeds or which exception it raises, so that operation stays named-loud.
-
-A free-function call `g(x)` is the deterministic opaque receiver (no vendor,
-no numpy): its result has no field testimony, exactly like `np.asarray(...)`.
+An unexecuted call authenticates which call produced the receiver, but not its
+runtime type or members.  A completed ``py.getattr`` coordinate would silently
+choose the success edge; a guessed ``AttributeError`` would silently choose the
+failure edge.  Neither choice has source testimony, so both attribute and
+subscript operations remain named construction refusals.
 """
 
 import os
@@ -15,74 +12,66 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.ir import (
-    atomic as _atomic,
-    ctor as _ctor,
-    make_var,
-    str_const,
-    eq as _eq,
-)
 
 
-def _post_of(src):
-    d = tempfile.mkdtemp()
-    p = os.path.join(d, "m.py")
-    open(p, "w").write(src)
-    fn = list(SourceFile(path_source(p)).functions())[0]
-    return fn.sugar().desugar(None).value.post()
+def _refusal(src):
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as source_file:
+        source_file.write(src)
+    function = next(SourceFile(path_source(path)).functions())
+    try:
+        function.sugar().desugar(None)
+    except ConstructionPanic as panic:
+        return panic.info
+    raise AssertionError("opaque member operation invented a completed coordinate")
 
 
-def test_opaque_attribute_is_getattr_not_gap():
-    # `g(x).foo` -- attribute on an opaque call result -- projects the honest
-    # symbolic read, NOT SugarNotWritten and NOT a fabricated field value.
-    post = _post_of("def f(x):\n    return g(x).foo\n")
-    expected = _eq(
-        make_var("out"),
-        _ctor("py.getattr", [_ctor("call:g", [make_var("x")]), str_const("foo")]),
+def test_opaque_attribute_is_named_undecided():
+    info = _refusal("def f(x):\n    return g(x).foo\n")
+
+    assert info.owner == "CallSiteValue.attribute"
+    assert info.observed.endswith("CallSiteValue.foo")
+    assert "source-authenticated attribute success or exceptional exit" in (
+        info.requested
     )
-    assert post == expected, f"post was {post!r}"
 
 
 def test_opaque_subscript_is_named_undecided():
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    info = _refusal("def f(x):\n    return g(x)[0]\n")
 
-    try:
-        _post_of("def f(x):\n    return g(x)[0]\n")
-    except ConstructionPanic as panic:
-        assert panic.info.owner == "CallSiteValue.subscript"
-        assert "undecided receiver runtime type" in panic.info.observed
-    else:  # pragma: no cover - the lying arm
-        raise AssertionError("opaque subscript invented a completed coordinate")
+    assert info.owner == "CallSiteValue.subscript"
+    assert "undecided receiver runtime type" in info.observed
 
 
-def test_opaque_member_access_no_longer_raises():
-    # The discrimination against the OLD behavior: the guard used to raise
-    # SugarNotWritten on any opaque receiver. Construction must now complete.
-    from sugar_source_tree.panic import SugarNotWritten
+def test_opaque_attribute_uses_the_typed_construction_refusal():
+    info = _refusal("def f(x):\n    return g(x).foo\n")
 
-    try:
-        _post_of("def f(x):\n    return g(x).foo\n")
-    except SugarNotWritten as e:  # pragma: no cover - the regression tripwire
-        raise AssertionError(f"opaque member access wrongly withheld: {e}")
+    assert info.gap_locus.value == "Construction"
+    assert "AttributeError" not in info.observed
+    assert "AttributeError" not in info.requested
 
 
-def test_opaque_attribute_congruence():
-    # Same attribute on the SAME opaque call is the SAME term (equal-in-equal-out
-    # one level up). Two `g(x).foo` reads produce identical coordinates.
-    a = _post_of("def f(x):\n    return g(x).foo\n")
-    b = _post_of("def f(x):\n    return g(x).foo\n")
-    assert a == b
+def test_opaque_attribute_refusal_is_reproducible():
+    first = _refusal("def f(x):\n    return g(x).foo\n")
+    second = _refusal("def f(x):\n    return g(x).foo\n")
+
+    assert (first.owner, first.observed, first.requested) == (
+        second.owner,
+        second.observed,
+        second.requested,
+    )
 
 
 def test_opaque_attribute_name_is_carried_verbatim():
-    # The attribute name is a static identifier carried onto the coordinate,
-    # never desugared: `.bar` yields "bar", distinct from `.foo`.
-    post = _post_of("def f(x):\n    return g(x).bar\n")
-    expected = _eq(
-        make_var("out"),
-        _ctor("py.getattr", [_ctor("call:g", [make_var("x")]), str_const("bar")]),
-    )
-    assert post == expected, f"post was {post!r}"
+    foo = _refusal("def f(x):\n    return g(x).foo\n")
+    bar = _refusal("def f(x):\n    return g(x).bar\n")
+
+    assert foo.observed.endswith(".foo")
+    assert bar.observed.endswith(".bar")
+    assert foo.observed != bar.observed
 
 
 if __name__ == "__main__":

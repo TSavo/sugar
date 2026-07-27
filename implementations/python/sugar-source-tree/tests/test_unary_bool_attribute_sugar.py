@@ -2,8 +2,8 @@
 
 Each mirrors an existing dispatch: UnaryOp routes to the operand value's floor
 method (`not` composes truth+negate); BoolOp combines the operands' truthiness
-via and_/or_; Attribute asks the receiver for `.name` (a symbolic receiver stays
-the opaque py.getattr coordinate, like py.subscript).
+via and_/or_; Attribute asks the receiver for `.name` and a symbolic receiver
+refuses because source testimony decides neither lookup edge.
 """
 
 import tempfile
@@ -69,20 +69,26 @@ def test_bare_operands_use_py_truthy():
 # ---- Attribute ---------------------------------------------------------------
 
 
-def test_attribute_is_the_py_getattr_coordinate():
-    post = _post("def A(z):\n    return z.numerator\n")
-    getattr_term = post.args[1]
-    assert getattr_term.name == "py.getattr"
-    assert getattr_term.args[0].name == "z"
-    assert getattr_term.args[1].value == "numerator"
+def _attribute_refusal(source):
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    try:
+        _post(source)
+    except ConstructionPanic as panic:
+        return panic.info
+    raise AssertionError("symbolic attribute invented a completed projection")
 
 
-def test_attribute_chain_nests():
-    # z.a.b -> py.getattr(py.getattr(z, "a"), "b")
-    post = _post("def A(z):\n    return z.a.b\n")
-    outer = post.args[1]
-    assert outer.name == "py.getattr" and outer.args[1].value == "b"
-    assert outer.args[0].name == "py.getattr" and outer.args[0].args[1].value == "a"
+def test_attribute_is_named_undecided():
+    info = _attribute_refusal("def A(z):\n    return z.numerator\n")
+    assert info.owner == "SymbolicValue.attribute"
+    assert info.observed.endswith("SymbolicValue.numerator")
+
+
+def test_attribute_chain_refuses_at_the_first_unowned_lookup():
+    info = _attribute_refusal("def A(z):\n    return z.a.b\n")
+    assert info.owner == "SymbolicValue.attribute"
+    assert info.observed.endswith("SymbolicValue.a")
 
 
 if __name__ == "__main__":
@@ -91,6 +97,6 @@ if __name__ == "__main__":
     test_and_conjoins_operand_truthiness()
     test_or_disjoins_operand_truthiness()
     test_bare_operands_use_py_truthy()
-    test_attribute_is_the_py_getattr_coordinate()
-    test_attribute_chain_nests()
+    test_attribute_is_named_undecided()
+    test_attribute_chain_refuses_at_the_first_unowned_lookup()
     print("ok: UnaryOp, BoolOp, Attribute drained through the node")

@@ -17,15 +17,19 @@ def _guard():
     return atomic("choose", [])
 
 
-def test_guarded_attribute_distributes_to_symbolic_faces():
+def test_guarded_attribute_keeps_symbolic_face_refusal_loud():
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     true_face = SymbolicValue(make_var("t"))
     false_face = SymbolicValue(make_var("f"))
     guarded = GuardedValue(_guard(), true_face, false_face)
-    outcome = guarded.attribute("x", "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GuardedValue)
-    assert outcome.value.when_true.term.name == "py.getattr"
-    assert outcome.value.when_false.term.name == "py.getattr"
+    try:
+        guarded.attribute("x", "site")
+    except ConstructionPanic as panic:
+        assert panic.info.owner == "SymbolicValue.attribute"
+        assert panic.info.observed.endswith("SymbolicValue.x")
+    else:
+        raise AssertionError("guarded symbolic attribute invented completion")
 
 
 def test_guarded_list_membership_opposite_faces_emit_predicate():
