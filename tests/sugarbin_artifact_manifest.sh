@@ -198,3 +198,7 @@ grep -Fq 'sugar-ir-smt-lib' "$tmp/ssh.log"
 ! grep -Eq 'target/(release|debug)/sugar.*:' "$tmp/rsync.log"
 
 echo 'PASS: sugarbin per-executable artifact manifests'
+
+# The new kind must be admitted by the existing artifact protocol, not by a
+# package-named cache or a second publication path.
+"$repo/tests/sugarbin_python_demand_table_fixture.sh" "$repo"

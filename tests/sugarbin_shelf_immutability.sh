@@ -42,3 +42,8 @@ if grep -Eq 'pull_from_shelf|publish_if_absent' <<<"$main_body"; then
 fi
 
 echo 'PASS: sugarbin shelf assets are immutable and race-idempotent'
+
+# Exercise the python-demand-table artifact through the shelf boundary. Static
+# inspection cannot prove that a partial cell is refused or that concurrent
+# publication never exposes a mixture of two producers' bytes.
+"$repo/tests/sugarbin_python_demand_table_fixture.sh" "$repo"
