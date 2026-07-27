@@ -27,7 +27,8 @@ def render(value, width):
 # the decisive law, not merely its convenient conclusion: same corpus,
 # different parser output, byte-identical demand table.
 MEASURED_CORPUS_MANIFEST_CID = (
-    "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
+    "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 )
 MEASURED_DEMAND_TABLE_OUTPUT_CIDS = {
     "cpython-3.12.13": (

@@ -12,6 +12,7 @@ from sugar_lift_py_tests.authenticated_pytest import (
     ExecutionEnvironmentMismatch,
     activate_checkout_import_roots,
     authenticate_distribution,
+    authenticate_corpus_manifest,
     authenticate_lift,
     corpus_manifest_cid,
     interpreter_identity,
@@ -131,11 +132,28 @@ def test_lift_must_resolve_from_the_synced_checkout(tmp_path) -> None:
         authenticate_lift(foreign, repo)
 
 
-def test_manifest_cid_is_order_independent_and_path_bound() -> None:
-    assert corpus_manifest_cid(["pandas/b.py", "pandas/a.py"]) == (
-        "sha256:194cbd45be1fdf143d4ed8dca52fb946dc88b5a15198dbef26426ef514503ca6"
+def test_manifest_cid_is_order_independent_and_content_bound(tmp_path) -> None:
+    root = tmp_path / "pandas"
+    root.mkdir()
+    first = root / "a.py"
+    second = root / "b.py"
+    first.write_bytes(b"VALUE = 1\n")
+    second.write_bytes(b"VALUE = 2\n")
+
+    expected_cid, expected_count = corpus_manifest_cid(root, [second, first])
+    assert corpus_manifest_cid(root, [first, second]) == (
+        expected_cid,
+        expected_count,
     )
-    assert corpus_manifest_cid(["pandas/a.py"]) != corpus_manifest_cid(["pandas/b.py"])
+
+    # LYING TWIN: same two relative paths, one changed byte. Path-only
+    # authentication accepts this; corpus authentication must refuse it.
+    first.write_bytes(b"VALUE = 0\n")
+    with pytest.raises(
+        ExecutionEnvironmentMismatch,
+        match=r"pandas corpus content manifest CID mismatch.*over 2 files",
+    ):
+        authenticate_corpus_manifest(root, [first, second], expected_cid)
 
 
 def test_selected_interpreter_identity_is_named() -> None:

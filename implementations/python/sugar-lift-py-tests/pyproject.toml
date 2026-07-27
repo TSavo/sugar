@@ -48,10 +48,12 @@ test = [
 ]
 
 [tool.sugar.measured-corpus]
-# SourceTree(pandas_root).paths(), sorted and JSON-canonicalized before sha256.
-# This is the 1,421-file pandas 3.0.3 denominator in the immutable managed
-# closure. Older 1,415-file receipts have a different CID and cannot mix.
-pandas-manifest-cid = "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
+# Content manifest over SourceTree(pandas_root).paths(): each sorted relative
+# path is paired with the BLAKE3-512 CID of its file bytes, then the canonical
+# manifest is content-addressed by demand_table_identity.corpus_manifest_cid.
+# Identical paths with one changed byte MUST mismatch. This is the 1,421-file
+# pandas 3.0.3 denominator in the immutable managed closure.
+pandas-manifest-cid = "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 
 [project.scripts]
 sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"
