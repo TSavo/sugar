@@ -54,7 +54,7 @@ def _first_opaque(steps):
         # Same statement kind, opposite obligations.
         ("def g():\n    x = yield 1\n    return x\n", "Assign", True),
         ("def g():\n    x = 1\n    yield 2\n", "Assign", False),
-        ("def g(c):\n    if c:\n        yield 1\n", "If", True),
+        ("def g(c):\n    if c:\n        x = yield 1\n", "If", True),
         ("def g(c):\n    if c:\n        pass\n    yield 2\n", "If", False),
         # Every bare `yield from` -- where the delegation debt actually lives.
         ("def g(xs):\n    yield from xs\n", "Expr", True),
@@ -73,7 +73,7 @@ def test_an_opaque_step_states_whether_it_holds_a_suspension(
     ("source", "observed"),
     (
         ("def g():\n    x = yield 1\n    return x\n", "Assign carrying a suspension"),
-        ("def g(c):\n    if c:\n        yield 1\n", "If carrying a suspension"),
+        ("def g(c):\n    if c:\n        x = yield 1\n", "If carrying a suspension"),
         ("def g(xs):\n    yield from xs\n", "Expr carrying a suspension"),
     ),
 )
@@ -124,7 +124,7 @@ def test_an_opaque_step_without_a_suspension_is_named_unchanged(tmp_path) -> Non
     "source",
     (
         "def g():\n    x = yield 1\n    return x\n",
-        "def g(c):\n    if c:\n        yield 1\n",
+        "def g(c):\n    if c:\n        x = yield 1\n",
         "def g(xs):\n    yield from xs\n",
     ),
 )
