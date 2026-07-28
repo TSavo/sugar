@@ -12,7 +12,10 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _boolop_wrapped_pair
 
 _BOOL_OPERATOR_COORDINATE = {
@@ -61,8 +64,12 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
 @dataclass(frozen=True)
 class BoolOpSugar(ConstructedTermSugar):
     op_kind: str  # "And" | "Or"
-    values: tuple  # the operand sugars, in source order (>= 2)
+    values: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for value in self.values:
+            require_constructed_term_sugar(value, owner="BoolOpSugar.values")
 
     @classmethod
     def witnesses(cls):

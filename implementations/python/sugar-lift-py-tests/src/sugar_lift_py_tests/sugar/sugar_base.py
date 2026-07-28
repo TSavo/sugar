@@ -81,3 +81,14 @@ class ConstructedTermSugar(Sugar):
             ),
             symbol_kind="coordinate",
         )
+
+
+def require_constructed_term_sugar(
+    value: object, *, owner: str
+) -> ConstructedTermSugar:
+    """Close a nested construction payload before canonical projection."""
+    if not isinstance(value, ConstructedTermSugar):
+        raise TypeError(
+            f"{owner} requires ConstructedTermSugar, got {type(value).__name__}"
+        )
+    return value

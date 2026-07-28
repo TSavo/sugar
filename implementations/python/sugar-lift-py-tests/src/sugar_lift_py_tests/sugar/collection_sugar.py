@@ -118,8 +118,14 @@ class ListSugar(Sugar):
 
 @dataclass(frozen=True)
 class TupleSugar(ConstructedTermSugar):
-    elements: tuple
+    elements: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.sugar.sugar_base import require_constructed_term_sugar
+
+        for element in self.elements:
+            require_constructed_term_sugar(element, owner="TupleSugar.elements")
 
     @classmethod
     def witnesses(cls):

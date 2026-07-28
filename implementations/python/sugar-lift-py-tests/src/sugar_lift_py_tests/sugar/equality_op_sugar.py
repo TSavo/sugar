@@ -4,7 +4,10 @@ from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 
 
 @dataclass(frozen=True)
@@ -14,13 +17,17 @@ class EqualityOpSugar(ConstructedTermSugar):
     and asks the left whether it equals the right: the left stands on the equals floor
     and gives back a True or False literal."""
 
-    left: Sugar
-    right: Sugar
+    left: ConstructedTermSugar
+    right: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
     # The dotted PLACE this pair's left operand names (`x`, `a.b.c`), or None if
     # it names none. Read off the tree by `Compare._construct_sugar`, because
     # only construction knows which operand is this pair's left.
     left_coordinate: object = None
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(self.left, owner="EqualityOpSugar.left")
+        require_constructed_term_sugar(self.right, owner="EqualityOpSugar.right")
 
     @classmethod
     def witnesses(cls):

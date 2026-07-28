@@ -6,7 +6,10 @@ from typing import Any
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.ir import Term
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
@@ -33,9 +36,9 @@ class CallSiteSugar(ConstructedTermSugar):
     """
 
     target_name: str
-    args: tuple  # the argument sugars, in source order
+    args: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
-    keywords: tuple = ()  # (name, sugar) pairs, in source order
+    keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
@@ -43,6 +46,12 @@ class CallSiteSugar(ConstructedTermSugar):
     source_call_frame: Any = dataclass_field(default=None, compare=False)
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+
+    def __post_init__(self) -> None:
+        for argument in self.args:
+            require_constructed_term_sugar(argument, owner="CallSiteSugar.args")
+        for _name, argument in self.keywords:
+            require_constructed_term_sugar(argument, owner="CallSiteSugar.keywords")
 
     @classmethod
     def witnesses(cls):
@@ -82,6 +91,26 @@ class CallSiteSugar(ConstructedTermSugar):
         definition_authority.extend(
             str_const(cid) for cid in self.formal_coordinate_cids
         )
+        if self.contract_ref is None:
+            contract_authority = ctor("python:no-resolved-call-contract", ())
+        else:
+            from sugar_lift_py_tests.call_contract_resolution import (
+                ResolvedCallContractRefV1,
+            )
+
+            if not isinstance(self.contract_ref, ResolvedCallContractRefV1):
+                raise TypeError(
+                    f"{owner} requires authenticated ResolvedCallContractRefV1, "
+                    f"got {type(self.contract_ref).__name__}"
+                )
+            contract_authority = ctor(
+                "python:resolved-call-contract",
+                (
+                    str_const(self.contract_ref.resolution_cid),
+                    str_const(self.contract_ref.contract_cid),
+                ),
+                symbol_kind="coordinate",
+            )
         positional = tuple(argument.to_term(owner=owner) for argument in self.args)
         keywords = tuple(
             ctor(
@@ -102,6 +131,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     tuple(definition_authority),
                     symbol_kind="coordinate",
                 ),
+                contract_authority,
             ),
             symbol_kind="coordinate",
         )
