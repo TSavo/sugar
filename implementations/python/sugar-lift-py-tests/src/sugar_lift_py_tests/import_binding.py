@@ -182,6 +182,18 @@ class AuthenticatedImportUseV1:
         ):
             if self.demand.get(key) != value:
                 raise ValueError(f"authenticated demand has stale {key}")
+        # Role-bound surfaces stay disjoint: value-use and call-target cannot
+        # substitute for each other even at a nearby coordinate.
+        demand_kind = self.demand.get("kind")
+        if demand_kind == "import-value-use-demand":
+            _require_value_use_role(self)
+        elif demand_kind == "call-contract-demand":
+            if self.use.get("role") == "value-use" or self.demand.get("role") == (
+                "value-use"
+            ):
+                raise ValueError(
+                    "call-contract-demand cannot carry value-use role"
+                )
 
     def revalidate(self) -> None:
         """Demand byte identity against one shared #6090 snapshot per module.
@@ -192,7 +204,8 @@ class AuthenticatedImportUseV1:
         docs/audits/pandas-recensus-latency-bisect.md).
 
         Call-target and value-use demands revalidate against their own
-        row/outcome surfaces so Call receipts stay unchanged.
+        row/outcome surfaces so Call receipts stay unchanged and neither
+        surface can authorize the other.
         """
         site = self.use["useSite"]
         key = (
@@ -225,6 +238,59 @@ class AuthenticatedImportUseV1:
             raise ValueError(
                 "authenticated import use is not byte-identical to lexical revalidation"
             )
+
+
+def _require_value_use_role(receipt: AuthenticatedImportUseV1) -> None:
+    """Final-check the value-use role and its bound identity fields.
+
+    A value-use receipt authenticates together: exact source occurrence,
+    import binding CID, exported member path, consumer source CID, and the
+    value-use role.  Missing any field, or borrowing a call-target shape, is
+    refusal — not repair.  No AST-scan fallback, first-candidate, or spelling
+    resolver may reconstruct what the lexical pass did not pin.
+    """
+    use = receipt.use
+    demand = receipt.demand
+    if use.get("role") != "value-use" or demand.get("role") != "value-use":
+        raise ValueError("import-value-use-demand requires value-use role")
+    if use.get("sourceCid") != receipt.source_cid:
+        raise ValueError("authenticated import value-use sourceCid is stale")
+    if demand.get("sourceCid") != receipt.source_cid:
+        raise ValueError("authenticated import value-use demand sourceCid is stale")
+    site = use.get("useSite")
+    if not isinstance(site, dict) or site.get("sourceCid") != receipt.source_cid:
+        raise ValueError("authenticated import value-use site sourceCid is stale")
+    if demand.get("useSite") != site:
+        raise ValueError("authenticated import value-use demand has stale useSite")
+    exported = use.get("exportedMemberPath")
+    if not isinstance(exported, list) or any(
+        not isinstance(part, str) or not part for part in exported
+    ):
+        raise ValueError("authenticated import value-use exportedMemberPath is invalid")
+    if demand.get("exportedMemberPath") != exported:
+        raise ValueError(
+            "authenticated import value-use demand has stale exportedMemberPath"
+        )
+    binding = receipt.import_binding.to_value()
+    if binding.get("sourceCid") != receipt.source_cid:
+        raise ValueError("authenticated import value-use binding sourceCid is stale")
+    if use.get("importBindingCid") != receipt.import_binding.cid:
+        raise ValueError("authenticated import value-use cites another binding")
+    # Composition law: targetSymbol is binding head + structural Attribute
+    # segments only (exportedMemberPath), never a spelling-resolved rewrite.
+    target = receipt.target_symbol
+    if exported:
+        suffix = "".join(f".{part}" for part in exported)
+        if not target.endswith(suffix):
+            raise ValueError(
+                "authenticated import value-use targetSymbol disagrees with "
+                "exportedMemberPath"
+            )
+        head = target[: -len(suffix)]
+    else:
+        head = target
+    if not head.startswith("python:") or head == "python:":
+        raise ValueError("authenticated import value-use targetSymbol is incomplete")
 
 
 _NON_IMPORT = "non-import"
@@ -370,20 +436,29 @@ class _Pass:
             # A name USE whose sole concrete reaching definition is an import
             # statement is lexically bound to that import's target coordinate.
             # Optional try/import joins ImportDef with unbound on the except
-            # path; the ImportDef is still the only source-visible binding.
-            # Recorded here by the same reaching-definition state the call rows
-            # use -- never by a second resolver and never by spelling.
-            binding = self._unique_import_def(node.id, state, allow_unbound=True)
-            if binding is not None:
+            # path; the ImportDef is still the only source-visible binding for
+            # name_targets (closed-coordinate projection).  Value-use receipts
+            # are stricter: unique ImportDef only — shadowing, reassignment,
+            # unbound join, and wildcard ambiguity do not authorize a value.
+            name_binding = self._unique_import_def(
+                node.id, state, allow_unbound=True
+            )
+            if name_binding is not None:
                 span = node.line_col_span()
                 self.name_targets[
                     (span.start_line, span.start_col, span.end_line, span.end_col)
-                ] = binding.target_symbol
-                self._enroll_value_use(node, binding, ())
+                ] = name_binding.target_symbol
+            value_binding = self._unique_import_def(
+                node.id, state, allow_unbound=False
+            )
+            if value_binding is not None:
+                self._enroll_value_use(node, value_binding, ())
             return
         if node.kind == "Attribute":
-            # Value occurrence of ``head.attr...`` when head is import-bound.
-            # Recurse first so nested Attribute / Name loads enroll too.
+            # Value occurrence of ``head.attr...`` when head is uniquely
+            # import-bound.  Recurse first so each chained Attribute keeps its
+            # own exact coordinate; exportedMemberPath is structural Attribute
+            # segments only — never spelling resolution or first-candidate.
             self.expression(node.value, state, scope)
             path = self._attribute_export_path(node)
             if path is not None:
@@ -466,25 +541,37 @@ class _Pass:
         binding: _ImportDef,
         exported_path: tuple[str, ...],
     ) -> None:
-        """Final-checked value-occurrence row at the exact Name/Attribute site."""
+        """Final-checked value-occurrence row at the exact Name/Attribute site.
+
+        Authenticates together: exact occurrence (useSite), import binding,
+        structural exported member path, consumer sourceCid, and value-use role.
+        Call-target enrollment is a separate row surface; sets stay disjoint.
+        """
         span = node.line_col_span()
         key = (span.start_line, span.start_col, span.end_line, span.end_col)
         self.value_outcomes[key] = "authenticated-import-value-use"
         use_site = _site(self.source_cid, node)
+        member_path = list(exported_path)
         use = {
             "kind": "authenticated-import-use",
             "schemaVersion": "1",
+            "role": "value-use",
+            "sourceCid": self.source_cid,
             "useSite": use_site,
             "importBindingCid": binding.cid,
+            "exportedMemberPath": member_path,
         }
         self.value_rows.append(
             {
                 "schemaVersion": "1",
                 "kind": "import-value-use-demand",
+                "role": "value-use",
+                "sourceCid": self.source_cid,
                 "authenticatedImportUse": {**use, "cid": _hash(use)},
                 "importBinding": json.loads(binding.payload_jcs),
                 "targetSymbol": binding.target_symbol
                 + "".join(f".{part}" for part in exported_path),
+                "exportedMemberPath": member_path,
                 "importBindingCid": binding.cid,
                 "useSite": use_site,
             }
