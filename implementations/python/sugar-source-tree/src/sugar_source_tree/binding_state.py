@@ -124,6 +124,8 @@ class LoopProjectedBinding:
 
     target_cid: str
     completed_faces: tuple[LoopProjectedCompletedFace, ...]
+    projection: object | None = None
+    constructed_term_product: object | None = None
 
     def __post_init__(self) -> None:
         _require_runtime_cid(self.target_cid, "targetCid")
@@ -131,6 +133,29 @@ class LoopProjectedBinding:
             raise BindingStateWireGap("loop projected binding requires completed faces")
         if any(face.target_cid != self.target_cid for face in self.completed_faces):
             raise BindingStateWireGap("loop projected binding target mismatch")
+        if (self.projection is None) != (self.constructed_term_product is None):
+            raise BindingStateWireGap(
+                "loop projected binding requires one closed projection product"
+            )
+        if self.constructed_term_product is not None:
+            from sugar_source_tree.loop_recurrence import (
+                LoopProjectedBindingProductSugar,
+            )
+
+            if not isinstance(
+                self.constructed_term_product, LoopProjectedBindingProductSugar
+            ):
+                raise BindingStateWireGap(
+                    "loop projected binding received a foreign constructed product"
+                )
+            if self.constructed_term_product.projection is not self.projection:
+                raise BindingStateWireGap(
+                    "loop projected binding product lost exact projection identity"
+                )
+            if self.constructed_term_product.target_cid != self.target_cid:
+                raise BindingStateWireGap(
+                    "loop projected binding product has a foreign loop occurrence"
+                )
 
 
 BindingState: TypeAlias = (

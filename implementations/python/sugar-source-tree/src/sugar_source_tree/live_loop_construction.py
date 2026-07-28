@@ -207,45 +207,6 @@ def _sealed_state(snapshot: tuple[BindingEntryV1, ...]):
     return raw, testified
 
 
-def construct_live_binding_product_sugar(
-    *, name: str, entry: BindingEntryV1, expected_coordinate, site
-):
-    """Project one authenticated binding product into term-sugar currency.
-
-    The runtime entry is already the product of ``_sealed_state``.  This door
-    re-authenticates its coordinate and exact live/sealed pairing before using
-    the shared binding-projection owner; a loop consumer never reconstructs a
-    projection from lexical names or from whichever state happens to arrive.
-    """
-    from .binding_provenance import BindingCoordinateV1
-    from .nodes import _construct_binding_projection
-    from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
-        GuardedBindingReadSugar,
-    )
-    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-
-    if not isinstance(entry, BindingEntryV1) or not isinstance(
-        expected_coordinate, BindingCoordinateV1
-    ):
-        raise BindingStateWireGap(
-            "live binding product requires an authenticated binding entry coordinate"
-        )
-    BindingCoordinateV1.decode(entry.coordinate.wire())
-    BindingCoordinateV1.decode(expected_coordinate.wire())
-    if entry.coordinate != expected_coordinate:
-        raise BindingStateWireGap(
-            "live binding product received a foreign binding coordinate"
-        )
-    if entry.sealed_state != _seal_runtime_state(entry.state):
-        raise BindingStateWireGap(
-            "live state disagrees with its authenticated sealed binding product"
-        )
-    projection = _construct_binding_projection(entry.state)
-    if isinstance(projection, ConstructedTermSugar):
-        return projection
-    return GuardedBindingReadSugar(name=name, state=projection, site=site)
-
-
 def _combine(outer, inner):
     return inner if outer is None else and_([outer, inner])
 
@@ -816,15 +777,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 pattern,
                 carried_names,
                 tuple(
-                    construct_live_binding_product_sugar(
-                        name=name,
-                        entry=runtime_entry,
-                        expected_coordinate=source_entry.coordinate,
-                        site=loop.fragment,
-                    )
-                    for name, source_entry, runtime_entry in zip(
-                        carried_names, pre_entries, pre_runtime, strict=True
-                    )
+                    entry.state.constructed_term_product
+                    if isinstance(entry.state, LoopProjectedBinding)
+                    else entry.state.sugar()
+                    for entry in pre_runtime
                 ),
                 tuple(loop.body),
                 tuple(loop.orelse),
@@ -838,6 +794,8 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             binding_coordinate=entry.coordinate,
             runtime_states=runtime_states,
             live_guards=live_guards,
+            read_name=name,
+            read_site=loop.fragment,
         )
         bindings[name] = replace(entry, state=projected, sealed_state=None)
     return LiveLoopProjectionV1(
@@ -856,6 +814,5 @@ __all__ = [
     "LiveForTargetPatternV1",
     "LiveLoopProjectionV1",
     "LiveOutwardHaltedFaceV1",
-    "construct_live_binding_product_sugar",
     "construct_live_loop_recurrence",
 ]

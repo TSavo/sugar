@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+
+from sugar_lift_python_source.canonical import cid_of_json
 
 from sugar_lift_py_tests.loop_construction import (
     LoopConstructionV1,
     decode_loop_construction_v1,
 )
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 from .binding_provenance import BindingCoordinateV1
 from .binding_state import (
@@ -17,6 +21,99 @@ from .binding_state import (
     LoopProjectedCompletedFace,
 )
 
+_PRODUCT_MINT_AUTHORITY = cid_of_json(
+    {"owner": "sugar_source_tree.loop_recurrence.project_loop_post_binding"}
+)
+
+
+@dataclass(frozen=True)
+class LoopProjectedBindingProductSugar(ConstructedTermSugar):
+    """Closed term product minted with one authenticated loop projection."""
+
+    name: str
+    projection: object
+    site: object
+    binding_coordinate: BindingCoordinateV1
+    target_cid: str
+    name_identity_cid: str
+    occurrence_cid: str
+    _mint_authority: object
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.sugar.binding_projection import LoopGuardedProjection
+
+        if self._mint_authority is not _PRODUCT_MINT_AUTHORITY:
+            raise BindingStateWireGap(
+                "loop binding product must come from its authenticated projection mint"
+            )
+        if not isinstance(self.projection, LoopGuardedProjection):
+            raise BindingStateWireGap(
+                "loop binding product requires the producer's exact projection"
+            )
+        if self.projection.target_cid != self.target_cid:
+            raise BindingStateWireGap("loop binding product has a foreign loop occurrence")
+        if cid_of_json(self.binding_coordinate.preimage) != self.binding_coordinate.cid:
+            raise BindingStateWireGap("loop binding product has a foreign coordinate")
+        expected_name = cid_of_json(
+            {
+                "bindingCoordinateCid": self.binding_coordinate.cid,
+                "name": self.name,
+            }
+        )
+        if self.name_identity_cid != expected_name:
+            raise BindingStateWireGap("loop binding product has a foreign binding name")
+        expected_occurrence = cid_of_json(self.site.seal().to_dict())
+        if self.occurrence_cid != expected_occurrence:
+            raise BindingStateWireGap("loop binding product has a foreign read occurrence")
+        if (
+            self.binding_coordinate.binding_site["source_cid"]
+            != self.site.seal().source_cid
+        ):
+            raise BindingStateWireGap("loop binding product crosses source frames")
+
+    @classmethod
+    def _mint(
+        cls,
+        *,
+        name: str,
+        projection: object,
+        site: object,
+        binding_coordinate: BindingCoordinateV1,
+        target_cid: str,
+    ) -> "LoopProjectedBindingProductSugar":
+        return cls(
+            name,
+            projection,
+            site,
+            binding_coordinate,
+            target_cid,
+            cid_of_json(
+                {"bindingCoordinateCid": binding_coordinate.cid, "name": name}
+            ),
+            cid_of_json(site.seal().to_dict()),
+            _PRODUCT_MINT_AUTHORITY,
+        )
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
+
+        return read_binding(
+            self.projection, read_name=self.name, read_site=self.site, ctx=ctx
+        ).collapse()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+            GuardedBindingReadSugar,
+        )
+
+        return GuardedBindingReadSugar(
+            name=self.name, state=self.projection, site=self.site
+        ).to_term(owner=owner)
+
 
 def project_loop_post_binding(
     *,
@@ -24,6 +121,8 @@ def project_loop_post_binding(
     binding_coordinate: BindingCoordinateV1,
     runtime_states: Mapping[str, tuple[BindingEntryV1, ...]],
     live_guards: Mapping[str, object] | None = None,
+    read_name: str | None = None,
+    read_site: object | None = None,
 ) -> LoopProjectedBinding:
     """Project one coordinate through every exact completed loop face.
 
@@ -108,7 +207,21 @@ def project_loop_post_binding(
             f"retained {len(projected_faces)}. A partition missing a face is "
             "an outcome nobody accounted for; do not project it as complete"
         )
-    return LoopProjectedBinding(target_cid, tuple(projected_faces))
+    faces = tuple(projected_faces)
+    if read_name is None or read_site is None:
+        return LoopProjectedBinding(target_cid, faces)
+    from .nodes import _construct_binding_projection
+
+    provisional = LoopProjectedBinding(target_cid, faces)
+    projection = _construct_binding_projection(provisional)
+    product = LoopProjectedBindingProductSugar._mint(
+        name=read_name,
+        projection=projection,
+        site=read_site,
+        binding_coordinate=binding_coordinate,
+        target_cid=target_cid,
+    )
+    return LoopProjectedBinding(target_cid, faces, projection, product)
 
 
-__all__ = ["project_loop_post_binding"]
+__all__ = ["LoopProjectedBindingProductSugar", "project_loop_post_binding"]
