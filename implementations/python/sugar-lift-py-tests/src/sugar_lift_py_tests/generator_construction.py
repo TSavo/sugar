@@ -168,10 +168,46 @@ class FinallyStepV1:
     """
 
     statements: tuple[ConstructedTermSugar, ...]
+    cleanup_steps: tuple = ()
 
     def __post_init__(self) -> None:
         for statement in self.statements:
             _require_constructed_term(statement, owner="FinallyStepV1.statements")
+
+
+@dataclass(frozen=True)
+class ForStepV1:
+    """Authenticated source construction for one generator ``for`` step.
+
+    Transition remains a separate loud gap until the generator machine owns
+    iterator advancement and authenticated StopIteration routing.
+    """
+
+    iterable: ConstructedTermSugar
+    target_coordinates: tuple
+    body_steps: tuple
+    fragment_cid: str
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(self.iterable, owner="ForStepV1.iterable")
+        if not self.target_coordinates:
+            raise TypeError("ForStepV1 requires authenticated target coordinates")
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        coordinate_cids = []
+        for coordinate in self.target_coordinates:
+            if not isinstance(coordinate, BindingCoordinateV1):
+                raise TypeError(
+                    "ForStepV1 target coordinates must be authenticated "
+                    "BindingCoordinateV1 values"
+                )
+            coordinate_cids.append(coordinate.cid)
+        if len(coordinate_cids) != len(set(coordinate_cids)):
+            raise TypeError("ForStepV1 target coordinates must be distinct")
+        if not isinstance(self.fragment_cid, str) or not self.fragment_cid.startswith(
+            "blake3-512:"
+        ):
+            raise TypeError("ForStepV1.fragment_cid must be authenticated")
 
 
 @dataclass(frozen=True)
@@ -267,6 +303,7 @@ GeneratorStepV1 = (
     | InertStepV1
     | AssignStepV1
     | FinallyStepV1
+    | ForStepV1
     | RaiseStepV1
     | TermStepV1
     | IfStepV1
@@ -383,6 +420,22 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "statements": [
                 _generator_value_testimony(item, owner=owner)
                 for item in step.statements
+            ],
+            "cleanupSteps": [
+                _generator_step_testimony(item, owner=owner)
+                for item in step.cleanup_steps
+            ],
+        }
+    if isinstance(step, ForStepV1):
+        return {
+            "kind": "for",
+            "fragmentCid": step.fragment_cid,
+            "iterable": _generator_value_testimony(step.iterable, owner=owner),
+            "targetCoordinateCids": [
+                coordinate.cid for coordinate in step.target_coordinates
+            ],
+            "bodySteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.body_steps
             ],
         }
     if isinstance(step, RaiseStepV1):
@@ -723,6 +776,12 @@ class GeneratorConstructionV1:
                 return after
             return after._transition(requested)
         if isinstance(step, FinallyStepV1):
+            if step.cleanup_steps:
+                return self._gap(
+                    requested,
+                    "FinallyStepV1 structured cleanup steps require generator "
+                    "cleanup transition composition",
+                )
             cleanup = self._reduce_finally(step)
             from sugar_lift_py_tests.outcome import Completed, Halted
 
@@ -732,6 +791,12 @@ class GeneratorConstructionV1:
             return machine._transition(requested)
         if isinstance(step, IfStepV1):
             return self._transition_branch(step, requested)
+        if isinstance(step, ForStepV1):
+            return self._gap(
+                requested,
+                "ForStepV1 requires iter_with/next_with transition and "
+                "authenticated StopIteration routing",
+            )
         if isinstance(step, ReturnStepV1):
             value = self._reduce_value(step.value, requested)
             if isinstance(value, GeneratorTransitionGapV1):

@@ -17,6 +17,8 @@ these tests.
 
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests import generator_construction as generator_api
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -183,3 +185,40 @@ def test_for_step_transition_contract_is_explicit_and_owner_complete() -> None:
         "preserve body halts, accept only authenticated StopIteration, and route "
         "fall-through/return/halt through paired finally cleanup"
     )
+
+
+def test_for_step_transition_remains_the_exact_named_consumer_gap() -> None:
+    """Producer green is not a fabricated generator-loop completion claim."""
+    step = _for_steps(_OPTION_PAIR_MANAGER)[0]
+    machine = generator_api.GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:renamed-pair-scope",
+        frame_coordinate="frame:renamed-pair-scope",
+        binding_state=(),
+        steps=(step,),
+    )
+
+    gap = machine.resume()
+
+    assert isinstance(gap, generator_api.GeneratorTransitionGapV1)
+    assert gap.owner == "GeneratorConstructionV1.transition"
+    assert gap.requested == "resume"
+    assert gap.observed == (
+        "ForStepV1 requires iter_with/next_with transition and authenticated "
+        "StopIteration routing"
+    )
+
+
+def test_for_step_rejects_cid_shaped_foreign_target_coordinates() -> None:
+    """A CID-looking object is not producer-authenticated binding testimony."""
+    step = _for_steps(_OPTION_PAIR_MANAGER)[0]
+
+    class ForeignCoordinate:
+        cid = step.target_coordinates[0].cid
+
+    with pytest.raises(TypeError, match="authenticated BindingCoordinateV1"):
+        generator_api.ForStepV1(
+            iterable=step.iterable,
+            target_coordinates=(ForeignCoordinate(),),
+            body_steps=step.body_steps,
+            fragment_cid=step.fragment_cid,
+        )
