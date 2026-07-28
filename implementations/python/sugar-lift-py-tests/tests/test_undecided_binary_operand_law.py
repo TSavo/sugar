@@ -33,14 +33,50 @@ from sugar_lift_py_tests.floor.set_value import SetValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
+from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, _Lambda, ctor, make_var
+from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.tree import SourceFile
 
 SITE = "undecided-binary-site"
 
 
 def _symbolic() -> SymbolicValue:
     return SymbolicValue(make_var("s"))
+
+
+def _native_operation_site():
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+
+    source = "def operation(left, right):\n    return left + right\n"
+    tree = SourceFile(
+        (source, "native-operation-floor.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    return next(tree.functions()).fragment
+
+
+def _formal(name: str, ordinal: int) -> FormalParameterCoordinateV1:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    source_cid = "blake3-512:" + "b" * 128
+    owner = SourceFragmentCoordinateV1(source_cid, 1, 0, 2, 23)
+    return FormalParameterCoordinateV1.mint(
+        owner_source_identity_cid=source_cid,
+        owner_definition_locus=owner,
+        declaration_locus=SourceFragmentCoordinateV1(
+            source_cid, 1, 14 + ordinal * 6, 1, 18 + ordinal * 6
+        ),
+        ordinal=ordinal,
+        parameter_kind="positional-or-keyword",
+        declared_name=name,
+        sort=PrimitiveSort("Value"),
+    )
 
 
 def _callsite() -> CallSiteValue:
@@ -90,6 +126,109 @@ def test_undecided_native_bitwise_dispatch_refuses_in_the_producer() -> None:
     )
     assert "TypeError" not in str(info)
     assert "RuntimeEffect" not in str(info)
+
+
+def _formal_addition_demand():
+    left_coordinate = _formal("left", 0)
+    right_coordinate = _formal("right", 1)
+    outcome = SymbolicValue(make_var("left"), left_coordinate).add(
+        SymbolicValue(make_var("right"), right_coordinate), _native_operation_site()
+    )
+    return outcome, left_coordinate, right_coordinate
+
+
+def test_formal_binary_operation_survives_construction_as_native_demand() -> None:
+    """The Floor records one ordered occurrence; it does not choose an exit."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    outcome, left, right = _formal_addition_demand()
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "add"
+    assert outcome.demand.operand_terms == (make_var("left"), make_var("right"))
+    assert outcome.demand.operand_coordinate_cids == (
+        left.coordinate_cid,
+        right.coordinate_cid,
+    )
+
+
+def test_same_formal_binary_demand_completes_for_authenticated_actuals() -> None:
+    """Truthful caller twin: authenticated integer actuals complete normally."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    outcome, left, right = _formal_addition_demand()
+    exits = outcome.discharge(
+        {
+            left.coordinate_cid: TermValue(1),
+            right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+    assert exits.exits[0].value == TermValue(3)
+
+
+def test_same_formal_binary_demand_halts_for_authenticated_actuals() -> None:
+    """Lying caller twin: incompatible actuals produce the authenticated halt."""
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    outcome, left, right = _formal_addition_demand()
+    exits = outcome.discharge(
+        {
+            left.coordinate_cid: NoneValue(),
+            right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Halted)
+    assert exits.exits[0].effect.exception_name == "TypeError"
+
+
+def test_one_formal_operand_is_enough_to_defer_native_dispatch() -> None:
+    """A decided sibling is retained while the caller supplies the one formal."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    left = _formal("left", 0)
+    outcome = SymbolicValue(make_var("left"), left).multiply(
+        TermValue(3), _native_operation_site()
+    )
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operand_coordinate_cids == (left.coordinate_cid, None)
+    exits = outcome.discharge({left.coordinate_cid: TermValue(2)})
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+    assert exits.exits[0].value == TermValue(6)
+
+
+def test_swapped_formal_binary_operands_have_distinct_occurrence_identity() -> None:
+    """Subtraction order is content identity: ``a - b`` is not ``b - a``."""
+    left = _formal("left", 0)
+    right = _formal("right", 1)
+    site = _native_operation_site()
+    forward = SymbolicValue(make_var("left"), left).subtract(
+        SymbolicValue(make_var("right"), right), site
+    )
+    reverse = SymbolicValue(make_var("right"), right).subtract(
+        SymbolicValue(make_var("left"), left), site
+    )
+
+    assert forward.demand.operand_coordinate_cids == (
+        left.coordinate_cid,
+        right.coordinate_cid,
+    )
+    assert reverse.demand.operand_coordinate_cids == (
+        right.coordinate_cid,
+        left.coordinate_cid,
+    )
+    assert forward.demand.demand_cid != reverse.demand.demand_cid
 
 
 @pytest.mark.parametrize(

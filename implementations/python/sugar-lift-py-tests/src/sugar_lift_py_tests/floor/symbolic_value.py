@@ -343,6 +343,18 @@ class SymbolicValue(FloorValue):
         )
         if isinstance(other, GuardedValue):
             return other.map_from_left(owner, self, site)
+        other_coordinate = getattr(other, "formal_coordinate", None)
+        if self.formal_coordinate is not None or other_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator=owner,
+                operands=(self, other),
+                coordinates=(self.formal_coordinate, other_coordinate),
+            )
         refused = self._undecided_binary_law(other, site, operator)
         if refused is not None:
             return refused
