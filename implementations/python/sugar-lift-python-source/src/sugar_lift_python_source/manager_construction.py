@@ -947,6 +947,7 @@ def resolve_source_visible_frame(
     resolved: ResolvedPythonObjectV1,
     *,
     graph: DependencyArtifactGraph,
+    dependency_graphs: dict[str, DependencyArtifactGraph] | None = None,
     session: SourceResolutionSession | None = None,
 ) -> tuple[object, Node] | ManagerConstructionGapV1:
     """Resolve one authenticated definition into the ordinary source frame.
@@ -981,6 +982,12 @@ def resolve_source_visible_frame(
     definition = resolved.definition
     cache_key = (
         graph.distribution_artifact_cid,
+        tuple(
+            sorted(
+                (name, dependency.distribution_artifact_cid)
+                for name, dependency in (dependency_graphs or {}).items()
+            )
+        ),
         resolved.source_cid,
         definition.name,
         definition.kind,
@@ -1003,7 +1010,11 @@ def resolve_source_visible_frame(
     session.frame_active.add(cache_key)
     try:
         result = _resolve_source_visible_frame_uncached(
-            resolved, graph=graph, module=module, session=session
+            resolved,
+            graph=graph,
+            module=module,
+            dependency_graphs=dependency_graphs,
+            session=session,
         )
     finally:
         session.frame_active.discard(cache_key)
@@ -1022,6 +1033,7 @@ def _resolve_source_visible_frame_uncached(
     *,
     graph: DependencyArtifactGraph,
     module,
+    dependency_graphs: dict[str, DependencyArtifactGraph] | None,
     session: SourceResolutionSession,
 ) -> tuple[object, Node, object] | ManagerConstructionGapV1:
     # frame_projection: dual-mode factories may nest With only on non-CM
@@ -1033,9 +1045,8 @@ def _resolve_source_visible_frame_uncached(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
     )
-    dependency_graphs: dict[str, DependencyArtifactGraph] = {
-        resolved.module_name.split(".", 1)[0]: graph
-    }
+    dependency_graphs = dict(dependency_graphs or {})
+    dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
     # Seat final-checked import value-use receipts into THIS frame's SourceUnit
     # before any construction.  Identity operands (e.g. ``pd.array``) bind via
     # authenticated definition coordinates on this unit — never cross-unit spans.
@@ -1210,7 +1221,10 @@ def _resolve_source_visible_frame_uncached(
 
         try:
             projected = resolve_source_visible_frame(
-                imported, graph=dependency_graph, session=session
+                imported,
+                graph=dependency_graph,
+                dependency_graphs=dependency_graphs,
+                session=session,
             )
         except SugarNotWritten as exc:
             # Imported callee body is incomplete: park the obligation, do not
@@ -1912,10 +1926,10 @@ def _seat_import_value_use_receipts(
         # pre-authenticated graphs carried by this publication.
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
-            raise ImportValueUseSeatingGap(
-                "dependency-graph-unavailable",
-                f"no pre-authenticated graph for {dependency_module!r}",
-            )
+            # An absent graph carries no source authority.  Leave the exact
+            # import-use coordinate unseated; any consumer that needs it stays
+            # typed-loud at its ordinary resolution door.
+            continue
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
