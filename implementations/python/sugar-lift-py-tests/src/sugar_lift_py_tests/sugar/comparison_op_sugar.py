@@ -45,7 +45,7 @@ _OPERATOR_COORDINATE = {
 
 
 def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
-    """Keep undecided native comparison/containment dispatch at the producer.
+    """Keep undecided native comparison/containment/equality dispatch loud.
 
     Ordering and membership are not total over undecided runtime types:
     Python may select a rich method that completes or raises (``Series`` vs
@@ -53,11 +53,15 @@ def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
     ``__contains__``). Emitting ``py.lt`` / ``py.in`` invents completion;
     inventing ``TypeError`` invents an exception identity. Both stay refused
     until native operand types are source-authenticated — the same producer
-    law BinOp/BoolOp already own.
+    law BinOp already owns.
 
-    Equality is different: ``==`` / ``!=`` remain total solver coordinates for
-    symbolic and ground pairs (``py.eq``), so equality only refuses an
-    unexecuted call result whose ``__eq__`` body is itself undecided.
+    Equality keeps a narrower carve-out: ``==`` / ``!=`` remain total solver
+    ``py.eq`` coordinates when at least one operand's runtime type is decided
+    (symbolic/ground and ground/ground pairs). They refuse when **both**
+    operand types are undecided — misaligned Index/Series/DataFrame/Categorical
+    equality raises at runtime, and inventing ``py.eq`` under ``pytest.raises``
+    is the residual silent Complete. Unexecuted ``CallSiteValue`` equality also
+    stays refused: the call result's ``__eq__`` body is itself a third value.
     """
     denotes_left = getattr(left, "denotes_value", None)
     denotes_right = getattr(right, "denotes_value", None)
@@ -66,16 +70,23 @@ def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
     if not (denotes_left() and denotes_right()):
         return
 
+    decided_left = getattr(left, "runtime_type_is_decided", None)
+    decided_right = getattr(right, "runtime_type_is_decided", None)
+    if not callable(decided_left) or not callable(decided_right):
+        return
+
     if op_kind in {"Eq", "NotEq"}:
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
-        if not isinstance(left, CallSiteValue) and not isinstance(right, CallSiteValue):
+        # Solver-owned arm: at least one decided type, and neither side is an
+        # unexecuted call result whose __eq__ body is itself undecided.
+        if (
+            (decided_left() or decided_right())
+            and not isinstance(left, CallSiteValue)
+            and not isinstance(right, CallSiteValue)
+        ):
             return
     else:
-        decided_left = getattr(left, "runtime_type_is_decided", None)
-        decided_right = getattr(right, "runtime_type_is_decided", None)
-        if not callable(decided_left) or not callable(decided_right):
-            return
         if decided_left() and decided_right():
             return
 
