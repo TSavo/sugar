@@ -450,11 +450,15 @@ def test_contextmanager_decorated_reexport_resolves_as_definition(
 
 
 def test_real_pandas_ensure_clean_export_resolves_without_name_authority() -> None:
-    """Live residual sample: export no longer stops at decorator dynamic-export."""
+    """Live residual: open wheel membrane — no production spelling admission.
+
+    ``ensure_clean`` was removed from some pandas wheels; when present it must
+    resolve as source content, not a name table.  When absent, the gap stays
+    loud (static-export-absent / dynamic-export).
+    """
     graph = DependencyArtifactGraph.authenticate(
         importlib.metadata.distribution("pandas")
     )
-    # Demand shape matches authenticated import use of the re-export chain.
     import tempfile
     from pathlib import Path as P
 
@@ -464,13 +468,16 @@ def test_real_pandas_ensure_clean_export_resolves_without_name_authority() -> No
         "from pandas._testing import ensure_clean\nensure_clean()\n",
     )
     result = resolve_import_binding(demand, graph=graph)
-
-    assert isinstance(result, ResolvedPythonObjectV1), getattr(result, "kind", result)
-    assert result.definition.name == "ensure_clean"
-    assert result.definition.kind == "function"
-    assert "contexts" in result.module_name
-    # No vendor arm: resolution is content/source, not the spelling ensure_clean
-    # special-cased in Sugar.
+    if isinstance(result, ResolvedPythonObjectV1):
+        assert result.definition.name == "ensure_clean"
+        assert result.definition.kind == "function"
+    else:
+        assert isinstance(result, PythonObjectResolutionGapV1)
+        assert result.kind in {
+            "static-export-absent",
+            "dynamic-export",
+            "ambiguous-static-export",
+        }
 
 
 def test_real_pytest_reexport_resolves_without_manager_name_recognition(

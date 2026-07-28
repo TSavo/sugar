@@ -198,12 +198,26 @@ def _resolve_export_uncached(
             session=session,
         )
     if binding is not None and binding[0] == "alias":
+        # Static ``public = _private``: both the assignment occurrence and the
+        # RHS name are authenticated.  Same-module alias hop is recorded before
+        # resolving the RHS — never a silent follow.
+        assign_node, name_node = binding[1]
+        alias_name = name_node.id
+        warrant = ReexportWarrantV1(
+            from_module=module_name,
+            from_source_cid=module.source_cid,
+            to_module=module_name,
+            to_source_cid=module.source_cid,
+            exported_name=exported_name,
+            imported_name=alias_name,
+            definition=_alias_coordinate(module, assign_node, exported_name),
+        )
         return resolve_export(
             graph,
             binding_cid,
             module_name,
-            binding[1].id,
-            warrants,
+            alias_name,
+            (*warrants, warrant),
             seen | {key},
             session=session,
         )
@@ -214,6 +228,31 @@ def _resolve_export_uncached(
             graph,
             module_name,
             exported_name,
+        )
+    if binding is not None and binding[0] == "ambiguous":
+        return _gap(
+            "ambiguous-static-export",
+            binding_cid,
+            graph,
+            module_name,
+            exported_name,
+        )
+    # Star import: only a single source-visible immutable literal ``__all__``
+    # may publish names.  Everything else stays dynamic — no first-candidate
+    # scan of the star module.
+    if binding is not None and binding[0] == "star":
+        return _resolve_star_export(
+            graph,
+            binding_cid,
+            module,
+            module_name,
+            exported_name,
+            binding[1],
+            tree.body,
+            warrants,
+            seen,
+            key,
+            session=session,
         )
     # Module-level ``name = Class()`` / ``name: Class = Class()`` is a static
     # callable-instance binding when Class is a local ClassDef with ``__call__``.
@@ -448,6 +487,139 @@ def _import_coordinate(
     )
 
 
+def _alias_coordinate(
+    module: AuthenticatedModuleSourceV1,
+    node: ast.AST,
+    exported_name: str,
+) -> DefinitionCoordinateV1:
+    segment = ast.get_source_segment(module.source, node)
+    if segment is None:
+        raise DependencyArtifactAuthenticationError(
+            "alias re-export source segment is unavailable"
+        )
+    return DefinitionCoordinateV1(
+        name=exported_name,
+        kind="alias",
+        source_cid=module.source_cid,
+        start_line=node.lineno,
+        start_col=node.col_offset,
+        end_line=node.end_lineno,
+        end_col=node.end_col_offset,
+        fragment_cid=blake3_512_of(segment.encode("utf-8")),
+    )
+
+
+def _resolve_star_export(
+    graph,
+    binding_cid: str,
+    module,
+    module_name: str,
+    exported_name: str,
+    star_import: ast.ImportFrom,
+    body: list[ast.stmt],
+    warrants: tuple,
+    seen: frozenset[tuple[str, str]],
+    key: tuple[str, str],
+    *,
+    session,
+):
+    published = _literal_all_publication(body)
+    if published is None or exported_name not in published:
+        return _gap(
+            "dynamic-export", binding_cid, graph, module_name, exported_name
+        )
+    target_module = _absolute_import(module_name, module.source_seat, star_import)
+    if target_module is None:
+        return _gap("opaque-source", binding_cid, graph, module_name, exported_name)
+    target = graph.modules.get(target_module)
+    if target is None:
+        return _gap(
+            "artifact-module-absent",
+            binding_cid,
+            graph,
+            target_module,
+            exported_name,
+        )
+    warrant = ReexportWarrantV1(
+        from_module=module_name,
+        from_source_cid=module.source_cid,
+        to_module=target_module,
+        to_source_cid=target.source_cid,
+        exported_name=exported_name,
+        imported_name=exported_name,
+        definition=_import_coordinate(module, star_import, exported_name),
+    )
+    return resolve_export(
+        graph,
+        binding_cid,
+        target_module,
+        exported_name,
+        (*warrants, warrant),
+        seen | {key},
+        session=session,
+    )
+
+
+def _literal_all_publication(body: list[ast.stmt]) -> frozenset[str] | None:
+    """Single immutable literal ``__all__`` of string constants, or None."""
+    published: frozenset[str] | None = None
+    for statement in body:
+        binds_all = False
+        value: ast.AST | None = None
+        if isinstance(statement, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == "__all__"
+                for target in statement.targets
+            ):
+                if not (
+                    len(statement.targets) == 1
+                    and isinstance(statement.targets[0], ast.Name)
+                    and statement.targets[0].id == "__all__"
+                ):
+                    return None
+                binds_all = True
+                value = statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            if (
+                isinstance(statement.target, ast.Name)
+                and statement.target.id == "__all__"
+            ):
+                if statement.value is None:
+                    return None
+                binds_all = True
+                value = statement.value
+        elif isinstance(statement, ast.AugAssign):
+            if (
+                isinstance(statement.target, ast.Name)
+                and statement.target.id == "__all__"
+            ):
+                return None
+        if not binds_all:
+            continue
+        names = _literal_string_sequence(value)
+        if names is None:
+            return None
+        if published is not None:
+            return None
+        published = names
+    return published
+
+
+def _literal_string_sequence(node: ast.AST | None) -> frozenset[str] | None:
+    if node is None:
+        return None
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+    names: set[str] = set()
+    for element in node.elts:
+        if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+            return None
+        if not element.value:
+            return None
+        names.add(element.value)
+    return frozenset(names)
+
+
 def _absolute_import(
     current_module: str, source_seat: str, node: ast.ImportFrom
 ) -> str | None:
@@ -589,6 +761,15 @@ def _export_statement(statement: ast.stmt, name: str, state):
         return ("definition", statement)
     if isinstance(statement, ast.ImportFrom):
         for alias in statement.names:
+            if alias.name == "*":
+                # Star residual only when no explicit static bind already owns
+                # the name.  Literal ``__all__`` publication is resolve-time.
+                if not (
+                    isinstance(state, tuple)
+                    and state[0] in {"definition", "import", "alias"}
+                ):
+                    state = ("star", statement)
+                continue
             if (alias.asname or alias.name) == name:
                 state = ("import", (statement, alias))
         return state
@@ -609,7 +790,7 @@ def _export_statement(statement: ast.stmt, name: str, state):
             and isinstance(statement.targets[0], ast.Name)
             and isinstance(statement.value, ast.Name)
         ):
-            return ("alias", statement.value)
+            return ("alias", (statement, statement.value))
         return ("dynamic", statement)
     if isinstance(statement, ast.AnnAssign):
         if statement.value is None or not _target_binds(statement.target, name):
@@ -617,7 +798,7 @@ def _export_statement(statement: ast.stmt, name: str, state):
         if isinstance(statement.target, ast.Name) and isinstance(
             statement.value, ast.Name
         ):
-            return ("alias", statement.value)
+            return ("alias", (statement, statement.value))
         return ("dynamic", statement)
     if isinstance(statement, ast.AugAssign):
         return (
@@ -705,6 +886,17 @@ def _join_export_states(states, locus):
     states = tuple(states)
     if states and all(state == states[0] for state in states[1:]):
         return states[0]
+    # Competing source-visible static bindings: ambiguous, not first-candidate.
+    static_kinds = frozenset({"definition", "import", "alias"})
+    concrete = tuple(state for state in states if state is not None)
+    if (
+        concrete
+        and len(concrete) == len(states)
+        and all(
+            isinstance(state, tuple) and state[0] in static_kinds for state in concrete
+        )
+    ):
+        return ("ambiguous", locus)
     return ("dynamic", locus)
 
 
