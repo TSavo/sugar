@@ -144,12 +144,13 @@ def test_native_resource_requires_both_authenticated_definition_coordinates():
     )
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     assert isinstance(boundary, WithResourceSugar)
-    assert boundary.enter_definition == SourceFragmentCoordinateV1(
-        _cid("e"), 10, 4, 11, 20
-    )
-    assert boundary.exit_definition == SourceFragmentCoordinateV1(
-        _cid("x"), 20, 4, 22, 20
-    )
+    assert boundary.receiver_coordinate == boundary.contract_ref.use_site
+    assert boundary.contract_refs.require_native_definition(
+        boundary.receiver_coordinate, NativeProtocolSlot.CONTEXT_ENTER
+    ) == SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    assert boundary.contract_refs.require_native_definition(
+        boundary.receiver_coordinate, NativeProtocolSlot.CONTEXT_EXIT
+    ) == SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
     assert boundary.enter_slot_id is not None
     assert boundary.enter_slot_id.startswith(boundary.manager_slot_id)
 
@@ -166,8 +167,9 @@ def test_open_name_without_native_definition_stays_typed_loud():
             )
         },
     )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     with pytest.raises(SugarNotWritten, match="authenticated source definition"):
-        next(node for node in tree.nodes() if node.kind == "With").sugar()
+        boundary.desugar()
 
 
 def _function_sugar(source_identity, resolution):

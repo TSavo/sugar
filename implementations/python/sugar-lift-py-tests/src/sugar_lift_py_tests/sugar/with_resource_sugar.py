@@ -38,14 +38,14 @@ class WithResourceSugar(Sugar):
     contract_ref: object | None = None
     context_manager_edge: object | None = None
     enter_slot_id: str | None = None
-    enter_definition: object | None = None
-    exit_definition: object | None = None
+    contract_refs: object | None = None
+    receiver_coordinate: object | None = None
     site: object = dataclass_field(compare=False, default=None)
 
     def __post_init__(self) -> None:
-        if self.enter_definition is None or self.exit_definition is None:
+        if self.contract_refs is None or self.receiver_coordinate is None:
             raise ValueError(
-                "WithResourceSugar requires authenticated enter and exit definition coordinates"
+                "WithResourceSugar requires the authenticated native-definition door"
             )
 
     @classmethod
@@ -83,6 +83,14 @@ class WithResourceSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationResolutionV1,
+        )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            NativeDefinitionCoordinateGapV1,
+            NativeProtocolSlot,
+        )
+        from sugar_lift_py_tests.floor import EnteredManagerStateValue
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -110,6 +118,13 @@ class WithResourceSugar(Sugar):
                 parts.append(ExitSet((mgr_exit,)))
                 continue
 
+            enter_definition = self.contract_refs.require_native_definition(
+                self.receiver_coordinate, NativeProtocolSlot.CONTEXT_ENTER
+            )
+            if isinstance(enter_definition, NativeDefinitionCoordinateGapV1):
+                NativeOperationResolutionV1.undischarged(
+                    enter_definition.reason
+                ).project(source_node=self.receiver_coordinate)
             mgr_facts = ()
             if hasattr(mgr_exit.value, "to_term"):
                 mgr_facts = ManagerBinding(
@@ -120,20 +135,45 @@ class WithResourceSugar(Sugar):
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
                 if isinstance(enter_exit, Halted):
-                    parts.append(ExitSet((Halted(face_guard, enter_exit.effect),)))
+                    parts.append(
+                        ExitSet(
+                            (
+                                Halted(
+                                    face_guard,
+                                    enter_exit.effect,
+                                    enter_exit.state,
+                                    enter_exit.faces,
+                                    enter_exit.pending_contracts,
+                                ),
+                            )
+                        )
+                    )
                     continue
+
+                entered = EnteredManagerStateValue(
+                    enter_value=enter_exit.value,
+                    receiver_state=mgr_exit.value,
+                )
 
                 enter_facts = ()
                 if self.enter_slot_id is not None and hasattr(
                     enter_exit.value, "to_term"
                 ):
                     enter_facts = EnterResultBinding(
-                        self.enter_slot_id, enter_exit.value
+                        self.enter_slot_id, entered.enter_value
                     ).to_facts(site=self.site)
 
                 body_es = promote_raise_halts(
                     reduce_block_to_exitset(self.body)
                 ).guarded(face_guard)
+
+                exit_definition = self.contract_refs.require_native_definition(
+                    self.receiver_coordinate, NativeProtocolSlot.CONTEXT_EXIT
+                )
+                if isinstance(exit_definition, NativeDefinitionCoordinateGapV1):
+                    NativeOperationResolutionV1.undischarged(
+                        exit_definition.reason
+                    ).project(source_node=self.receiver_coordinate)
 
                 # Parametric exit: materialize once, fan over every body face.
                 exit_es = sugar_outcome_to_exitset(self.exit.desugar())
@@ -143,27 +183,11 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
-                    from sugar_lift_py_tests.context_manager_contract import (
-                        NeverSuppressesDispositionV1,
-                        ReturnTruthinessDispositionV1,
+                    after = face.and_source_resource_exit(
+                        exit_es,
+                        disposition=self.disposition,
+                        site=self.site,
                     )
-                    from sugar_lift_py_tests.effect import RaiseEffect
-
-                    if (
-                        isinstance(self.disposition, ReturnTruthinessDispositionV1)
-                        and isinstance(body_exit, Halted)
-                        and isinstance(body_exit.effect, RaiseEffect)
-                    ):
-                        after = face.and_exit_truthiness(exit_es, site=self.site)
-                    else:
-                        disposition = (
-                            NeverSuppressesDispositionV1()
-                            if isinstance(
-                                self.disposition, ReturnTruthinessDispositionV1
-                            )
-                            else self.disposition
-                        )
-                        after = face.and_exit(exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )
