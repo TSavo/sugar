@@ -8002,6 +8002,50 @@ class Compare(Expression):
         are leaves, carried through)."""
         return self._substitute_children(scope)
 
+    def _comparison_leg_site(self, index: int, operands: tuple[Expression, ...]):
+        """Return the enumerated operator occurrence for one chained leg.
+
+        The operator token, not operand content or the enclosing Compare span,
+        distinguishes adjacent operations.  Authenticate that token against
+        the two operands it separates before allowing it to become an effect
+        occurrence coordinate.
+        """
+        left = operands[index]
+        right = operands[index + 1]
+
+        def reject():
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=self.fragment,
+                owner="Compare._comparison_leg_site",
+                observed=(index, left.span, right.span),
+                requested="the source-authenticated operator interval between adjacent operands",
+                fix="preserve each Compare leg's adjacent operand spans in source order",
+            )
+
+        if not (
+            self.span.start <= left.span.start < left.span.end
+            and left.span.end < right.span.start
+            and right.span.end <= self.span.end
+        ):
+            reject()
+        gap = Span(left.span.end, right.span.start)
+        if not gap.slice(self.unit.source).strip():
+            reject()
+        from .fragment import SourceFragment
+
+        # Comparison operators have no backend node of their own.  The exact
+        # source-authenticated occurrence is the non-empty source interval
+        # between the adjacent operand nodes; the Compare grammar testifies
+        # which operator occupies that interval.  Repeated operand content
+        # cannot collapse these positional intervals.
+        return SourceFragment(
+            unit=self.unit,
+            span=gap,
+            node=self,
+        )
+
     def _construct_sugar(self):
         """A comparison constructs its operator's sugar, built WITH its
         children's sugar. `==` is EqualityOpSugar (it also refines); the ordering
@@ -8030,6 +8074,11 @@ class Compare(Expression):
             op = self.ops[index]
             left_s = operands[index].sugar()
             right_s = operands[index + 1].sugar()
+            site = (
+                self._comparison_leg_site(index, operands)
+                if len(self.ops) > 1
+                else self.fragment
+            )
             if isinstance(op, Eq):
                 # The refinement coordinate is the PAIR's left operand, read
                 # here where the tree is in hand. In a chain `a.k == b == c` the
@@ -8039,11 +8088,11 @@ class Compare(Expression):
                 return EqualityOpSugar(
                     left=left_s,
                     right=right_s,
-                    site=self.fragment,
+                    site=site,
                     left_coordinate=operands[index].dotted_expr_name(),
                 )
             return ComparisonOpSugar(
-                op_kind=op.kind, left=left_s, right=right_s, site=self.fragment
+                op_kind=op.kind, left=left_s, right=right_s, site=site
             )
 
         pairs = tuple(pair(i) for i in range(len(self.ops)))
