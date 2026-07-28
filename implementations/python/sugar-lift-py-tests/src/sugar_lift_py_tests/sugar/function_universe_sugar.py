@@ -314,6 +314,7 @@ def reduce_block_to_exitset(
 
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
+                ReducerPreEffectStateV1,
             )
 
             if isinstance(outcome, NativeOperationExitCarrierV1):
@@ -322,7 +323,10 @@ def reduce_block_to_exitset(
                 # Retain the ordinary statement projection as a continuation;
                 # discharge will feed its Completed face through this exact
                 # block seam, while its Halted face bypasses the tail.
-                return outcome.and_then(project)
+                return outcome.and_then(
+                    project,
+                    pre_effect_state=ReducerPreEffectStateV1._from_reducer(state),
+                )
 
             if (
                 isinstance(outcome, Complete)
