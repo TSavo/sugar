@@ -90,6 +90,13 @@ class WithEffectBoundarySugar(Sugar):
                 self.contract_ref.import_signature,
                 manager_value,
             )
+            # Reduce the body suite ONCE per manager face. Factored message
+            # faces are alternative guards over the same body occurrence —
+            # re-reducing would re-enter nested resources and invent a second
+            # evaluation of the same source suite under each message face.
+            body_es_once = promote_raise_halts(
+                reduce_block_to_exitset(self.body, ctx)
+            )
             for face_guard, semantics in self._guarded_semantics():
                 expected = project_formal_selector_v1(
                     semantics.expected_type_operand,
@@ -132,9 +139,7 @@ class WithEffectBoundarySugar(Sugar):
                     )
                     continue
 
-                body_es = promote_raise_halts(
-                    reduce_block_to_exitset(self.body, ctx)
-                ).guarded(face_manager.guard)
+                body_es = body_es_once.guarded(face_manager.guard)
 
                 disposition = EffectBoundaryDisposition(
                     matcher=AuthenticatedRaiseMatcher(
