@@ -35,7 +35,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Complete, Completed, outcome_to_exitset
 
 from .canonical import cid_of_json
 from .manager_protocol_construction import ConstructedManagerProtocolV1
@@ -188,6 +188,51 @@ def _sealed_summary(protocol, semantics, signature):
     )
 
 
+def _construct_message_pattern_operand(
+    projected_match,
+    *,
+    site,
+    construct_message_obligation,
+):
+    """Construct the message obligation on the source-authorized match face."""
+    from sugar_lift_py_tests.floor import NoneValue
+
+    return projected_match.and_then(
+        lambda match_value: (
+            Complete(NoMessagePatternV1())
+            if isinstance(match_value, NoneValue)
+            else match_value.attribute("pattern", site).and_then(
+                construct_message_obligation
+            )
+        )
+    )
+
+
+def _project_receiver_match(receiver, *, site):
+    """Project only source-written receiver faces that carry ``match``."""
+    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    if isinstance(receiver, ObjectValue):
+        if not any(field.name == "match" for field in receiver.fields):
+            return None
+        return receiver.attribute("match", site)
+    if not isinstance(receiver, ReceiverStatePartitionValue):
+        return None
+    projected = []
+    for face in receiver.exits.exits:
+        if not isinstance(face, Completed) or not isinstance(face.value, ObjectValue):
+            continue
+        if not any(field.name == "match" for field in face.value.fields):
+            continue
+        projected.extend(
+            ExitSet((face,))
+            .and_then(lambda value: value.attribute("match", site))
+            .exits
+        )
+    return ExitSet(tuple(projected)) if projected else None
+
+
 def _soft_effect_boundary_from_exception_formals(behavior):
     """Expects-mode EffectBoundary when exit body is undecided but formals decide.
 
@@ -223,15 +268,31 @@ def _soft_effect_boundary_from_exception_formals(behavior):
                     message_index = index
     if expected_index is None:
         return None
+    message_operand = (
+        NoMessagePatternV1()
+        if message_index is None
+        else OptionalFormalArgumentProjectionV1(message_index)
+    )
+    site = behavior.formal_actual_bindings[expected_index].coordinate
+    projected_match = _project_receiver_match(behavior.receiver_state, site=site)
+    if projected_match is not None:
+        projected_operand = _construct_message_pattern_operand(
+            projected_match,
+            site=site,
+            construct_message_obligation=lambda _pattern: Complete(message_operand),
+        )
+        projected_faces = outcome_to_exitset(projected_operand).exits
+        if not projected_faces or not all(
+            isinstance(face, Completed) and face.value == projected_faces[0].value
+            for face in projected_faces
+        ):
+            return None
+        message_operand = projected_faces[0].value
     return EffectBoundarySemanticsV1(
         ExpectsModeV1(),
         RaiseEffectKindV1(),
         FormalArgumentProjectionV1(expected_index),
-        (
-            NoMessagePatternV1()
-            if message_index is None
-            else OptionalFormalArgumentProjectionV1(message_index)
-        ),
+        message_operand,
         ExceptionInfoBindingV1(),
     )
 

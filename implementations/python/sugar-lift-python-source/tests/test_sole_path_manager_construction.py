@@ -1183,11 +1183,11 @@ def test_renamed_source_visible_exit_derives_expects_raise_boundary(tmp_path):
 
 
 def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_path):
-    """The tempting pandas helper spelling has no assertion authority.
+    """A deferred assertion import cannot override the returned manager.
 
-    This is the lying twin for the returned-manager reproducer.  It uses the
-    exact helper name but returns an ordinary resource manager; native protocol
-    testimony must keep it out of the EffectBoundary arm.
+    This is the lying twin for the returned-manager reproducer. It binds the
+    assertion provider at call time but returns an ordinary resource manager;
+    native return testimony must keep it out of the EffectBoundary arm.
     """
     graph, resolved, actual, call_site = _resolved_type_actual(
         tmp_path,
@@ -1199,6 +1199,7 @@ def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_p
         "    def __exit__(self, effect_type, effect, traceback):\n"
         "        return False\n"
         "def external_error_raised(expected):\n"
+        "    import pytest\n"
         "    return OrdinaryResource(expected)\n",
         exported="external_error_raised",
     )
@@ -1340,6 +1341,65 @@ def test_renamed_effect_boundary_derives_message_operand_from_real_formal(tmp_pa
     assert summary.semantics.message_pattern_operand == (
         OptionalFormalArgumentProjectionV1(1)
     )
+
+
+def test_none_match_branches_before_pattern_projection():
+    """Mutation tooth: moving ``.pattern`` after the join reads from None."""
+    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+    )
+
+    class PatternReadTrap(NoneValue):
+        def attribute(self, name, site):
+            raise AssertionError(
+                f"speculative {name!r} read reached authenticated match=None at {site}"
+            )
+
+    projected_match = Complete(PatternReadTrap())
+    result = _construct_message_pattern_operand(
+        projected_match,
+        site="match-none-mutation-tooth",
+        construct_message_obligation=lambda _pattern: (_ for _ in ()).throw(
+            AssertionError("match=None cannot construct a regex obligation")
+        ),
+    )
+
+    assert isinstance(result, Complete)
+    assert isinstance(result.value, NoMessagePatternV1)
+
+
+def test_non_none_match_projects_pattern_inside_its_face():
+    """Truthful twin: the non-None face alone constructs regex testimony."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.floor import FloorValue, StringValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+    )
+
+    class PatternCarrier(FloorValue):
+        def attribute(self, name, site):
+            assert (name, site) == ("pattern", "non-none-pattern-face")
+            return Complete(StringValue("^$"))
+
+    expected = OptionalFormalArgumentProjectionV1(1)
+    result = _construct_message_pattern_operand(
+        Complete(PatternCarrier()),
+        site="non-none-pattern-face",
+        construct_message_obligation=lambda pattern: (
+            Complete(expected)
+            if pattern == StringValue("^$")
+            else (_ for _ in ()).throw(AssertionError(pattern))
+        ),
+    )
+
+    assert isinstance(result, Complete)
+    assert result.value == expected
 
 
 def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
