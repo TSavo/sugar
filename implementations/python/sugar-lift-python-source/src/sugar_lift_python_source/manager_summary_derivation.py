@@ -148,17 +148,9 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        soft = _soft_effect_boundary_from_exception_formals(
-            behavior,
-            protocol_construction_cid=protocol.protocol_construction_cid,
-        )
-        if isinstance(soft, DerivedManagerSummaryGapV1):
-            return soft
-        if isinstance(soft, ExitSet):
-            return _factored_effect_boundary_summary(protocol, soft, behavior)
-        if soft is not None:
-            signature = _signature_for_behavior(behavior, soft)
-            return _sealed_summary(protocol, soft, signature)
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -167,17 +159,9 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
-        soft = _soft_effect_boundary_from_exception_formals(
-            behavior,
-            protocol_construction_cid=protocol.protocol_construction_cid,
-        )
-        if isinstance(soft, DerivedManagerSummaryGapV1):
-            return soft
-        if isinstance(soft, ExitSet):
-            return _factored_effect_boundary_summary(protocol, soft, behavior)
-        if soft is not None:
-            signature = _signature_for_behavior(behavior, soft)
-            return _sealed_summary(protocol, soft, signature)
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -191,7 +175,14 @@ def derive_manager_summary(
     if boundary is not None:
         signature = _signature_for_behavior(behavior, boundary)
         return _sealed_summary(protocol, boundary, signature)
+    # Non-total exit ExitSet (residual Halted faces, empty exits): formals may
+    # still authenticate Expects/Raise. Soft sealing used to run only on
+    # ConstructionPanic/SugarNotWritten; apply the same formal projection here
+    # so message match formals seal OptionalFormalArgumentProjectionV1.
     if not exit_.exits or any(not isinstance(face, Completed) for face in exit_.exits):
+        sealed = _try_soft_effect_boundary_summary(protocol, behavior)
+        if sealed is not None:
+            return sealed
         return DerivedManagerSummaryGapV1(
             "exit-may-halt", protocol.protocol_construction_cid, "__exit__ ExitSet"
         )
@@ -249,18 +240,25 @@ def _construct_message_pattern_operand(
     """Construct the message obligation on the source-authorized match face.
 
     ``match=None`` constructs ``NoMessagePatternV1`` without reading
-    ``.pattern``. Non-None faces project ``.pattern`` then construct the
-    regex obligation. Multi-face projections stay partitioned: each face
-    keeps its own answer under its own guard.
+    ``.pattern``. A source-written string formal is already the pattern
+    obligation input — do not invent a ``.pattern`` attribute. Other non-None
+    faces project ``.pattern`` then construct the regex obligation. Multi-face
+    projections stay partitioned: each face keeps its own answer under its
+    own guard.
     """
     from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
 
     return projected_match.and_then(
         lambda match_value: (
             Complete(NoMessagePatternV1())
             if isinstance(match_value, NoneValue)
-            else match_value.attribute("pattern", site).and_then(
-                construct_message_obligation
+            else (
+                construct_message_obligation(match_value)
+                if isinstance(match_value, StringValue)
+                else match_value.attribute("pattern", site).and_then(
+                    construct_message_obligation
+                )
             )
         )
     )
@@ -319,6 +317,44 @@ def _effect_boundary_for_message_operand(expected_index, message_operand):
     )
 
 
+# Authenticated message-pattern formal names. Used only as the soft-seal
+# index when the call site supplied that formal — never as a manager spelling
+# admission rule for which class is a CM.
+_MESSAGE_FORMAL_NAMES = frozenset({"match", "message", "pattern", "msg"})
+
+
+def _try_soft_effect_boundary_summary(protocol, behavior):
+    """Apply formal soft-seal when exit theorem construction is incomplete.
+
+    Shared by ConstructionPanic / SugarNotWritten arms and by a returned
+    non-total ExitSet with residual Halted faces. Returns a sealed summary,
+    a factored dual-face summary, a soft gap, or None when formals do not
+    authenticate an expects-raise contract.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+
+    try:
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior,
+            protocol_construction_cid=protocol.protocol_construction_cid,
+        )
+    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+        # Soft projection of receiver match may still be unfinished; formals
+        # that already authenticated type+string seal without that projection.
+        return None
+    if soft is None:
+        return None
+    if isinstance(soft, DerivedManagerSummaryGapV1):
+        return soft
+    if isinstance(soft, ExitSet):
+        return _factored_effect_boundary_summary(protocol, soft, behavior)
+    signature = _signature_for_behavior(behavior, soft)
+    return _sealed_summary(protocol, soft, signature)
+
+
 def _soft_effect_boundary_from_exception_formals(
     behavior,
     *,
@@ -348,6 +384,8 @@ def _soft_effect_boundary_from_exception_formals(
     actuals = tuple(getattr(behavior, "formal_actual_values", ()) or ())
     if not actuals:
         return None
+    frame = getattr(behavior, "source_call_frame", None)
+    parameters = tuple(getattr(frame, "parameters", ()) or ())
     expected_index = None
     message_index = None
     for index, value in enumerate(actuals):
@@ -355,14 +393,24 @@ def _soft_effect_boundary_from_exception_formals(
         if callable(identity) and identity() is not None and expected_index is None:
             expected_index = index
             continue
-        # Optional match= / message formal: string-sort values after the type.
+        # Optional match= / message formal after the type:
+        # 1. Ground StringValue (strongest)
+        # 2. Bound message formal by authenticated parameter name even when
+        #    the actual is still a Name/SymbolicValue at the use site
+        #    (``pattern = 'needle'; match=pattern``). Explicit None stays
+        #    NoMessagePattern.
         if expected_index is not None and message_index is None:
-            decided = getattr(value, "runtime_type_is_decided", None)
-            if callable(decided) and decided():
-                from sugar_lift_py_tests.floor.string_value import StringValue
+            from sugar_lift_py_tests.floor import NoneValue
+            from sugar_lift_py_tests.floor.string_value import StringValue
 
-                if isinstance(value, StringValue):
-                    message_index = index
+            if isinstance(value, NoneValue):
+                continue
+            decided = getattr(value, "runtime_type_is_decided", None)
+            if callable(decided) and decided() and isinstance(value, StringValue):
+                message_index = index
+                continue
+            if index < len(parameters) and parameters[index] in _MESSAGE_FORMAL_NAMES:
+                message_index = index
     if expected_index is None:
         return None
     message_operand = (
@@ -373,13 +421,25 @@ def _soft_effect_boundary_from_exception_formals(
     site = behavior.formal_actual_bindings[expected_index].coordinate
     projected_match = _project_receiver_match(behavior.receiver_state, site=site)
     if projected_match is not None:
-        projected_operand = _construct_message_pattern_operand(
-            projected_match,
-            site=site,
-            construct_message_obligation=lambda _pattern: Complete(message_operand),
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+        from sugar_source_tree.panic import (
+            OpaqueSourceCallResolutionGap,
+            SugarNotWritten,
         )
-        resolved = _message_pattern_operand_faces(projected_operand)
-        if resolved is None:
+
+        try:
+            projected_operand = _construct_message_pattern_operand(
+                projected_match,
+                site=site,
+                construct_message_obligation=lambda _pattern: Complete(message_operand),
+            )
+            resolved = _message_pattern_operand_faces(projected_operand)
+        except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten):
+            # Receiver match projection may still be undecided; formals already
+            # authenticated type + match index — seal from formals alone.
+            resolved = None
+        if resolved is None and message_index is None:
             return None
         if isinstance(resolved, ExitSet):
             return ExitSet(
@@ -396,7 +456,8 @@ def _soft_effect_boundary_from_exception_formals(
                     if isinstance(face, Completed)
                 )
             )
-        message_operand = resolved
+        if resolved is not None:
+            message_operand = resolved
     return _effect_boundary_for_message_operand(expected_index, message_operand)
 
 
