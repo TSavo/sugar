@@ -505,6 +505,18 @@ def test_installed_box_expected_source_call_has_an_authenticated_frame(
         context.source_call_resolutions[coordinate],
         SourceCallPreconstructionRefV1,
     )
+    result = call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="installed box_expected return"
+    )
+    assert result is not None
+    assert not isinstance(result, CallSiteValue)
+    produced = result.add(StringValue("a"), call.fragment)
+    halted = tuple(exit_ for exit_ in produced.exits if isinstance(exit_, Halted))
+    assert len(halted) == 1
+    assert halted[0].effect.exception_type_coordinate == ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("TypeError")],
+    )
 
 
 def test_runtime_wrong_expected_type_does_not_consume_candidate_exception() -> None:
