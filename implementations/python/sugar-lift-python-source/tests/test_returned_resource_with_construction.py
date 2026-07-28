@@ -313,8 +313,17 @@ def test_authenticated_pandas_303_get_handle_is_real_resource_reproducer():
 
 def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     """The producer's two real coordinates are the sole lifecycle authority."""
+    import platform
+    import sys
+
+    import pandas
+
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    assert sys.executable == "/usr/local/bin/python"
+    assert platform.python_version() == "3.12.13"
+    assert pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
 
     corpus = authenticated_pandas_corpus()
     root = corpus.root.parent
@@ -329,11 +338,18 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
         for node in tree.nodes()
         if node.kind == "With" and node.line_col_span().start_line == 25
     )
-    receiver = next(
+    receivers = tuple(
         coordinate
         for coordinate in context.source_manager_provider_calls
         if coordinate.start_line == 25
     )
+    assert len(receivers) == 1, (
+        "authenticated pandas option_context use at line 25 must publish exactly "
+        "one provider receiver before With construction; publication stopped "
+        "upstream, derived refs="
+        f"{tuple(type(ref).__name__ for ref in context.source_derived_contract_refs.values())}"
+    )
+    receiver = receivers[0]
     refs = context.contract_refs
     enter_definition = refs.require_native_definition(
         receiver, NativeProtocolSlot.CONTEXT_ENTER
@@ -368,6 +384,10 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     ]
     assert resource.enter.native_definition_coordinate == enter_definition
     assert resource.exit.native_definition_coordinate == exit_definition
+    assert resource.enter_definition == enter_definition
+    assert resource.exit_definition == exit_definition
+    assert resource.protocol.enter_definition == enter_definition
+    assert resource.protocol.exit_definition == exit_definition
 
     completed = replace(
         resource,
@@ -401,6 +421,208 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     assert any(
         isinstance(face, Halted) and face.effect is effect for face in halted.exits
     )
+
+
+def test_real_option_context_published_ref_selects_source_resource_at_construction():
+    """The closed generator-resource ref outranks the legacy generator path."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    corpus = authenticated_pandas_corpus()
+    root = corpus.root.parent
+    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = open_source_file_for_construction(
+        path, root=root, construction_context=context, populate_derived=False
+    )
+    populate_source_derived_resource_refs(tree, root=root, path=path)
+    with_node = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 25
+    )
+    receiver = next(
+        coordinate
+        for coordinate in context.source_manager_provider_calls
+        if coordinate.start_line == 25
+    )
+    refs = context.contract_refs
+    enter_definition = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_ENTER
+    )
+    exit_definition = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_EXIT
+    )
+
+    class RecordingDefinitionDoor:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def require_native_definition(self, use_site, slot):
+            self.calls.append((use_site, slot))
+            return self.delegate.require_native_definition(use_site, slot)
+
+    recording = RecordingDefinitionDoor(refs)
+    object.__setattr__(context, "contract_refs", recording)
+
+    resource = with_node.sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert recording.calls == [
+        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
+        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert resource.enter.native_definition_coordinate == enter_definition
+    assert resource.exit.native_definition_coordinate == exit_definition
+
+
+@pytest.mark.parametrize("manager_name", ("borrowed_state", "temporary_setting"))
+def test_renamed_source_generator_resources_use_the_same_closed_factory_arm(
+    tmp_path: Path, manager_name: str
+):
+    """Selection follows the published ref type, never a manager spelling."""
+    implementation = (
+        "from contextlib import contextmanager\n\n"
+        "@contextmanager\n"
+        f"def {manager_name}(value):\n"
+        "    try:\n"
+        "        yield value\n"
+        "    finally:\n"
+        "        release(value)\n"
+    )
+    dist = _distribution(tmp_path, implementation, exported=manager_name)
+    tree, context, _ = _tree(
+        tmp_path,
+        f"from arbitrary import {manager_name}\n"
+        f"with {manager_name}(7) as entered:\n"
+        "    observed = entered\n",
+        dist=dist,
+    )
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    receiver = next(iter(context.source_manager_provider_calls))
+
+    class RecordingDefinitionDoor:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def require_native_definition(self, use_site, slot):
+            self.calls.append((use_site, slot))
+            return self.delegate.require_native_definition(use_site, slot)
+
+    recording = RecordingDefinitionDoor(context.contract_refs)
+    object.__setattr__(context, "contract_refs", recording)
+
+    resource = with_node.substitute({}).sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert recording.calls == [
+        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
+        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert resource.enter.native_definition_coordinate == resource.enter_definition
+    assert resource.exit.native_definition_coordinate == resource.exit_definition
+
+
+@pytest.mark.parametrize(
+    ("manager_name", "guard_name", "cleanup_name"),
+    (
+        ("borrowed_branch", "should_borrow", "release_borrowed"),
+        ("temporary_branch", "should_install", "restore_temporary"),
+    ),
+)
+def test_renamed_pre_yield_branch_and_cleanup_spellings_share_one_resource_path(
+    tmp_path: Path, manager_name: str, guard_name: str, cleanup_name: str
+):
+    """Only the published structure selects; every local spelling may change."""
+    implementation = (
+        "from contextlib import contextmanager\n\n"
+        f"def {cleanup_name}(value):\n"
+        "    return value\n\n"
+        "@contextmanager\n"
+        f"def {manager_name}(value):\n"
+        f"    {guard_name} = value is not None\n"
+        f"    if {guard_name}:\n"
+        "        entered = value\n"
+        "    else:\n"
+        "        entered = value\n"
+        "    try:\n"
+        "        yield entered\n"
+        "    finally:\n"
+        f"        {cleanup_name}(entered)\n"
+    )
+    dist = _distribution(tmp_path, implementation, exported=manager_name)
+    tree, context, _ = _tree(
+        tmp_path,
+        f"from arbitrary import {manager_name}\n"
+        f"with {manager_name}(7) as entered:\n"
+        "    observed = entered\n",
+        dist=dist,
+    )
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    receiver = next(iter(context.source_manager_provider_calls))
+
+    class RecordingDefinitionDoor:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def require_native_definition(self, use_site, slot):
+            self.calls.append((use_site, slot))
+            return self.delegate.require_native_definition(use_site, slot)
+
+    recording = RecordingDefinitionDoor(context.contract_refs)
+    object.__setattr__(context, "contract_refs", recording)
+    resource = with_node.substitute({}).sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert recording.calls == [
+        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
+        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert resource.enter.native_definition_coordinate == resource.enter_definition
+    assert resource.exit.native_definition_coordinate == resource.exit_definition
+
+
+def test_unauthenticated_generator_manager_stays_on_generator_path(tmp_path: Path):
+    """A source generator without resource coordinates never enters this arm."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+    )
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+
+    manager_name = "unsealed_stream"
+    dist = _distribution(
+        tmp_path,
+        f"def {manager_name}(value):\n"
+        "    yield value\n",
+        exported=manager_name,
+    )
+    tree, context, _ = _tree(
+        tmp_path,
+        f"from arbitrary import {manager_name}\n"
+        f"with {manager_name}(7) as entered:\n"
+        "    observed = entered\n",
+        dist=dist,
+    )
+    resource = next(node for node in tree.nodes() if node.kind == "With").sugar()
+
+    assert len(context.source_derived_contract_refs) == 1
+    assert all(
+        isinstance(reference, ContextManagerResolutionGapV1)
+        for reference in context.source_derived_contract_refs.values()
+    )
+    assert isinstance(resource, GeneratorWithSugar)
 
 
 def test_source_true_exit_publishes_truthiness_and_consumes_raise(tmp_path: Path):
