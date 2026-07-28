@@ -539,7 +539,9 @@ def reduce_block_to_exitset(
 
     if isinstance(exits, NativeOperationExitCarrierV1):
         return exits
-    return _enrol_exit_obligations(exits)
+    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
+
+    return _enrol_exit_obligations(promote_raise_halts(exits))
 
 
 def reduce_statements(statements: tuple, ctx: object = None):
