@@ -19,7 +19,10 @@ speed never comes from skipping testimony.
 """
 
 import gc
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import weakref
 from dataclasses import dataclass
@@ -228,7 +231,7 @@ def test_speed_never_comes_from_skipping_testimony():
             raise AssertionError("unsupported value went quiet")
 
 
-def test_real_construction_agrees_bit_for_bit_with_the_unmemoized_answer():
+def _real_construction_comparisons():
     # For EVERY semantic value a real function presents, mint its CID with the
     # memo warm and again with the memo emptied, and require them equal. Done
     # in ONE pass so no other warm cache (node shape, sugar() coordinate) can
@@ -270,7 +273,38 @@ def test_real_construction_agrees_bit_for_bit_with_the_unmemoized_answer():
         fn.sugar()
     finally:
         BS._constructed_preimage = original
+    return compared
+
+
+def _fresh_real_construction_comparisons() -> list[str]:
+    script = (
+        "import json, runpy; "
+        f"ns = runpy.run_path({__file__!r}); "
+        "print('comparisons=' + json.dumps(ns['_real_construction_comparisons']()))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    line = completed.stdout.strip().splitlines()[-1]
+    assert line.startswith("comparisons="), completed.stdout
+    return json.loads(line.removeprefix("comparisons="))
+
+
+def test_real_construction_agrees_bit_for_bit_with_the_unmemoized_answer():
+    compared = _fresh_real_construction_comparisons()
     # A real function presents several distinct values (8 measured here); a
     # silent zero comparisons would make this test prove nothing at all.
     assert len(compared) >= 8, len(compared)
     assert len(set(compared)) > 1, compared
+
+
+def test_real_construction_memo_floor_is_independent_of_prior_construction():
+    first = _fresh_real_construction_comparisons()
+    second = _fresh_real_construction_comparisons()
+
+    assert len(first) >= 8, len(first)
+    assert len(second) >= 8, len(second)
