@@ -64,20 +64,34 @@ def promote_raise_halts(exits):
             continue
 
         remaining: list = []
+        prefix: list = []
         saw_halt = False
         for entry in state.entries:
             if is_hard_raise(entry):
                 saw_halt = True
                 guard = guard_from_conditions(exit_.guard, entry.branch_conditions)
-                promoted.append(Halted(guard, entry.effect, state))
+                # A Halted face carries the state that existed before its
+                # effect.  Keeping the raise entry in that state lets a later
+                # enclosing reducer promote the already-consumed edge again.
+                promoted.append(
+                    Halted(
+                        guard,
+                        entry.effect,
+                        replace(state, entries=tuple(prefix)),
+                    )
+                )
             else:
                 remaining.append(entry)
+                prefix.append(entry)
 
         if not saw_halt:
             promoted.append(exit_)
             continue
 
-        if remaining or state.can_fall_through:
+        # Entries before a terminal raise are the halted arm's state, not
+        # evidence of a second execution that completed.  Only the reducer's
+        # explicit fall-through testimony authorizes a complementary arm.
+        if state.can_fall_through:
             promoted.append(
                 Completed(
                     exit_.guard,
