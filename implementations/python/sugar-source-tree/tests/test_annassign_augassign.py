@@ -56,8 +56,9 @@ def test_name_augassign_constructs_explicit_read_op_store_child():
     substituted = function.substitute({})
     sugar = substituted.body[1].sugar()
     assert isinstance(sugar, AugAssignSugar)
-    assert isinstance(sugar.operation, BinOpSugar)
-    assert sugar.operation.op_kind == "Add"
+    assert isinstance(sugar.read_op, BinOpSugar)
+    assert sugar.read_op.op_kind == "Add"
+    assert sugar.operator == "iadd"
 
 
 def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
@@ -76,7 +77,7 @@ def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
         if statement.kind == "AugAssign"
     )
     assert isinstance(sugar, AugAssignSugar)
-    assert type(sugar.operation.left).__name__ == "IfExpSugar"
+    assert type(sugar.left).__name__ == "IfExpSugar"
 
 
 def _red_effects(source):
@@ -92,19 +93,30 @@ def _red_effects(source):
     return [entry.effect for entry in entries if isinstance(entry, Incomplete)]
 
 
-def test_attribute_aug_assign_builds_store_effect():
-    # Free undecided receiver keeps dual-face RuntimeEffect.
-    effects = _red_effects("def A(y):\n    obj.a += y\n    return y\n")
+def test_attribute_aug_assign_formal_get_is_attribute_named_carrier():
+    """Attribute OP= on formals: undischarged attribute_named get (not RuntimeEffect)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
 
-    assert len(effects) == 1
-    assert isinstance(effects[0], AttributeStoreRuntimeEffect)
+    outcome = (
+        _fn("def A(obj, y):\n    obj.a += y\n    return y\n").sugar().desugar()
+    )
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "attribute_named"
 
 
-def test_subscript_aug_assign_builds_store_effect():
-    effects = _red_effects("def A(d, k, y):\n    d[k] += y\n    return y\n")
+def test_subscript_aug_assign_formal_get_is_subscript_carrier():
+    """Subscript OP= on formals: undischarged subscript get (not RuntimeEffect)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
 
-    assert len(effects) == 1
-    assert isinstance(effects[0], SubscriptStoreRuntimeEffect)
+    outcome = (
+        _fn("def A(d, k, y):\n    d[k] += y\n    return y\n").sugar().desugar()
+    )
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "subscript"
 
 
 def test_annotated_attribute_with_value_builds_store_effect():
@@ -114,9 +126,17 @@ def test_annotated_attribute_with_value_builds_store_effect():
     assert isinstance(effects[0], AttributeStoreRuntimeEffect)
 
 
-def test_annotated_subscript_store_stays_loud_without_setitem_testimony():
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
+def test_annotated_subscript_store_is_undischarged_setitem_carrier():
+    """Formal annotated subscript store mints setitem demand (not free SugarNotWritten)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    outcome = (
         _fn("def A(d, k, y):\n    d[k]: int = y\n    return y\n").sugar().desugar()
+    )
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "setitem"
 
 
 _CONSTRUCTED_RECEIVER_SOURCE = (

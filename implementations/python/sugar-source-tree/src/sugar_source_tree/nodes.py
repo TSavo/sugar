@@ -4286,7 +4286,7 @@ class AugAssign(Statement):
 
         # Structural operator site before any rewrite (Compare-style gap).
         pre_sub_operator_site = None
-        if isinstance(self.target, (Attribute, Subscript)):
+        if isinstance(self.target, (Name, Attribute, Subscript)):
             pre_sub_operator_site = getattr(self, "operator_site", None)
             if pre_sub_operator_site is None:
                 pre_sub_operator_site = self._mint_operator_site_from_structure()
@@ -4328,7 +4328,11 @@ class AugAssign(Statement):
             ShadowNode(
                 desc.kind,
                 desc.raw_span or self.span,
-                (*desc.slots, ("operation", Child(_handle_of(operation)))),
+                (
+                    *desc.slots,
+                    ("operation", Child(_handle_of(operation))),
+                    ("operator_site", Leaf(pre_sub_operator_site)),
+                ),
             ),
             self.reporter,
         )
@@ -4411,9 +4415,19 @@ class AugAssign(Statement):
             operation = getattr(self, "operation", None)
             if not isinstance(operation, Node):
                 return super()._construct_sugar()
+            binop_sugar = operation.sugar()
+            op_site = getattr(self, "operator_site", None)
+            if op_site is None:
+                op_site = self._mint_operator_site_from_structure()
+            # Same project_inplace substrate as attribute/subscript AugAssign.
             return AugAssignSugar(
-                operation=operation.sugar(),
+                left=binop_sugar.left,
+                right=binop_sugar.right,
+                operator=type(self.op).inplace_operator,
+                operation=self.op.project_inplace,
+                op_site=op_site,
                 site=self.fragment,
+                read_op=binop_sugar,
             )
         if isinstance(self.target, Attribute):
             from sugar_lift_py_tests.sugar.augassign_sugar import (
