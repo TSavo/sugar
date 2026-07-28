@@ -112,6 +112,106 @@ GeneratorStepV1 = (
 )
 
 
+def _generator_value_testimony(value: object, *, owner: str) -> dict:
+    """Content-addressed testimony for one binding-state or step payload value."""
+    if value is None:
+        return {"kind": "null"}
+    if isinstance(value, ResumeBindingV1):
+        return {
+            "kind": "resume-binding",
+            "resumeCoordinate": value.resume_coordinate,
+            "value": _generator_value_testimony(value.resume_value, owner=owner),
+        }
+    to_term = getattr(value, "to_term", None)
+    if callable(to_term):
+        from sugar_lift_py_tests.ir import _term_content_cid
+
+        return {
+            "kind": "term-cid",
+            "contentCid": _term_content_cid(to_term(owner=owner)),
+        }
+    # IR Terms are already content-addressable without a FloorValue wrapper.
+    from sugar_lift_py_tests.ir import (
+        _ConstBool,
+        _ConstInt,
+        _ConstReal,
+        _ConstStr,
+        _Ctor,
+        _Lambda,
+        _Var,
+        _term_content_cid,
+    )
+
+    if isinstance(
+        value, (_Ctor, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Var, _Lambda)
+    ):
+        return {"kind": "term-cid", "contentCid": _term_content_cid(value)}
+    fragment = getattr(value, "fragment", None)
+    if fragment is not None:
+        seal = getattr(fragment, "seal", None)
+        if callable(seal):
+            return {"kind": "fragment-cid", "contentCid": seal().cid}
+    wire = getattr(value, "wire", None)
+    if callable(wire):
+        return {"kind": "wire", "payload": wire()}
+    if isinstance(value, (str, int, bool)):
+        return {"kind": "primitive", "value": value}
+    # Typed binding entries may project through coordinate CID.
+    coordinate = getattr(value, "coordinate", None)
+    coordinate_cid = getattr(coordinate, "cid", None)
+    if isinstance(coordinate_cid, str):
+        return {"kind": "binding-coordinate", "coordinateCid": coordinate_cid}
+    raise TypeError(
+        f"{owner} cannot content-address value of type {type(value).__name__}; "
+        "project authenticated construction testimony, never object identity"
+    )
+
+
+def _generator_step_testimony(step: object, *, owner: str) -> dict:
+    """Content-addressed testimony for one generator step."""
+    if isinstance(step, YieldStepV1):
+        return {
+            "kind": "yield",
+            "value": _generator_value_testimony(step.value, owner=owner),
+        }
+    if isinstance(step, ReturnStepV1):
+        return {
+            "kind": "return",
+            "value": _generator_value_testimony(step.value, owner=owner),
+        }
+    if isinstance(step, OpaqueStepV1):
+        return {
+            "kind": "opaque",
+            "observed": step.observed,
+            "carriesSuspension": step.carries_suspension,
+        }
+    if isinstance(step, InertStepV1):
+        return {"kind": "inert", "observed": step.observed}
+    if isinstance(step, FinallyStepV1):
+        return {
+            "kind": "finally",
+            "statements": [
+                _generator_value_testimony(item, owner=owner)
+                for item in step.statements
+            ],
+        }
+    if isinstance(step, IfStepV1):
+        return {
+            "kind": "if",
+            "fragmentCid": step.fragment_cid,
+            "guard": _generator_value_testimony(step.guard, owner=owner),
+            "thenSteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.then_steps
+            ],
+            "elseSteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.else_steps
+            ],
+        }
+    raise TypeError(
+        f"{owner} cannot content-address step of type {type(step).__name__}"
+    )
+
+
 @dataclass(frozen=True)
 class ResumeBindingV1:
     resume_coordinate: str
@@ -175,6 +275,51 @@ class GeneratorConstructionV1:
             binding_state=binding_state,
             steps=tuple(steps),
             instance_coordinate=instance_coordinate,
+        )
+
+    def construction_term_preimage(self) -> dict:
+        """Authenticated construction + lifecycle content for term projection.
+
+        Derives solely from construction coordinates (allocation/frame/instance),
+        step testimony, binding-state testimony, and lifecycle (cursor /
+        suspended resume). Never object identity, class spelling, or a
+        fabricated generic manager DTO disconnected from this preimage.
+        """
+        return {
+            "kind": "python-generator-construction-term",
+            "schemaVersion": "1",
+            "allocationCoordinate": self.allocation_coordinate,
+            "frameCoordinate": self.frame_coordinate,
+            "instanceCoordinate": self.instance_coordinate,
+            "cursor": self.cursor,
+            "suspendedResumeCoordinate": self.suspended_resume_coordinate,
+            "bindingState": [
+                _generator_value_testimony(item, owner="GeneratorConstructionV1")
+                for item in self.binding_state
+            ],
+            "steps": [
+                _generator_step_testimony(step, owner="GeneratorConstructionV1")
+                for step in self.steps
+            ],
+        }
+
+    def construction_term_cid(self) -> str:
+        return cid_of_json(self.construction_term_preimage())
+
+    def to_term(self, *, owner: str):
+        """Canonical term for ManagerBinding and other record testimony.
+
+        Content-addressed over :meth:`construction_term_preimage`. Identical
+        construction and lifecycle yield identical terms; any change to
+        generator/frame/state testimony changes the term.
+        """
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:generator-construction",
+            [str_const(self.construction_term_cid())],
+            symbol_kind="coordinate",
         )
 
     def resume(self):
