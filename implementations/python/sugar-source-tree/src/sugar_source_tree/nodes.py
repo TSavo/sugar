@@ -5607,6 +5607,9 @@ class With(Statement):
 
             manager_slot = item._manager_slot_id()
             enter_slot = f"{manager_slot}#enter_result" if binds_enter_result else None
+            enter_definition, exit_definition = (
+                self._require_native_resource_definitions(resolved_ref)
+            )
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
@@ -5620,6 +5623,8 @@ class With(Statement):
                     resolved_ref, resolved_ref.use_site
                 ),
                 enter_slot_id=enter_slot,
+                enter_definition=enter_definition,
+                exit_definition=exit_definition,
                 site=self.fragment,
             )
         panic = RuntimeSelectedContextManager(
@@ -5631,6 +5636,39 @@ class With(Statement):
         )
         self.reporter.report_gap(self, panic)
         raise panic
+
+    def _require_native_resource_definitions(self, resolved_ref):
+        """Require both protocol methods through the one authenticated door."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            NativeDefinitionCoordinateGapV1,
+            NativeProtocolSlot,
+        )
+        from .panic import SugarNotWritten
+
+        refs = self.unit.construction_context.contract_refs
+        receiver = resolved_ref.use_site
+        enter = refs.require_native_definition(
+            receiver, NativeProtocolSlot.CONTEXT_ENTER
+        )
+        exit_ = refs.require_native_definition(
+            receiver, NativeProtocolSlot.CONTEXT_EXIT
+        )
+        for resolution in (enter, exit_):
+            if isinstance(resolution, NativeDefinitionCoordinateGapV1):
+                raise SugarNotWritten(
+                    blame=self.fragment,
+                    owner="With._require_native_resource_definitions",
+                    observed=resolution.reason,
+                    requested=(
+                        "authenticated source definition coordinates for both "
+                        "context-enter and context-exit"
+                    ),
+                    fix=(
+                        "retain this native resource as undischarged until the "
+                        "shared definition door resolves the missing slot"
+                    ),
+                )
+        return enter, exit_
 
     def _authenticate_expected_exception_type(self, manager, manager_sugar, reference):
         """Attach the floor-owned identity to the selected real call operand."""
