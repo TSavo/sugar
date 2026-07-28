@@ -491,23 +491,6 @@ class SourceUnit:
                 containing.append(candidate)
         if containing:
             owner = max(containing, key=lambda item: item.line_col_span().start_line)
-            nested = tuple(
-                member
-                for member in owner.body
-                if isinstance(member, (FunctionDef, AsyncFunctionDef))
-                and member.name == call.func.id
-                and member.unit.source_cid == call.unit.source_cid
-            )
-            if len(nested) == 1:
-                definition = nested[0]
-                definition_span = definition.line_col_span()
-                if (
-                    definition_span.start_line <= span.start_line
-                    and span.start_line <= owner.line_col_span().end_line
-                    and (definition_span.start_line, definition_span.start_col)
-                    < (span.start_line, span.start_col)
-                ):
-                    return definition
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
                 symbol = table.lookup(call.func.id)
