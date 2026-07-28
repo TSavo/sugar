@@ -2565,13 +2565,15 @@ def _projected_manager_call_uses(source_file):
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
-    from sugar_source_tree.nodes import Call, With
+    from sugar_source_tree.nodes import AsyncWith, Call, With
+
+    manager_scope_types = (With, AsyncWith)
 
     uses = {}
 
     def collect(root, *, projected_names: bool) -> None:
         for node in root.walk():
-            if not isinstance(node, With):
+            if not isinstance(node, manager_scope_types):
                 continue
             for item in node.items:
                 expr = item.context_expr
