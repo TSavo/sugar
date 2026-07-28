@@ -19,7 +19,7 @@ class LoopControlSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None):
-        del ctx
         return ExitSet.halted(
-            LoopControlEffect(self.action, self.target_cid, self.occurrence_cid)
+            LoopControlEffect(self.action, self.target_cid, self.occurrence_cid),
+            state=ctx,
         )
