@@ -34,6 +34,8 @@ import hashlib
 import re
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     Halted,
@@ -610,16 +612,24 @@ def test_source_visible_subscript_leaves_construct_after_store_coordinate_law(
 
 
 def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> None:
-    """Runtime-selected receivers still refuse at the store door (#6599)."""
+    """Formal receivers mint undischarged setitem carrier (not Completed).
+
+    Runtime-selected non-formal receivers still refuse at the store door
+    (#6599 SugarNotWritten).  Formal operands are the n-ary setitem vertical:
+    ``NativeOperationExitCarrierV1`` awaiting caller actuals.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
     sugar = _function_sugar(
         tmp_path, "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n", "formal_sub"
     )
-    try:
-        sugar.desugar(None)
-    except SugarNotWritten as gap:
-        assert "undischarged subscript store" in gap.observed
-        return
-    raise AssertionError("expected undischarged subscript store for formal receiver")
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "setitem"
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        outcome.discharge({})
 
 
 def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
