@@ -269,6 +269,17 @@ class SourceVisibleCallFrameV1:
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:
+        owner = self.owner
+        owner_fragment = getattr(owner, "fragment", None)
+        if owner_fragment is None or self.definition_site != _source_coordinate(owner):
+            raise SourceCallBindingGap(
+                "source call frame has a foreign definition site"
+            )
+        if owner_fragment.seal().cid != self.definition_fragment_cid:
+            raise SourceCallBindingGap(
+                "source call frame has a foreign definition fragment"
+            )
+
         coordinates = self.formal_coordinates
         if len(coordinates) != len(self.parameters):
             raise SourceCallBindingGap("formal coordinate roster is missing an entry")
