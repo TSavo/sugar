@@ -14,15 +14,28 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class AugAssignSugar(Sugar):
-    """Lexical Name ``x OP= rhs`` — rebind threaded by substitute; effects from operation.
+    """Lexical Name ``x OP= rhs`` — authenticated inplace owns the rebind.
 
-    Name-target AugAssign ownership of authenticated ``project_inplace`` as the
-    **binding** (not a discarded side evaluation) is a separate vertical —
-    do not fold partial iadd evaluation here while substitute still binds
-    ordinary ``_make_binop`` (__add__).  See banked Name AugAssign backlog.
+    Composition (same substrate as attribute/subscript, store replaced by
+    lexical rebind):
+
+      1. Evaluate ``left`` (prior binding) once
+      2. Evaluate ``rhs`` once
+      3. ``result = project_augmented / project_inplace`` (iadd edge, NotImplemented law)
+      4. On success: ``ScopeRebind(name, result)`` — iadd result IS the binding
+      5. On halt: no ScopeRebind (and_then / RaiseValue law) — prior binding stands
+
+    Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
+    Later name uses stay as Name and read the temporal ScopeRebind.  Dual-eval
+    of discarded project_inplace + add-binding is the forbidden shape.
     """
 
-    operation: Sugar
+    name: str
+    left: Sugar
+    right: Sugar
+    operator: str
+    operation: Callable
+    op_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -36,12 +49,21 @@ class AugAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
         from sugar_lift_py_tests.outcome import Complete
 
-        # Evaluate the threaded read-op for effects; rebind already owns the tail.
-        return self.operation.desugar(ctx).and_then(
-            lambda _value: Complete(BlockValue((), can_fall_through=True))
+        return self.left.desugar(ctx).and_then(
+            lambda left: self.right.desugar(ctx).and_then(
+                lambda right: project_augmented(
+                    left,
+                    right,
+                    operator=self.operator,
+                    projector=self.operation,
+                    site=self.op_site,
+                ).and_then(
+                    lambda result: Complete(ScopeRebind(self.name, result))
+                )
+            )
         )
 
 
