@@ -63,6 +63,8 @@ class PrivacyLeakEvidence:
     discovered_closed_types: tuple[type, ...]
     audited_closed_types: tuple[type, ...]
     unaudited_closed_types: tuple[type, ...]
+    product_relation_types: tuple[type, ...]
+    receipt_relation_types: tuple[type, ...]
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,11 @@ class LawOfOneEvidence:
         assert privacy.discovered_closed_types
         assert privacy.audited_closed_types == privacy.discovered_closed_types
         assert privacy.unaudited_closed_types == ()
+        assert privacy.product_relation_types == privacy.receipt_relation_types
+        assert set(privacy.discovered_closed_types) == {
+            privacy.product_type,
+            *privacy.product_relation_types,
+        }
         assert len(privacy.definitions) == len(privacy.audited_closed_types)
         assert len(privacy.constructions) >= len(privacy.audited_closed_types)
         assert privacy.aliases == ()

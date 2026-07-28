@@ -508,16 +508,34 @@ def audit_law_of_one(
     assert dict(truthful_protocol)["seal"] > 0
     assert dict(foreign_protocol)["seal"] > 0
 
-    discovered_closed_type_set = {product_type}
     assert is_dataclass(product), "constructed product must expose closed fields"
-    for field in fields(product):
-        value = getattr(product, field.name)
-        if not isinstance(value, tuple):
-            continue
-        for item in value:
-            item_type = type(item)
-            if item_type.__module__ == product_type.__module__:
-                discovered_closed_type_set.add(item_type)
+
+    def authentic_relation_types(container: object) -> tuple[type, ...]:
+        assert is_dataclass(container)
+        found = {
+            type(item)
+            for field in fields(container)
+            for value in (getattr(container, field.name),)
+            if isinstance(value, tuple)
+            for item in value
+            if type(item).__module__ == product_type.__module__
+        }
+        return tuple(
+            sorted(
+                found,
+                key=lambda runtime_type: (
+                    runtime_type.__module__, runtime_type.__qualname__
+                ),
+            )
+        )
+
+    product_relation_types = authentic_relation_types(product)
+    receipt_relation_types = authentic_relation_types(receipt)
+    discovered_closed_type_set = {
+        product_type,
+        *product_relation_types,
+        *receipt_relation_types,
+    }
     discovered_closed_types = tuple(
         sorted(
             discovered_closed_type_set,
@@ -555,9 +573,18 @@ def audit_law_of_one(
         for binding in graph.bindings
         if binding.kind in {"parameter", "classmethod"}
     }
-    for binding in graph.bindings:
-        if not (set(binding.targets) & opaque_symbols):
-            continue
+    opaque_bindings = tuple(
+        binding
+        for binding in graph.bindings
+        if set(binding.targets) & opaque_symbols
+    )
+    opaque_read_targets = {
+        target
+        for edge in graph.calls
+        for target in edge.targets
+        if target in opaque_symbols
+    }
+    for binding in opaque_bindings:
         site = EvidenceSite(
             binding.path, binding.line, binding.owner.lexical, binding.name
         )
@@ -565,7 +592,11 @@ def audit_law_of_one(
             aliases.append(site)
         elif binding.kind == "reexport":
             reexports.append(site)
-        if binding.kind == "alias" and binding.owner not in function_owners:
+        if (
+            binding.kind == "alias"
+            and binding.owner not in function_owners
+            and bool(set(binding.targets) & opaque_read_targets)
+        ):
             caches.append(site)
     for symbol in opaque_symbols:
         if not symbol.name.startswith("_"):
@@ -605,21 +636,12 @@ def audit_law_of_one(
             serializers.append(
                 EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
             )
-    audited_opaque_reference_count = (
-        len(opaque_symbols) + len(opaque_edges) + len(aliases)
-        + len(reexports) + len(serializers)
+    discovered_opaque_reference_count = (
+        len(opaque_symbols) + len(opaque_edges) + len(opaque_bindings)
     )
-    opaque_names = {symbol.name for symbol in opaque_symbols}
-    discovered_opaque_reference_count = sum(
-        1
-        for tree in parsed.values()
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Name, ast.Attribute))
-        and (
-            (isinstance(node, ast.Name) and node.id in opaque_names)
-            or (isinstance(node, ast.Attribute) and node.attr in opaque_names)
-        )
-    ) + len(opaque_symbols)
+    audited_opaque_reference_count = (
+        len(definitions) + len(constructions) + len(opaque_bindings)
+    )
     audited_closed_types = tuple(
         runtime_type
         for runtime_type in discovered_closed_types
@@ -705,6 +727,7 @@ def audit_law_of_one(
             discovered_opaque_reference_count, audited_opaque_reference_count,
             discovered_closed_types, audited_closed_types,
             unaudited_closed_types,
+            product_relation_types, receipt_relation_types,
         ),
         projection=ProjectionClosureEvidence(
             definition=projection_def,

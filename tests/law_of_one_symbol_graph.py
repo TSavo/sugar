@@ -161,6 +161,12 @@ class SymbolGraph:
                 if target is not None:
                     found.add(target)
             return found
+        if isinstance(expr, ast.Call):
+            # Preserve constructor/factory provenance across a write.  The
+            # graph does not claim the runtime return type; it records the
+            # authenticated callable that produced the stored value so later
+            # scope/read auditing can identify cached construction doors.
+            return self._resolve_expr(expr.func, env)
         return set()
 
     def _record_call(self, node: ast.Call, owner: Symbol, env: dict[str, set[Symbol]]) -> None:
