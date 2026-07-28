@@ -135,15 +135,39 @@ def _formula_from_floor_value(value, site):
     return predicate_formula(value, site)
 
 
+def _exceptional_faces_only(exits, prefix_guard):
+    """Propagate only non-Completed control faces under ``prefix_guard``.
+
+    Completed faces feed matching / guard truth; they must not also escape as
+    completed Match outcomes by wholesale ExitSet union.
+    """
+    from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    side = ExitSet(())
+    for face in exits.exits:
+        if isinstance(face, Completed):
+            continue
+        if isinstance(face, Halted):
+            side = side.union(_halted_face(face, prefix_guard))
+        elif isinstance(face, Incomplete):
+            side = side.union(_incomplete_as_halted(face, prefix_guard))
+        else:
+            raise NotImplementedError(
+                f"match side face not lifted: {type(face).__name__}"
+            )
+    return side
+
+
 def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev, ctx):
-    """Build match formula; any equality Incomplete/Halted rides under not_prev.
+    """Build match formula; exceptional alt/equality faces ride under not_prev.
 
     Returns ``(match_formula | None, side_exits: ExitSet)``.
-    ``match_formula is None`` means no completed match formula was obtained
-    (only exceptional faces under not_prev).
+    Completed faces of alternative/equality ExitSets feed matching ONLY —
+    they are never unioned wholesale into the Match outcome.
     """
     from sugar_lift_py_tests.ir import or_
-    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.outcome import Complete, Completed, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, true_guard
 
     if not alternatives:
@@ -157,16 +181,19 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
             side = side.union(_incomplete_as_halted(alt_out, not_prev))
             continue
         if isinstance(alt_out, ExitSet):
-            # Restrict whole alt construction ExitSet by not_prev.
-            side = side.union(_restrict(alt_out, not_prev))
-            # Completed alt values may still supply equality formulas.
+            # Exceptional/control faces only — not Completed outcomes.
+            side = side.union(_exceptional_faces_only(alt_out, not_prev))
             for face in alt_out.exits:
                 if not isinstance(face, Completed):
                     continue
+                # Matching under not_prev ∧ alt-face polarity.
+                eq_prefix = _and_parts(not_prev, face.guard)
                 eq_out = subject.equals(face.value, site)
-                side, formula = _equality_outcome_under(eq_out, not_prev, site, side)
+                side, formula = _equality_outcome_under(eq_out, eq_prefix, site, side)
                 if formula is not None:
-                    alts.append(formula)
+                    # Alt polarity is already in formula when equality is Complete;
+                    # when multi-face equality, formula is OR of (face.guard ∧ truth).
+                    alts.append(_and_parts(face.guard, formula))
             continue
         if not isinstance(alt_out, Complete):
             raise NotImplementedError(
@@ -184,27 +211,36 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
 
 
 def _equality_outcome_under(eq_out, not_prev, site, side):
-    """Process subject.equals outcome under not_prev; return (side, formula|None)."""
+    """Process subject.equals under not_prev; return (side, formula|None).
+
+    ExitSet Completed faces contribute ``face.guard ∧ truth(face.value)`` to
+    the match formula only. Non-completed faces propagate separately (state
+    preserved). Never wholesale-unions Completed equality faces into side.
+    """
+    from sugar_lift_py_tests.ir import or_
     from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     if isinstance(eq_out, Incomplete):
         return side.union(_incomplete_as_halted(eq_out, not_prev)), None
     if isinstance(eq_out, ExitSet):
-        # Every face of equality is restricted by not_prev (never unguarded).
-        restricted = _restrict(eq_out, not_prev)
-        side = side.union(restricted)
         formulas = []
         for face in eq_out.exits:
             if isinstance(face, Halted):
-                # Already included via restricted with state preserved.
+                side = side.union(_halted_face(face, not_prev))
                 continue
             if isinstance(face, Completed):
-                formulas.append(_formula_from_floor_value(face.value, site))
+                truth = _formula_from_floor_value(face.value, site)
+                formulas.append(_and_parts(face.guard, truth))
+                continue
+            if isinstance(face, Incomplete):
+                side = side.union(_incomplete_as_halted(face, not_prev))
+                continue
+            raise NotImplementedError(
+                f"match equality face not lifted: {type(face).__name__}"
+            )
         if not formulas:
             return side, None
-        from sugar_lift_py_tests.ir import or_
-
         formula = or_(tuple(formulas)) if len(formulas) > 1 else formulas[0]
         return side, formula
     if isinstance(eq_out, Complete):
@@ -217,12 +253,11 @@ def _equality_outcome_under(eq_out, not_prev, site, side):
 def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula):
     """Fan a guard outcome into ExitSets under ``reached``; return (parts, earlier_bits).
 
-    Per Completed face: derive that face's guard truth and run the body under
-    ``reached ∧ face.guard ∧ truth``. Per Halted face: preserve Halted with
-    state under ``reached ∧ face.guard``.
+    Per Completed face: body under ``reached ∧ face.guard ∧ truth``.
+    Per Halted face: preserve Halted under ``reached ∧ face.guard``; mark only
+    ``match_formula ∧ face.guard`` consumed (not the whole match path).
     """
     from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -230,9 +265,11 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula):
     parts: list = []
     earlier_bits: list = []
 
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
     if isinstance(guard_out, Incomplete):
         parts.append(_incomplete_as_halted(guard_out, reached))
-        # Guard halt consumes the match path for later cases.
+        # No face polarity: whole reached path is consumed by the halt.
         earlier_bits.append(match_formula)
         return parts, earlier_bits
 
@@ -240,16 +277,19 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula):
         for face in guard_out.exits:
             if isinstance(face, Halted):
                 parts.append(_halted_face(face, reached))
-                # Halt on guard under match: this match path does not fall through.
-                earlier_bits.append(match_formula)
+                # Only this polarity of the match is consumed by the halt.
+                earlier_bits.append(_and_parts(match_formula, face.guard))
                 continue
             if isinstance(face, Completed):
                 truth = _formula_from_floor_value(face.value, site)
-                # Preserve the face's own guard polarity with reached + truth.
                 selection = _and_parts(reached, face.guard, truth)
                 body_exits = reduce_block_to_exitset(body, body_ctx)
                 parts.append(_restrict(body_exits, selection))
                 earlier_bits.append(_and_parts(match_formula, face.guard, truth))
+                continue
+            if isinstance(face, Incomplete):
+                parts.append(_incomplete_as_halted(face, reached))
+                earlier_bits.append(match_formula)
                 continue
             raise NotImplementedError(
                 f"match guard ExitSet face not lifted: {type(face).__name__}"
@@ -386,25 +426,8 @@ class MatchSugar(Sugar):
             from sugar_lift_py_tests.floor.block_value import BlockValue
 
             return Complete(BlockValue((), can_fall_through=True))
-        # Single unconditional completed arm collapses to Complete for callers
-        # that expect BlockValue (value-pattern legacy path).
-        if (
-            len(accumulated.exits) == 1
-            and isinstance(accumulated.exits[0], __import__(
-                "sugar_lift_py_tests.outcome", fromlist=["Completed"]
-            ).Completed)
-            and accumulated.exits[0].guard == true_guard()
-        ):
-            from sugar_lift_py_tests.floor.block_value import BlockValue
-            from sugar_lift_py_tests.outcome import Completed
-
-            face = accumulated.exits[0]
-            assert isinstance(face, Completed)
-            value = face.value
-            if hasattr(value, "entries") or hasattr(value, "statements"):
-                return Complete(value)
-            return Complete(BlockValue((value,), can_fall_through=True))
-        return accumulated.normalize()
+        # Shared ExitSet projection — no output-kind membrane on value shape.
+        return accumulated.normalize().collapse()
 
 
 @dataclass(frozen=True)

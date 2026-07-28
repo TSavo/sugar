@@ -306,28 +306,28 @@ def test_guard_halt_bypasses_later_cases() -> None:
         ),
     )
     outcome = sugar.desugar(ReduceContext.root(owner="guard-halt"))
-    # Guard halt publishes Halted (state preserved when present); later cases
-    # do not contribute an unguarded Completed winner.
+    # Guard halt: Halted (or ExitSet.collapse → Incomplete for sole true-guard
+    # halt). Later cases do not contribute an unguarded Completed winner.
+    if isinstance(outcome, Incomplete):
+        assert outcome.effect.exception_name == "ValueError"
+        return
     if isinstance(outcome, ExitSet):
         halted = [e for e in outcome.exits if isinstance(e, Halted)]
         assert halted, outcome.exits
-        assert halted[0].effect.exception_name == "ValueError"
-        # Original Halted face path — effect present; state may be None for
-        # Incomplete-origin guards, but we never rebuilt Incomplete from Halted.
+        assert any(h.effect.exception_name == "ValueError" for h in halted)
         completed = [e for e in outcome.exits if isinstance(e, Completed)]
         for face in completed:
             from sugar_lift_py_tests.outcome.exit_set import true_guard
 
             if face.guard == true_guard():
-                # Unguarded completion after guard halt would defeat the law.
                 rets = _block_return_values(ExitSet((face,)))
                 assert TermValue(2) not in rets
-    else:
-        assert isinstance(outcome, Complete)
-        entries = _block_entries(outcome)
-        incompletes = [e for e in entries if isinstance(e, Incomplete)]
-        assert incompletes, entries
-        assert incompletes[0].effect.exception_name == "ValueError"
+        return
+    assert isinstance(outcome, Complete)
+    entries = _block_entries(outcome)
+    incompletes = [e for e in entries if isinstance(e, Incomplete)]
+    assert incompletes, entries
+    assert incompletes[0].effect.exception_name == "ValueError"
 
 # ===========================================================================
 # Case order and wildcard fall-through distinct
