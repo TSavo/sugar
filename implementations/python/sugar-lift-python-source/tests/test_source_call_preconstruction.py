@@ -12,6 +12,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ReturnValue, TermValue
+from sugar_lift_py_tests.gap import ConstructionPanic
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.source_call_resolution import (
     SourceCallPreconstructionGapV1,
@@ -49,6 +50,18 @@ def _distribution(root: Path, implementation: str) -> importlib.metadata.Distrib
         for file in files:
             writer.writerow((file, "", ""))
     return importlib.metadata.Distribution.at(metadata)
+
+
+def _distribution_with_nested_module(
+    root: Path, implementation: str, nested: str
+) -> importlib.metadata.Distribution:
+    distribution = _distribution(root, implementation)
+    package = root / "unprivileged"
+    (package / "nested.py").write_text(nested, encoding="utf-8")
+    record = root / "unprivileged_dist-1.0.dist-info" / "RECORD"
+    with record.open("a", newline="", encoding="utf-8") as stream:
+        csv.writer(stream).writerow(("unprivileged/nested.py", "", ""))
+    return distribution
 
 
 def _coordinate(call: Call) -> SourceFragmentCoordinateV1:
@@ -119,6 +132,91 @@ def test_renamed_cross_file_call_installs_source_frame_and_constructs_return(
     )
     assert isinstance(nested_result, BlockValue)
     assert nested_result.statements == (ReturnValue(TermValue(17)),)
+
+
+def test_authenticated_nested_attribute_call_installs_recursive_source_frame(
+    tmp_path: Path,
+) -> None:
+    """An attributed callee with authenticated defining bytes is not dynamic."""
+    distribution = _distribution_with_nested_module(
+        tmp_path,
+        "import unprivileged.nested as nested\n\n"
+        "def arbitrary_helper(value=17):\n"
+        "    return nested.project(value)\n",
+        "def project(value):\n"
+        "    return value\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as renamed\nrenamed()\n",
+    )
+    call = next(node for node in source_file.nodes() if isinstance(node, Call))
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    coordinate = _coordinate(call)
+    assert isinstance(
+        context.source_call_resolutions[coordinate], SourceCallPreconstructionRefV1
+    )
+    value = call.sugar().desugar().value
+    assert isinstance(value, CallSiteValue)
+    result = value.force_floor(
+        None, owner="authenticated nested attribute call", project_callsite=False
+    )
+    returned = result.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    nested_result = returned.value.force_floor(
+        None, owner="authenticated attributed callee", project_callsite=False
+    )
+    assert nested_result.statements == (ReturnValue(TermValue(17)),)
+
+
+def test_runtime_receiver_attribute_call_remains_dynamic_and_loud(
+    tmp_path: Path,
+) -> None:
+    """A formal receiver supplies no authenticated identity for its method."""
+    distribution = _distribution(
+        tmp_path,
+        "def arbitrary_helper(receiver, value):\n"
+        "    return receiver.project(value)\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as renamed\n"
+        "renamed(subject, 17)\n",
+    )
+    call = next(node for node in source_file.nodes() if isinstance(node, Call))
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    coordinate = _coordinate(call)
+    row = context.source_call_resolutions[coordinate]
+    assert isinstance(row, SourceCallPreconstructionRefV1)
+    assert coordinate in context.source_call_frames
+    value = call.sugar().desugar().value
+    assert isinstance(value, CallSiteValue)
+    outer = value.force_floor(
+        None, owner="runtime receiver attribute call", project_callsite=False
+    )
+    returned = outer.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    with pytest.raises(ConstructionPanic) as raised:
+        returned.value.force_floor(
+            None, owner="runtime receiver attribute call", project_callsite=False
+        )
+    assert "blame=project observed=missing callsite body" in str(raised.value)
 
 
 def test_source_visible_function_with_opaque_child_stays_typed_loud(

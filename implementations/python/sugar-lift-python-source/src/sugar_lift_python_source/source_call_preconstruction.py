@@ -122,14 +122,7 @@ def populate_source_visible_call_frames(
             )
             continue
         frame, target = frame_result
-        opaque = _unsupported_call(target)
-        if opaque is not None:
-            context.source_call_resolutions[coordinate] = (
-                SourceCallPreconstructionGapV1(
-                    "dynamic-call-target", coordinate, opaque
-                )
-            )
-            continue
+        _preconstruct_authenticated_attribute_calls(target, graph=graph, session=session)
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
         try:
@@ -189,19 +182,68 @@ def populate_source_visible_call_frames(
         )
 
 
-def _unsupported_call(target) -> str | None:
-    """Keep method/computed dispatch loud until receiver identity is authenticated."""
+def _preconstruct_authenticated_attribute_calls(
+    target, *, graph, session, visited: frozenset[tuple] = frozenset()
+) -> None:
+    """Install exact frames for attributed callees authenticated in this artifact.
+
+    The outer import receipt authenticates ``target``.  This second lexical
+    pass reads receipts from those same retained module bytes and admits only
+    exact attributed call coordinates whose targets resolve through the same
+    dependency-artifact graph.  No receiver or member spelling is consulted.
+    """
     if not isinstance(target, FunctionDef):
-        return None
-    stack = list(reversed(target.body))
-    while stack:
-        node = stack.pop()
-        if isinstance(node, FunctionDef):
+        return
+    context = target.unit.construction_context
+    if context is None:
+        return
+    target_key = (target.unit.source_cid, _span_key(target))
+    if target_key in visited:
+        return
+    visited = visited | {target_key}
+
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    receipts, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(target.unit.filename),
+        target.unit.source,
+        target.unit.source_cid,
+        module_identities={},
+    )
+    calls = tuple(
+        node
+        for node in target.walk()
+        if isinstance(node, Call) and isinstance(node.func, Attribute)
+    )
+    calls_by_span = {
+        span: call
+        for call in calls
+        for span in (_span_key(call), _span_key(call.func))
+    }
+    for receipt in receipts:
+        raw = receipt.use["useSite"]
+        key = (raw["startLine"], raw["startCol"], raw["endLine"], raw["endCol"])
+        call = calls_by_span.get(key)
+        if call is None:
             continue
-        if isinstance(node, Call) and not isinstance(node.func, Name):
-            return node.func.kind
-        stack.extend(reversed([child for _, _, child in node.children()]))
-    return None
+        # The lexical pass authenticated this exact attributed use against its
+        # import binding. That is sufficient to distinguish it from runtime
+        # receiver dispatch; the call's ordinary factory/definition door still
+        # owns whether the target can construct a Floor.
+        resolved = resolve_import_binding(receipt, graph=graph, session=session)
+        if not isinstance(resolved, ResolvedPythonObjectV1):
+            continue
+        projected = resolve_source_visible_frame(
+            resolved, graph=graph, session=session
+        )
+        if isinstance(projected, ManagerConstructionGapV1):
+            continue
+        frame, nested_target = projected
+        _preconstruct_authenticated_attribute_calls(
+            nested_target, graph=graph, session=session, visited=visited
+        )
+        context.source_call_frames[_coordinate(call)] = frame
 
 
 def _span_key(node):
