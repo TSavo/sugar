@@ -301,9 +301,7 @@ def _message_pattern_operand_faces(projected_operand):
     from sugar_lift_py_tests.outcome import ExitSet
 
     projected = outcome_to_exitset(projected_operand)
-    completed = tuple(
-        face for face in projected.exits if isinstance(face, Completed)
-    )
+    completed = tuple(face for face in projected.exits if isinstance(face, Completed))
     if not completed:
         return None
     if all(face.value == completed[0].value for face in completed):
@@ -904,7 +902,7 @@ def populate_source_derived_resource_refs(
             resolved, graph=graph, session=session
         )
         if not isinstance(frame_result, ManagerConstructionGapV1):
-            frame, _ = frame_result
+            frame, generator_target = frame_result
             if frame.generator_steps is not None:
                 _install_source_call_frame(context, call, frame)
                 # Seat the provider Call at the manager-use coordinate so a
@@ -913,13 +911,17 @@ def populate_source_derived_resource_refs(
                 # frame by their own span; the use-site seat is what carries
                 # assigned multi-manager projection.
                 context.source_manager_provider_calls[coordinate] = call
-                # Publication: a source-owned generator manager is entered and
-                # exited by contextlib's generator CM class. Publish those two
-                # authenticated method coordinates so consumption can require
-                # them without resolving at desugar time. Identity is the
-                # suspension (generator_steps), never a manager spelling.
+                # Publication: construct the generator function's authenticated
+                # decorator/helper; its sole returned class owns enter/exit.
+                # Identity is the suspension (generator_steps) plus constructed
+                # decorator testimony — never a manager or class spelling scan.
                 _publish_generator_context_manager_native_definitions(
-                    context, coordinate
+                    context,
+                    coordinate,
+                    generator_target=generator_target,
+                    session=session,
+                    graph=graph,
+                    distribution_index=distribution_index,
                 )
                 continue
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
@@ -1232,150 +1234,38 @@ def _publish_class_protocol_native_definitions(context, receiver, behavior) -> N
     )
 
 
-_GENERATOR_CM_PROTOCOL_COORDS: (
-    tuple[
-        "SourceFragmentCoordinateV1",  # type: ignore[name-defined]
-        "SourceFragmentCoordinateV1",
-    ]
-    | None
-    | bool
-) = False
+def _publish_generator_context_manager_native_definitions(
+    context,
+    receiver,
+    *,
+    generator_target,
+    session,
+    graph=None,
+    distribution_index=None,
+) -> None:
+    """Publish enter/exit from the decorator helper's constructed return class.
 
+    Producer path only:
+    1. Resolve each decorator on the generator FunctionDef through its
+       authenticated import/module binding (typed node testimony).
+    2. Construct that decorator function through ``resolve_source_visible_frame``.
+    3. Project the sole nested helper the decorator returns, then the sole
+       class that helper constructs on return.
+    4. Publish that class's constructed ``__enter__`` / ``__exit__`` definition
+       sites.
 
-def _generator_context_manager_protocol_coordinates():
-    """Authenticated language generator-CM enter/exit spans.
-
-    Python law: ``@contextmanager`` wraps a generator in the stdlib generator
-    context-manager class. That class's ``__enter__`` / ``__exit__`` are the
-    source-defined protocol methods for every generator manager (including
-    pandas ``option_context``). The nested try/finally in the generator body
-    runs under ``__exit__`` via ``throw``/``next``; ``__exit__`` itself decides
-    suppression (falsy when the same exception re-raises).
-
-    Selection is structural on authenticated contextlib source: the unique
-    module-level class whose body defines both protocol methods and that the
-    language ``contextmanager`` helper constructs. Failure to load stdlib
-    source leaves the slots unpublished (typed gap), never a guessed
-    coordinate. Cached per process after the first authenticated read.
+    Ambiguous helpers/classes refuse (no first-candidate). No process-global
+    cache: coordinates are re-derived from authenticated source construction
+    (session frame memos remain content-keyed by definition).
     """
-    global _GENERATOR_CM_PROTOCOL_COORDS
-    if _GENERATOR_CM_PROTOCOL_COORDS is not False:
-        return _GENERATOR_CM_PROTOCOL_COORDS if _GENERATOR_CM_PROTOCOL_COORDS else None
-
-    import ast
-
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        authenticate_dependency_top_level,
-    )
-
-    try:
-        graph = authenticate_dependency_top_level("contextlib")
-    except DependencyArtifactAuthenticationError:
-        _GENERATOR_CM_PROTOCOL_COORDS = None
-        return None
-
-    module_file = None
-    for item in graph.files:
-        seat = getattr(item, "source_seat", "") or ""
-        if seat == "contextlib.py" or seat.endswith("/contextlib.py"):
-            module_file = item
-            break
-    if module_file is None:
-        _GENERATOR_CM_PROTOCOL_COORDS = None
-        return None
-    try:
-        source = module_file.content.decode("utf-8")
-    except UnicodeError:
-        _GENERATOR_CM_PROTOCOL_COORDS = None
-        return None
-    source_cid = module_file.content_cid
-    try:
-        module = ast.parse(source)
-    except SyntaxError:
-        _GENERATOR_CM_PROTOCOL_COORDS = None
-        return None
-
-    # Prefer the class the language helper constructs: the module-level class
-    # that defines both protocol methods and appears in ``contextmanager``'s
-    # return. Fall back to the sole class that defines both methods when the
-    # helper shape is unavailable.
-    helper_return_names: set[str] = set()
-    for node in module.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name != "contextmanager":
-            continue
-        for child in ast.walk(node):
-            if isinstance(child, ast.Return) and isinstance(child.value, ast.Call):
-                func = child.value.func
-                if isinstance(func, ast.Name):
-                    helper_return_names.add(func.id)
-                elif isinstance(func, ast.Attribute):
-                    helper_return_names.add(func.attr)
-
-    candidates: list[
-        tuple[object, SourceFragmentCoordinateV1, SourceFragmentCoordinateV1]
-    ] = []
-    for node in module.body:
-        if not isinstance(node, ast.ClassDef):
-            continue
-        enter = exit_ = None
-        for item in node.body:
-            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            end_line = item.end_lineno if item.end_lineno is not None else item.lineno
-            end_col = (
-                item.end_col_offset
-                if item.end_col_offset is not None
-                else item.col_offset
-            )
-            coord = SourceFragmentCoordinateV1(
-                source_cid,
-                item.lineno,
-                item.col_offset,
-                end_line,
-                end_col,
-            )
-            if item.name == "__enter__":
-                enter = coord
-            elif item.name == "__exit__":
-                exit_ = coord
-        if enter is None or exit_ is None or enter == exit_:
-            continue
-        candidates.append((node, enter, exit_))
-
-    selected = None
-    if helper_return_names:
-        for node, enter, exit_ in candidates:
-            if node.name in helper_return_names:
-                selected = (enter, exit_)
-                break
-    if selected is None and len(candidates) == 1:
-        selected = (candidates[0][1], candidates[0][2])
-    if selected is None:
-        # Last structural path: the class that defines both methods and whose
-        # name is referenced by the decorator helper body (construction).
-        for node, enter, exit_ in candidates:
-            selected = (enter, exit_)
-            break
-
-    if selected is None:
-        _GENERATOR_CM_PROTOCOL_COORDS = None
-        return None
-    _GENERATOR_CM_PROTOCOL_COORDS = selected
-    return _GENERATOR_CM_PROTOCOL_COORDS
-
-
-def _publish_generator_context_manager_native_definitions(context, receiver) -> None:
-    """Publish generator-CM ``__enter__`` / ``__exit__`` for one use site."""
     from sugar_lift_py_tests.context_manager_resolution import NativeProtocolSlot
 
-    coords = _generator_context_manager_protocol_coordinates()
+    coords = _protocol_coords_from_generator_decorators(
+        generator_target,
+        session=session,
+        graph=graph,
+        distribution_index=distribution_index,
+    )
     if coords is None:
         return
     enter, exit_ = coords
@@ -1385,6 +1275,261 @@ def _publish_generator_context_manager_native_definitions(context, receiver) -> 
     _publish_native_definition(
         context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
     )
+
+
+def _protocol_coords_from_generator_decorators(
+    generator_target, *, session, graph=None, distribution_index=None
+):
+    """Construct enter/exit definition sites from generator decorator testimony."""
+    from sugar_source_tree.nodes import FunctionDef
+
+    if not isinstance(generator_target, FunctionDef):
+        return None
+    decorators = getattr(generator_target, "decorators", ()) or ()
+    if not decorators:
+        return None
+    published = []
+    for decorator in decorators:
+        decorator_fn = _construct_decorator_function(
+            decorator,
+            session=session,
+            graph=graph,
+            distribution_index=distribution_index,
+        )
+        if decorator_fn is None:
+            continue
+        returned_class = _sole_returned_manager_class(decorator_fn)
+        if returned_class is None:
+            continue
+        coords = _enter_exit_sites_from_class_def(returned_class)
+        if coords is None:
+            continue
+        published.append(coords)
+    # Exactly one decorator arm may yield protocol coordinates; several would
+    # reintroduce first-candidate selection across independent wrappers.
+    if len(published) != 1:
+        return None
+    return published[0]
+
+
+def _construct_decorator_function(
+    decorator, *, session, graph=None, distribution_index=None
+):
+    """Resolve and construct the decorator callable from typed import testimony."""
+    from sugar_source_tree.nodes import FunctionDef, Name
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        ResolvedPythonObjectV1,
+        authenticate_dependency_top_level,
+        resolve_authenticated_module_export,
+    )
+    from .manager_construction import (
+        ManagerConstructionGapV1,
+        resolve_source_visible_frame,
+    )
+
+    binding = _decorator_module_export_binding(decorator)
+    if binding is None:
+        # Same-module FunctionDef bound under the decorator Name.
+        if isinstance(decorator, Name):
+            binds = (decorator.unit.module_direct_bindings or {}).get(decorator.id, ())
+            if len(binds) == 1 and isinstance(binds[0], FunctionDef):
+                return binds[0]
+        return None
+    module_name, exported_name = binding
+    graphs = []
+    if graph is not None:
+        graphs.append(graph)
+    top_level = module_name.split(".", 1)[0]
+    try:
+        graphs.append(
+            authenticate_dependency_top_level(
+                top_level, distribution_index=distribution_index
+            )
+        )
+    except DependencyArtifactAuthenticationError:
+        pass
+    resolved = None
+    resolved_graph = None
+    for candidate in graphs:
+        if module_name not in candidate.modules:
+            continue
+        result = resolve_authenticated_module_export(
+            graph=candidate,
+            binding_cid=decorator.fragment.seal().cid,
+            module_name=module_name,
+            exported_name=exported_name,
+            session=session,
+        )
+        if isinstance(result, ResolvedPythonObjectV1):
+            resolved = result
+            resolved_graph = candidate
+            break
+    if resolved is None or resolved_graph is None:
+        return None
+    frame_result = resolve_source_visible_frame(
+        resolved, graph=resolved_graph, session=session
+    )
+    if isinstance(frame_result, ManagerConstructionGapV1):
+        return None
+    _frame, target = frame_result
+    if not isinstance(target, FunctionDef):
+        return None
+    return target
+
+
+def _decorator_module_export_binding(decorator) -> tuple[str, str] | None:
+    """Read (module_name, exported_name) from authenticated import bindings."""
+    from sugar_source_tree.nodes import Attribute, Import, ImportFrom, Name
+
+    unit = decorator.unit
+    bindings = unit.module_direct_bindings or {}
+    if isinstance(decorator, Name):
+        binds = bindings.get(decorator.id, ())
+        if len(binds) != 1:
+            return None
+        bind = binds[0]
+        if not isinstance(bind, ImportFrom) or not bind.module:
+            return None
+        for alias in bind.names:
+            local = alias.asname or alias.name
+            if local == decorator.id:
+                return bind.module, alias.name
+        return None
+    if isinstance(decorator, Attribute) and isinstance(decorator.value, Name):
+        binds = bindings.get(decorator.value.id, ())
+        if len(binds) != 1:
+            return None
+        bind = binds[0]
+        if isinstance(bind, Import):
+            for alias in bind.names:
+                local = alias.asname or alias.name
+                if local == decorator.value.id:
+                    return alias.name, decorator.attr
+        if isinstance(bind, ImportFrom) and bind.module:
+            # ``from pkg import mod`` then ``@mod.decorator`` — module is
+            # pkg.mod when the imported name is a module re-export.
+            for alias in bind.names:
+                local = alias.asname or alias.name
+                if local == decorator.value.id:
+                    return f"{bind.module}.{alias.name}", decorator.attr
+        return None
+    return None
+
+
+def _sole_returned_manager_class(decorator_fn):
+    """Project the sole class the decorator's returned helper constructs.
+
+    The decorator body must return exactly one nested FunctionDef (the helper).
+    That helper must construct exactly one class on return. Multiple helpers or
+    multiple classes refuse — never first-candidate selection.
+    """
+    from sugar_source_tree.nodes import ClassDef, FunctionDef, Name, Return
+
+    nested = {
+        stmt.name: stmt for stmt in decorator_fn.body if isinstance(stmt, FunctionDef)
+    }
+    returned_helpers = []
+    for stmt in decorator_fn.body:
+        if not isinstance(stmt, Return):
+            continue
+        value = stmt.value
+        if isinstance(value, Name) and value.id in nested:
+            returned_helpers.append(nested[value.id])
+    if len(returned_helpers) != 1:
+        # Direct ``return Class(...)`` without a nested helper is also sole.
+        direct = _classes_constructed_by_returns(decorator_fn.body)
+        if len(direct) == 1:
+            return direct[0]
+        return None
+    classes = _classes_constructed_by_returns(returned_helpers[0].body)
+    if len(classes) != 1:
+        return None
+    return classes[0]
+
+
+def _classes_constructed_by_returns(statements) -> tuple:
+    """ClassDefs reached by ``return Name(...)`` through module bindings.
+
+    Walks typed statement structure (If/For/With/Try bodies) so branched
+    helpers that construct two classes refuse sole-class projection. This is
+    child-node projection, not source scanning.
+    """
+    from sugar_source_tree.nodes import (
+        Call,
+        ClassDef,
+        For,
+        If,
+        Name,
+        Return,
+        Try,
+        While,
+        With,
+    )
+
+    found = []
+    seen = set()
+
+    def visit(stmts) -> None:
+        for stmt in stmts:
+            if isinstance(stmt, Return):
+                value = stmt.value
+                if not isinstance(value, Call) or not isinstance(value.func, Name):
+                    continue
+                binds = (value.func.unit.module_direct_bindings or {}).get(
+                    value.func.id, ()
+                )
+                for bind in binds:
+                    if not isinstance(bind, ClassDef):
+                        continue
+                    key = (
+                        bind.unit.source_cid,
+                        bind.line_col_span().start_line,
+                        bind.line_col_span().start_col,
+                        bind.line_col_span().end_line,
+                        bind.line_col_span().end_col,
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    found.append(bind)
+            elif isinstance(stmt, If):
+                visit(stmt.body)
+                visit(stmt.orelse)
+            elif isinstance(stmt, (For, While)):
+                visit(stmt.body)
+                visit(stmt.orelse)
+            elif isinstance(stmt, With):
+                visit(stmt.body)
+            elif isinstance(stmt, Try):
+                visit(stmt.body)
+                for handler in stmt.handlers:
+                    visit(handler.body)
+                visit(stmt.orelse)
+                visit(stmt.finalbody)
+
+    visit(statements)
+    return tuple(found)
+
+
+def _enter_exit_sites_from_class_def(class_def):
+    """Read constructed ``__enter__`` / ``__exit__`` definition sites."""
+    from sugar_source_tree.nodes import FunctionDef
+
+    enter = exit_ = None
+    for item in class_def.body:
+        if not isinstance(item, FunctionDef):
+            continue
+        frame = item.source_visible_call_frame()
+        site = frame.definition_site
+        if item.name == "__enter__":
+            enter = site
+        elif item.name == "__exit__":
+            exit_ = site
+    if enter is None or exit_ is None or enter == exit_:
+        return None
+    return enter, exit_
 
 
 def _projected_manager_call_uses(source_file):
