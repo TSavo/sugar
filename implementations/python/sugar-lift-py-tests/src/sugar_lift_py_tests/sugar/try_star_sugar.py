@@ -1,6 +1,19 @@
+"""``except*`` subgroup routing over authenticated ``GroupedRaiseEffect`` trees.
+
+Laws (owned here; ExitSet/carrier untouched):
+
+- Partition each body ``GroupedRaiseEffect`` by authenticated handler type.
+- Matching subgroup reaches its handler once (type-tuple = one body run).
+- Unmatched residual continues to subsequent handlers in source order.
+- Handler halt effects regroup with residual; empty residual completes.
+- Finally restore preserves residual; finally terminate overrides.
+- Leaf occurrence identities and nested topology survive partition/regroup.
+- Ordinary ``RaiseEffect`` under ``except*`` stays loud (distinct from Try).
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -57,7 +70,11 @@ class TryStarSugar(Sugar):
             original = exit_.effect
             residual = original
             handler_effects = []
-            completed_states = []
+            # Temporal fragments from handlers that complete or halt — merged
+            # into the outgoing face so assignments before a handler raise /
+            # pass survive into residual propagation (occurrence identities
+            # already live on the RaiseEffect leaves themselves).
+            temporal_fragments = []
             for matchers, handler_body, slot_id in self.handlers:
                 # One handler, one body run, however many types it lists. Each
                 # type partitions what the previous type left behind, and the
@@ -115,24 +132,17 @@ class TryStarSugar(Sugar):
                 for handler_exit in handler_exits.exits:
                     if isinstance(handler_exit, Halted):
                         handler_effects.append(handler_exit.effect)
+                        temporal_fragments.append(handler_exit.state)
                     elif isinstance(handler_exit, Completed):
-                        completed_states.append(handler_exit.value)
+                        temporal_fragments.append(handler_exit.value)
             outgoing = list(handler_effects)
             if residual.children:
                 outgoing.append(residual)
             regrouped = regroup_except_star(original, outgoing)
-            state = exit_.state
-            if isinstance(state, _ReducedBlock):
-                entries = list(state.entries)
-                for completed in completed_states:
-                    if isinstance(completed, _ReducedBlock):
-                        entries.extend(completed.entries)
-                from dataclasses import replace
-
-                state = replace(state, entries=tuple(entries))
+            state = _merge_temporal_state(exit_.state, temporal_fragments)
             if regrouped is not None:
                 parts.append(ExitSet((Halted(exit_.guard, regrouped, state),)))
-            elif completed_states:
+            elif temporal_fragments:
                 parts.append(ExitSet((Completed(exit_.guard, state),)))
             else:
                 parts.append(ExitSet.completed(state))
@@ -143,6 +153,7 @@ class TryStarSugar(Sugar):
         if self.finalbody:
             cleanup = reduce_block_to_exitset(self.finalbody, ctx)
             from sugar_lift_py_tests.floor.return_value import ReturnValue
+            from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
             def restores(value):
                 return not (
@@ -155,3 +166,33 @@ class TryStarSugar(Sugar):
 
             result = result.and_finally(lambda: cleanup, cleanup_restores=restores)
         return exitset_to_outcome(result)
+
+
+def _merge_temporal_state(base, fragments):
+    """Fold handler temporal fragments into the body halt state.
+
+    Entries/transforms from completed or halted handlers append onto the body
+    halt's ``_ReducedBlock`` so residual propagation retains work the handlers
+    performed. Non-block bases pass through unchanged when nothing merges.
+    """
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    if not fragments:
+        return base
+    if not isinstance(base, _ReducedBlock):
+        # Prefer the last fragment when the body halt carried no block state.
+        for fragment in reversed(fragments):
+            if isinstance(fragment, _ReducedBlock):
+                return fragment
+        return base
+    entries = list(base.entries)
+    transforms = list(getattr(base, "transforms", ()) or ())
+    for fragment in fragments:
+        if isinstance(fragment, _ReducedBlock):
+            entries.extend(fragment.entries)
+            transforms.extend(getattr(fragment, "transforms", ()) or ())
+    return replace(
+        base,
+        entries=tuple(entries),
+        transforms=tuple(transforms),
+    )

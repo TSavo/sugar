@@ -1,3 +1,12 @@
+"""Authenticated ``ExceptionGroup`` tree construction for ``except*`` routing.
+
+Produces an immutable ``GroupedRaiseEffect`` whose leaves are ordinary
+``RaiseEffect`` values (authenticated type coordinate, MRO, occurrence). Nested
+groups stay nested: children are never flattened. Spelling does not grant
+group authority — only the Raise construction path that recognized the builtin
+group coordinate may mint this sugar.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
@@ -40,6 +49,8 @@ class GroupedRaiseSugar(Sugar):
                     fix="keep non-exception group members loud",
                 )
             effects.append(outcome.effect)
+        # Site occurrence is independent of group_identity (content seal) so
+        # two raises of the same group shape remain distinct halt faces.
         occurrence = f"{self.site.filename}:{self.site.line}:{self.site.col}"
         return Incomplete(
             GroupedRaiseEffect(
