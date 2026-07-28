@@ -18,23 +18,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class MethodCallSugar(Sugar):
-    receiver: Sugar
+class MethodCallSugar(ConstructedTermSugar):
+    receiver: ConstructedTermSugar
     name: str
-    args: tuple  # the argument sugars, in source order
+    args: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
-    keywords: tuple = ()  # (name, sugar) pairs, in source order
+    keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     source_call_frame: object = dataclass_field(default=None, compare=False)
     # Exception construction only: when Raise authenticates an Attribute
     # exception-class path, the resulting CallSiteValue carries that identity.
     exception_type_coordinate: object = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     native_definition_coordinate: object = dataclass_field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(self.receiver, owner="MethodCallSugar.receiver")
+        for argument in self.args:
+            require_constructed_term_sugar(argument, owner="MethodCallSugar.args")
+        for _name, argument in self.keywords:
+            require_constructed_term_sugar(argument, owner="MethodCallSugar.keywords")
 
     @classmethod
     def witnesses(cls):
@@ -46,6 +56,45 @@ class MethodCallSugar(Sugar):
             owner_sugar="MethodCallSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 3\n",
             lying=prefix + "def test_a():\n    assert A(5) == 4\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        authority = []
+        if self.source_call_frame is not None:
+            authority.append(str_const(self.source_call_frame.frame_cid))
+        if self.exception_type_coordinate is not None:
+            authority.append(str_const(self.exception_type_coordinate.cid))
+        if self.native_definition_coordinate is not None:
+            authority.append(str_const(self.native_definition_coordinate.cid))
+        return ctor(
+            "python:method-call-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.receiver.to_term(owner=owner),
+                str_const(self.name),
+                ctor(
+                    "python:positional-arguments",
+                    tuple(argument.to_term(owner=owner) for argument in self.args),
+                ),
+                ctor(
+                    "python:keyword-arguments",
+                    tuple(
+                        ctor(
+                            "python:keyword-argument",
+                            (str_const(name), argument.to_term(owner=owner)),
+                        )
+                        for name, argument in self.keywords
+                    ),
+                ),
+                ctor(
+                    "python:definition-authority",
+                    tuple(authority),
+                    symbol_kind="coordinate",
+                ),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

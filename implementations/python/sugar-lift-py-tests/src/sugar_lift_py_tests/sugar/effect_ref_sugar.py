@@ -10,17 +10,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
 @dataclass(frozen=True)
-class EffectRefSugar(Sugar):
+class EffectRefSugar(ConstructedTermSugar):
     slot_id: str
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
     def witnesses(cls):
         return ()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:effect-reference-construction",
+            (self.occurrence_term(owner=owner), str_const(self.slot_id)),
+            symbol_kind="coordinate",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.effect_coordinate import (
@@ -41,7 +50,7 @@ class EffectRefSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class ObservationRefSugar(Sugar):
+class ObservationRefSugar(ConstructedTermSugar):
     slot_id: str
     projection: str
     site: object = dataclass_field(compare=False, default=None)
@@ -49,6 +58,19 @@ class ObservationRefSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return ()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:observation-reference-construction",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.slot_id),
+                str_const(self.projection),
+            ),
+            symbol_kind="coordinate",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.effect_coordinate import (

@@ -28,7 +28,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 # Unary operator kind -> the floor method that owns its meaning. Every entry is
@@ -97,10 +100,15 @@ def refuse_undecided_unary_truth(value, site) -> None:
 
 
 @dataclass(frozen=True)
-class UnaryOpSugar(Sugar):
+class UnaryOpSugar(ConstructedTermSugar):
     op_kind: str
-    operand: Sugar
+    operand: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        if self.op_kind not in {*UNARYOP_METHODS, "Not"}:
+            raise ValueError(f"unknown unary operator {self.op_kind!r}")
+        require_constructed_term_sugar(self.operand, owner="UnaryOpSugar.operand")
 
     @classmethod
     def witnesses(cls):
@@ -111,6 +119,19 @@ class UnaryOpSugar(Sugar):
             owner_sugar="UnaryOpSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:unary-op-construction",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.op_kind),
+                self.operand.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

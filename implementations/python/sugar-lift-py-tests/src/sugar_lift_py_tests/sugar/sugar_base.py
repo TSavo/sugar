@@ -6,6 +6,7 @@ import inspect
 from typing import Any, Callable, ClassVar, List, cast
 
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -50,3 +51,44 @@ class Sugar(ABC):
         # Default: a leaf. Sugars that hold SugarBody children override to
         # return them in source order -- the factory walk projects those.
         return ()
+
+
+class ConstructedTermSugar(Sugar):
+    """Sugar admitted as canonical generator/nested-construction testimony."""
+
+    @abstractmethod
+    def to_term(self, *, owner: str) -> Term:
+        """Project authenticated construction testimony into canonical IR."""
+
+    def occurrence_term(self, *, owner: str) -> Term:
+        """Seal the exact source occurrence; identical spelling elsewhere differs."""
+        from sugar_lift_py_tests.ir import ctor, num, str_const
+
+        try:
+            occurrence = self.site.seal()
+        except (AttributeError, TypeError) as exc:
+            raise TypeError(
+                f"{owner} requires an authenticated source occurrence for "
+                f"{type(self).__name__}"
+            ) from exc
+        return ctor(
+            "python:source-occurrence",
+            (
+                str_const(occurrence.source_cid),
+                num(occurrence.start),
+                num(occurrence.end),
+                str_const(occurrence.cid),
+            ),
+            symbol_kind="coordinate",
+        )
+
+
+def require_constructed_term_sugar(
+    value: object, *, owner: str
+) -> ConstructedTermSugar:
+    """Close a nested construction payload before canonical projection."""
+    if not isinstance(value, ConstructedTermSugar):
+        raise TypeError(
+            f"{owner} requires ConstructedTermSugar, got {type(value).__name__}"
+        )
+    return value

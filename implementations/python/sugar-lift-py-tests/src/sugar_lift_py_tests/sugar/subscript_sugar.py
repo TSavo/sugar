@@ -4,12 +4,15 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class SubscriptSugar(Sugar):
+class SubscriptSugar(ConstructedTermSugar):
     """`<receiver>[<index>]`. Reduce the receiver and the index, then ask the
     receiver to subscript by the index -- the value owns what indexing means.
     Concrete containers fold (a string indexes to its character); a vendor
@@ -22,9 +25,13 @@ class SubscriptSugar(Sugar):
     never silently handled by this parent.
     """
 
-    receiver: Sugar
-    index: Sugar
+    receiver: ConstructedTermSugar
+    index: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(self.receiver, owner="SubscriptSugar.receiver")
+        require_constructed_term_sugar(self.index, owner="SubscriptSugar.index")
 
     @classmethod
     def witnesses(cls):
@@ -37,6 +44,19 @@ class SubscriptSugar(Sugar):
             owner_sugar="SubscriptSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:subscript-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.receiver.to_term(owner=owner),
+                self.index.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: Any = None) -> Outcome:

@@ -4,12 +4,12 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 @dataclass(frozen=True)
-class IntLiteralSugar(Sugar):
+class IntLiteralSugar(ConstructedTermSugar):
     """An integer literal. A leaf: it holds its value and no child sugars, and
     it desugars to the number as a term. (`bool` is a subclass of `int`, so the
     node that constructs this must have already distinguished `True`/`False` --
@@ -31,3 +31,12 @@ class IntLiteralSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # the number stands as a term
         return Complete(TermValue(self.value))
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, num
+
+        return ctor(
+            "python:int-literal-construction",
+            (self.occurrence_term(owner=owner), num(self.value)),
+            symbol_kind="coordinate",
+        )

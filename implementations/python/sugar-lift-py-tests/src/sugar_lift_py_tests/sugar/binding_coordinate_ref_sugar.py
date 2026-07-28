@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
 @dataclass(frozen=True)
-class BindingCoordinateRefSugar(Sugar):
+class BindingCoordinateRefSugar(ConstructedTermSugar):
     coordinate: object
     site: object = field(compare=False)
 
@@ -36,4 +36,13 @@ class BindingCoordinateRefSugar(Sugar):
             observed="unspecialized source-call formal",
             requested="runtime BindingEntryV1 substitution before Sugar construction",
             fix="bind the exact typed actual Node through SourceVisibleCallFrameV1",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:binding-coordinate-reference",
+            (self.occurrence_term(owner=owner), str_const(self.coordinate.cid)),
+            symbol_kind="coordinate",
         )

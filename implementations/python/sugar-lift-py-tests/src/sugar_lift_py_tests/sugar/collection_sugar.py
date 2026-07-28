@@ -14,7 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
@@ -96,9 +99,13 @@ def _reduce_into(element_sugars, ctx, build):
 
 
 @dataclass(frozen=True)
-class ListSugar(Sugar):
-    elements: tuple
+class ListSugar(ConstructedTermSugar):
+    elements: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for element in self.elements:
+            require_constructed_term_sugar(element, owner="ListSugar.elements")
 
     @classmethod
     def witnesses(cls):
@@ -115,11 +122,30 @@ class ListSugar(Sugar):
 
         return _reduce_into(self.elements, ctx, ListValue)
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:list-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor(
+                    "python:list-elements",
+                    tuple(element.to_term(owner=owner) for element in self.elements),
+                ),
+            ),
+            symbol_kind="coordinate",
+        )
+
 
 @dataclass(frozen=True)
-class TupleSugar(Sugar):
-    elements: tuple
+class TupleSugar(ConstructedTermSugar):
+    elements: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for element in self.elements:
+            require_constructed_term_sugar(element, owner="TupleSugar.elements")
 
     @classmethod
     def witnesses(cls):
@@ -131,6 +157,21 @@ class TupleSugar(Sugar):
             lying="3",
         )
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:tuple-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor(
+                    "python:tuple-elements",
+                    tuple(element.to_term(owner=owner) for element in self.elements),
+                ),
+            ),
+            symbol_kind="coordinate",
+        )
+
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
@@ -138,9 +179,13 @@ class TupleSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class SetSugar(Sugar):
-    elements: tuple
+class SetSugar(ConstructedTermSugar):
+    elements: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for element in self.elements:
+            require_constructed_term_sugar(element, owner="SetSugar.elements")
 
     @classmethod
     def witnesses(cls):
@@ -157,12 +202,35 @@ class SetSugar(Sugar):
 
         return _reduce_into(self.elements, ctx, SetValue)
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:set-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor(
+                    "python:set-elements",
+                    tuple(element.to_term(owner=owner) for element in self.elements),
+                ),
+            ),
+            symbol_kind="coordinate",
+        )
+
 
 @dataclass(frozen=True)
-class DictSugar(Sugar):
-    keys: tuple  # key sugars, in source order
-    values: tuple  # value sugars, in source order
+class DictSugar(ConstructedTermSugar):
+    keys: tuple[ConstructedTermSugar, ...]
+    values: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        if len(self.keys) != len(self.values):
+            raise ValueError("DictSugar requires equal key/value arity")
+        for key in self.keys:
+            require_constructed_term_sugar(key, owner="DictSugar.keys")
+        for value in self.values:
+            require_constructed_term_sugar(value, owner="DictSugar.values")
 
     @classmethod
     def witnesses(cls):
@@ -188,3 +256,22 @@ class DictSugar(Sugar):
             return DictValue(tuple(zip(flat[0::2], flat[1::2])))
 
         return _reduce_into(interleaved, ctx, build)
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        entries = tuple(
+            ctor(
+                "python:dict-entry",
+                (key.to_term(owner=owner), value.to_term(owner=owner)),
+            )
+            for key, value in zip(self.keys, self.values, strict=True)
+        )
+        return ctor(
+            "python:dict-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor("python:dict-entries", entries),
+            ),
+            symbol_kind="coordinate",
+        )

@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 # Binary operator kind -> the floor method that owns its meaning. The value
@@ -29,7 +32,7 @@ BINOP_METHODS: dict[str, str] = {
 
 
 @dataclass(frozen=True)
-class BinOpSugar(Sugar):
+class BinOpSugar(ConstructedTermSugar):
     """A binary operation `<left> <op> <right>`. It reduces both sides and asks
     the LEFT value to apply the operation against the right -- the value owns
     the answer (numbers fold, strings concatenate, mixed types hit the honest
@@ -43,9 +46,15 @@ class BinOpSugar(Sugar):
     """
 
     op_kind: str
-    left: Sugar
-    right: Sugar
+    left: ConstructedTermSugar
+    right: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        if self.op_kind not in BINOP_METHODS:
+            raise ValueError(f"unknown binary operator {self.op_kind!r}")
+        require_constructed_term_sugar(self.left, owner="BinOpSugar.left")
+        require_constructed_term_sugar(self.right, owner="BinOpSugar.right")
 
     @classmethod
     def witnesses(cls):
@@ -57,6 +66,20 @@ class BinOpSugar(Sugar):
             owner_sugar="BinOpSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:binary-op-construction",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.op_kind),
+                self.left.to_term(owner=owner),
+                self.right.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

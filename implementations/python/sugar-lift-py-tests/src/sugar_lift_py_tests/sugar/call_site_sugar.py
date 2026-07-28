@@ -5,12 +5,16 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.ir import Term
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class CallSiteSugar(Sugar):
+class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
 
     Reduce each argument, then stand as a CallSiteValue whose term is the bridge
@@ -32,9 +36,9 @@ class CallSiteSugar(Sugar):
     """
 
     target_name: str
-    args: tuple  # the argument sugars, in source order
+    args: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
-    keywords: tuple = ()  # (name, sugar) pairs, in source order
+    keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
@@ -42,6 +46,12 @@ class CallSiteSugar(Sugar):
     source_call_frame: Any = dataclass_field(default=None, compare=False)
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+
+    def __post_init__(self) -> None:
+        for argument in self.args:
+            require_constructed_term_sugar(argument, owner="CallSiteSugar.args")
+        for _name, argument in self.keywords:
+            require_constructed_term_sugar(argument, owner="CallSiteSugar.keywords")
 
     @classmethod
     def witnesses(cls):
@@ -54,6 +64,76 @@ class CallSiteSugar(Sugar):
             owner_sugar="CallSiteSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
+
+    def to_term(self, *, owner: str) -> Term:
+        """Project authenticated callee, arguments, authority, and occurrence."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        occurrence = self.occurrence_term(owner=owner)
+        if self.source_call_frame is not None:
+            callee = ctor(
+                "python:source-callee",
+                (str_const(self.source_call_frame.frame_cid),),
+                symbol_kind="coordinate",
+            )
+        else:
+            # The exact call occurrence is the available callee authority for
+            # builtin/opaque calls; never elevate the target spelling.
+            callee = ctor(
+                "python:occurrence-callee", (occurrence,), symbol_kind="coordinate"
+            )
+        definition_authority = []
+        if self.exception_type_coordinate is not None:
+            definition_authority.append(
+                str_const(self.exception_type_coordinate.cid)
+            )
+        definition_authority.extend(
+            str_const(cid) for cid in self.formal_coordinate_cids
+        )
+        if self.contract_ref is None:
+            contract_authority = ctor("python:no-resolved-call-contract", ())
+        else:
+            from sugar_lift_py_tests.call_contract_resolution import (
+                ResolvedCallContractRefV1,
+            )
+
+            if not isinstance(self.contract_ref, ResolvedCallContractRefV1):
+                raise TypeError(
+                    f"{owner} requires authenticated ResolvedCallContractRefV1, "
+                    f"got {type(self.contract_ref).__name__}"
+                )
+            contract_authority = ctor(
+                "python:resolved-call-contract",
+                (
+                    str_const(self.contract_ref.resolution_cid),
+                    str_const(self.contract_ref.contract_cid),
+                ),
+                symbol_kind="coordinate",
+            )
+        positional = tuple(argument.to_term(owner=owner) for argument in self.args)
+        keywords = tuple(
+            ctor(
+                "python:keyword-argument",
+                (str_const(name), argument.to_term(owner=owner)),
+            )
+            for name, argument in self.keywords
+        )
+        return ctor(
+            "python:call-construction",
+            (
+                occurrence,
+                callee,
+                ctor("python:positional-arguments", positional),
+                ctor("python:keyword-arguments", keywords),
+                ctor(
+                    "python:definition-authority",
+                    tuple(definition_authority),
+                    symbol_kind="coordinate",
+                ),
+                contract_authority,
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

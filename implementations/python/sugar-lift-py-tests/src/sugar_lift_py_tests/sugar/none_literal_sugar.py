@@ -4,12 +4,12 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class NoneLiteralSugar(Sugar):
+class NoneLiteralSugar(ConstructedTermSugar):
     """The `None` literal. A leaf: it stands as the NoneValue floor -- the
     None-ness IS the type, there is no value to carry."""
 
@@ -28,3 +28,12 @@ class NoneLiteralSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
         return Complete(NoneValue())
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:none-literal-construction",
+            (self.occurrence_term(owner=owner),),
+            symbol_kind="coordinate",
+        )
