@@ -640,8 +640,210 @@ def test_leaf_harvester_uses_typed_source_tree_for_renamed_call():
         "def test_arbitrary():\n" "    assert renamed_operation(3) == 7\n",
         "renamed_fixture.py",
     )
-    assert [edge["targetSymbol"] for edge in result.call_edges] == ["renamed_operation"]
+    assert result.call_edges == [
+        {
+            "kind": "call-edge",
+            "sourceContract": "test_arbitrary",
+            "targetSymbol": "renamed_operation",
+            "callSiteLocus": {
+                "file": "renamed_fixture.py",
+                "line": 2,
+                "column": 11,
+            },
+        }
+    ]
     assert result.diagnostics == []
+
+
+def test_leaf_call_edge_same_locus_different_call_does_not_cross_wire():
+    first = harvest_source(
+        "def test_one():\n    assert first_call(3) == 7\n", "same.py"
+    )
+    second = harvest_source(
+        "def test_one():\n    assert second_call(3) == 7\n", "same.py"
+    )
+
+    assert first.call_edges[0]["callSiteLocus"] == second.call_edges[0]["callSiteLocus"]
+    assert first.call_edges[0]["targetSymbol"] == "first_call"
+    assert second.call_edges[0]["targetSymbol"] == "second_call"
+
+
+def test_leaf_call_edge_same_spelling_keeps_distinct_occurrences():
+    result = harvest_source(
+        "def test_two():\n"
+        "    assert repeated(1) == 1\n"
+        "    assert repeated(2) == 2\n",
+        "two.py",
+    )
+
+    assert [edge["targetSymbol"] for edge in result.call_edges] == [
+        "repeated",
+        "repeated",
+    ]
+    assert [edge["callSiteLocus"]["line"] for edge in result.call_edges] == [2, 3]
+
+
+def test_leaf_call_edges_follow_nested_producer_order():
+    result = harvest_source(
+        "def test_nested():\n    assert outer(inner(3)) == 7\n", "nested.py"
+    )
+
+    assert [edge["targetSymbol"] for edge in result.call_edges] == ["outer", "inner"]
+    assert [edge["callSiteLocus"]["column"] for edge in result.call_edges] == [11, 17]
+
+
+def test_unsupported_leaf_call_emits_no_edge():
+    result = harvest_source(
+        "def test_unsupported():\n    assert obj.method(3) == 7\n", "unsupported.py"
+    )
+
+    assert result.ir == []
+    assert result.call_edges == []
+    assert result.diagnostics == [
+        {
+            "kind": "leaf-assertion-skipped",
+            "message": "call callee is not a bare identifier",
+            "path": "unsupported.py",
+            "line": 2,
+        }
+    ]
+
+
+def test_leaf_call_edge_consumer_projects_producer_owned_testimony(monkeypatch):
+    import sugar_lift_python_source.leaf_assertions as leaf_assertions
+    from sugar_source_tree.nodes import Call
+
+    original = leaf_assertions._translate_term
+
+    def cross_wired_translate(node):
+        translated = original(node)
+        if not isinstance(node, Call):
+            return translated
+        object.__setattr__(translated.calls[0], "target_symbol", "foreign-symbol")
+        return translated
+
+    monkeypatch.setattr(leaf_assertions, "_translate_term", cross_wired_translate)
+
+    with pytest.raises(leaf_assertions._LeafCallTestimonyMismatch) as raised:
+        leaf_assertions.harvest_source(
+            "def test_foreign():\n    assert source_spelling(3) == 7\n", "source.py"
+        )
+    assert str(raised.value) == (
+        "leaf call testimony does not match its authenticated Call occurrence"
+    )
+
+
+def test_leaf_call_testimony_constructors_and_replace_refuse():
+    from dataclasses import replace
+    import sugar_lift_python_source.leaf_assertions as leaf_assertions
+
+    with pytest.raises(TypeError, match="^_CallOccurrence is producer-minted only$"):
+        leaf_assertions._CallOccurrence()
+    with pytest.raises(TypeError, match="^_TranslatedTerm is producer-minted only$"):
+        leaf_assertions._TranslatedTerm()
+
+    source = "def test_one():\n    assert kept(1) == 1\n"
+    source_file = leaf_assertions.SourceFile(
+        (source, "kept.py", leaf_assertions.blake3_512_of(source.encode("utf-8")))
+    )
+    call = next(node for node in source_file.nodes() if isinstance(node, leaf_assertions.Call))
+    translated = leaf_assertions._translate_term(call)
+    with pytest.raises(TypeError, match="^_TranslatedTerm is producer-minted only$"):
+        replace(translated, calls=())
+
+
+def test_leaf_call_testimony_refuses_foreign_frame_and_roster_cross_wires():
+    import sugar_lift_python_source.leaf_assertions as leaf_assertions
+
+    def translated_in(path, callee):
+        source = f"def test_one():\n    assert {callee}(1) == 1\n"
+        source_file = leaf_assertions.SourceFile(
+            (source, path, leaf_assertions.blake3_512_of(source.encode("utf-8")))
+        )
+        contract = next(
+            node
+            for node in source_file.root.body
+            if isinstance(node, leaf_assertions.FunctionDef)
+        )
+        call = next(
+            node for node in source_file.nodes() if isinstance(node, leaf_assertions.Call)
+        )
+        return leaf_assertions._translate_term(call), contract
+
+    first, first_contract = translated_in("first.py", "same")
+    second, second_contract = translated_in("second.py", "same")
+
+    with pytest.raises(leaf_assertions._LeafCallTestimonyMismatch) as foreign:
+        first.calls[0].edge(source_contract=second_contract)
+    assert str(foreign.value) == (
+        "leaf call testimony does not belong to the authenticated FunctionDef"
+    )
+
+    object.__setattr__(first, "calls", second.calls)
+    with pytest.raises(leaf_assertions._LeafCallTestimonyMismatch) as roster:
+        first.project()
+    assert str(roster.value) == (
+        "translated term/call roster does not match its authenticated preimage"
+    )
+
+    second.term["name"] = "mutated-alias"
+    with pytest.raises(leaf_assertions._LeafCallTestimonyMismatch) as alias:
+        second.project()
+    assert str(alias.value) == (
+        "translated term/call roster does not match its authenticated preimage"
+    )
+
+    assert first_contract.unit is not second_contract.unit
+
+
+def test_leaf_call_edge_reconstruction_side_door_is_structurally_absent():
+    import inspect
+    import sugar_lift_python_source.leaf_assertions as leaf_assertions
+
+    tree = ast.parse(inspect.getsource(leaf_assertions))
+    functions = {
+        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    assert [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_call_edges"
+    ] == []
+    assert {"term", "calls"}.issubset(
+        leaf_assertions._TranslatedTerm.__dataclass_fields__
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_translate_term"
+        for node in ast.walk(functions["_lift_assert"])
+    ) == 2
+    assert [
+        function.name
+        for function in functions.values()
+        if function.name != "_translate_term"
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "walk"
+            for node in ast.walk(function)
+        )
+    ] == []
+    assert [
+        function.name
+        for function in functions.values()
+        if function.name != "_translate_term"
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "isinstance"
+            and any(
+                isinstance(arg, ast.Name) and arg.id in {"Call", "Name"}
+                for arg in node.args[1:]
+            )
+            for node in ast.walk(function)
+        )
+    ] == []
 
 
 def test_leaf_harvester_lifts_is_none_with_substrate_guard():
