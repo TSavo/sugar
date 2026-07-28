@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 import json
 from typing import Any
 
@@ -8,7 +8,15 @@ from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.context_manager_contract import _json_value
 from sugar_lift_py_tests.floor import FloorValue
-from sugar_lift_py_tests.ir import Formula, Term, formula_to_value, term_to_value
+from sugar_lift_py_tests.ir import (
+    Formula,
+    Term,
+    atomic,
+    ctor,
+    formula_to_value,
+    str_const,
+    term_to_value,
+)
 
 
 def _json(value) -> Any:
@@ -28,6 +36,188 @@ def source_coordinate(site) -> SourceFragmentCoordinateV1:
         span.end_line,
         span.end_col,
     )
+
+
+def native_operator_demand(operator: str, operands: tuple[Term, ...]) -> Formula:
+    """The unresolved caller obligation for one ordered native operation.
+
+    This formula records a question.  It does not choose a result, an exception
+    type, or a runtime coordinate; caller discharge supplies authenticated
+    actual operands and the ordinary Floor answers the question later.
+    """
+    return atomic(
+        "python:native_operator_demand",
+        [str_const(operator), *operands],
+    )
+
+
+@dataclass(frozen=True)
+class NativeOperationDemandV1:
+    """Content identity for an ordered native-operation occurrence."""
+
+    source_node: SourceFragmentCoordinateV1
+    operator: str
+    operand_terms: tuple[Term, ...]
+    operand_coordinate_cids: tuple[str | None, ...]
+    candidate: Term
+    candidate_cid: str
+    demanded_formula: Formula
+    demand_cid: str
+
+    @classmethod
+    def mint(cls, *, site, operator, operands, coordinates):
+        if not isinstance(operator, str) or not operator:
+            raise ValueError("native operation requires a nonempty operator")
+        operands = tuple(operands)
+        coordinates = tuple(coordinates)
+        if len(operands) != 2 or len(coordinates) != len(operands):
+            raise ValueError(
+                "native operation requires two ordered operands and aligned coordinates"
+            )
+
+        source_node = source_coordinate(site)
+        operand_terms = tuple(
+            operand.to_term(owner=f"native operation {operator} operand")
+            for operand in operands
+        )
+        coordinate_cids = tuple(
+            None if coordinate is None else coordinate.coordinate_cid
+            for coordinate in coordinates
+        )
+        candidate = ctor(
+            "python:native_operation",
+            [str_const(operator), *operand_terms],
+        )
+        candidate_preimage = {
+            "kind": "native-operation-candidate",
+            "schemaVersion": "1",
+            "sourceNode": source_node.wire(),
+            "operator": operator,
+            "operands": [_json(term_to_value(term)) for term in operand_terms],
+            "formalCoordinates": list(coordinate_cids),
+            "candidate": _json(term_to_value(candidate)),
+        }
+        candidate_cid = _cid(candidate_preimage)
+        demanded_formula = native_operator_demand(operator, operand_terms)
+        demand_preimage = {
+            "kind": "native-operation-demand",
+            "schemaVersion": "1",
+            "sourceNode": source_node.wire(),
+            "operator": operator,
+            "operands": [_json(term_to_value(term)) for term in operand_terms],
+            "formalCoordinates": list(coordinate_cids),
+            "candidateCid": candidate_cid,
+            "demandedFormula": _json(formula_to_value(demanded_formula)),
+        }
+        return cls(
+            source_node=source_node,
+            operator=operator,
+            operand_terms=operand_terms,
+            operand_coordinate_cids=coordinate_cids,
+            candidate=candidate,
+            candidate_cid=candidate_cid,
+            demanded_formula=demanded_formula,
+            demand_cid=_cid(demand_preimage),
+        )
+
+
+@dataclass(frozen=True)
+class NativeOperationExitCarrierV1:
+    """Deferred native operation whose discharge codomain is an ``ExitSet``.
+
+    The same recorded operation can complete or raise after its formal operands
+    are replaced by authenticated caller actuals.  Keeping that codomain here,
+    rather than retaining a ``FloorValue``, is what preserves the exceptional
+    arm until an enclosing effect boundary consumes it.
+    """
+
+    demand: NativeOperationDemandV1
+    operands: tuple[FloorValue, ...]
+    coordinates: tuple[object | None, ...]
+    site: object = dataclass_field(compare=False, repr=False)
+    continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
+
+    @classmethod
+    def mint(cls, *, site, operator, operands, coordinates):
+        operands = tuple(operands)
+        coordinates = tuple(coordinates)
+        return cls(
+            demand=NativeOperationDemandV1.mint(
+                site=site,
+                operator=operator,
+                operands=operands,
+                coordinates=coordinates,
+            ),
+            operands=operands,
+            coordinates=coordinates,
+            site=site,
+        )
+
+    def and_then(self, step):
+        """Retain enclosing expression work until the operation discharges."""
+        return replace(self, continuations=(*self.continuations, step))
+
+    def discharge(self, actuals_by_formal_coordinate):
+        """Evaluate against authenticated actual operands and project exits."""
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.gap.info import GapKind
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        actual_operands = []
+        for original, coordinate_cid in zip(
+            self.operands, self.demand.operand_coordinate_cids, strict=True
+        ):
+            if coordinate_cid is None:
+                actual_operands.append(original)
+                continue
+            if coordinate_cid not in actuals_by_formal_coordinate:
+                construction_panic_gap(
+                    owner="NativeOperationExitCarrierV1.discharge",
+                    blame=self.demand.source_node,
+                    observed=(
+                        "native operation discharge omitted authenticated actual "
+                        f"for {coordinate_cid}"
+                    ),
+                    requested="one authenticated actual for every formal operand",
+                    fix=(
+                        "preserve the operation demand until caller discharge can "
+                        "supply the missing formal-to-actual binding"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                )
+            actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
+
+        left, right = actual_operands
+        operation = getattr(left, self.demand.operator, None)
+        if not callable(operation):
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.discharge",
+                blame=self.demand.source_node,
+                observed=(
+                    f"{type(left).__name__} has no native Floor operation "
+                    f"{self.demand.operator}"
+                ),
+                requested="an operator named by the authenticated producer Floor",
+                fix="wire the producer's existing Floor method into the carrier",
+                gap_kind=GapKind.FLOOR,
+            )
+
+        projected = operation(right, self.site)
+        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
+            exits = ExitSet.halted(projected.value.effect)
+        elif isinstance(projected, (Complete, Incomplete, ExitSet)):
+            exits = outcome_to_exitset(projected)
+        else:
+            # Other Outcome variants must pass through the exit algebra's loud
+            # door.  In particular, never reinterpret an unresolved carrier as
+            # a normal completion.
+            exits = outcome_to_exitset(projected)
+
+        for continuation in self.continuations:
+            exits = exits.and_then(continuation)
+        return exits
 
 
 @dataclass(frozen=True)
