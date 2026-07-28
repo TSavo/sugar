@@ -41,5 +41,25 @@ class EncodedStringValue(FloorValue):
             owner="EncodedStringValue.delitem",
         )
 
+    def setattr(self, name, value, site):
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="EncodedStringValue.setattr",
+        )
+
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="EncodedStringValue.delattr",
+        )
+
     def binary_operator_with(self, operation, ctx):
         return operation.binary_encoded_string(self, ctx)
