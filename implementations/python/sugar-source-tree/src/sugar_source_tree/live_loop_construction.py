@@ -47,6 +47,17 @@ class LiveOutwardHaltedFaceV1:
     state: tuple[BindingEntryV1, ...]
 
 
+@dataclass(frozen=True)
+class LiveForRuntimeV1:
+    """Unsealed execution handles paired with the sealed for construction."""
+
+    target_name: str
+    carried_names: tuple[str, ...]
+    initial_value_sugars: tuple[object, ...]
+    body_sugars: tuple[object, ...]
+    else_sugars: tuple[object, ...]
+
+
 def _formula_cid(formula) -> str:
     # Encode the Value tree once and hash those bytes. Do not decode the
     # canonical JCS string back through JSON merely to re-encode for the CID.
@@ -673,7 +684,21 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
     if isinstance(loop, For):
-        construction = replace(construction, iterable_sugar=loop.iter.sugar())
+        if loop.target.kind != "Name":
+            raise BindingStateWireGap(
+                "live iterator recurrence requires an authenticated name target"
+            )
+        construction = replace(
+            construction,
+            iterable_sugar=loop.iter.sugar(),
+            loop_runtime=LiveForRuntimeV1(
+                loop.target.id,
+                carried_names,
+                tuple(entry.state.sugar() for entry in pre_runtime),
+                tuple(statement.sugar() for statement in loop.body),
+                tuple(statement.sugar() for statement in loop.orelse),
+            ),
+        )
 
     bindings = {}
     for name, entry in zip(carried_names, pre_entries, strict=True):

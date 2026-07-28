@@ -5,11 +5,11 @@ from dataclasses import dataclass, field
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import atomic, ctor, not_, or_, str_const
 from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
 @dataclass(frozen=True)
-class LoopBindingRefSugar(Sugar):
+class LoopBindingRefSugar(ConstructedTermSugar):
     target_cid: str
     binding_coordinate_cid: str
     completion_kind: str
@@ -19,21 +19,25 @@ class LoopBindingRefSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx=None):
-        del ctx
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "python:loop.post_binding",
-                    [
-                        str_const(self.target_cid),
-                        str_const(self.binding_coordinate_cid),
-                        str_const(self.completion_kind),
-                    ],
-                    symbol_kind="coordinate",
-                )
-            )
+    def to_term(self, *, owner: str):
+        del owner
+        return ctor(
+            "python:loop.post_binding",
+            [
+                str_const(self.target_cid),
+                str_const(self.binding_coordinate_cid),
+                str_const(self.completion_kind),
+            ],
+            symbol_kind="coordinate",
         )
+
+    def desugar(self, ctx=None):
+        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        if temporal is not None:
+            bound = temporal.value_if_bound(self.binding_coordinate_cid)
+            if bound is not None:
+                return Complete(bound)
+        return Complete(SymbolicValue(self.to_term(owner="LoopBindingRefSugar")))
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,41 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
 
     def _desugar_with_iterable(self, iterable, ctx):
+        runtime = self.construction.loop_runtime
+        from sugar_lift_py_tests.floor import SymbolicValue
+
+        if (
+            iterable is not None
+            and runtime is not None
+            and not isinstance(iterable, SymbolicValue)
+        ):
+            from sugar_lift_py_tests.operations.iterator_operation import (
+                IteratorOperation,
+            )
+            from sugar_lift_py_tests.temporal import bind_temporal
+
+            runtime_ctx = ctx
+            for name, sugar in zip(
+                runtime.carried_names, runtime.initial_value_sugars, strict=True
+            ):
+                initial = sugar.desugar(runtime_ctx)
+                if not isinstance(initial, Complete):
+                    return initial
+                runtime_ctx = bind_temporal(
+                    runtime_ctx,
+                    name,
+                    initial.value,
+                    owner="LoopRecurrenceSugar",
+                    blame=str(self.site),
+                )
+            return IteratorOperation(
+                owner="LoopRecurrenceSugar", blame=self.site
+            ).submit(iterable, runtime_ctx).and_then(
+                lambda iterator: self._advance_iterator(
+                    iterator, runtime, runtime_ctx, entries=()
+                )
+            )
+
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
@@ -187,3 +226,131 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                             )
                         )
         return ExitSet(tuple(exits)).normalize()
+
+    def _advance_iterator(self, iterator, runtime, ctx, *, entries):
+        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.iterator_value import NextResult
+        from sugar_lift_py_tests.operations.next_operation import NextOperation
+        from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.temporal import bind_temporal
+
+        outcome = NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
+            iterator, ctx
+        )
+        if isinstance(outcome, Incomplete):
+            effect = outcome.effect
+            if isinstance(effect, RaiseEffect) and effect.exception_name == "StopIteration":
+                return self._finish_iterator(runtime, ctx, entries=entries)
+            return outcome
+        if not isinstance(outcome, Complete) or not isinstance(outcome.value, NextResult):
+            raise TypeError("NextOperation must produce NextResult or a named exception")
+
+        next_result = outcome.value
+        iteration_ctx = bind_temporal(
+            ctx,
+            runtime.target_name,
+            next_result.value,
+            owner="LoopRecurrenceSugar",
+            blame=str(self.site),
+        )
+        body = reduce_block_to_exitset(runtime.body_sugars, iteration_ctx)
+        if not isinstance(body, ExitSet):
+            return body
+        if len(body.exits) != 1:
+            return body
+        face = body.exits[0]
+        if isinstance(face, Halted):
+            effect = face.effect
+            if (
+                isinstance(effect, LoopControlEffect)
+                and effect.target_cid == self.target_cid
+            ):
+                state = face.state
+                if state is None:
+                    raise TypeError("loop control omitted its exact pre-exit state")
+                combined = (*entries, *state.entries)
+                if effect.action == "continue":
+                    return self._advance_iterator(
+                        next_result.advanced,
+                        runtime,
+                        state.context,
+                        entries=combined,
+                    )
+                if effect.action == "break":
+                    return self._publish_runtime_bindings(
+                        runtime, state.context, entries=combined
+                    )
+            return body
+        if not isinstance(face, Completed):
+            return body
+        state = face.value
+        combined = (*entries, *state.entries)
+        if not state.can_fall_through:
+            return Complete(BlockValue(combined, can_fall_through=False))
+        return self._advance_iterator(
+            next_result.advanced,
+            runtime,
+            state.context,
+            entries=combined,
+        )
+
+    def _finish_iterator(self, runtime, ctx, *, entries):
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+        if not runtime.else_sugars:
+            return self._publish_runtime_bindings(runtime, ctx, entries=entries)
+        otherwise = reduce_block_to_exitset(runtime.else_sugars, ctx)
+        if not isinstance(otherwise, ExitSet) or len(otherwise.exits) != 1:
+            return otherwise
+        face = otherwise.exits[0]
+        if not isinstance(face, Completed):
+            return otherwise
+        state = face.value
+        return self._publish_runtime_bindings(
+            runtime,
+            state.context,
+            entries=(*entries, *state.entries),
+            fall_through=state.fall_through,
+            can_fall_through=state.can_fall_through,
+        )
+
+    def _publish_runtime_bindings(
+        self,
+        runtime,
+        ctx,
+        *,
+        entries,
+        fall_through=(),
+        can_fall_through=True,
+    ):
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete
+
+        temporal = getattr(ctx, "temporal", None)
+        if temporal is None:
+            raise TypeError("loop recurrence omitted its temporal context")
+        projected = []
+        for name, coordinate_cid in zip(
+            runtime.carried_names, self.binding_coordinate_cids, strict=True
+        ):
+            value = temporal.value_if_bound(name)
+            if value is None:
+                raise TypeError("loop recurrence omitted a carried binding")
+            projected.append(ScopeRebind(name, value))
+            projected.append(ScopeRebind(coordinate_cid, value))
+        return Complete(
+            BlockValue(
+                (*entries, *projected),
+                fall_through=fall_through,
+                can_fall_through=can_fall_through,
+            )
+        )
