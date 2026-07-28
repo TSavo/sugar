@@ -85,7 +85,7 @@ class ClassValue(FloorValue):
         producer panics on BuiltinExceptionClassValue and exit summary stays
         exit-may-halt rather than sealing ExpectsMode.
         """
-        if name == "__name__":
+        if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.floor.string_value import StringValue
             from sugar_lift_py_tests.outcome import Complete
 

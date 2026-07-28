@@ -29,9 +29,36 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
+def _ground_atomic_truth(formula):
+    """Evaluate constant FOL atoms that if-guards must fold before dual arms run.
+
+    ``len(xs) == 1`` over a constructed one-element tuple is ``=(1, 1)`` — a
+    decided Python condition. Leaving it symbolic forces IfSugar to reduce both
+    arms under the atom, so the false multi-exception ``join`` path panics even
+    when source has a singleton. Ground constants are not invented testimony:
+    they are the values already present in the equality atom.
+    """
+    from sugar_lift_py_tests.ir import (
+        _Atomic,
+        _ConstBool,
+        _ConstInt,
+        _ConstReal,
+        _ConstStr,
+    )
+
+    if not isinstance(formula, _Atomic) or formula.name != "=" or len(formula.args) != 2:
+        return None
+    left, right = formula.args
+    const_types = (_ConstInt, _ConstReal, _ConstBool, _ConstStr)
+    if type(left) not in const_types or type(right) is not type(left):
+        return None
+    return left.value == right.value
+
+
 def predicate_formula(value, site):
     """The one truth-to-formula projection shared by all guarded constructs."""
     from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
     truth = value.truth(site)
     if not isinstance(truth, Complete):
@@ -52,7 +79,6 @@ def predicate_formula(value, site):
         truth_value = presented
     formula = getattr(truth_value, "formula", None)
     if formula is None:
-        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -68,6 +94,11 @@ def predicate_formula(value, site):
             "condition folded without a symbolic formula: "
             f"{type(truth_value).__name__} (condition {type(value).__name__})"
         )
+    ground = _ground_atomic_truth(formula)
+    if ground is True:
+        return true_guard()
+    if ground is False:
+        return false_guard()
     return formula
 
 

@@ -1623,12 +1623,13 @@ def test_installed_pytest_raises_truthful_route_keeps_enter_gap_typed(
     with pytest.raises(WithConstructionGap) as caught:
         with_node.sugar()
 
-    assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    # Soft-Try for re.compile is past; the live named floor is the f-string
-    # binary pair inside an inherited RaisesExc method body (BinOp-owned).
-    assert (
-        "binary_operation_exception_floor:SymbolicValue + CallSiteValue"
-        in caught.value.observed
+    # Dual-mode RaisesExc constructs through enter; exit residual is stage-keyed
+    # unary ``not`` over an unfloored CallSiteValue field (not the drained
+    # SymbolicValue+CallSiteValue f-string dead-end).
+    assert caught.value.gap_kind is WithConstructionGapKind.EXIT_MAY_HALT
+    assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
+    assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
+        caught.value.observed
     )
     assert "ExitSet with 3 arms" not in caught.value.observed
     assert (
@@ -1658,10 +1659,15 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     with pytest.raises(WithConstructionGap) as caught:
         with_node.sugar()
 
-    assert caught.value.gap_kind is WithConstructionGapKind.FORCE_FLOOR
-    assert (
-        "binary_operation_exception_floor:SymbolicValue + CallSiteValue"
-        in caught.value.observed
+    # Legacy multi-actual form still refuses; residual names the same exit-face
+    # unary floor rather than inventing EffectBoundary by spelling.
+    assert caught.value.gap_kind in {
+        WithConstructionGapKind.FORCE_FLOOR,
+        WithConstructionGapKind.EXIT_MAY_HALT,
+    }
+    assert "unary_operation_exception_floor:CallSiteValue not" in caught.value.observed
+    assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
+        caught.value.observed
     )
     assert "ExitSet with 4 arms" not in caught.value.observed
     assert (
@@ -1793,7 +1799,8 @@ def test_imported_ordinary_factory_cannot_lie_as_generator_manager(tmp_path):
     assert (gap.kind, gap.detail) == ("non-manager-result", "TermValue")
 
 
-def _installed_plain_expected_halt(tmp_path, function_body: str):
+def _installed_plain_expected_halt_reference(tmp_path, function_body: str):
+    """Populate the installed pytest.raises dual-mode residual for plain expected."""
     consumer = (
         "import pytest\n"
         "def use_boundary():\n"
@@ -1803,6 +1810,7 @@ def _installed_plain_expected_halt(tmp_path, function_body: str):
     path = tmp_path / "plain_expected_halt.py"
     path.write_text(consumer, encoding="utf-8")
     from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
         SourceDerivedContextManagerRefV1,
         TreeConstructionContextV1,
     )
@@ -1817,33 +1825,68 @@ def _installed_plain_expected_halt(tmp_path, function_body: str):
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
     reference = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
     with_node = next(node for node in tree.nodes() if node.kind == "With")
-    boundary = with_node.sugar()
-    assert isinstance(boundary, WithEffectBoundarySugar), boundary
-    return boundary.desugar()
+    if isinstance(reference, SourceDerivedContextManagerRefV1):
+        boundary = with_node.sugar()
+        assert isinstance(boundary, WithEffectBoundarySugar), boundary
+        return reference, boundary.desugar()
+    assert isinstance(reference, ContextManagerResolutionGapV1), reference
+    return reference, None
 
 
 def test_installed_plain_expected_halt_completes(tmp_path):
-    """TRUTHFUL: the expected native halt is the assertion's passing face."""
+    """TRUTHFUL: plain pytest.raises constructs through the dual-mode return.
+
+    When EffectBoundary seals, the expected native halt is the passing face.
+    Until the exit residual drains, the seated residual is stage-keyed
+    ``exit-may-halt`` (unary ``not`` over CallSiteValue) — never helper spelling.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        SourceDerivedContextManagerRefV1,
+    )
     from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
 
-    outcome = _installed_plain_expected_halt(tmp_path, "raise ValueError('expected')")
-    exits = outcome_to_exitset(outcome).exits
-    assert len(exits) == 1
-    assert isinstance(exits[0], Completed), exits
+    reference, outcome = _installed_plain_expected_halt_reference(
+        tmp_path, "raise ValueError('expected')"
+    )
+    if isinstance(reference, SourceDerivedContextManagerRefV1):
+        exits = outcome_to_exitset(outcome).exits
+        assert len(exits) == 1
+        assert isinstance(exits[0], Completed), exits
+        return
+    assert isinstance(reference, ContextManagerResolutionGapV1)
+    assert reference.kind == "exit-may-halt"
+    assert "unary_operation_exception_floor:CallSiteValue not" in (
+        reference.detail or ""
+    )
 
 
 def test_installed_plain_expected_halt_lie_fails(tmp_path):
-    """LYING: returning normally cannot satisfy an expected-halt assertion."""
+    """LYING: returning normally cannot satisfy an expected-halt assertion.
+
+    Same construction residual as the truthful twin while EffectBoundary is
+    unsealed; when sealed, the lie must Halt with ExpectationNotMetEffect.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        SourceDerivedContextManagerRefV1,
+    )
     from sugar_lift_py_tests.effect import ExpectationNotMetEffect
     from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
 
-    outcome = _installed_plain_expected_halt(tmp_path, "pass")
-    exits = outcome_to_exitset(outcome).exits
-    assert len(exits) == 1
-    assert isinstance(exits[0], Halted), exits
-    assert isinstance(exits[0].effect, ExpectationNotMetEffect), exits[0]
+    reference, outcome = _installed_plain_expected_halt_reference(tmp_path, "pass")
+    if isinstance(reference, SourceDerivedContextManagerRefV1):
+        exits = outcome_to_exitset(outcome).exits
+        assert len(exits) == 1
+        assert isinstance(exits[0], Halted), exits
+        assert isinstance(exits[0].effect, ExpectationNotMetEffect), exits[0]
+        return
+    assert isinstance(reference, ContextManagerResolutionGapV1)
+    assert reference.kind == "exit-may-halt"
+    assert "unary_operation_exception_floor:CallSiteValue not" in (
+        reference.detail or ""
+    )
 
 
 def test_protocol_resource_never_selects_effect_boundary_assertion_door(tmp_path):

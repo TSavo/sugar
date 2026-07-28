@@ -4,15 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
     _projected_manager_call_uses,
     populate_source_derived_resource_refs,
 )
+from sugar_source_tree.nodes import With
+from sugar_source_tree.tree import SourceFile
 
 PANDAS_SOURCE_CID = (
     "blake3-512:60e7b5ba2c971960e4d8edcaa85e916704dc8bfb977bc15dafb2f2b3e87458ff"
@@ -340,7 +343,6 @@ def test_non_exception_class_without_init_still_refuses_extra_actuals(
     )
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
     from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
-    from sugar_source_tree.tree import SourceFile
 
     source = (
         "class RenamedPlain:\n"
@@ -370,3 +372,114 @@ def test_non_exception_class_without_init_still_refuses_extra_actuals(
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
         function.source_visible_call_frame()
+
+
+def _generator_distribution(root: Path, source: str, *, exported: str = "acquire"):
+    """Install a distribution whose exported generator is the provider."""
+    import csv
+    import importlib.metadata
+
+    package = root / "arbitrary"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        f"from arbitrary.manager import {exported}\n", encoding="utf-8"
+    )
+    (package / "manager.py").write_text(source, encoding="utf-8")
+    metadata = root / "arbitrary_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: arbitrary-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    files = (
+        "arbitrary/__init__.py",
+        "arbitrary/manager.py",
+        "arbitrary_dist-1.0.dist-info/METADATA",
+        "arbitrary_dist-1.0.dist-info/RECORD",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for file in files:
+            writer.writerow((file, "", ""))
+    return importlib.metadata.Distribution.at(metadata)
+
+
+def test_truthful_local_two_assigned_generators_construct_and_desugar(
+    tmp_path: Path,
+) -> None:
+    """Truthful twin: two bare Names that reach generator calls both construct."""
+    distribution = _generator_distribution(
+        tmp_path, "def acquire():\n    yield\n", exported="acquire"
+    )
+    consumer = (
+        "import arbitrary\n"
+        "def exercise():\n"
+        "    first = arbitrary.acquire()\n"
+        "    second = arbitrary.acquire()\n"
+        "    with first, second:\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+
+    site = next(node for node in tree.nodes() if isinstance(node, With))
+    assert [item.context_expr.kind for item in site.items] == ["Name", "Name"]
+    seats = sorted(
+        (coordinate.start_col, call.line_col_span().start_line)
+        for coordinate, call in context.source_manager_provider_calls.items()
+        if coordinate.start_line == 5
+    )
+    assert seats == [(9, 3), (16, 4)]
+    assert all(site._generator_manager_frame(item) is not None for item in site.items)
+
+    sugar = site.sugar()
+    assert isinstance(sugar, GeneratorWithSugar)
+    outcome = sugar.desugar()
+    assert isinstance(outcome, Complete)
+
+
+def test_independent_manager_coordinates_survive_shared_provider_spelling(
+    tmp_path: Path,
+) -> None:
+    """Two uses of the same provider function keep independent use coordinates."""
+    distribution = _generator_distribution(
+        tmp_path, "def acquire():\n    yield\n", exported="acquire"
+    )
+    consumer = (
+        "import arbitrary\n"
+        "def exercise():\n"
+        "    left = arbitrary.acquire()\n"
+        "    right = arbitrary.acquire()\n"
+        "    with left, right:\n"
+        "        pass\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    site = next(node for node in tree.nodes() if isinstance(node, With))
+    use_coords = [item._manager_use_site_span() for item in site.items]
+    assert use_coords[0] != use_coords[1]
+    provider_calls = [site._provider_manager_call(item) for item in site.items]
+    assert all(call is not None for call in provider_calls)
+    assert provider_calls[0].line_col_span() != provider_calls[1].line_col_span()

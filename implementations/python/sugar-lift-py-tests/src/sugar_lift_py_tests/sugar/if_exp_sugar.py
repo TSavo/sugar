@@ -58,12 +58,22 @@ class IfExpSugar(Sugar):
 
     def _join(self, cond_value, ctx) -> Outcome:
         from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
         # The guard is the test's TRUTHINESS as a predicate -- uniform via
         # `.truth`: a predicate test (`5 if a == b else 6`) stands as its formula,
         # a bare value (`5 if c else 6`) emits `py.truthy(c)`. A ground-bool test
         # folds to a literal with no formula and is not lifted yet -- LOUD.
         formula = predicate_formula(cond_value, self.site)
+        # Ground conditions select one arm before the peer reduces — same law
+        # IfSugar owns for statement form. Dual-mode RaisesExc phis
+        # (`(T,) if not isinstance(x, tuple) else x`) must collapse to the live
+        # TupleValue rather than a GuardedValue/conditional term that later
+        # tuple(genexp) cannot floor.
+        if formula == true_guard():
+            return self.body.desugar(ctx)
+        if formula == false_guard():
+            return self.orelse.desugar(ctx)
         not_formula = not_(formula)
 
         then_out = self.body.desugar(ctx)
