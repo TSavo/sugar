@@ -72,6 +72,17 @@ class NoneValue(FloorValue):
 
         return getattr_coordinate(self, name, owner="NoneValue.attribute")
 
+    def setattr(self, name, value, site):
+        """``None.name = value`` is always AttributeError — store, not read."""
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="NoneValue.setattr",
+        )
+
     def subscript(self, index, site):
         """Construct Python's exact ground ``None[...]`` exceptional exit."""
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit

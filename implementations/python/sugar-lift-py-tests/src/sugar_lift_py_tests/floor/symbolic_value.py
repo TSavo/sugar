@@ -352,6 +352,19 @@ class SymbolicValue(FloorValue):
             for method, coordinate in _BINARY_OPERATOR_COORDINATE.items()
             if coordinate == operator
         )
+        left_coordinate = self.formal_coordinate
+        right_coordinate = getattr(other, "formal_coordinate", None)
+        if left_coordinate is not None or right_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator=owner,
+                operands=(self, other),
+                coordinates=(left_coordinate, right_coordinate),
+            )
         if isinstance(other, GuardedValue):
             return other.map_from_left(owner, self, site)
         denotes_other = getattr(other, "denotes_value", None)
@@ -418,17 +431,17 @@ class SymbolicValue(FloorValue):
     def subscript(self, index, site):
         if self.formal_coordinate is not None:
             from sugar_lift_py_tests.caller_parameter_contract import (
-                ContractConditionalConstructionV1,
+                NativeOperationExitCarrierV1,
             )
-            from sugar_lift_py_tests.ir import atomic
 
-            built = self.py_subscript_coordinate(index, site)
-            return ContractConditionalConstructionV1.mint(
+            return NativeOperationExitCarrierV1.mint(
                 site=site,
-                candidate=built.value.to_term(owner=str(site)),
-                demand_formula=atomic("python:indexable", [self.term]),
-                value=built.value,
-                coordinate=self.formal_coordinate,
+                operator="subscript",
+                operands=(self, index),
+                coordinates=(
+                    self.formal_coordinate,
+                    getattr(index, "formal_coordinate", None),
+                ),
             )
         return self.undecided_subscript(
             index,

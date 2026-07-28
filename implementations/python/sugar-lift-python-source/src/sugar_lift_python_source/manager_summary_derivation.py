@@ -122,7 +122,12 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        soft = _soft_effect_boundary_from_exception_formals(behavior)
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior,
+            protocol_construction_cid=protocol.protocol_construction_cid,
+        )
+        if isinstance(soft, DerivedManagerSummaryGapV1):
+            return soft
         if soft is not None:
             signature = _signature_for_behavior(behavior, soft)
             return _sealed_summary(protocol, soft, signature)
@@ -134,7 +139,12 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
-        soft = _soft_effect_boundary_from_exception_formals(behavior)
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior,
+            protocol_construction_cid=protocol.protocol_construction_cid,
+        )
+        if isinstance(soft, DerivedManagerSummaryGapV1):
+            return soft
         if soft is not None:
             signature = _signature_for_behavior(behavior, soft)
             return _sealed_summary(protocol, soft, signature)
@@ -233,7 +243,31 @@ def _project_receiver_match(receiver, *, site):
     return ExitSet(tuple(projected)) if projected else None
 
 
-def _soft_effect_boundary_from_exception_formals(behavior):
+def _uniform_message_operand_or_gap(
+    projected_operand,
+    *,
+    protocol_construction_cid,
+    coordinate,
+):
+    """Collapse identical message faces or return one located summary gap."""
+    projected_faces = outcome_to_exitset(projected_operand).exits
+    if projected_faces and all(
+        isinstance(face, Completed) and face.value == projected_faces[0].value
+        for face in projected_faces
+    ):
+        return projected_faces[0].value
+    return DerivedManagerSummaryGapV1(
+        "exit-may-halt",
+        protocol_construction_cid,
+        f"non-uniform-message-pattern-faces:{coordinate.cid}",
+    )
+
+
+def _soft_effect_boundary_from_exception_formals(
+    behavior,
+    *,
+    protocol_construction_cid,
+):
     """Expects-mode EffectBoundary when exit body is undecided but formals decide.
 
     Installed-source ``pytest.raises`` (and dual-mode peers) carry an
@@ -281,13 +315,13 @@ def _soft_effect_boundary_from_exception_formals(behavior):
             site=site,
             construct_message_obligation=lambda _pattern: Complete(message_operand),
         )
-        projected_faces = outcome_to_exitset(projected_operand).exits
-        if not projected_faces or not all(
-            isinstance(face, Completed) and face.value == projected_faces[0].value
-            for face in projected_faces
-        ):
-            return None
-        message_operand = projected_faces[0].value
+        message_operand = _uniform_message_operand_or_gap(
+            projected_operand,
+            protocol_construction_cid=protocol_construction_cid,
+            coordinate=site,
+        )
+        if isinstance(message_operand, DerivedManagerSummaryGapV1):
+            return message_operand
     return EffectBoundarySemanticsV1(
         ExpectsModeV1(),
         RaiseEffectKindV1(),

@@ -265,6 +265,39 @@ class NativeOperationExitCarrierV1:
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
 
+    def __post_init__(self):
+        operand_count = len(self.operands)
+        coordinate_count = len(self.coordinates)
+        demand_count = len(self.demand.operand_coordinate_cids)
+        if len({operand_count, coordinate_count, demand_count}) != 1:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(operand_count, coordinate_count, demand_count),
+                requested="one authenticated coordinate slot per ordered operand",
+                fix="rebuild the carrier with aligned operands and coordinates",
+                gap_kind=GapKind.FLOOR,
+            )
+        stored_cids = tuple(
+            None if coordinate is None else coordinate.coordinate_cid
+            for coordinate in self.coordinates
+        )
+        if stored_cids != self.demand.operand_coordinate_cids:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(stored_cids, self.demand.operand_coordinate_cids),
+                requested="stored coordinates authenticating to the demand CID tuple",
+                fix="preserve ordered coordinate identity when constructing the carrier",
+                gap_kind=GapKind.FLOOR,
+            )
+
     @classmethod
     def mint(cls, *, site, operator, operands, coordinates):
         operands = tuple(operands)
@@ -288,10 +321,13 @@ class NativeOperationExitCarrierV1:
     def discharge(self, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits."""
         from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.gap.info import GapKind
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        def undischarged(reason):
+            return NativeOperationResolutionV1.undischarged(reason).project(
+                source_node=self.demand.source_node
+            )
 
         actual_operands = []
         for original, coordinate_cid in zip(
@@ -301,35 +337,23 @@ class NativeOperationExitCarrierV1:
                 actual_operands.append(original)
                 continue
             if coordinate_cid not in actuals_by_formal_coordinate:
-                construction_panic_gap(
-                    owner="NativeOperationExitCarrierV1.discharge",
-                    blame=self.demand.source_node,
-                    observed=(
-                        "native operation discharge omitted authenticated actual "
-                        f"for {coordinate_cid}"
-                    ),
-                    requested="one authenticated actual for every formal operand",
-                    fix=(
-                        "preserve the operation demand until caller discharge can "
-                        "supply the missing formal-to-actual binding"
-                    ),
-                    gap_kind=GapKind.FLOOR,
+                return undischarged(
+                    "authenticated caller actual absent for "
+                    f"{coordinate_cid}"
                 )
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
 
+        if len(actual_operands) not in {1, 2}:
+            return undischarged(
+                "native operation arity is unavailable until a unary or binary "
+                f"producer is authenticated (arity={len(actual_operands)})"
+            )
         left = actual_operands[0]
         operation = getattr(left, self.demand.operator, None)
         if not callable(operation):
-            construction_panic_gap(
-                owner="NativeOperationExitCarrierV1.discharge",
-                blame=self.demand.source_node,
-                observed=(
-                    f"{type(left).__name__} has no native Floor operation "
-                    f"{self.demand.operator}"
-                ),
-                requested="an operator named by the authenticated producer Floor",
-                fix="wire the producer's existing Floor method into the carrier",
-                gap_kind=GapKind.FLOOR,
+            return undischarged(
+                "native producer operation unavailable on authenticated actual: "
+                f"{self.demand.operator}"
             )
 
         if len(actual_operands) == 1:
@@ -337,14 +361,7 @@ class NativeOperationExitCarrierV1:
         elif len(actual_operands) == 2:
             projected = operation(actual_operands[1], self.site)
         else:
-            construction_panic_gap(
-                owner="NativeOperationExitCarrierV1.discharge",
-                blame=self.demand.source_node,
-                observed="native operation has unsupported operand arity",
-                requested="a unary or binary native operation",
-                fix="retain the operation demand until its native arity is supported",
-                gap_kind=GapKind.FLOOR,
-            )
+            return undischarged("native operation arity is unavailable")
         if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
             effect = projected.value.effect
             if effect.exception_type_coordinate is None or effect.occurrence_id is None:

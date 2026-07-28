@@ -1371,15 +1371,52 @@ def test_none_match_branches_before_pattern_projection():
     assert isinstance(result.value, NoMessagePatternV1)
 
 
-def test_non_none_match_projects_pattern_inside_its_face():
-    """Truthful twin: the non-None face alone constructs regex testimony."""
+def test_uniform_none_match_faces_collapse_to_one_no_message_summary():
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+        _uniform_message_operand_or_gap,
+    )
+
+    projected = _construct_message_pattern_operand(
+        ExitSet(
+            (
+                Completed(_Atomic("none-face-a", ()), NoneValue()),
+                Completed(_Atomic("none-face-b", ()), NoneValue()),
+            )
+        ),
+        site="uniform-none-faces",
+        construct_message_obligation=lambda _pattern: (_ for _ in ()).throw(
+            AssertionError("None faces cannot construct a regex obligation")
+        ),
+    )
+    result = _uniform_message_operand_or_gap(
+        projected,
+        protocol_construction_cid="uniform-none-protocol",
+        coordinate=SimpleNamespace(cid="uniform-none-coordinate"),
+    )
+
+    assert isinstance(result, NoMessagePatternV1)
+
+
+def test_uniform_pattern_faces_collapse_to_one_pattern_obligation():
+    """Truthful twin: non-None faces construct one regex obligation."""
+    from types import SimpleNamespace
+
     from sugar_lift_py_tests.context_manager_contract import (
         OptionalFormalArgumentProjectionV1,
     )
     from sugar_lift_py_tests.floor import FloorValue, StringValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
     from sugar_lift_python_source.manager_summary_derivation import (
         _construct_message_pattern_operand,
+        _uniform_message_operand_or_gap,
     )
 
     class PatternCarrier(FloorValue):
@@ -1388,8 +1425,13 @@ def test_non_none_match_projects_pattern_inside_its_face():
             return Complete(StringValue("^$"))
 
     expected = OptionalFormalArgumentProjectionV1(1)
-    result = _construct_message_pattern_operand(
-        Complete(PatternCarrier()),
+    projected = _construct_message_pattern_operand(
+        ExitSet(
+            (
+                Completed(_Atomic("pattern-face-a", ()), PatternCarrier()),
+                Completed(_Atomic("pattern-face-b", ()), PatternCarrier()),
+            )
+        ),
         site="non-none-pattern-face",
         construct_message_obligation=lambda pattern: (
             Complete(expected)
@@ -1397,9 +1439,50 @@ def test_non_none_match_projects_pattern_inside_its_face():
             else (_ for _ in ()).throw(AssertionError(pattern))
         ),
     )
+    result = _uniform_message_operand_or_gap(
+        projected,
+        protocol_construction_cid="uniform-pattern-protocol",
+        coordinate=SimpleNamespace(cid="uniform-pattern-coordinate"),
+    )
 
-    assert isinstance(result, Complete)
-    assert result.value == expected
+    assert result == expected
+
+
+def test_non_uniform_message_faces_return_located_derived_summary_gap():
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        DerivedManagerSummaryGapV1,
+        _uniform_message_operand_or_gap,
+    )
+
+    coordinate = SimpleNamespace(cid="non-uniform-formal-coordinate")
+    result = _uniform_message_operand_or_gap(
+        ExitSet(
+            (
+                Completed(_Atomic("none-message-face", ()), NoMessagePatternV1()),
+                Completed(
+                    _Atomic("pattern-message-face", ()),
+                    OptionalFormalArgumentProjectionV1(1),
+                ),
+            )
+        ),
+        protocol_construction_cid="non-uniform-protocol-coordinate",
+        coordinate=coordinate,
+    )
+
+    assert isinstance(result, DerivedManagerSummaryGapV1)
+    assert result.kind == "exit-may-halt"
+    assert result.protocol_construction_cid == "non-uniform-protocol-coordinate"
+    assert result.detail == (
+        "non-uniform-message-pattern-faces:non-uniform-formal-coordinate"
+    )
 
 
 def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):

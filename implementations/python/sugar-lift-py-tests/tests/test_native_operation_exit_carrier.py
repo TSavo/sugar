@@ -76,6 +76,98 @@ def _carrier(operator: str = "add"):
     return carrier, left_coordinate, right_coordinate
 
 
+@pytest.mark.parametrize(
+    ("method", "operator"),
+    (
+        ("add", "add"),
+        ("subtract", "subtract"),
+        ("multiply", "multiply"),
+        ("divide", "divide"),
+        ("floor_divide", "floor_divide"),
+        ("modulo", "modulo"),
+        ("power", "power"),
+        ("matrix_multiply", "matrix_multiply"),
+        ("bitwise_and", "bitwise_and"),
+        ("bitwise_or", "bitwise_or"),
+        ("bitwise_xor", "bitwise_xor"),
+        ("left_shift", "left_shift"),
+        ("right_shift", "right_shift"),
+    ),
+)
+def test_formal_binary_dispatch_mints_caller_discharge_carrier(method, operator):
+    left_coordinate = _coordinate("left", 0)
+    right_coordinate = _coordinate("right", 1)
+    left = SymbolicValue(make_var("left"), left_coordinate)
+    right = SymbolicValue(make_var("right"), right_coordinate)
+
+    outcome = getattr(left, method)(right, _site())
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == operator
+    assert outcome.operands == (left, right)
+    assert outcome.demand.operand_coordinate_cids == (
+        left_coordinate.coordinate_cid,
+        right_coordinate.coordinate_cid,
+    )
+
+
+def test_swapped_formal_binary_operands_retain_distinct_ordered_demands():
+    left_coordinate = _coordinate("left", 0)
+    right_coordinate = _coordinate("right", 1)
+    left = SymbolicValue(make_var("left"), left_coordinate)
+    right = SymbolicValue(make_var("right"), right_coordinate)
+
+    forward = left.subtract(right, _site())
+    reverse = right.subtract(left, _site())
+
+    assert isinstance(forward, NativeOperationExitCarrierV1)
+    assert isinstance(reverse, NativeOperationExitCarrierV1)
+    assert forward.demand.operator == reverse.demand.operator == "subtract"
+    assert forward.demand.operand_coordinate_cids == (
+        left_coordinate.coordinate_cid,
+        right_coordinate.coordinate_cid,
+    )
+    assert reverse.demand.operand_coordinate_cids == (
+        right_coordinate.coordinate_cid,
+        left_coordinate.coordinate_cid,
+    )
+    assert forward.demand.demand_cid != reverse.demand.demand_cid
+
+
+@pytest.mark.parametrize("formal_side", ("left", "right"))
+def test_either_formal_operand_is_enough_to_defer_binary_dispatch(formal_side):
+    coordinate = _coordinate(formal_side, 0)
+    left = SymbolicValue(
+        make_var("left"), coordinate if formal_side == "left" else None
+    )
+    right = SymbolicValue(
+        make_var("right"), coordinate if formal_side == "right" else None
+    )
+
+    outcome = left.add(right, _site())
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.coordinates == (
+        coordinate if formal_side == "left" else None,
+        coordinate if formal_side == "right" else None,
+    )
+
+
+def test_coordinate_free_binary_dispatch_retains_existing_symbolic_faces():
+    outcome = SymbolicValue(make_var("left")).add(
+        SymbolicValue(make_var("right")), _site()
+    )
+
+    assert isinstance(outcome, ExitSet)
+    assert (
+        len(tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)))
+        == 1
+    )
+    assert (
+        len(tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))) == 1
+    )
+
+
 def test_same_native_operation_demand_can_complete_for_authenticated_actuals():
     carrier, left, right = _carrier()
 
@@ -114,11 +206,52 @@ def test_undischarged_native_operation_is_typed_loud_not_completed():
         outcome_to_exitset(carrier)
 
 
-def test_missing_authenticated_actual_remains_typed_loud():
+def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic():
     carrier, left, _ = _carrier()
 
-    with pytest.raises(ConstructionPanic, match="authenticated actual"):
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
         carrier.discharge({left.coordinate_cid: TermValue(1)})
+
+
+def test_unavailable_native_operation_is_undischarged_not_a_construction_panic():
+    carrier, left, right = _carrier(operator="not_a_floor_operation")
+    with pytest.raises(SugarNotWritten, match="producer operation unavailable"):
+        carrier.discharge(
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        )
+
+
+def test_unsupported_native_arity_is_undischarged_not_a_construction_panic():
+    carrier, left, right = _carrier()
+    third = left
+    three = NativeOperationExitCarrierV1.mint(
+        site=_site(),
+        operator="add",
+        operands=carrier.operands + (carrier.operands[0],),
+        coordinates=(left, right, third),
+    )
+    with pytest.raises(SugarNotWritten, match="arity is unavailable"):
+        three.discharge({left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)})
+
+    # The construction invariant remains independently loud for mismatched rows.
+    from dataclasses import replace
+    demand = replace(
+        carrier.demand,
+        operand_coordinate_cids=carrier.demand.operand_coordinate_cids + (left.coordinate_cid,),
+    )
+    with pytest.raises(ConstructionPanic, match="one authenticated coordinate slot"):
+        replace(
+            carrier,
+            demand=demand,
+        )
+
+
+def test_same_length_swapped_coordinate_identities_panic_at_construction():
+    from dataclasses import replace
+
+    carrier, left, right = _carrier()
+    with pytest.raises(ConstructionPanic, match="ordered coordinate identity"):
+        replace(carrier, coordinates=(right, left))
 
 
 def test_swapped_operands_retain_distinct_demand_coordinates():

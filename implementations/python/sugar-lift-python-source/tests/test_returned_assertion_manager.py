@@ -140,6 +140,8 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
 
     assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
     assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    # ``match=None`` is written, constructed, and remains a separate absence
+    # obligation. A speculative ``match.pattern`` face cannot replace it.
     assert isinstance(reference.semantics.message_pattern_operand, NoMessagePatternV1)
     assert isinstance(with_node.sugar(), WithEffectBoundarySugar)
 

@@ -652,6 +652,50 @@ class FloorValue:
                 )
         return self.truth(site)
 
+    def boolop_truth(self, site):
+        """Truth-test once while retaining the actual operand BoolOp returns.
+
+        This unary carrier adapter is deliberately distinct from ``truth``:
+        ``a and b`` / ``a or b`` select using ``bool(a)`` but return ``a`` on
+        the stopping face.  After formal-coordinate discharge, ``self`` is the
+        authenticated caller actual, so packaging it here prevents the
+        definition-time formal from leaking into the result.
+
+        An actual whose runtime type remains undecided stays a named refusal;
+        neither a generic halt nor a total symbolic truth is invented.
+        """
+        denotes = getattr(self, "denotes_value", None)
+        decided = getattr(self, "runtime_type_is_decided", None)
+        if callable(denotes) and callable(decided) and denotes() and not decided():
+            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if not isinstance(self, CallSiteValue):
+                raise SugarNotWritten(
+                    blame=site,
+                    owner="boolean_operation_exception_floor",
+                    observed=f"{type(self).__name__} BoolOp truth",
+                    requested=(
+                        "source-visible native truth testimony selecting completion "
+                        "or an authenticated exceptional exit"
+                    ),
+                    fix=(
+                        "preserve the undecided third value at boolop_truth discharge; "
+                        "resolve the actual's runtime type and __bool__/__len__ from "
+                        "source before completing or halting"
+                    ),
+                )
+
+        from sugar_lift_py_tests.floor.boolop_truth_selection import (
+            BoolOpTruthSelection,
+        )
+
+        from sugar_lift_py_tests.outcome import Complete
+
+        return self.truth(site).and_then(
+            lambda truth_value: Complete(BoolOpTruthSelection(self, truth_value))
+        )
+
     def undecided_attribute(self, name, site, *, owner: str):
         """Refuse lookup when source testimony decides neither outgoing edge.
 
@@ -707,6 +751,28 @@ class FloorValue:
             observed=observed,
             requested="stand on the subscript-store floor",
             fix=f"write more Floor: implement {observed}.setitem",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        construction_panic(info)
+
+    def setattr(self, name, value, site):
+        """``receiver.name = value`` — the store path, never the read path.
+
+        Distinct from :meth:`attribute` / ``__getattr__`` / ``__getattribute__``.
+        A readable name does not license a write. Default: loud floor gap.
+        """
+        del name, value
+        from sugar_lift_py_tests.gap.panic import construction_panic
+        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+
+        observed = type(self).__name__
+        info = ConstructionGap(
+            owner="setattr",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the attribute-store floor",
+            fix=f"write more Floor: implement {observed}.setattr",
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )

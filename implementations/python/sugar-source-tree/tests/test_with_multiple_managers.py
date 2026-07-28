@@ -41,6 +41,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ImportSignatureV2,
+    NativeProtocolSlot,
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -114,6 +115,7 @@ def _function_sugar(tmp_path, src: str, *, resolve_items=None, name="f"):
     identity = path_source(str(path))
     probe = SourceFile(identity)
     rows = {}
+    native_definitions = {}
     for node in probe.nodes():
         if node.kind != "With":
             continue
@@ -122,8 +124,19 @@ def _function_sugar(tmp_path, src: str, *, resolve_items=None, name="f"):
                 continue
             coordinate = _coordinate(item.context_expr)
             rows[coordinate] = _resolved(coordinate)
+            native_definitions[(coordinate, NativeProtocolSlot.CONTEXT_ENTER)] = (
+                SourceFragmentCoordinateV1(_cid("e"), 1, 0, 1, 1)
+            )
+            native_definitions[(coordinate, NativeProtocolSlot.CONTEXT_EXIT)] = (
+                SourceFragmentCoordinateV1(_cid("x"), 2, 0, 2, 1)
+            )
     context = TreeConstructionContextV1(
-        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+        ResolvedContractRefsV1(
+            _cid("c"),
+            _cid("t"),
+            MappingProxyType(rows),
+            MappingProxyType(native_definitions),
+        )
     )
     source = SourceFile(identity, construction_context=context)
     for fn in source.functions():
@@ -296,6 +309,10 @@ class _FloorValue:
 
 
 def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
     exit_sugar = _FixedSugar(Complete(_FloorValue("exited")), probe=exit_probe)
     return WithResourceSugar(
         manager=_FixedSugar(Complete(_FloorValue(f"mgr{slot}"))),
@@ -305,6 +322,12 @@ def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
         exit_face_id=f"{slot}#exit_face",
         body=body if body is not None else (),
         disposition=NeverSuppresses(),
+        enter_definition=SourceFragmentCoordinateV1(
+            "blake3-512:" + "e" * 128, 1, 0, 1, 1
+        ),
+        exit_definition=SourceFragmentCoordinateV1(
+            "blake3-512:" + "x" * 128, 2, 0, 2, 1
+        ),
         site=None,
     )
 
