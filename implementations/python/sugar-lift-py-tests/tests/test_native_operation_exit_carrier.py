@@ -4,6 +4,8 @@ import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
+    NativeOperationResolutionV1,
+    source_coordinate,
 )
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -92,7 +94,9 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_name == "TypeError"
+    assert halted.effect.exception_name is None
+    assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
+    assert halted.effect.occurrence is not None
 
 
 def test_undischarged_native_operation_is_typed_loud_not_completed():
@@ -148,14 +152,19 @@ def test_lying_exception_type_is_rejected_without_inventing_identity():
             right.coordinate_cid: TermValue(2),
         }
     )
-    with pytest.raises(SugarNotWritten, match="no term to state the test over"):
-        exits.and_exit(
-            type(exits).completed(object()),
-            disposition=EffectBoundaryDisposition(
-                matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
-                unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-            ),
-        )
+    routed = exits.and_exit(
+        type(exits).completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
+            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+        ),
+    )
+    assert len(routed.exits) == 1
+    assert isinstance(routed.exits[0], Halted)
+    assert (
+        routed.exits[0].effect.exception_type_coordinate
+        != _Expected("ValueError").identity
+    )
 
 
 def test_identity_operation_never_acquires_a_fabricated_exceptional_edge():
@@ -170,3 +179,42 @@ def test_identity_operation_never_acquires_a_fabricated_exceptional_edge():
 
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
+
+
+def test_nameless_resolution_is_undischarged_and_cannot_project_a_halt():
+    resolution = NativeOperationResolutionV1.undischarged(
+        "native operation exception identity unproven"
+    )
+
+    assert resolution.kind == "undischarged"
+    assert not resolution.has_authenticated_exception_type
+    with pytest.raises(SugarNotWritten, match="identity unproven"):
+        resolution.project(source_node=_site())
+
+
+def test_same_named_exception_keeps_distinct_operation_origins():
+    source = _site()
+    exception_type = _Expected("TypeError").identity
+    origin = source_coordinate(source)
+    first = NativeOperationResolutionV1.exceptional(
+        exception_type_coordinate=exception_type,
+        operation_occurrence=origin,
+    )
+    second = NativeOperationResolutionV1.exceptional(
+        exception_type_coordinate=exception_type,
+        operation_occurrence=type(origin)(
+            origin.source_cid,
+            origin.start_line + 1,
+            origin.start_col,
+            origin.end_line + 1,
+            origin.end_col,
+        ),
+    )
+
+    first_exit = first.project(source_node=source).exits[0]
+    second_exit = second.project(source_node=source).exits[0]
+    assert isinstance(first_exit, Halted)
+    assert isinstance(second_exit, Halted)
+    assert first_exit.effect.exception_type_coordinate == exception_type
+    assert second_exit.effect.exception_type_coordinate == exception_type
+    assert first_exit.effect.occurrence != second_exit.effect.occurrence
