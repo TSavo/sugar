@@ -83,6 +83,17 @@ class NoneValue(FloorValue):
             owner="NoneValue.setattr",
         )
 
+    def delattr(self, name, site):
+        """``del None.name`` is always AttributeError — delete, not read."""
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="NoneValue.delattr",
+        )
+
     def subscript(self, index, site):
         """Construct Python's exact ground ``None[...]`` exceptional exit."""
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit

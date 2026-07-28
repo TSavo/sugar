@@ -47,6 +47,15 @@ class ListValue(FloorValue):
             exception_name="AttributeError", site=site, owner="ListValue.setattr"
         )
 
+    def delattr(self, name, site):
+        """Lists have no instance ``__dict__``; delete is AttributeError."""
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="ListValue.delattr"
+        )
+
     def to_term(self, *, owner: str):
         # Project elements into FOL — assert equality / dig return faces.
         from sugar_lift_py_tests.ir import ctor
