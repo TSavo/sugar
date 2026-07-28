@@ -33,7 +33,7 @@ def _post_term(source: str):
 
 def test_lambda_identity_truthful_and_lying_terms_discriminate():
     truthful = _post_term("def A(v):\n    return (lambda x: x)(v)\n")
-    lying = _post_term("def A(v):\n    return (lambda x: x)(v + 1)\n")
+    lying = _post_term("def A(v, other):\n    return (lambda x: x)(other)\n")
 
     assert truthful.name == "py.call"
     assert truthful.args[0].name == "python:lambda"
