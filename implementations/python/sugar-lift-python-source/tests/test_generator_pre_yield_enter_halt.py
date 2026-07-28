@@ -223,6 +223,7 @@ def test_lifecycle_protocol_refuses_stale_lifecycle_cid(tmp_path: Path) -> None:
             protocol.generator_frame,
             protocol.enter_halt_faces,
             protocol.yield_faces,
+            protocol.exit_halt_faces,
             "blake3-512:" + "c" * 128,
         )
 
