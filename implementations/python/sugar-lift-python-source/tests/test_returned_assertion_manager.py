@@ -36,7 +36,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     AttributionOutcome,
     BodyProbe,
     attribute_body_probe,
-    summarize_attribution_outcomes,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 
@@ -127,13 +126,7 @@ def _with_at(line: int):
 
 
 def test_external_error_raised_follows_authenticated_returned_manager() -> None:
-    """Truthful: local import plus returned manager supplies the classification.
-
-    Construction follows the factory return into the installed RaisesExc dual-
-    mode body. Full EffectBoundary summary derivation still stops at the
-    exit-face residual (expected_exceptions / matches floor); that residual is
-    named and stage-keyed, never bridged by the helper spelling.
-    """
+    """Truthful: local import plus returned manager supplies the classification."""
     from sugar_lift_py_tests.context_manager_contract import (
         EffectBoundarySemanticsV1,
         NoMessagePatternV1,
@@ -145,41 +138,12 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
     with_node = _with_at(40)
     reference = with_node._prebound_manager_resolution(with_node.items[0])
 
-    if isinstance(reference, SourceDerivedContextManagerRefV1):
-        assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
-        # ``match=None`` is written, constructed, and classified as no pattern.
-        assert isinstance(reference.semantics.message_pattern, NoMessagePatternV1)
-        assert isinstance(with_node.sugar(), WithEffectBoundarySugar)
-        return
-
-    # Stage-keyed residual after dual-mode return follow-through. The returned
-    # manager constructed through isinstance/tuple/len field flooring, and
-    # ``not self.matches(...)`` digs method bodies instead of refusing the
-    # CallSiteValue at the UnaryOp producer. Summary derivation still has not
-    # sealed EffectBoundary.
-    assert isinstance(reference, ContextManagerResolutionGapV1), reference
-    assert reference.kind in {
-        "exit-may-halt",
-        "enter-may-halt",
-        "force-floor",
-        "incomplete-call-actuals",
-        "no-derived-contract",
-        "method-construction",
-    }, reference
-    assert "external_error_raised" not in (reference.detail or "")
-    # Prior dead-ends drained by returned-manager construction machinery.
-    assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
-        reference.detail or ""
-    )
-    assert "SymbolicValue + CallSiteValue" not in (reference.detail or "")
-    assert "comparison_operation_exception_floor" not in (reference.detail or "")
-    assert "unary_operation_exception_floor:CallSiteValue not" not in (
-        reference.detail or ""
-    )
-    # Current residual is deeper in matches() / method-body truth after the
-    # CallSiteValue UnaryOp gate digs.
-    assert reference.kind == "exit-may-halt"
-    assert reference.detail == "truth:BlockValue"
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    # ``match=None`` is written, constructed, and remains a separate absence
+    # obligation. A speculative ``match.pattern`` face cannot replace it.
+    assert isinstance(reference.semantics.message_pattern_operand, NoMessagePatternV1)
+    assert isinstance(with_node.sugar(), WithEffectBoundarySugar)
 
 
 def test_external_error_raised_population_is_the_authenticated_47_with_sites() -> None:
@@ -333,34 +297,39 @@ def _external_error_attributions():
     return tuple(attributed)
 
 
-def test_external_error_raised_47_site_outcome_partition() -> None:
-    summary = summarize_attribution_outcomes(_external_error_attributions())
+@cache
+def _external_error_population_refusal():
+    from sugar_source_tree.panic import UnattributableRefusal
 
-    assert summary.enrolled == 47
-    # ArrowInvalid/ArrowException heads construct through import-bound export
-    # coordinates; residual is named (exit-face), never ConstructionPanic on
-    # SymbolicValue.attribute for the exception-type operand.
-    assert summary.construction_panics == 0
-    assert summary.authenticated_exceptional_exits > 0
-    assert (
-        summary.authenticated_exceptional_exits + summary.named_refusals
-        == summary.enrolled
+    try:
+        _external_error_attributions()
+    except UnattributableRefusal as refusal:
+        return refusal
+    raise AssertionError("expected the provider-source boundary to stay loud")
+
+
+def test_external_error_raised_47_site_partition_stays_loud_without_provider_source() -> (
+    None
+):
+    """The 47-site census cannot bank exits without the provider definition."""
+    refusal = _external_error_population_refusal()
+
+    assert refusal.owner == "provider_exception_type_construction"
+    assert refusal.observed == "provider artifact source absent: pyarrow"
+    assert refusal.requested == "provider-defined exception class testimony"
+    assert (refusal.blame.line, refusal.blame.col) == (1715, 34)
+
+
+def test_external_error_raised_missing_provider_source_names_the_real_site() -> None:
+    """The honest negative names source, coordinate, and required testimony."""
+    refusal = _external_error_population_refusal()
+
+    assert refusal.blame.filename.endswith("/pandas/tests/extension/test_arrow.py")
+    assert (refusal.blame.line, refusal.blame.col) == (1715, 34)
+    assert refusal.fix == (
+        "publish the named provider artifact source; never replace it with an "
+        "attribute spelling"
     )
-
-
-def test_external_error_raised_refusal_and_gap_twins_are_concrete_sites() -> None:
-    by_id = {body.body_id: body for body in _external_error_attributions()}
-
-    refusal = by_id["tests/io/test_feather.py:40"]
-    assert refusal.outcome is AttributionOutcome.NAMED_REFUSAL
-    assert refusal.detail == "With._construct_sugar"
-
-    for relative, line, _attribute in _ARROW_EXCEPTION_SITES:
-        site = by_id[f"{relative}:{line}"]
-        # Before: a named refusal after sealing the attribute spelling. After:
-        # provider-defined class testimony reaches the boundary and the real
-        # body effect is authenticated.
-        assert site.outcome is AttributionOutcome.AUTHENTICATED_EXIT, site
 
 
 def test_external_error_raised_emits_complete_consumer_testimony() -> None:

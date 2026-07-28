@@ -1183,11 +1183,11 @@ def test_renamed_source_visible_exit_derives_expects_raise_boundary(tmp_path):
 
 
 def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_path):
-    """The tempting pandas helper spelling has no assertion authority.
+    """A deferred assertion import cannot override the returned manager.
 
-    This is the lying twin for the returned-manager reproducer.  It uses the
-    exact helper name but returns an ordinary resource manager; native protocol
-    testimony must keep it out of the EffectBoundary arm.
+    This is the lying twin for the returned-manager reproducer.  It binds the
+    assertion provider at call time but returns an ordinary resource manager;
+    native return testimony must keep it out of the EffectBoundary arm.
     """
     graph, resolved, actual, call_site = _resolved_type_actual(
         tmp_path,
@@ -1199,6 +1199,7 @@ def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_p
         "    def __exit__(self, effect_type, effect, traceback):\n"
         "        return False\n"
         "def external_error_raised(expected):\n"
+        "    import pytest\n"
         "    return OrdinaryResource(expected)\n",
         exported="external_error_raised",
     )
