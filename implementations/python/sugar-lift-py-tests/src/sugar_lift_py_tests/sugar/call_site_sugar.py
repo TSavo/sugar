@@ -343,6 +343,11 @@ class CallSiteSugar(ConstructedTermSugar):
                 if native_operation_actuals is None
                 else native_operation_actuals.by_formal_coordinate
             ),
+            bound_native_source_actuals=(
+                None
+                if native_operation_actuals is None
+                else native_operation_actuals.source_actuals
+            ),
         )
         if native_operation_actuals is not None:
             pending = self.source_call_frame.pending_native_operation.discharge(
