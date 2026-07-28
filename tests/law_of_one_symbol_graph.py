@@ -235,8 +235,15 @@ class SymbolGraph:
                         args = (*args, node.args.vararg)
                     if node.args.kwarg:
                         args = (*args, node.args.kwarg)
-                    for arg in args:
-                        self._bind(symbol, arg, arg.arg, set(), "parameter", child_env)
+                    classmethod = owner in self._class_symbols and any(
+                        isinstance(decorator, ast.Name)
+                        and decorator.id == "classmethod"
+                        for decorator in node.decorator_list
+                    )
+                    for index, arg in enumerate(args):
+                        values = {owner} if classmethod and index == 0 else set()
+                        kind = "classmethod" if values else "parameter"
+                        self._bind(symbol, arg, arg.arg, values, kind, child_env)
                 self._walk_body(node.body, symbol, child_env)
                 continue
             if isinstance(node, (ast.Import, ast.ImportFrom)):

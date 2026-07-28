@@ -70,3 +70,20 @@ def test_symbol_graph_resolves_fixed_point_reexports(tmp_path: Path) -> None:
     call = next(edge for edge in graph.calls if edge.expression == "again")
     assert {(target.module, target.name) for target in call.targets} == {("a", "owner")}
     assert call.dynamic is False
+
+
+def test_symbol_graph_resolves_classmethod_cls_to_its_class(tmp_path: Path) -> None:
+    graph = _graph(tmp_path, {
+        "m": (
+            "class SourceFile:\n"
+            "    def __init__(self, identity): pass\n"
+            "    @classmethod\n"
+            "    def from_path(cls, identity):\n"
+            "        return cls(identity)\n"
+        )
+    })
+    call = next(edge for edge in graph.calls if edge.expression == "cls")
+    assert {(target.name, target.lexical) for target in call.targets} == {
+        ("SourceFile", ())
+    }
+    assert call.dynamic is False

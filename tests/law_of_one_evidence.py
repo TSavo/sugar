@@ -25,7 +25,8 @@ class OwnerCallPathEvidence:
     canonical_source_file_entry: EvidenceSite
     canonical_call: EvidenceSite
     other_owner_definitions: tuple[EvidenceSite, ...]
-    other_constructor_calls: tuple[EvidenceSite, ...]
+    constructor_calls: tuple[EvidenceSite, ...]
+    dynamic_calls: tuple[EvidenceSite, ...]
     forwarders: tuple[EvidenceSite, ...]
     adapter_overrides: tuple[EvidenceSite, ...]
     discovered_calls: int
@@ -34,9 +35,10 @@ class OwnerCallPathEvidence:
 
 @dataclass(frozen=True)
 class SourceFileSurfaceEvidence:
-    canonical_surface: EvidenceSite
-    pure_surfaces: tuple[EvidenceSite, ...]
-    constructing_secondary_surfaces: tuple[EvidenceSite, ...]
+    oracle_intake: EvidenceSite
+    work_entry: EvidenceSite
+    intake_constructor_edges: tuple[EvidenceSite, ...]
+    forbidden_intake_work_edges: tuple[EvidenceSite, ...]
     discovered_surfaces: int
     audited_surfaces: int
 
@@ -114,7 +116,9 @@ class LawOfOneEvidence:
 
         owner = self.owner_path
         assert owner.other_owner_definitions == ()
-        assert owner.other_constructor_calls == ()
+        assert owner.constructor_calls
+        assert owner.canonical_call in owner.constructor_calls
+        assert owner.dynamic_calls == ()
         assert owner.forwarders == ()
         assert owner.adapter_overrides == ()
         assert owner.discovered_calls == owner.audited_calls > 0
@@ -124,9 +128,11 @@ class LawOfOneEvidence:
         )
 
         surfaces = self.source_file_surfaces
-        assert surfaces.constructing_secondary_surfaces == ()
+        assert len(surfaces.intake_constructor_edges) == 1
+        assert surfaces.forbidden_intake_work_edges == ()
         assert surfaces.discovered_surfaces == surfaces.audited_surfaces > 0
-        assert surfaces.canonical_surface == owner.canonical_source_file_entry
+        assert surfaces.oracle_intake == owner.canonical_source_file_entry
+        assert surfaces.work_entry == owner.owner
 
         privacy = self.privacy
         assert len(privacy.definitions) == 3

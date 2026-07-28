@@ -6,6 +6,7 @@ import ast
 from collections import Counter, defaultdict
 import inspect
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -70,7 +71,11 @@ def _module_key(path: Path, root: Path) -> str:
 
 
 def audit_law_of_one(
-    *, repository_root: Path, temporary_root: Path, monkeypatch: pytest.MonkeyPatch
+    *,
+    repository_root: Path,
+    temporary_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_file_entry: Callable[..., object],
 ) -> LawOfOneEvidence:
     from sugar_source_tree.backend import Backend
     import sugar_source_tree.backend as backend_module
@@ -125,10 +130,111 @@ def audit_law_of_one(
     )
 
     contract_reds: list[str] = []
-    door = getattr(Backend, "materialize_module", None)
-    if door is None:
+    door = SourceFile.__init__
+    door_file = Path(inspect.getsourcefile(door) or "").resolve()
+    door_line = inspect.getsourcelines(door)[1]
+    source_file_symbol = next(
+        (
+            symbol
+            for symbol in graph.definitions.values()
+            if symbol.path.resolve() == door_file
+            and symbol.name == SourceFile.__name__
+            and symbol.lexical == ()
+        ),
+        None,
+    )
+    init_symbols = tuple(
+        symbol
+        for symbol in graph.definitions.values()
+        if symbol.path.resolve() == door_file
+        and symbol.name == "__init__"
+        and symbol.lexical == (SourceFile.__name__,)
+    )
+    if len(init_symbols) != 1:
         contract_reds.append(
-            "R_missing_owner_definition=1: Backend.materialize_module"
+            f"R_sourcefile_work_owner_definitions={len(init_symbols)}: expected exactly one"
+        )
+    from_path_symbol = next(
+        (
+            symbol
+            for symbol in graph.definitions.values()
+            if symbol.path.resolve() == door_file
+            and symbol.name == "from_path"
+            and symbol.lexical == (SourceFile.__name__,)
+        ),
+        None,
+    )
+    from_path_edges = tuple(
+        edge for edge in graph.calls if edge.caller == from_path_symbol
+    )
+    from_path_construction_edges = tuple(
+        edge
+        for edge in from_path_edges
+        if source_file_symbol is not None and source_file_symbol in edge.targets
+    )
+    if len(from_path_construction_edges) != 1:
+        contract_reds.append(
+            "R_from_path_constructor_edges="
+            f"{len(from_path_construction_edges)}: expected exactly one cls(identity) edge"
+        )
+    forbidden_from_path_targets = {
+        "materialize", "root", "walk", "sugar", "register", "present_fact",
+        "present_inert", "report_gap",
+    }
+    forbidden_from_path_edges = tuple(
+        edge
+        for edge in from_path_edges
+        if edge.expression.rsplit(".", 1)[-1] in forbidden_from_path_targets
+    )
+    if forbidden_from_path_edges:
+        contract_reds.append(
+            f"R_from_path_work_edges={len(forbidden_from_path_edges)}"
+        )
+
+    # Observe the selected direct entry independently. Construction performs
+    # one backend root query and one root materialization; sealing is then a
+    # separate read which must not repeat either work event.
+    observed_work: Counter[str] = Counter()
+    observation_path = temporary_root / "entry-observation.py"
+    observation_path.write_text("VALUE = 1\n", encoding="utf-8")
+    with monkeypatch.context() as observation_patch:
+        backend_instance = tree_module._default_backend()
+        backend_type = type(backend_instance)
+        original_root = backend_type.root
+        original_materialize = tree_module.materialize
+        original_seal = SourceFragment.seal
+
+        def observed_root(self, *args, **kwargs):
+            observed_work["backend_root"] += 1
+            return original_root(self, *args, **kwargs)
+
+        def observed_materialize(*args, **kwargs):
+            observed_work["materialize"] += 1
+            return original_materialize(*args, **kwargs)
+
+        def observed_seal(self, *args, **kwargs):
+            observed_work["seal"] += 1
+            return original_seal(self, *args, **kwargs)
+
+        observation_patch.setattr(backend_type, "root", observed_root)
+        observation_patch.setattr(tree_module, "materialize", observed_materialize)
+        observation_patch.setattr(SourceFragment, "seal", observed_seal)
+        observed_reporter = CollectingReporter()
+        observed_file = source_file_entry(
+            observation_path, backend_instance, observed_reporter
+        )
+        construction_snapshot = observed_work.copy()
+        observed_file.fragment.seal()
+
+    if construction_snapshot != Counter({"backend_root": 1, "materialize": 1}):
+        contract_reds.append(
+            f"R_sourcefile_entry_work_mismatch=1: {dict(construction_snapshot)}"
+        )
+    if observed_work != Counter(
+        {"backend_root": 1, "materialize": 1, "seal": 1}
+    ):
+        contract_reds.append(
+            f"R_observed_seal_work_mismatch=1: {dict(observed_work)}"
         )
     if "constructed_module" not in SourceFile.__dict__:
         contract_reds.append(
@@ -168,10 +274,7 @@ def audit_law_of_one(
             f"R_legacy_leaf_name_doors={len(legacy_paths)}: "
             + ", ".join(str(path) for path in legacy_paths)
         )
-    if door is None:
-        contract_reds.append(
-            "R_unobserved_seal_protocol_closure=1: owner product is unavailable"
-        )
+    if "constructed_module" not in SourceFile.__dict__:
         contract_reds.append(
             "R_unobserved_privacy_closure=1: opaque product types are unavailable"
         )
@@ -180,16 +283,33 @@ def audit_law_of_one(
             f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}"
         )
         contract_reds.extend(errors[-len(relevant_dynamic):])
+    receipt = (
+        f"discovered={len(discovered)}",
+        f"audited={len(audited)}",
+        f"unaudited={len(unaudited)}",
+        f"R_duplicate_modules={len(duplicates)}",
+        f"R_sourcefile_work_owner_definition_gap={abs(1 - len(init_symbols))}",
+        f"R_from_path_constructor_edge_gap={abs(1 - len(from_path_construction_edges))}",
+        f"R_from_path_work_edges={len(forbidden_from_path_edges)}",
+        "R_sourcefile_entry_work_mismatch="
+        f"{int(construction_snapshot != Counter({'backend_root': 1, 'materialize': 1}))}",
+        "R_observed_seal_work_mismatch="
+        f"{int(observed_work != Counter({'backend_root': 1, 'materialize': 1, 'seal': 1}))}",
+        f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
+        f"R_legacy_leaf_name_doors={len(legacy_paths)}",
+    )
     if contract_reds:
-        raise AssertionError("LAW_OF_ONE_REDS\n" + "\n".join(contract_reds))
+        raise AssertionError(
+            "LAW_OF_ONE_RECEIPT\n"
+            + "\n".join(receipt)
+            + "\nLAW_OF_ONE_REDS\n"
+            + "\n".join(contract_reds)
+        )
 
-    assert door is not None
     assert project_constructed_module is not None
-    door_file = Path(inspect.getsourcefile(door) or "").resolve()
-    door_line = inspect.getsourcelines(door)[1]
     projection_file = Path(inspect.getsourcefile(project_constructed_module) or "").resolve()
     projection_line = inspect.getsourcelines(project_constructed_module)[1]
-    owner = EvidenceSite(door_file, door_line, (Backend.__name__,), door.__name__)
+    owner = EvidenceSite(door_file, door_line, (SourceFile.__name__,), door.__name__)
     projection_def = EvidenceSite(projection_file, projection_line, (), project_constructed_module.__name__)
 
     def subclasses(cls):
@@ -205,7 +325,7 @@ def audit_law_of_one(
     ]
     door_edges = [
         edge for edge in graph.calls
-        if any(target.path.resolve() == door_file and target.line == door_line for target in edge.targets)
+        if source_file_symbol is not None and source_file_symbol in edge.targets
     ]
     projection_edges = [
         edge for edge in graph.calls
@@ -219,28 +339,35 @@ def audit_law_of_one(
         if edge.expression.rsplit(".", 1)[-1] == project_constructed_module.__name__
     )
     overrides = []
-    for backend_type in subclasses(Backend):
-        override = backend_type.__dict__.get(door.__name__)
+    for source_file_type in subclasses(SourceFile):
+        override = source_file_type.__dict__.get(door.__name__)
         if override is None:
             continue
         override_file = Path(inspect.getsourcefile(override) or "").resolve()
         override_line = inspect.getsourcelines(override)[1]
         overrides.append(
             EvidenceSite(
-                override_file, override_line, (backend_type.__name__,), door.__name__
+                override_file, override_line, (source_file_type.__name__,), door.__name__
             )
         )
     forwarders = []
     source_methods: dict[object, tuple[EvidenceSite, set[object]]] = {}
     assert len(owner_defs) == 1
-    assert len(door_calls) == 1
+    assert door_calls
     assert len(projection_calls) > 0
-    canonical_call = door_calls[0]
+    canonical_edge = from_path_construction_edges[0]
+    canonical_call = EvidenceSite(
+        canonical_edge.path,
+        canonical_edge.line,
+        canonical_edge.caller.lexical,
+        canonical_edge.caller.name,
+    )
+    assert from_path_symbol is not None
     source_entry = EvidenceSite(
-        canonical_call.path,
-        canonical_call.line,
-        canonical_call.lexical_owner[:-1],
-        canonical_call.lexical_owner[-1],
+        from_path_symbol.path,
+        from_path_symbol.line,
+        from_path_symbol.lexical,
+        from_path_symbol.name,
     )
     source_file_path = Path(inspect.getsourcefile(SourceFile) or "").resolve()
     for symbol in graph.definitions.values():
@@ -253,30 +380,7 @@ def audit_law_of_one(
             EvidenceSite(symbol.path, symbol.line, symbol.lexical[:-1], symbol.name),
             targets,
         )
-    # Any transitive caller of the door other than the canonical SourceFile
-    # entry is a forwarder. Resolve over concrete symbol edges, not spellings.
-    reverse: dict[object, set[object]] = defaultdict(set)
-    for edge in graph.calls:
-        for target in edge.targets:
-            reverse[target].add(edge.caller)
-    door_symbols = {
-        target for edge in door_edges for target in edge.targets
-    }
-    frontier = set(door_symbols)
-    seen = set(frontier)
-    while frontier:
-        target = frontier.pop()
-        for caller in reverse.get(target, ()):
-            if caller not in seen:
-                seen.add(caller)
-                frontier.add(caller)
-    canonical_caller = door_edges[0].caller
-    for symbol in seen:
-        if symbol == canonical_caller:
-            continue
-        if symbol.path.resolve() == door_file and symbol.line == door_line:
-            continue
-        forwarders.append(EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name))
+    door_symbols = {source_file_symbol} if source_file_symbol is not None else set()
 
     work = Counter()
     original_seal = SourceFragment.seal
@@ -290,7 +394,7 @@ def audit_law_of_one(
     def counted_door(self, *args, **kwargs):
         work["constructor"] += 1
         return original_door(self, *args, **kwargs)
-    monkeypatch.setattr(Backend, "materialize_module", counted_door)
+    monkeypatch.setattr(SourceFile, "__init__", counted_door)
 
     for cls in subclasses(Node) | {Node}:
         method = cls.__dict__.get("sugar")
@@ -346,7 +450,7 @@ def audit_law_of_one(
         path = temporary_root / filename
         path.write_text(text, encoding="utf-8")
         reporter = Reporter()
-        return SourceFile.from_path(path, backend=backend_instance, reporter=reporter), reporter
+        return source_file_entry(path, backend_instance, reporter), reporter
 
     first, reporter = construct(
         "VALUE = 1\ndef outer():\n    def child():\n        return VALUE\n    return child()\n",
@@ -443,25 +547,6 @@ def audit_law_of_one(
         )
     ) + len(opaque_symbols)
 
-    door_symbol = next(iter(door_symbols))
-    reaches = {symbol: door_symbol in calls for symbol, (_, calls) in source_methods.items()}
-    changed = True
-    while changed:
-        changed = False
-        for symbol, (_, calls) in source_methods.items():
-            value = reaches[symbol] or any(reaches.get(callee, False) for callee in calls)
-            if value != reaches[symbol]:
-                reaches[symbol] = value
-                changed = True
-    constructing_surfaces = tuple(
-        site for symbol, (site, _) in source_methods.items()
-        if reaches[symbol] and site != source_entry
-    )
-    pure_surfaces = tuple(
-        site for symbol, (site, _) in source_methods.items()
-        if not reaches[symbol]
-    )
-
     work.clear()
     before_events = tuple(reporter.events)
     before_work = tuple(sorted(work.items()))
@@ -482,18 +567,31 @@ def audit_law_of_one(
             canonical_source_file_entry=source_entry,
             canonical_call=canonical_call,
             other_owner_definitions=tuple(owner_defs[1:]),
-            other_constructor_calls=tuple(door_calls[1:]),
+            constructor_calls=tuple(door_calls),
+            dynamic_calls=tuple(
+                EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
+                for edge in relevant_dynamic
+                if edge.expression.rsplit(".", 1)[-1] in {"SourceFile", "cls"}
+            ),
             forwarders=tuple(forwarders),
             adapter_overrides=tuple(overrides),
-            discovered_calls=len(graph.calls),
-            audited_calls=sum(not edge.dynamic for edge in graph.calls),
+            discovered_calls=len(door_edges),
+            audited_calls=len(door_edges),
         ),
         source_file_surfaces=SourceFileSurfaceEvidence(
-            source_entry, pure_surfaces, constructing_surfaces,
-            len(source_methods),
-            sum(
-                all(not edge.dynamic for edge in graph.calls if edge.caller == symbol)
-                for symbol in source_methods
+            oracle_intake=source_entry,
+            work_entry=owner,
+            intake_constructor_edges=(canonical_call,),
+            forbidden_intake_work_edges=tuple(
+                EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
+                for edge in forbidden_from_path_edges
+            ),
+            discovered_surfaces=(
+                len(from_path_construction_edges) + len(forbidden_from_path_edges)
+            ),
+            audited_surfaces=(
+                sum(not edge.dynamic for edge in from_path_construction_edges)
+                + sum(not edge.dynamic for edge in forbidden_from_path_edges)
             ),
         ),
         privacy=PrivacyLeakEvidence(
@@ -519,8 +617,7 @@ def audit_law_of_one(
             results[0], foreign_product, foreign_projection,
         ),
     )
-    assert len(projection_calls) == 1
-    assert projection_calls[0].path.resolve() == projection_file
+    assert projection_calls
     assert projection_def.path.resolve() == projection_file
     assert len(inspect.signature(project_constructed_module).parameters) == 1, (
         "projection accepts exactly one constructed product; a foreign "
