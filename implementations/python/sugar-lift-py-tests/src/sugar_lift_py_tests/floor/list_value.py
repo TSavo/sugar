@@ -82,6 +82,14 @@ class ListValue(FloorValue):
         """
         return operation.project_array(self, ctx)
 
+    def iter_with(self, operation, ctx):
+        """``iter(list)`` → authenticated ``ListIteratorValue`` over members."""
+        del operation, ctx
+        from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(ListIteratorValue(self.elements, index=0))
+
     @property
     def items(self) -> tuple:
         """Member sequence for SequenceProjectionOperation.project_array."""

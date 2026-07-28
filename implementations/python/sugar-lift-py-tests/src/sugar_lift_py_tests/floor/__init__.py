@@ -56,6 +56,7 @@ from .list_value import ListValue
 from .loop_control_value import LoopControlValue
 from .loop_else_value import LoopElseValue
 from .inv_value import InvValue
+from .iterator_value import ListIteratorValue, NextResult, TupleIteratorValue
 from .bytes_value import BytesValue
 from .complex_value import ComplexValue
 from .ellipsis_value import EllipsisValue
@@ -128,9 +129,12 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     LoopControlValue,
     LoopElseValue,
     InvValue,
+    ListIteratorValue,
+    NextResult,
     NoneValue,
     ObjectMethodValue,
     ObjectValue,
+    TupleIteratorValue,
     OpaqueOpCallsite,
     PredicateValue,
     RaiseValue,
@@ -204,6 +208,8 @@ __all__ = [
     "LoopControlValue",
     "LoopElseValue",
     "InvValue",
+    "ListIteratorValue",
+    "NextResult",
     "BytesValue",
     "ComplexValue",
     "EllipsisValue",
@@ -212,6 +218,7 @@ __all__ = [
     "ObjectField",
     "ObjectMethodValue",
     "ObjectValue",
+    "TupleIteratorValue",
     "ReceiverFieldStoreValue",
     "GuardedReceiverFieldStoreValue",
     "ReceiverStatePartitionValue",

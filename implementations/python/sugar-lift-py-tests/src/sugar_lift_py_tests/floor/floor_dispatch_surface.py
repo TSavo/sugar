@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.operations.method_call_operation import (
         MethodCallOperation,
     )
+    from sugar_lift_py_tests.operations.iterator_operation import IteratorOperation
     from sugar_lift_py_tests.operations.next_operation import NextOperation
     from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
         ReflectedBinaryOperatorOperation,
@@ -106,6 +107,7 @@ FLOOR_OPERATION_METHOD_NAMES = (
     "format_value_with",
     "guard_with",
     "inplace_binary_operator_with",
+    "iter_with",
     "map_with",
     "materialize_with",
     "merge_finally_with",
@@ -282,6 +284,12 @@ class DictMissingFloor(Protocol):
     ) -> Outcome: ...
 
 
+class IteratorFloor(Protocol):
+    def iter_with(
+        self, operation: IteratorOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome: ...
+
+
 class NextFloor(Protocol):
     def next_with(
         self, operation: NextOperation, ctx: FactoryBuildContext | None
@@ -364,6 +372,7 @@ class FloorDispatchSurface(
     FormatValueFloor,
     ControlFlowGuardFloor,
     InplaceBinaryOperatorFloor,
+    IteratorFloor,
     MapFloor,
     MaterializeFloor,
     FinallyFallthroughFloor,

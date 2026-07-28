@@ -114,6 +114,14 @@ class TupleValue(FloorValue):
         """
         return operation.project_tuple(self, ctx)
 
+    def iter_with(self, operation, ctx):
+        """``iter(tuple)`` → authenticated ``TupleIteratorValue`` over members."""
+        del operation, ctx
+        from sugar_lift_py_tests.floor.iterator_value import TupleIteratorValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(TupleIteratorValue(self.elements, index=0))
+
     @property
     def items(self) -> tuple:
         """Member sequence for SequenceProjectionOperation.project_tuple."""
