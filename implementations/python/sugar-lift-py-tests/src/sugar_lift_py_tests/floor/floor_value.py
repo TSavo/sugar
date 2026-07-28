@@ -409,6 +409,36 @@ class FloorValue:
         del ctx
         return self._operation_construction_gap(operation, "materialize_with")
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Slice-assignment RHS materialization — default Floor door.
+
+        Exact sequences override with authenticated members.  A decided
+        non-iterable is Python's TypeError.  Unresolved iterability stays a
+        named runtime boundary (never a getattr species probe).
+        """
+        del ctx
+        site = operation.blame
+        owner = operation.owner
+        if self.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError",
+                site=site,
+                owner=owner,
+            )
+        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+        from sugar_lift_py_tests.effect import runtime_effect_evidence
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            SubscriptStoreRuntimeEffect(
+                "list slice assignment RHS iterability is undecided at lift; "
+                f"owner={owner} site={site}",
+                **runtime_effect_evidence("py.setitem", self, site),
+            )
+        )
+
     def merge_finally_with(
         self,
         operation: FinallyFallthroughOperation,

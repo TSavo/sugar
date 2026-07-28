@@ -242,8 +242,37 @@ class ListValue(FloorValue):
     def subscript(self, index, site):
         # Concrete list + integer index is fully decided. A known non-integer
         # is TypeError; an index with undecided runtime semantics stays loud.
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(index, SliceValue):
+            bounds = (index.lower, index.upper, index.step)
+            if all(
+                bound is None
+                or (type(bound) is TermValue and type(bound.value) is int)
+                for bound in bounds
+            ):
+                lower, upper, step = (
+                    bound.value if isinstance(bound, TermValue) else None
+                    for bound in bounds
+                )
+                if step == 0:
+                    from sugar_lift_py_tests.floor.ground_exit import (
+                        ground_exceptional_exit,
+                    )
+
+                    return ground_exceptional_exit(
+                        exception_name="ValueError",
+                        site=site,
+                        owner="ListValue.subscript",
+                    )
+                return Complete(
+                    ListValue(tuple(self.elements[slice(lower, upper, step)]))
+                )
+            return self.undecided_subscript(
+                index, site, owner="ListValue.subscript"
+            )
 
         if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
@@ -270,8 +299,12 @@ class ListValue(FloorValue):
         return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
     def setitem(self, index, value, site):
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if isinstance(index, SliceValue):
+            return self._setitem_slice(index, value, site)
 
         if type(index) is TermValue and type(index.value) is int:
             i = index.value
@@ -299,11 +332,94 @@ class ListValue(FloorValue):
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(
-                "list subscript store requires a concrete integer index; "
+                "list subscript store requires a concrete integer index or "
+                "ground SliceValue; "
                 f"owner=ListValue.setitem site={site}",
                 **runtime_effect_evidence("py.setitem", index, site),
             )
         )
+
+    def _setitem_slice(self, index, value, site):
+        """Python list slice assignment: ``xs[lo:hi:st] = iterable``.
+
+        Ground integer (or omitted) bounds only — same decidability law as
+        ``delitem`` over SliceValue.  RHS materializes through the Floor-owned
+        ``SliceAssignIterableOperation`` door (exact containers answer;
+        decided non-iterables TypeError; unresolved iterability stays loud).
+        """
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.operations.slice_assign_iterable_operation import (
+            SliceAssignIterableOperation,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        bounds = (index.lower, index.upper, index.step)
+        if not all(
+            bound is None or (type(bound) is TermValue and type(bound.value) is int)
+            for bound in bounds
+        ):
+            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+            return Incomplete(
+                SubscriptStoreRuntimeEffect(
+                    "list slice assignment depends on runtime slice bounds; "
+                    f"owner=ListValue.setitem site={site}",
+                    **runtime_effect_evidence("py.setitem", index, site),
+                )
+            )
+        lower, upper, step = (
+            bound.value if isinstance(bound, TermValue) else None for bound in bounds
+        )
+        if step == 0:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="ValueError",
+                site=site,
+                owner="ListValue.setitem",
+            )
+
+        members_out = SliceAssignIterableOperation(
+            owner="ListValue.setitem",
+            blame=site,
+        ).submit(value, None)
+
+        # Decided TypeError faces are Complete(RaiseValue); do not feed the
+        # RaiseValue into the write step (and_then would treat it as members).
+        from sugar_lift_py_tests.floor import RaiseValue
+
+        if isinstance(members_out, Complete) and isinstance(
+            members_out.value, RaiseValue
+        ):
+            return members_out
+        if isinstance(members_out, Incomplete):
+            return members_out
+
+        def _write(members):
+            elements = list(self.elements)
+            try:
+                elements[slice(lower, upper, step)] = list(members)
+            except ValueError:
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
+                )
+
+                # Extended-slice length mismatch is Python's ValueError.
+                return ground_exceptional_exit(
+                    exception_name="ValueError",
+                    site=site,
+                    owner="ListValue.setitem",
+                )
+            return Complete(ListValue(tuple(elements)))
+
+        return members_out.and_then(_write)
+
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Authenticated finite members for slice-assignment RHS."""
+        del operation, ctx
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self.elements)
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
@@ -320,6 +436,16 @@ class ListValue(FloorValue):
                     bound.value if isinstance(bound, TermValue) else None
                     for bound in bounds
                 )
+                if step == 0:
+                    from sugar_lift_py_tests.floor.ground_exit import (
+                        ground_exceptional_exit,
+                    )
+
+                    return ground_exceptional_exit(
+                        exception_name="ValueError",
+                        site=site,
+                        owner="ListValue.delitem",
+                    )
                 selected = set(range(len(self.elements))[slice(lower, upper, step)])
                 return Complete(
                     ListValue(
