@@ -122,6 +122,15 @@ def populate_source_visible_call_frames(
             )
             continue
         frame, target = frame_result
+        if isinstance(target, FunctionDef) and target.decorators:
+            context.source_call_resolutions[coordinate] = (
+                SourceCallPreconstructionGapV1(
+                    "decorator-application",
+                    coordinate,
+                    "authenticated definition has unapplied decorators",
+                )
+            )
+            continue
         _preconstruct_authenticated_attribute_calls(target, graph=graph, session=session)
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
@@ -240,6 +249,8 @@ def _preconstruct_authenticated_attribute_calls(
         if isinstance(projected, ManagerConstructionGapV1):
             continue
         frame, nested_target = projected
+        if isinstance(nested_target, FunctionDef) and nested_target.decorators:
+            continue
         _preconstruct_authenticated_attribute_calls(
             nested_target, graph=graph, session=session, visited=visited
         )

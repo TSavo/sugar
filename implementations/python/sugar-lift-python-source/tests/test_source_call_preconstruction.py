@@ -176,6 +176,71 @@ def test_authenticated_nested_attribute_call_installs_recursive_source_frame(
     assert nested_result.statements == (ReturnValue(TermValue(17)),)
 
 
+def test_decorator_wrapped_source_call_does_not_borrow_undecorated_body(
+    tmp_path: Path,
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "from functools import wraps as preserve_metadata\n\n"
+        "def decorate(original):\n"
+        "    @preserve_metadata(original)\n"
+        "    def wrapper(value):\n"
+        "        return original(value)\n"
+        "    return wrapper\n\n"
+        "@decorate\n"
+        "def arbitrary_helper(value):\n"
+        "    return value + 1\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as renamed\n"
+        "renamed(2) + 3\n",
+    )
+    call = next(node for node in source_file.nodes() if isinstance(node, Call))
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    coordinate = _coordinate(call)
+    row = context.source_call_resolutions[coordinate]
+    assert isinstance(row, SourceCallPreconstructionGapV1)
+    assert row.kind == "decorator-application"
+    assert coordinate not in context.source_call_frames
+
+
+def test_undecorated_twin_still_installs_its_authenticated_return_frame(
+    tmp_path: Path,
+) -> None:
+    distribution = _distribution(
+        tmp_path,
+        "def arbitrary_helper(value):\n"
+        "    return value + 1\n",
+    )
+    path, source_file, context = _consumer(
+        tmp_path,
+        "from unprivileged import arbitrary_helper as renamed\n"
+        "renamed(2) + 3\n",
+    )
+    call = next(node for node in source_file.nodes() if isinstance(node, Call))
+
+    populate_source_visible_call_frames(
+        source_file,
+        root=tmp_path,
+        path=path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    coordinate = _coordinate(call)
+    assert isinstance(
+        context.source_call_resolutions[coordinate], SourceCallPreconstructionRefV1
+    )
+    assert coordinate in context.source_call_frames
+
+
 def test_runtime_receiver_attribute_call_remains_dynamic_and_loud(
     tmp_path: Path,
 ) -> None:
