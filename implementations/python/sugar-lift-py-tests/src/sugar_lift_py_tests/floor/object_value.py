@@ -100,6 +100,13 @@ class ObjectValue(FloorValue):
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
     deferred_helper_fields: tuple[str, ...] = dataclass_field(default=(), compare=False)
+    # Instance field names removed by an authenticated delattr.  Reading one
+    # of these is AttributeError (delete readback), without inventing
+    # AttributeError for unenrolled members of a partial construction
+    # (those stay undecided via deferred_helper_fields / undecided_attribute).
+    deleted_instance_fields: tuple[str, ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
@@ -194,6 +201,16 @@ class ObjectValue(FloorValue):
                 owner="ObjectValue.attribute.property",
                 blame=site,
             ).and_then(invoke)
+        if name in self.deleted_instance_fields:
+            # Authenticated delattr removed this instance field — read is
+            # AttributeError with delete→read lineage, not an undecided gap.
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="ObjectValue.attribute",
+            )
         if name in self.deferred_helper_fields:
             from sugar_lift_py_tests.floor.getattr_coordinate import (
                 getattr_coordinate,
@@ -205,6 +222,8 @@ class ObjectValue(FloorValue):
         # with an honest owner name — do not fall through to the generic
         # FloorValue.attribute owner="attribute" panic, and do not invent
         # AttributeError for a member table that is not source-complete.
+        # (Contrast: names in deleted_instance_fields above — those absences
+        # are delete-authenticated, not construction incompleteness.)
         return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
 
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
@@ -226,6 +245,8 @@ class ObjectValue(FloorValue):
                 ),
             )
         remaining = tuple(field for field in self.fields if field.name != name)
+        # Restore retires the deleted-field mark for this name.
+        still_deleted = tuple(d for d in self.deleted_instance_fields if d != name)
         return ObjectValue(
             self.class_name,
             (*remaining, ObjectField(name, value)),
@@ -233,6 +254,7 @@ class ObjectValue(FloorValue):
             self.class_fields,
             self.identity,
             self.deferred_helper_fields,
+            still_deleted,
         )
 
     def authenticates_plain_attribute_store(self, name: str) -> bool:
@@ -294,6 +316,11 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.delattr",
             )
+        deleted = (
+            self.deleted_instance_fields
+            if name in self.deleted_instance_fields
+            else (*self.deleted_instance_fields, name)
+        )
         return Complete(
             ObjectValue(
                 self.class_name,
@@ -302,6 +329,7 @@ class ObjectValue(FloorValue):
                 self.class_fields,
                 self.identity,
                 self.deferred_helper_fields,
+                deleted,
             )
         )
 
@@ -314,6 +342,7 @@ class ObjectValue(FloorValue):
             self.class_fields,
             self.identity,
             names,
+            self.deleted_instance_fields,
         )
 
     def helper_receiver_field_names(self) -> tuple[str, ...]:
