@@ -8,7 +8,7 @@ child references are required before a loop graph becomes construction input.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .canonicalizer import blake3_512_of, encode_jcs
@@ -427,9 +427,24 @@ class LoopConstructionV1:
     completed_faces: tuple[LoopCompletedFaceV1, ...]
     loop_construction_cid: str
     _graph: dict[str, Any]
+    iterable_sugar: object | None = field(default=None, compare=False, repr=False)
 
     def wire_graph(self) -> dict[str, Any]:
         return deepcopy(self._graph)
+
+    @property
+    def iterable_value_construction_cid(self) -> str | None:
+        """Return the authenticated iterable occurrence owned by a for-loop."""
+        if self.operation.kind != "for-operation":
+            return None
+        iterator_cid = self.operation.raw["iteratorTestimonyCid"]
+        (iterator,) = (
+            record
+            for record in self._graph["records"]
+            if record.get("kind") == "loop-iterator-testimony"
+            and record.get("iteratorTestimonyCid") == iterator_cid
+        )
+        return iterator["iterableValueConstructionCid"]
 
     # ------------------------------------------------------------------
     # The authenticated native identity of this constructed value.

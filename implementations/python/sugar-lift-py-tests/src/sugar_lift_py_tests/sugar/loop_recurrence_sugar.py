@@ -94,6 +94,21 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
+        from sugar_lift_py_tests.loop_construction import LoopWireError
+
+        iterable_sugar = self.construction.iterable_sugar
+        iterable_cid = self.construction.iterable_value_construction_cid
+        if iterable_cid is None:
+            return self._desugar_with_iterable(None, ctx)
+        if iterable_sugar is None:
+            raise LoopWireError("for recurrence omitted its live iterable sugar")
+        if iterable_sugar.site.seal().cid != iterable_cid:
+            raise LoopWireError("loop recurrence iterable occurrence mismatch")
+        return iterable_sugar.desugar(ctx).and_then(
+            lambda iterable: self._desugar_with_iterable(iterable, ctx)
+        )
+
+    def _desugar_with_iterable(self, iterable, ctx):
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
@@ -106,7 +121,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
             step = ctor(
                 "python:loop.step",
-                [h, str_const(self.loop_construction_cid)],
+                [
+                    h,
+                    str_const(self.loop_construction_cid),
+                    *(
+                        ()
+                        if iterable is None
+                        else (iterable.to_term(owner="LoopRecurrenceSugar"),)
+                    ),
+                ],
                 symbol_kind="coordinate",
             )
             recurrences.append(InvValue(atomic("=", [h, step]), self.site))

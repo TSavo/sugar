@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -12,6 +12,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.generator_construction import _generator_value_testimony
 from sugar_lift_py_tests.ir import _term_content_cid, ctor, str_const
 from sugar_lift_py_tests.loop_construction import LoopWireError
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.outcome.resource_bindings import ManagerBinding
 from sugar_source_tree.tree import SourceFile
 
@@ -33,6 +34,32 @@ _BASE = (
     "        pass\n"
     "    return xs\n"
 )
+
+_CARRIED = (
+    "def exercise(xs):\n"
+    "    total = 0\n"
+    "    for item in xs:\n"
+    "        total = total + item\n"
+    "    return total\n"
+)
+
+
+@dataclass(frozen=True)
+class _CountingIterableSugar(ConstructedTermSugar):
+    delegate: ConstructedTermSugar
+    calls: list[int]
+    site: object
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        self.calls.append(1)
+        return self.delegate.desugar(ctx)
+
+    def to_term(self, *, owner: str):
+        return self.delegate.to_term(owner=owner)
 
 
 _OLD_TERM_CONSUMERS = (
@@ -134,3 +161,47 @@ def test_loop_term_occurrence_migration_reaches_every_existing_consumer(
     observed_consumers.append("ManagerBinding fact testimony")
 
     assert tuple(observed_consumers) == _OLD_TERM_CONSUMERS
+
+
+def test_loop_recurrence_evaluates_iterable_once_and_retains_live_floor(
+    tmp_path: Path,
+):
+    loop = _loop(tmp_path, _CARRIED, "retained.py")
+    iterable = loop.construction.iterable_sugar
+    calls: list[int] = []
+    counting = _CountingIterableSugar(iterable, calls, iterable.site)
+    construction = replace(loop.construction, iterable_sugar=counting)
+
+    outcome = replace(loop, construction=construction).desugar()
+
+    assert calls == [1]
+    (equation,) = outcome.value.inv_contribution()
+    step = equation.args[1]
+    assert step.name == "python:loop.step"
+    assert step.args[2] == iterable.desugar().value.to_term(owner="test")
+
+
+def test_loop_recurrence_rejects_lying_iterable_occurrence(tmp_path: Path):
+    truthful = _loop(tmp_path, _CARRIED, "truthful.py")
+    lying = _loop(
+        tmp_path,
+        _CARRIED.replace("exercise(xs)", "exercise(xs, ys)").replace(
+            "in xs", "in ys"
+        ),
+        "lying.py",
+    )
+    construction = replace(
+        truthful.construction,
+        iterable_sugar=lying.construction.iterable_sugar,
+    )
+
+    with pytest.raises(LoopWireError, match="iterable occurrence mismatch"):
+        replace(truthful, construction=construction).desugar()
+
+
+def test_for_recurrence_refuses_missing_live_iterable(tmp_path: Path):
+    loop = _loop(tmp_path, _CARRIED, "missing.py")
+    construction = replace(loop.construction, iterable_sugar=None)
+
+    with pytest.raises(LoopWireError, match="omitted its live iterable sugar"):
+        replace(loop, construction=construction).desugar()
