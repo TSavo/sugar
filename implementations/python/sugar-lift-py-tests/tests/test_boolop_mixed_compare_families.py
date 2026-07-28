@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import BoolOp, Compare
+from sugar_source_tree.nodes import BoolOp, Call, Compare
 from sugar_source_tree.tree import SourceFile
 
 
@@ -98,3 +99,61 @@ def test_swapping_families_swaps_laws_without_collapsing_occurrences() -> None:
     assert {exit_.effect.occurrence_id for exit_ in halted} == {
         str(compare.sugar().site) for compare in comparisons
     }
+
+
+def _caller_outcomes(calls: str):
+    source = (
+        "def mixed(a, b, c, d):\n"
+        "    return a < b and c in d\n"
+        f"\n{calls}"
+    )
+    tree = SourceFile(
+        (source, "boolop-mixed-caller.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
+    outcomes = tuple(
+        node.sugar().desugar(None)
+        for node in tree.nodes()
+        if isinstance(node, Call)
+    )
+    assert len(comparisons) == 2
+    return outcomes, comparisons
+
+
+def _only_halted(outcome) -> Halted:
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    halted = outcome.exits[0]
+    assert isinstance(halted, Halted)
+    return halted
+
+
+def _formal_occurrence(compare: Compare) -> str:
+    return str(source_coordinate(compare.sugar().site).wire())
+
+
+def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> None:
+    (toxic, safe), comparisons = _caller_outcomes(
+        "mixed(None, 1, None, 3)\n"
+        "mixed(None, 1, 1, [1])\n"
+    )
+    toxic_halt = _only_halted(toxic)
+    safe_halt = _only_halted(safe)
+
+    first_occurrence = str(comparisons[0].sugar().site)
+    assert toxic_halt.effect.occurrence_id == first_occurrence
+    assert safe_halt.effect.occurrence_id == first_occurrence
+    assert toxic_halt.effect.occurrence_id != _formal_occurrence(comparisons[1])
+    assert toxic_halt.state is not None
+    assert safe_halt.state is not None
+    assert toxic_halt.state == safe_halt.state
+
+
+def test_truthful_first_leg_routes_membership_halt_to_second_occurrence_and_state() -> None:
+    (outcome,), comparisons = _caller_outcomes("mixed(1, 2, None, 3)\n")
+    halted = _only_halted(outcome)
+
+    assert halted.effect.occurrence_id == _formal_occurrence(comparisons[1])
+    assert halted.effect.occurrence_id != _formal_occurrence(comparisons[0])
+    assert halted.state is not None
