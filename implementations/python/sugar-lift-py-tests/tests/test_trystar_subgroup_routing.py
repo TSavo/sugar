@@ -713,13 +713,13 @@ def test_handler_completion_and_residual_both_retained_as_faces():
 
 
 def test_guarded_handler_faces_conjoin_body_guard():
-    """Handler-exit guards are conjoined with the body halt guard."""
+    """Handler-exit guards are conjoined with the body halt guard on THAT face."""
     from types import SimpleNamespace
 
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.ir import atomic, str_const
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, true_guard
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
 
@@ -796,36 +796,10 @@ def test_guarded_handler_faces_conjoin_body_guard():
         handlers=(((MatchVE(),), (GuardedRaise(),), "slot-ve"),),
         site=site,
     )
-    # Bypass exitset_to_outcome to observe conjoined guards on ExitSet faces.
-    from sugar_lift_py_tests.sugar.exit_set_routing import (
-        exitset_to_outcome,
-        promote_raise_halts,
-    )
-    from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
-
-    # Call desugar but intercept: reimplement observation via direct ExitSet
-    # by temporarily patching exitset_to_outcome to identity.
-    captured = {}
-
-    def capture(es):
-        captured["es"] = es
-        return exitset_to_outcome(es)
-
-    import sugar_lift_py_tests.sugar.exit_set_routing as esr
-
-    real = esr.exitset_to_outcome
-    esr.exitset_to_outcome = capture
-    try:
-        outcome = sugar.desugar(ReduceContext.root(owner="guard_twin"))
-    finally:
-        esr.exitset_to_outcome = real
-
-    es = captured.get("es")
-    assert es is not None, outcome
+    es = _capture_trystar_exitset(sugar, ReduceContext.root(owner="guard_twin"))
     halted = [face for face in es.exits if isinstance(face, Halted)]
     assert halted, es.exits
     text = str(halted[0].guard)
-    # Conjunction must mention both body and handler guard atoms.
     assert "body.guard" in text or "body" in text, text
     assert "handler.guard" in text or "handler" in text, text
     effect = halted[0].effect
@@ -835,3 +809,120 @@ def test_guarded_handler_faces_conjoin_body_guard():
         assert any(
             leaf.exception_name == "RuntimeError" for leaf in _leaves(effect)
         )
+
+
+def _capture_trystar_exitset(sugar, ctx):
+    """Desugar TryStar but capture the ExitSet before exitset_to_outcome."""
+    import sugar_lift_py_tests.sugar.exit_set_routing as esr
+
+    captured = {}
+    real = esr.exitset_to_outcome
+
+    def capture(es):
+        captured["es"] = es
+        return real(es)
+
+    esr.exitset_to_outcome = capture
+    try:
+        sugar.desugar(ctx)
+    finally:
+        esr.exitset_to_outcome = real
+    assert "es" in captured
+    return captured["es"]
+
+
+def test_alternative_exceptional_faces_keep_separate_guards():
+    """Regroup never ANDs guards from mutually exclusive exceptional exits.
+
+    A handler that splits into two exceptional faces under g1|g2 must emit
+    two residual/exception faces, each under its own guard — not one face
+    under g1∧g2 (impossible).
+    """
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.ir import atomic, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
+
+    site = SimpleNamespace(
+        filename="guard_split.py",
+        line=1,
+        col=0,
+        unit=SimpleNamespace(source="try-star"),
+    )
+    _ve_cls, ve_typed, ve_id = _synthetic_class("ValueError")
+    leaf = RaiseEffect(
+        exception_name="ValueError",
+        occurrence="leaf:ve",
+        exception_type_coordinate=ve_id,
+        exception_type_mro=(ve_id,),
+        raised_value=ve_typed,
+    )
+    group = GroupedRaiseEffect("group:root", "g", (leaf,), occurrence="group:root")
+    body_atom = atomic("body.guard", [str_const("body")])
+    g1 = atomic("alt.one", [str_const("1")])
+    g2 = atomic("alt.two", [str_const("2")])
+
+    class MatchVE(Sugar):
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(ve_typed)
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    class SplitRaise(Sugar):
+        def desugar(self, ctx=None):
+            del ctx
+            return ExitSet(
+                (
+                    Halted(
+                        g1,
+                        RaiseEffect(exception_name="KeyError", occurrence="a1"),
+                        None,
+                    ),
+                    Halted(
+                        g2,
+                        RaiseEffect(exception_name="OSError", occurrence="a2"),
+                        None,
+                    ),
+                )
+            )
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    class BodyHalt(Sugar):
+        def desugar(self, ctx=None):
+            del ctx
+            return ExitSet((Halted(body_atom, group, None),))
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    sugar = TryStarSugar(
+        body=(BodyHalt(),),
+        handlers=(((MatchVE(),), (SplitRaise(),), "slot-ve"),),
+        site=site,
+    )
+    es = _capture_trystar_exitset(sugar, ReduceContext.root(owner="split_twin"))
+    halted = [face for face in es.exits if isinstance(face, Halted)]
+    assert len(halted) >= 2, es.exits
+    texts = [str(face.guard) for face in halted]
+    assert any("alt.one" in t or "1" in t for t in texts), texts
+    assert any("alt.two" in t or "2" in t for t in texts), texts
+    if len(halted) == 1:
+        raise AssertionError(f"alts collapsed into one face: {texts}")
+    names = []
+    for face in halted:
+        if isinstance(face.effect, RaiseEffect):
+            names.append(face.effect.exception_name)
+        elif isinstance(face.effect, GroupedRaiseEffect):
+            names.extend(leaf.exception_name for leaf in _leaves(face.effect))
+    assert "KeyError" in names and "OSError" in names, names

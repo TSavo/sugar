@@ -5,11 +5,11 @@ Laws (owned here; ExitSet/carrier untouched):
 - Partition each body ``GroupedRaiseEffect`` by authenticated handler type.
 - Matching subgroup reaches its handler once (type-tuple = one body run).
 - Unmatched residual continues to subsequent handlers in source order.
-- Handlers execute temporally: each handler begins from the prior handler's
-  resulting state (not a fresh original ctx / concatenated fragment merge).
-- Every ExitSet face is retained (Completed including terminal return, Halted,
-  and any future face); only exceptional raise faces are regrouped.
-- Handler-exit guards are conjoined with the body halt guard on every face.
+- Temporal state is an ExitSet of **per-face** handler states — never a single
+  scalar accumulator. Each handler face branches the frontier independently.
+- Every ExitSet face is retained with the enclosing body guard conjoined.
+- Exceptional raise effects regroup **only within equal guards** (never AND
+  mutually exclusive alternative faces into one impossible guard).
 - Finally restore preserves residual; finally terminate overrides.
 - Leaf occurrence identities and nested topology survive partition/regroup.
 - Ordinary ``RaiseEffect`` under ``except*`` stays loud (distinct from Try).
@@ -21,6 +21,19 @@ from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+
+@dataclass(frozen=True)
+class _StarFace:
+    """One except* routing face: residual + temporal state under one guard."""
+
+    guard: object
+    residual: object  # GroupedRaiseEffect
+    state: object  # _ReducedBlock
+    faces: frozenset
+    pending: tuple
+    # Exceptional raises collected on THIS face's guard path only.
+    exceptional: tuple
 
 
 @dataclass(frozen=True)
@@ -38,7 +51,6 @@ class TryStarSugar(Sugar):
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.caller_parameter_contract import merge_pending
         from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
-        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.effect_router import (
             regroup_except_star,
             route_except_star,
@@ -79,133 +91,196 @@ class TryStarSugar(Sugar):
                     fix="keep ordinary except and except* distinct",
                 )
             original = exit_.effect
-            residual = original
-            # Temporal seed: body halt state, carrying context for the first
-            # matching handler. Each subsequent matching handler begins from
-            # the previous handler's resulting state — not original ctx.
-            temporal = _seed_temporal(exit_.state, ctx)
-            # Exceptional raise effects for regroup only (not Completed/return).
-            exceptional_effects: list = []
-            exceptional_guards: list = []
-            # Every non-exceptional face retained with conjoined guards.
+            # Frontier: one face per body halt, then each handler branches it.
+            frontier: list[_StarFace] = [
+                _StarFace(
+                    guard=exit_.guard,
+                    residual=original,
+                    state=_seed_temporal(exit_.state, ctx),
+                    faces=exit_.faces,
+                    pending=exit_.pending_contracts,
+                    exceptional=(),
+                )
+            ]
+            # Faces that leave the residual walk (unknown control / terminal).
             retained: list = []
 
             for matchers, handler_body, slot_id in self.handlers:
-                # One handler, one body run, however many types it lists. Each
-                # type partitions what the previous type left behind, and the
-                # matched pieces are regrouped into ONE subgroup carrying the
-                # original topology -- so `except* (A, B)` over a group holding
-                # both binds a single group of both leaves rather than entering
-                # the body twice.
                 if not isinstance(matchers, tuple):
                     matchers = (matchers,)
-                handler_residual = residual
-                matched_parts = []
-                for matcher in matchers:
-                    expected = matcher.desugar(temporal.context)
-                    if not isinstance(expected, Complete):
-                        raise SugarNotWritten(
-                            blame=self.site,
-                            owner="TryStarSugar.desugar",
-                            observed="symbolic except* type",
-                            requested="authenticated subtype partition operand",
-                            fix="keep symbolic subtype partition typed loud",
+                next_frontier: list[_StarFace] = []
+                for face in frontier:
+                    handler_residual = face.residual
+                    matched_parts = []
+                    for matcher in matchers:
+                        expected = matcher.desugar(face.state.context)
+                        if not isinstance(expected, Complete):
+                            raise SugarNotWritten(
+                                blame=self.site,
+                                owner="TryStarSugar.desugar",
+                                observed="symbolic except* type",
+                                requested="authenticated subtype partition operand",
+                                fix="keep symbolic subtype partition typed loud",
+                            )
+                        routed = route_except_star(
+                            handler_residual,
+                            expected.value,
+                            slot_id=slot_id,
+                            site=self.site,
                         )
-                    routed = route_except_star(
-                        handler_residual,
-                        expected.value,
-                        slot_id=slot_id,
-                        site=self.site,
-                    )
-                    if routed is None:
+                        if routed is None:
+                            continue
+                        if routed.matched.children:
+                            matched_parts.append(routed.matched)
+                        handler_residual = routed.residual
+                    if not matched_parts:
+                        # This face does not match this handler — residual continues.
+                        next_frontier.append(face)
                         continue
-                    if routed.matched.children:
-                        matched_parts.append(routed.matched)
-                    handler_residual = routed.residual
-                if not matched_parts:
-                    continue
-                matched = regroup_except_star(residual, matched_parts)
-                residual = handler_residual
-
-                base_ctx = (
-                    temporal.context if temporal.context is not None else ctx
-                )
-                handler_ctx = bind_in_flight_effect(
-                    base_ctx, slot_id, matched, blame=self.site
-                )
-                if slot_id is not None:
-                    handler_ctx = _with_observed_effect(
-                        handler_ctx, slot_id, matched, blame=self.site
+                    matched = regroup_except_star(face.residual, matched_parts)
+                    base_ctx = (
+                        face.state.context
+                        if face.state.context is not None
+                        else ctx
                     )
-                seed = replace(temporal, context=handler_ctx)
-                handler_exits = promote_raise_halts(
-                    _reduce_block_from_state(handler_body, seed)
-                )
-
-                for handler_exit in handler_exits.exits:
-                    guard = _and_guards(exit_.guard, handler_exit.guard)
-                    faces = exit_.faces | handler_exit.faces
-                    owed = merge_pending(
-                        exit_.pending_contracts, handler_exit.pending_contracts
+                    handler_ctx = bind_in_flight_effect(
+                        base_ctx, slot_id, matched, blame=self.site
                     )
-                    if isinstance(handler_exit, Halted) and _is_exceptional_raise(
-                        handler_exit.effect
-                    ):
-                        # Regroup exceptional raises only; do not emit raw face.
-                        exceptional_effects.append(handler_exit.effect)
-                        exceptional_guards.append(guard)
-                        if isinstance(handler_exit.state, _ReducedBlock):
-                            temporal = handler_exit.state
-                        continue
-                    if isinstance(handler_exit, Halted):
+                    if slot_id is not None:
+                        handler_ctx = _with_observed_effect(
+                            handler_ctx, slot_id, matched, blame=self.site
+                        )
+                    seed = replace(face.state, context=handler_ctx)
+                    handler_exits = promote_raise_halts(
+                        _reduce_block_from_state(handler_body, seed)
+                    )
+                    # Branch the frontier: one next face per handler exit face.
+                    for handler_exit in handler_exits.exits:
+                        guard = _and_guards(face.guard, handler_exit.guard)
+                        faces = face.faces | handler_exit.faces
+                        owed = merge_pending(
+                            face.pending, handler_exit.pending_contracts
+                        )
+                        if isinstance(handler_exit, Halted) and _is_exceptional_raise(
+                            handler_exit.effect
+                        ):
+                            next_state = (
+                                handler_exit.state
+                                if isinstance(handler_exit.state, _ReducedBlock)
+                                else face.state
+                            )
+                            next_frontier.append(
+                                _StarFace(
+                                    guard=guard,
+                                    residual=handler_residual,
+                                    state=next_state,
+                                    faces=faces,
+                                    pending=owed,
+                                    exceptional=(
+                                        *face.exceptional,
+                                        handler_exit.effect,
+                                    ),
+                                )
+                            )
+                            continue
+                        if isinstance(handler_exit, Halted):
+                            retained.append(
+                                Halted(
+                                    guard,
+                                    handler_exit.effect,
+                                    handler_exit.state,
+                                    faces,
+                                    owed,
+                                )
+                            )
+                            next_state = (
+                                handler_exit.state
+                                if isinstance(handler_exit.state, _ReducedBlock)
+                                else face.state
+                            )
+                            next_frontier.append(
+                                _StarFace(
+                                    guard=guard,
+                                    residual=handler_residual,
+                                    state=next_state,
+                                    faces=faces,
+                                    pending=owed,
+                                    exceptional=face.exceptional,
+                                )
+                            )
+                            continue
+                        if isinstance(handler_exit, Completed):
+                            retained.append(
+                                Completed(guard, handler_exit.value, faces, owed)
+                            )
+                            next_state = (
+                                handler_exit.value
+                                if isinstance(handler_exit.value, _ReducedBlock)
+                                else face.state
+                            )
+                            next_frontier.append(
+                                _StarFace(
+                                    guard=guard,
+                                    residual=handler_residual,
+                                    state=next_state,
+                                    faces=faces,
+                                    pending=owed,
+                                    exceptional=face.exceptional,
+                                )
+                            )
+                            continue
+                        # Unknown face: still conjoin enclosing guard; retain.
                         retained.append(
-                            Halted(
-                                guard,
-                                handler_exit.effect,
-                                handler_exit.state,
-                                faces,
-                                owed,
+                            _rebind_face_guard(handler_exit, guard, faces, owed)
+                        )
+                        next_frontier.append(
+                            _StarFace(
+                                guard=guard,
+                                residual=handler_residual,
+                                state=face.state,
+                                faces=faces,
+                                pending=owed,
+                                exceptional=face.exceptional,
                             )
                         )
-                        if isinstance(handler_exit.state, _ReducedBlock):
-                            temporal = handler_exit.state
-                        continue
-                    if isinstance(handler_exit, Completed):
+                frontier = next_frontier
+
+            # Emit residual / exceptional per face — regroup only within a face
+            # (equal guard path). Never AND guards across alternative faces.
+            for face in frontier:
+                effects = list(face.exceptional)
+                if face.residual.children:
+                    effects.append(face.residual)
+                if effects:
+                    regrouped = regroup_except_star(original, effects)
+                    if regrouped is not None:
                         retained.append(
-                            Completed(guard, handler_exit.value, faces, owed)
+                            Halted(
+                                face.guard,
+                                regrouped,
+                                face.state,
+                                face.faces,
+                                face.pending,
+                            )
                         )
-                        if isinstance(handler_exit.value, _ReducedBlock):
-                            temporal = handler_exit.value
-                        continue
-                    # Unknown face kinds must not disappear — retain as-is under
-                    # the conjoined guard when the face carries one.
-                    retained.append(handler_exit)
+                    elif not face.exceptional and not face.residual.children:
+                        retained.append(
+                            Completed(face.guard, face.state, face.faces, face.pending)
+                        )
+                else:
+                    retained.append(
+                        Completed(face.guard, face.state, face.faces, face.pending)
+                    )
 
-            if residual.children:
-                exceptional_effects.append(residual)
-                exceptional_guards.append(exit_.guard)
-
-            regrouped = (
-                regroup_except_star(original, exceptional_effects)
-                if exceptional_effects
-                else None
-            )
-            if regrouped is not None:
-                regroup_guard = exit_.guard
-                for g in exceptional_guards:
-                    regroup_guard = _and_guards(regroup_guard, g)
+            if not retained:
                 retained.append(
-                    Halted(
-                        regroup_guard,
-                        regrouped,
-                        temporal,
+                    Completed(
+                        exit_.guard,
+                        _seed_temporal(exit_.state, ctx),
                         exit_.faces,
                         exit_.pending_contracts,
                     )
                 )
-            elif not retained:
-                retained.append(Completed(exit_.guard, temporal, exit_.faces))
-
             parts.append(ExitSet(tuple(retained)).normalize())
 
         result = parts[0] if parts else ExitSet.completed(None)
@@ -252,36 +327,48 @@ def _seed_temporal(state, ctx):
 
 
 def _with_observed_effect(ctx, slot_id, effect, *, blame):
-    """Require the typed observed-effect operation — no getattr soft-probe."""
+    """Typed ``ReduceContext.with_observed_effect`` — no exception capability probe."""
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_source_tree.panic import SugarNotWritten
 
-    if ctx is None:
-        raise SugarNotWritten(
-            blame=blame,
-            owner="TryStarSugar.desugar",
-            observed="None",
-            requested="ReduceContext.with_observed_effect for except* as-binding",
-            fix="route except* handlers through the shared ReduceContext",
-        )
-    try:
+    if isinstance(ctx, ReduceContext):
         return ctx.with_observed_effect(slot_id, effect)
-    except AttributeError as exc:
-        raise SugarNotWritten(
-            blame=blame,
-            owner="TryStarSugar.desugar",
-            observed=type(ctx).__name__,
-            requested="ReduceContext.with_observed_effect for except* as-binding",
-            fix="route except* handlers through the shared ReduceContext",
-        ) from exc
+    if isinstance(ctx, FactoryBuildContext):
+        # Typed front door: derive ReduceContext, then the typed method.
+        return ReduceContext.derived(
+            ctx, owner="TryStarSugar.desugar"
+        ).with_observed_effect(slot_id, effect)
+    raise SugarNotWritten(
+        blame=blame,
+        owner="TryStarSugar.desugar",
+        observed=type(ctx).__name__ if ctx is not None else "None",
+        requested="ReduceContext.with_observed_effect for except* as-binding",
+        fix="route except* handlers through the shared ReduceContext",
+    )
+
+
+def _rebind_face_guard(face, guard, faces, owed):
+    """Retain a face with the enclosing guard conjoined (all faces, no drop)."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if isinstance(face, Halted):
+        return Halted(guard, face.effect, face.state, faces, owed)
+    if isinstance(face, Completed):
+        return Completed(guard, face.value, faces, owed)
+    raise SugarNotWritten(
+        blame=None,
+        owner="TryStarSugar.desugar",
+        observed=type(face).__name__,
+        requested="Completed|Halted ExitSet face with conjoined body guard",
+        fix="extend TryStarSugar face retention for the new ExitSet face kind",
+    )
 
 
 def _reduce_block_from_state(statements, state):
-    """Reduce ``statements`` continuing from an existing temporal ``state``.
-
-    Unlike ``reduce_block_to_exitset`` (always empty seed), each statement
-    begins from the prior face's state so earlier handler work is visible.
-    """
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    """Reduce ``statements`` continuing from an existing temporal ``state``."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         _ReducedBlock,
         reduce_block_to_exitset,

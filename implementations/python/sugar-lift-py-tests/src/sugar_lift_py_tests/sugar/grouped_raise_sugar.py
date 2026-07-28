@@ -6,9 +6,8 @@ groups stay nested: children are never flattened. Spelling does not grant
 group authority — only the Raise construction path that recognized the builtin
 group coordinate may mint this sugar.
 
-Group occurrence identity is the sealed source fragment CID (content-addressed),
-never a fabricated ``filename:line:col`` string — identical positions in
-different authenticated sources must differ.
+Group occurrence identity is the sealed ``SourceMemento`` coordinate from
+``SourceFragment.seal()`` — never a fabricated ``filename:line:col`` string.
 """
 
 from __future__ import annotations
@@ -21,40 +20,37 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
 def sealed_source_occurrence(site, *, owner: str) -> str:
-    """Sealed source occurrence coordinate for this construction site.
+    """Sealed source occurrence coordinate via the typed fragment interface.
 
-    Uses the full sealed memento (file + source_cid + span + segment cid), not
-    a fabricated ``filename:line:col`` spelling. Identical positions in
-    different authenticated sources differ via ``file`` / ``source_cid``.
+    Requires ``SourceFragment.seal() -> SourceMemento``. Absence of that typed
+    interface is a construction error — not a soft getattr membrane.
     """
+    from sugar_source_tree.fragment import SourceFragment, SourceMemento
     from sugar_source_tree.panic import SugarNotWritten
 
-    seal = getattr(site, "seal", None)
-    if seal is None:
+    if not isinstance(site, SourceFragment):
         raise SugarNotWritten(
             blame=site,
             owner=owner,
-            observed="group construction site lacks seal()",
-            requested="a sealed SourceFragment occurrence coordinate",
+            observed=type(site).__name__,
+            requested="SourceFragment site with seal() -> SourceMemento",
             fix="construct GroupedRaiseSugar only from an enumerated source fragment",
         )
-    memento = seal()
-    cid = getattr(memento, "cid", None)
-    source_cid = getattr(memento, "source_cid", None)
-    file = getattr(memento, "file", None)
-    start = getattr(memento, "start", None)
-    end = getattr(memento, "end", None)
-    if not cid or not source_cid or file is None or start is None or end is None:
+    memento = site.seal()
+    if not isinstance(memento, SourceMemento):
         raise SugarNotWritten(
             blame=site,
             owner=owner,
             observed=type(memento).__name__,
-            requested="SourceMemento{file,start,end,source_cid,cid}",
-            fix="seal the raise site before minting GroupedRaiseEffect.occurrence",
+            requested="SourceMemento from SourceFragment.seal()",
+            fix="seal() must return the typed SourceMemento currency",
         )
-    # Full sealed coordinate — content CID alone collides across files that
+    # Full sealed coordinate — segment cid alone collides across files that
     # share identical span text; file + source_cid pin the authenticated source.
-    return f"{file}:{start}:{end}:{source_cid}:{cid}"
+    return (
+        f"{memento.file}:{memento.start}:{memento.end}"
+        f":{memento.source_cid}:{memento.cid}"
+    )
 
 
 @dataclass(frozen=True)
