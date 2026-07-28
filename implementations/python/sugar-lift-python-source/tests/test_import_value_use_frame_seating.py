@@ -12,6 +12,8 @@ import csv
 import importlib.metadata
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -188,3 +190,76 @@ def test_lying_foreign_unit_receipt_is_not_seated_on_frame(tmp_path: Path) -> No
         # Owner source is short; line 9999 would be foreign.
         assert start_line < 100
         assert end_line < 100
+
+
+def test_seat_refuses_foreign_source_cid(tmp_path: Path) -> None:
+    """Side-door tooth: seating with wrong source_cid is BackendDefect."""
+    from sugar_source_tree.panic import BackendDefect
+
+    frame = _frame_for_box_expected(
+        tmp_path,
+        "from unprivileged.types import ArrayType\n"
+        "def box_expected(expected, box_cls=None):\n"
+        "    default = ArrayType\n"
+        "    return expected if box_cls is None else box_cls\n",
+    )
+    owner = frame.owner.unit
+    seated = next(iter(owner._import_value_use_resolutions.values()))
+    with pytest.raises(BackendDefect, match="source_cid"):
+        owner.seat_import_value_use_resolution(
+            (1, 0, 1, 1),
+            seated,
+            source_cid="blake3-512:" + "f" * 128,
+        )
+
+
+def test_seat_refuses_non_resolved_object(tmp_path: Path) -> None:
+    from sugar_source_tree.panic import BackendDefect
+
+    frame = _frame_for_box_expected(
+        tmp_path,
+        "from unprivileged.types import ArrayType\n"
+        "def box_expected(expected, box_cls=None):\n"
+        "    default = ArrayType\n"
+        "    return expected if box_cls is None else box_cls\n",
+    )
+    owner = frame.owner.unit
+    with pytest.raises(BackendDefect, match="ResolvedPythonObjectV1"):
+        owner.seat_import_value_use_resolution(
+            (1, 0, 1, 1),
+            object(),
+            source_cid=owner.source_cid,
+        )
+
+
+def test_no_broad_exception_swallow_in_same_unit_rehost() -> None:
+    """Side-door tooth: rehost has no bare except Exception → fabricate path."""
+    import ast
+    import inspect
+    from sugar_lift_py_tests import source_call_frame as scf
+    from sugar_lift_python_source.manager_construction import (
+        _seat_import_value_use_receipts,
+    )
+
+    rehost_src = inspect.getsource(scf._same_unit_actual_node)
+    assert "except Exception" not in rehost_src
+
+    seat_src = inspect.getsource(_seat_import_value_use_receipts)
+    # Code body (not prose): no ambient spelling auth call, no ValueError swallow.
+    tree = ast.parse(seat_src)
+    fn = tree.body[0]
+    assert isinstance(fn, ast.FunctionDef)
+    call_names: set[str] = set()
+    except_types: list[str] = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                call_names.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                call_names.add(func.attr)
+        if isinstance(node, ast.ExceptHandler) and node.type is not None:
+            if isinstance(node.type, ast.Name):
+                except_types.append(node.type.id)
+    assert "authenticate_dependency_top_level" not in call_names
+    assert "ValueError" not in except_types

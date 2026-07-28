@@ -1775,12 +1775,15 @@ def _seat_import_value_use_receipts(
     context: TreeConstructionContextV1,
     dependency_graphs: dict[str, DependencyArtifactGraph],
 ) -> None:
-    """Seat final-checked value-use receipts into the frame unit before construction.
+    """Seat authenticated value-use receipts on this frame unit only.
 
-    Each receipt's useSite must match this unit's source_cid.  Resolved objects
-    are stored on both the construction context and the SourceUnit so Name /
-    Attribute identity operands bind by authenticated definition coordinate
-    without substituting foreign-unit spans into this frame.
+    Receipts are minted once via ``authenticated_import_value_use_receipts``
+    (source-CID authenticated; dual-door / mismatch raises).  Resolution uses
+    only pre-authenticated ``dependency_graphs`` already carried for this frame
+    — never spelling-derived ambient dependency authentication.  Seating
+    requires exact unit source_cid + validated span.  Missing graph /
+    non-resolved import leaves that coordinate unseated (consume stays
+    typed-loud); CID/auth defects raise.
     """
     from pathlib import Path
 
@@ -1790,23 +1793,33 @@ def _seat_import_value_use_receipts(
     from sugar_lift_py_tests.import_binding import (
         authenticated_import_value_use_receipts,
     )
+    from sugar_lift_python_source.canonical import blake3_512_of
 
     unit = source_file.unit
-    try:
-        receipts, _ = authenticated_import_value_use_receipts(
-            Path("."),
-            Path(module.source_seat),
-            module.source,
-            module.source_cid,
-            module_identities={},
+    # Path-source law: refuse dual-door / mismatched CID loudly at mint.
+    expected_cid = blake3_512_of(module.source.encode("utf-8"))
+    if module.source_cid != expected_cid or unit.source_cid != module.source_cid:
+        from sugar_source_tree.panic import BackendDefect
+
+        raise BackendDefect(
+            blame=module.source_seat,
+            owner="manager_construction._seat_import_value_use_receipts",
+            observed="source_cid mismatch with blake3(module.source)",
+            requested="path_source identity (source, seat, blake3(source))",
+            fix="refuse dual-door repair; re-mint module via path_source",
         )
-    except ValueError:
-        # Stale CID / dual-door refuse — leave unit unseated (loud later).
-        return
+    # No ValueError swallow: authenticated mint refuses tamper/mismatch loud.
+    receipts, _ = authenticated_import_value_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
     for receipt in receipts:
         site = receipt.use.get("useSite") or {}
         if site.get("sourceCid") != module.source_cid:
-            # Never seat a foreign unit's use into this frame.
+            # Foreign useSite: never seat on this unit.
             continue
         coordinate = SourceFragmentCoordinateV1(
             module.source_cid,
@@ -1822,28 +1835,19 @@ def _seat_import_value_use_receipts(
             site["endCol"],
         )
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        # Frame graph is pre-seeded into ``dependency_graphs`` under the frame
-        # module top-level at the call site; only reuse that entry when the
-        # value-use top-level matches (never apply it to a foreign top-level).
+        # Only pre-authenticated graphs for this publication — no ambient spelling hunt.
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
-            from .dependency_artifact import (
-                DependencyArtifactAuthenticationError,
-                authenticate_dependency_top_level,
-            )
-
-            try:
-                dependency_graph = authenticate_dependency_top_level(top_level)
-            except DependencyArtifactAuthenticationError:
-                continue
-            dependency_graphs[top_level] = dependency_graph
+            continue
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
             continue
         context.source_import_value_resolutions[coordinate] = imported
-        unit.seat_import_value_use_resolution(span_key, imported)
+        unit.seat_import_value_use_resolution(
+            span_key, imported, source_cid=module.source_cid
+        )
 
 
 def _install_opaque_call_obligation(

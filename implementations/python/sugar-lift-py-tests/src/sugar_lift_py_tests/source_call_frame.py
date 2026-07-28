@@ -311,10 +311,11 @@ def _same_unit_actual_node(owner_unit, node, coordinate):
 
     Same-unit nodes pass through. Foreign-unit actuals must never carry their
     LineTable offsets into owner-unit construction (``offset N outside 0..M``):
-    mint a ``BindingCoordinateRef`` at the formal's owner-local span. When the
-    foreign use site already has a seated import value-use resolution, transfer
-    that definition-coordinate identity onto the formal span on the owner unit
-    so Floor binding stays authenticated without spelling or cross-unit spans.
+    mint a ``BindingCoordinateRef`` at the formal's owner-local span only.
+
+    Value-use resolutions are **not** transferred or re-seated here: frames
+    consume exact seats on the owning SourceUnit (source-CID authenticated at
+    publication). No broad Exception catch, no fallback fabrication of seats.
     """
     from sugar_source_tree.backend import Leaf, materialize
     from sugar_source_tree.nodes import Node
@@ -344,47 +345,6 @@ def _same_unit_actual_node(owner_unit, node, coordinate):
     if not isinstance(start, int) or not isinstance(end, int) or end < start:
         raise SourceCallBindingGap("formal binding site span is not unit-local")
     owner_span = Span(start, end)
-
-    # Transfer seated import value-use definition-coordinate identity, if any.
-    # Never project foreign offsets through the owner LineTable.
-    foreign_unit = node.unit
-    try:
-        foreign_lc = node.line_col_span()
-        foreign_key = (
-            foreign_lc.start_line,
-            foreign_lc.start_col,
-            foreign_lc.end_line,
-            foreign_lc.end_col,
-        )
-        resolved = foreign_unit.import_value_use_resolution(foreign_key)
-    except Exception:
-        resolved = None
-    if resolved is not None:
-        owner_lc = owner_unit.line_table.project(owner_span)
-        owner_key = (
-            owner_lc.start_line,
-            owner_lc.start_col,
-            owner_lc.end_line,
-            owner_lc.end_col,
-        )
-        owner_unit.seat_import_value_use_resolution(owner_key, resolved)
-        context = owner_unit.construction_context
-        if context is not None:
-            from sugar_lift_py_tests.context_manager_resolution import (
-                SourceFragmentCoordinateV1,
-            )
-
-            resolutions = getattr(context, "source_import_value_resolutions", None)
-            if isinstance(resolutions, dict):
-                resolutions[
-                    SourceFragmentCoordinateV1(
-                        owner_unit.source_cid,
-                        owner_lc.start_line,
-                        owner_lc.start_col,
-                        owner_lc.end_line,
-                        owner_lc.end_col,
-                    )
-                ] = resolved
 
     return materialize(
         owner_unit,
