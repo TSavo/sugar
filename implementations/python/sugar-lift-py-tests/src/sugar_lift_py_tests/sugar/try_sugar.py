@@ -65,14 +65,9 @@ class TrySugar(Sugar):
 
     def _route_discharged_body(self, body_es, ctx):
         """Route one concrete body ExitSet; carriers enter only after discharge."""
-        from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.sugar.exit_set_routing import (
             exitset_to_outcome,
             promote_raise_halts,
-        )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            _ReducedBlock,
-            reduce_block_to_exitset,
         )
 
         pre_finally = _route_handlers_over_exits(
@@ -86,22 +81,116 @@ class TrySugar(Sugar):
         if not self.finalbody:
             return exitset_to_outcome(pre_finally)
 
-        cleanup_es = reduce_block_to_exitset(self.finalbody, ctx)
-
-        def _cleanup():
-            return cleanup_es
-
-        def _restores(value: object) -> bool:
-            if isinstance(value, _ReducedBlock):
-                if not value.can_fall_through:
-                    return False
-                if any(isinstance(e, ReturnValue) for e in value.entries):
-                    return False
-                return True
-            return True
-
-        after = pre_finally.and_finally(_cleanup, cleanup_restores=_restores)
+        after = _and_finally_with_raise_context(
+            pre_finally,
+            self.finalbody,
+            ctx=ctx,
+            site=self.site,
+        )
         return exitset_to_outcome(after)
+
+
+def _finally_restores(value: object) -> bool:
+    """Ordinary finally fall-through restores; return-in-finally does not."""
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    if isinstance(value, _ReducedBlock):
+        if not value.can_fall_through:
+            return False
+        if any(isinstance(e, ReturnValue) for e in value.entries):
+            return False
+        return True
+    return True
+
+
+def _and_finally_with_raise_context(pre_finally, finalbody, *, ctx, site):
+    """try/finally over ExitSet, retaining body raise as implicit context.
+
+    Mirrors ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
+    terminal cleanup supersede) without editing ExitSet. When a finally raise
+    supersedes an incoming RaiseEffect halt, attach that halt as
+    ``context_effect`` on the cleanup raise if it has none — Python's
+    implicit ``__context__`` for a raise in finally after a body exception.
+
+    For halted incoming faces, finally is reduced under
+    ``bind_in_flight_effect`` so bare re-raise / context-sensitive raises in
+    finally can resolve the authentic body effect when they carry a slot.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.caller_parameter_contract import merge_pending
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        _and_guards,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    # Shared fall-through cleanup (no body exception active).
+    neutral_cleanup = reduce_block_to_exitset(finalbody, ctx)
+    # Slot for bind/resolve when reducing finally over a body halt.
+    site_key = getattr(site, "filename", None) or repr(site)
+    site_line = getattr(site, "line", "")
+    finally_slot = f"try-finally-in-flight:{site_key}:{site_line}"
+
+    exits: list = []
+    for incoming in pre_finally.exits:
+        if (
+            isinstance(incoming, Halted)
+            and isinstance(incoming.effect, RaiseEffect)
+        ):
+            finally_ctx = bind_in_flight_effect(
+                ctx, finally_slot, incoming.effect, blame=site
+            )
+            cleanup_es = reduce_block_to_exitset(finalbody, finally_ctx)
+        else:
+            cleanup_es = neutral_cleanup
+
+        for clean in cleanup_es.exits:
+            guard = _and_guards(incoming.guard, clean.guard)
+            faces = incoming.faces | clean.faces
+            owed = merge_pending(
+                incoming.pending_contracts, clean.pending_contracts
+            )
+            if isinstance(clean, Halted):
+                effect = clean.effect
+                # Supersede: cleanup halt wins; retain body raise as context.
+                if (
+                    isinstance(effect, RaiseEffect)
+                    and effect.context_effect is None
+                    and isinstance(incoming, Halted)
+                    and isinstance(incoming.effect, RaiseEffect)
+                    and effect is not incoming.effect
+                ):
+                    effect = replace(effect, context_effect=incoming.effect)
+                exits.append(
+                    Halted(guard, effect, clean.state, faces, owed)
+                )
+                continue
+            if _finally_restores(clean.value):
+                if isinstance(incoming, Completed):
+                    exits.append(
+                        Completed(guard, incoming.value, faces, owed)
+                    )
+                else:
+                    exits.append(
+                        Halted(
+                            guard,
+                            incoming.effect,
+                            incoming.state,
+                            faces,
+                            owed,
+                        )
+                    )
+            else:
+                exits.append(Completed(guard, clean.value, faces, owed))
+    return ExitSet(tuple(exits)).normalize()
 
 
 def _effect_match_verdict(effect, matcher, ctx=None):
