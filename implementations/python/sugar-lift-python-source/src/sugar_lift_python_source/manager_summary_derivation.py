@@ -233,6 +233,73 @@ class GeneratorExitHaltFaceV1:
 
 
 @dataclass(frozen=True)
+class GeneratorNestedManagerLayerV1:
+    """One nested source-defined manager occurrence inside a generator CM body.
+
+    Distinct occurrence identity from the outer protocol: the With site's sealed
+    fragment CID plus nested protocol/frame construction CIDs. Temporal phase
+    is pre-yield when the With sits before the outer yield (including
+    ``with inner(): yield outer_resource``) and post-yield when it sits after.
+    """
+
+    occurrence: dict
+    nested_protocol_construction_cid: str
+    nested_generator_frame_cid: str
+    temporal_phase: Literal["pre-yield", "post-yield"]
+    cid: str
+    nested_protocol: object = field(compare=False, repr=False, default=None)
+    body_steps: tuple = field(compare=False, repr=False, default=())
+
+    @property
+    def preimage(self) -> dict:
+        return {
+            "kind": "generator-nested-manager-layer",
+            "schemaVersion": "1",
+            "occurrence": self.occurrence,
+            "nestedProtocolConstructionCid": self.nested_protocol_construction_cid,
+            "nestedGeneratorFrameCid": self.nested_generator_frame_cid,
+            "temporalPhase": self.temporal_phase,
+        }
+
+    def __post_init__(self) -> None:
+        if self.temporal_phase not in ("pre-yield", "post-yield"):
+            raise ValueError("nested manager layer temporal phase invalid")
+        if cid_of_json(self.preimage) != self.cid:
+            raise ValueError(
+                "generator nested manager layer CID does not match its preimage"
+            )
+
+    @classmethod
+    def mint(
+        cls,
+        *,
+        occurrence: dict,
+        nested_protocol_construction_cid: str,
+        nested_generator_frame_cid: str,
+        temporal_phase: Literal["pre-yield", "post-yield"],
+        nested_protocol: object = None,
+        body_steps: tuple = (),
+    ) -> "GeneratorNestedManagerLayerV1":
+        preimage = {
+            "kind": "generator-nested-manager-layer",
+            "schemaVersion": "1",
+            "occurrence": occurrence,
+            "nestedProtocolConstructionCid": nested_protocol_construction_cid,
+            "nestedGeneratorFrameCid": nested_generator_frame_cid,
+            "temporalPhase": temporal_phase,
+        }
+        return cls(
+            occurrence,
+            nested_protocol_construction_cid,
+            nested_generator_frame_cid,
+            temporal_phase,
+            cid_of_json(preimage),
+            nested_protocol,
+            body_steps,
+        )
+
+
+@dataclass(frozen=True)
 class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
     """Generator-backed protocol plus enter-halt / yield / exit-halt faces.
 
@@ -241,11 +308,14 @@ class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
     read enter/exit definitions and lifecycle performance through that base
     type; they never branch on Lifecycle-vs-Manager wrapper spelling. Face
     fields are producer testimony; enter/exit performance inherit from base.
+    Nested manager layers (With of source-defined managers inside the
+    generator body) are additional testimony on the same surface.
     """
 
     enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = ()
     yield_faces: tuple[GeneratorYieldFaceV1, ...] = ()
     exit_halt_faces: tuple[GeneratorExitHaltFaceV1, ...] = ()
+    nested_manager_layers: tuple[GeneratorNestedManagerLayerV1, ...] = ()
     lifecycle_cid: str = ""
 
     def __post_init__(self) -> None:
@@ -262,10 +332,16 @@ class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
                 raise ValueError("exit-halt face CID mismatch")
             if face.temporal_phase != "post-yield":
                 raise ValueError("exit-halt face must be post-yield temporal phase")
+        for layer in self.nested_manager_layers:
+            if layer.cid != cid_of_json(layer.preimage):
+                raise ValueError("nested manager layer CID mismatch")
         enter_cids = {face.cid for face in self.enter_halt_faces}
         exit_cids = {face.cid for face in self.exit_halt_faces}
         if enter_cids & exit_cids:
             raise ValueError("enter-halt and exit-halt faces must not share identity")
+        layer_cids = [layer.cid for layer in self.nested_manager_layers]
+        if len(layer_cids) != len(set(layer_cids)):
+            raise ValueError("nested manager layers must have distinct identities")
         expected = cid_of_json(self.lifecycle_preimage)
         if self.lifecycle_cid and self.lifecycle_cid != expected:
             raise ValueError("generator lifecycle CID does not match its preimage")
@@ -284,6 +360,9 @@ class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
             "enterHaltFaceCids": [face.cid for face in self.enter_halt_faces],
             "yieldFaceCids": [face.cid for face in self.yield_faces],
             "exitHaltFaceCids": [face.cid for face in self.exit_halt_faces],
+            "nestedManagerLayerCids": [
+                layer.cid for layer in self.nested_manager_layers
+            ],
         }
 
     @classmethod
@@ -294,6 +373,7 @@ class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
         enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = (),
         yield_faces: tuple[GeneratorYieldFaceV1, ...] = (),
         exit_halt_faces: tuple[GeneratorExitHaltFaceV1, ...] = (),
+        nested_manager_layers: tuple[GeneratorNestedManagerLayerV1, ...] = (),
     ) -> "GeneratorBackedLifecycleProtocolV1":
         return cls(
             protocol.protocol_construction_cid,
@@ -305,6 +385,7 @@ class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
             enter_halt_faces,
             yield_faces,
             exit_halt_faces,
+            nested_manager_layers,
             "",
         )
 
@@ -1627,6 +1708,33 @@ def _publish_generator_backed_resource_contract(
     enter_halts, yield_faces, exit_halts = _project_generator_lifecycle_faces(
         generator_target
     )
+    nested_layers, nested_gap = _project_nested_manager_layers(
+        generator_target,
+        session=session,
+        graph=graph,
+        distribution_index=distribution_index,
+        exit_face_id=exit_face_id,
+    )
+    if nested_gap is not None:
+        kind, detail = nested_gap
+        _install_derivation_gap(context, receiver, receipt, kind, detail)
+        return
+    # When nested layers resolve, rewrite Opaque With steps to NestedManagerStep
+    # on a published frame (producer-owned; not a nodes.py emission edit).
+    published_frame = _frame_with_nested_manager_steps(frame, nested_layers)
+    if published_frame is not frame:
+        protocol = construct_generator_backed_protocol(
+            frame=published_frame,
+            enter_definition=enter,
+            exit_definition=exit_,
+            exit_face_id=exit_face_id,
+            construction_cid=resolved_cid,
+        )
+        gap = _generator_protocol_construction_gap(protocol)
+        if gap is not None:
+            kind, detail = _gap_kind_and_detail(gap)
+            _install_derivation_gap(context, receiver, receipt, kind, detail)
+            return
     # Lifecycle *is* the generator-backed protocol surface (subclass); it
     # publishes under SourceDerivedGeneratorResourceRefV1 without a second
     # isinstance filter over wrapper spelling.
@@ -1635,6 +1743,7 @@ def _publish_generator_backed_resource_contract(
         enter_halt_faces=enter_halts,
         yield_faces=yield_faces,
         exit_halt_faces=exit_halts,
+        nested_manager_layers=nested_layers,
     )
     # Generator exit truthiness is the GCM throw/resume result — not a forged
     # NeverSuppresses theorem from an ObjectValue receiver.
@@ -1653,6 +1762,9 @@ def _publish_generator_backed_resource_contract(
         "enterHaltFaceCids": [face.cid for face in lifecycle.enter_halt_faces],
         "yieldFaceCids": [face.cid for face in lifecycle.yield_faces],
         "exitHaltFaceCids": [face.cid for face in lifecycle.exit_halt_faces],
+        "nestedManagerLayerCids": [
+            layer.cid for layer in lifecycle.nested_manager_layers
+        ],
         "lifecycleCid": lifecycle.lifecycle_cid,
         "semantics": json.loads(encode_jcs(semantics_to_value(semantics))),
         "importSignature": json.loads(encode_jcs(_signature_to_value(signature))),
@@ -1681,6 +1793,342 @@ def _generator_protocol_construction_gap(protocol):
     if type(protocol) is ManagerProtocolConstructionGapV1:
         return protocol
     return None
+
+
+def _project_nested_manager_layers(
+    generator_target,
+    *,
+    session,
+    graph=None,
+    distribution_index=None,
+    exit_face_id: str,
+) -> tuple[tuple[GeneratorNestedManagerLayerV1, ...], tuple[str, str] | None]:
+    """Project With-of-source-defined-manager layers inside a generator body.
+
+    Returns (layers, None) on success. When a nested With cannot honestly
+    publish as a generator-backed protocol, returns
+    ``((), ("nested-manager", detail))`` — a loud named gap, never a skip.
+    Each layer also carries ``body_steps`` (peer of pre-yield Assign/If/Yield)
+    for NestedManagerStep rewrite without nodes.py emission.
+    """
+    from sugar_source_tree.nodes import (
+        Call,
+        Expr,
+        FunctionDef,
+        If,
+        Try,
+        With,
+        Yield,
+    )
+
+    from .manager_protocol_construction import construct_generator_backed_protocol
+
+    if not isinstance(generator_target, FunctionDef):
+        return (), None
+
+    layers: list[GeneratorNestedManagerLayerV1] = []
+
+    def visit(stmts, *, past: bool) -> tuple[str, str] | None:
+        for statement in stmts:
+            if isinstance(statement, Expr) and isinstance(statement.value, Yield):
+                past = True
+                continue
+            if isinstance(statement, With):
+                for item in statement.items:
+                    expr = item.context_expr
+                    if not isinstance(expr, Call):
+                        # Non-Call With is not a nested generator manager layer.
+                        continue
+                    nested_fn = _resolve_nested_generator_function(
+                        expr,
+                        session=session,
+                        graph=graph,
+                        distribution_index=distribution_index,
+                    )
+                    if nested_fn is None:
+                        # Not a resolvable source-defined manager — leave Opaque.
+                        continue
+                    nested_frame, nested_target = _source_visible_frame_for_function(
+                        nested_fn
+                    )
+                    if nested_frame is None or nested_target is None:
+                        continue
+                    if getattr(nested_frame, "generator_steps", None) is None:
+                        # Source function but not a generator CM — not our layer.
+                        continue
+                    # Recognized nested generator manager: must publish honestly
+                    # or gap loud — never skip.
+                    coords = _protocol_coords_from_generator_decorators(
+                        nested_target,
+                        session=session,
+                        graph=graph,
+                        distribution_index=distribution_index,
+                    )
+                    if coords is None:
+                        return (
+                            "nested-manager",
+                            "nested manager native enter/exit definitions unavailable",
+                        )
+                    n_enter, n_exit = coords
+                    nested_protocol = construct_generator_backed_protocol(
+                        frame=nested_frame,
+                        enter_definition=n_enter,
+                        exit_definition=n_exit,
+                        exit_face_id=(
+                            f"{exit_face_id}:nested:"
+                            f"{statement.fragment.seal().cid[:16]}"
+                        ),
+                        construction_cid=nested_frame.frame_cid,
+                    )
+                    if _generator_protocol_construction_gap(nested_protocol) is not None:
+                        return (
+                            "nested-manager",
+                            "nested manager protocol construction refused",
+                        )
+                    body_steps = _nameable_nested_with_body_steps(statement.body)
+                    if body_steps is None:
+                        return (
+                            "nested-manager",
+                            "nested With body holds an unnameable statement",
+                        )
+                    phase: Literal["pre-yield", "post-yield"] = (
+                        "post-yield" if past else "pre-yield"
+                    )
+                    # Occurrence identity is the With item's context expression
+                    # fragment — distinct per nested Call, not the outer protocol.
+                    item_cid = expr.fragment.seal().cid
+                    occurrence = {
+                        "kind": "generator-nested-with-occurrence",
+                        "schemaVersion": "1",
+                        "cid": item_cid,
+                        "withCid": statement.fragment.seal().cid,
+                    }
+                    layers.append(
+                        GeneratorNestedManagerLayerV1.mint(
+                            occurrence=occurrence,
+                            nested_protocol_construction_cid=(
+                                nested_protocol.protocol_construction_cid
+                            ),
+                            nested_generator_frame_cid=nested_frame.frame_cid,
+                            temporal_phase=phase,
+                            nested_protocol=nested_protocol,
+                            body_steps=body_steps,
+                        )
+                    )
+                # Yield inside With body counts as past-yield for following stmts.
+                if any(
+                    isinstance(s, Expr) and isinstance(s.value, Yield)
+                    for s in statement.body
+                ):
+                    past = True
+                gap = visit(statement.body, past=past)
+                if gap is not None:
+                    return gap
+                continue
+            if isinstance(statement, If):
+                gap = visit(statement.body, past=past)
+                if gap is not None:
+                    return gap
+                gap = visit(statement.orelse, past=past)
+                if gap is not None:
+                    return gap
+                continue
+            if isinstance(statement, Try):
+                gap = visit(statement.body, past=past)
+                if gap is not None:
+                    return gap
+                for handler in statement.handlers:
+                    gap = visit(handler.body, past=past)
+                    if gap is not None:
+                        return gap
+                gap = visit(statement.orelse, past=past)
+                if gap is not None:
+                    return gap
+                gap = visit(statement.finalbody, past=past)
+                if gap is not None:
+                    return gap
+                continue
+        return None
+
+    gap = visit(generator_target.body, past=False)
+    if gap is not None:
+        return (), gap
+    return tuple(layers), None
+
+
+def _source_visible_frame_for_function(function_def):
+    """Build (frame, FunctionDef) for a same-module generator FunctionDef."""
+    from sugar_source_tree.nodes import FunctionDef
+
+    if not isinstance(function_def, FunctionDef):
+        return None, None
+    frame = function_def.source_visible_call_frame()
+    if frame is None:
+        return None, None
+    return frame, function_def
+
+
+def _resolve_nested_generator_function(
+    call, *, session, graph=None, distribution_index=None
+):
+    """Resolve Call.func to a same-module or imported FunctionDef when possible."""
+    from sugar_source_tree.nodes import FunctionDef, ImportFrom, Name
+
+    func = call.func
+    if not isinstance(func, Name):
+        return None
+    binds = (func.unit.module_direct_bindings or {}).get(func.id, ())
+    if len(binds) == 1 and isinstance(binds[0], FunctionDef):
+        return binds[0]
+    if len(binds) == 1 and isinstance(binds[0], ImportFrom):
+        constructed = _construct_decorator_function(
+            func,
+            session=session,
+            graph=graph,
+            distribution_index=distribution_index,
+        )
+        if isinstance(constructed, FunctionDef):
+            return constructed
+    return None
+
+
+def _nameable_nested_with_body_steps(body) -> tuple | None:
+    """Name With-body steps under the merged pre-yield law (Assign/If/Yield peers).
+
+    Returns None when any statement is unnameable — keeps the nested With loud.
+    """
+    from sugar_lift_py_tests.generator_construction import (
+        AssignStepV1,
+        IfStepV1,
+        InertStepV1,
+        ReturnStepV1,
+        YieldStepV1,
+    )
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        Constant,
+        Expr,
+        If,
+        Name,
+        Pass,
+        Return,
+        Yield,
+    )
+
+    def name_one(statement):
+        if isinstance(statement, Expr) and isinstance(statement.value, Yield):
+            value = statement.value.value
+            return YieldStepV1(None if value is None else value.sugar())
+        if isinstance(statement, Return):
+            return ReturnStepV1(
+                None if statement.value is None else statement.value.sugar()
+            )
+        if (
+            isinstance(statement, Expr)
+            and isinstance(statement.value, Constant)
+        ):
+            return InertStepV1(statement.kind)
+        if isinstance(statement, Pass):
+            return InertStepV1(statement.kind)
+        if (
+            isinstance(statement, Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], Name)
+        ):
+            return AssignStepV1(
+                statement.targets[0].id,
+                statement.value.sugar(),
+                statement.fragment.seal().cid,
+            )
+        if (
+            isinstance(statement, AnnAssign)
+            and isinstance(statement.target, Name)
+            and statement.value is not None
+        ):
+            return AssignStepV1(
+                statement.target.id,
+                statement.value.sugar(),
+                statement.fragment.seal().cid,
+            )
+        if isinstance(statement, If):
+            then_b = name_body(statement.body)
+            else_b = name_body(statement.orelse)
+            if then_b is None or else_b is None:
+                return None
+            return IfStepV1(
+                statement.test.sugar(),
+                then_b,
+                else_b,
+                statement.fragment.seal().cid,
+            )
+        return None
+
+    def name_body(stmts):
+        out = []
+        for s in stmts:
+            named = name_one(s)
+            if named is None:
+                return None
+            out.append(named)
+        return tuple(out)
+
+    return name_body(body)
+
+
+def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
+    """Rewrite Opaque With steps to NestedManagerStepV1 when layers resolve.
+
+    Producer-owned: does not edit nodes.py emission. Leaves the frame unchanged
+    when there are no nested layers or no Opaque With to rewrite.
+    """
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.generator_construction import (
+        NestedManagerStepV1,
+        OpaqueStepV1,
+    )
+
+    if not nested_layers:
+        return frame
+    steps = getattr(frame, "generator_steps", None)
+    if not steps:
+        return frame
+    rewritten = []
+    layer_idx = 0
+    for step in steps:
+        if (
+            isinstance(step, OpaqueStepV1)
+            and step.observed == "With"
+            and layer_idx < len(nested_layers)
+        ):
+            layer = nested_layers[layer_idx]
+            layer_idx += 1
+            nested_protocol = layer.nested_protocol
+            if nested_protocol is None:
+                rewritten.append(step)
+                continue
+            occurrence_cid = layer.occurrence.get("cid") or layer.cid
+            body_steps = getattr(layer, "body_steps", ()) or ()
+            rewritten.append(
+                NestedManagerStepV1(
+                    nested_protocol=nested_protocol,
+                    body_steps=body_steps,
+                    fragment_cid=occurrence_cid,
+                    occurrence_cid=occurrence_cid,
+                )
+            )
+            continue
+        rewritten.append(step)
+    if layer_idx == 0:
+        return frame
+    return SimpleNamespace(
+        frame_cid=frame.frame_cid,
+        generator_steps=tuple(rewritten),
+        runtime_entries=tuple(getattr(frame, "runtime_entries", ()) or ()),
+        parameters=tuple(getattr(frame, "parameters", ()) or ()),
+        definition_site=getattr(frame, "definition_site", None),
+    )
 
 
 def _project_generator_lifecycle_faces(
