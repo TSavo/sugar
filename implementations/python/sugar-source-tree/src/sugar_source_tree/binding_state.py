@@ -590,7 +590,17 @@ def _semantic_value_cid_for_bound_node(node: "Node") -> str:
         return cid_of_json(_constructed_preimage(constructed))
     except BindingStateWireGap:
         raise
-    except Exception as cause:  # noqa: BLE001 -- map any construction miss to seal gap
+    except Exception as cause:
+        # SugarNotWritten / SourceTreePanic are refusal, not soft-miss. Shape
+        # CID fallback after refusal would mint sealed testimony for a value
+        # whose sugar declined — silent green. Refuse seal loud instead.
+        from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
+
+        if isinstance(cause, (SugarNotWritten, SourceTreePanic)):
+            raise BindingStateWireGap(
+                "constructed-value testimony unavailable: "
+                f"{type(cause).__name__}: {cause}"
+            ) from cause
         try:
             return node_construction_shape_cid(node)
         except (TypeError, ValueError) as shape_cause:

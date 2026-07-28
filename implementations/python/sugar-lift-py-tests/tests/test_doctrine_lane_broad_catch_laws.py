@@ -14,8 +14,9 @@ binding_state / generator_construction) found two live offenders:
    so ``seal_bound_binding_entry_v1`` can mint sealed testimony after sugar
    refused. Seal must stay loud when value construction refused.
 
-These tests are the red instruments. Production edits only after the red names
-the fix. No carrier/ExitSet, no silent None soft-greens.
+These instruments stay green when production refuses soft-seals: ConstructionPanic
+propagates from guard truth; SugarNotWritten refuses seal. No carrier/ExitSet,
+no silent None soft-greens.
 """
 
 from __future__ import annotations
@@ -207,15 +208,35 @@ def test_seal_must_not_succeed_after_sugar_not_written():
 
     Node.sugar = refusing_sugar  # type: ignore[method-assign]
     try:
-        try:
-            sealed = seal_bound_binding_entry_v1(entry)
-        except (SugarNotWritten, BindingStateWireGap):
-            return  # green when production is fixed
-        pytest.fail(
-            "seal_bound_binding_entry_v1 succeeded after SugarNotWritten "
-            f"(testimony={sealed.require_constructed_value_testimony().cid!r}); "
-            "fix=stop except Exception → shape CID fallback in "
-            "_semantic_value_cid_for_bound_node"
+        with pytest.raises((SugarNotWritten, BindingStateWireGap)):
+            seal_bound_binding_entry_v1(entry)
+    finally:
+        Node.sugar = real_sugar  # type: ignore[method-assign]
+
+
+def test_mutation_twin_tampered_seal_coordinate_still_refuses_after_sugar_refusal():
+    """Mutation twin: stale coordinate cannot launder a refused sugar into a seal."""
+    from dataclasses import replace
+
+    _value, entry = _constant_entry()
+    real_sugar = Node.sugar
+
+    def refusing_sugar(self):
+        raise SugarNotWritten(
+            blame=self.fragment,
+            owner="doctrine.seal-sugar",
+            observed="sugar refused for bound value",
+            requested="written constructed sugar",
+            fix="write sugar or refuse seal; do not fall back to shape CID",
         )
+
+    Node.sugar = refusing_sugar  # type: ignore[method-assign]
+    try:
+        tampered = replace(
+            entry,
+            coordinate=replace(entry.coordinate, cid="blake3-512:" + "f" * 128),
+        )
+        with pytest.raises((SugarNotWritten, BindingStateWireGap, ValueError)):
+            seal_bound_binding_entry_v1(tampered)
     finally:
         Node.sugar = real_sugar  # type: ignore[method-assign]
