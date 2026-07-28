@@ -2831,12 +2831,7 @@ class ClassDef(Statement):
             ),
             None,
         )
-        params = () if initializer is None else initializer.params[1:]
         owner_cid = self.fragment.seal().cid
-        coordinates = tuple(
-            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
-            for index, param in enumerate(params)
-        )
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
             self.unit.source_cid,
@@ -2844,6 +2839,37 @@ class ClassDef(Statement):
             span.start_col,
             span.end_line,
             span.end_col,
+        )
+        # A source class without ``__init__`` that is an exception type inherits
+        # BaseException's constructor law: ``(*args)``.  Ordinary new-style
+        # classes inherit ``object.__init__`` (zero formals).  Installing the
+        # empty frame at ``raise OptionError(msg)`` was minting
+        # SourceCallBindingGap("unconsumed call actual") for every argumented
+        # exception construction during module-wide frame resolution — and that
+        # silence blocked authenticated generator managers whose helpers only
+        # *mention* those raises.
+        if initializer is None and self._inherits_default_exception_constructor():
+            args_coordinate = BindingCoordinateV1.mint(
+                owner_cid, self.fragment, ("inherited-exception-args", 0)
+            )
+            return SourceVisibleCallFrameV1(
+                source_identity_cid=self.unit.source_cid,
+                definition_site=site,
+                definition_fragment_cid=owner_cid,
+                parameters=("args",),
+                formal_coordinates=(args_coordinate,),
+                parameter_kinds=("vararg",),
+                default_sugars=(None,),
+                default_nodes=(None,),
+                default_fragments=(None,),
+                default_fragment_cids=(None,),
+                body=self._source_visible_body({}),
+                owner=self,
+            )
+        params = () if initializer is None else initializer.params[1:]
+        coordinates = tuple(
+            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
+            for index, param in enumerate(params)
         )
         formal_scope = {
             param.name: self._make_constructor_coordinate_ref(param, coordinate)
@@ -2872,6 +2898,47 @@ class ClassDef(Statement):
             body=self._source_visible_body(formal_scope),
             owner=self,
         )
+
+    def _inherits_default_exception_constructor(self) -> bool:
+        """Whether this class inherits BaseException's ``(*args)`` constructor.
+
+        Identity is the authenticated base graph, never the class spelling.
+        A non-exception class without ``__init__`` still takes zero arguments
+        (object construction); only exception ancestry opens ``*args``.
+        """
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_NAMES,
+        )
+
+        module = self.unit._require_typed_module(
+            "ClassDef._inherits_default_exception_constructor",
+            blame=self.fragment,
+        )
+        visiting: set[str] = set()
+
+        def base_is_exception(base) -> bool:
+            if not isinstance(base, Name):
+                return False
+            if base.id in BUILTIN_EXCEPTION_NAMES:
+                return True
+            if base.id in visiting:
+                return False
+            # Walk the same lexical ClassDef graph SourceUnit.exception_type_mro
+            # authenticates: one unique same-module definition, no guessed imports.
+            definitions = [
+                item
+                for item in module.body
+                if isinstance(item, ClassDef) and item.name == base.id
+            ]
+            if len(definitions) != 1:
+                return False
+            visiting.add(base.id)
+            try:
+                return any(base_is_exception(item) for item in definitions[0].bases)
+            finally:
+                visiting.remove(base.id)
+
+        return any(base_is_exception(base) for base in self.bases)
 
     def _make_constructor_coordinate_ref(self, param: "Param", coordinate) -> "Node":
         from .backend import Leaf, materialize
@@ -4775,8 +4842,38 @@ class With(Statement):
         self.reporter.report_gap(self, panic)
         raise panic
 
+    def _provider_manager_call(self, item: WithItem):
+        """The Call that authenticates this manager item, by binding not spelling.
+
+        A direct Call head is already the provider.  A bare Name head reaches
+        its provider only through the seat populate installed at the immutable
+        manager-use coordinate when projecting ordinary assignment testimony.
+        Same spelling elsewhere never authorizes a manager.
+        """
+        if isinstance(item.context_expr, Call):
+            return item.context_expr
+        context = self.unit.construction_context
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if not isinstance(context, TreeConstructionContextV1):
+            return None
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+        )
+        call = context.source_manager_provider_calls.get(coordinate)
+        return call if isinstance(call, Call) else None
+
     def _generator_manager_frame(self, item: WithItem):
-        if not isinstance(item.context_expr, Call):
+        call = self._provider_manager_call(item)
+        if call is None:
             return None
         context = self.unit.construction_context
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -4786,7 +4883,7 @@ class With(Statement):
 
         if not isinstance(context, TreeConstructionContextV1):
             return None
-        span = item.context_expr.line_col_span()
+        span = call.line_col_span()
         coordinate = SourceFragmentCoordinateV1(
             self.unit.source_cid,
             span.start_line,
@@ -4802,7 +4899,12 @@ class With(Statement):
     def _generator_manager_sugar(self, item: WithItem):
         if self._generator_manager_frame(item) is None:
             return None
-        return item.context_expr.sugar()
+        call = self._provider_manager_call(item)
+        if call is None:
+            return None
+        # Always sugar the provider Call (with its installed frame), never the
+        # bare Name spelling at the With head.
+        return call.sugar()
 
     def _require_narrow_cm_ref(self, item: WithItem):
         resolution = self._prebound_manager_resolution(item)

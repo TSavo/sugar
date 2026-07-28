@@ -7,6 +7,7 @@ import pytest
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
     _projected_manager_call_uses,
@@ -30,7 +31,9 @@ def _pandas_root() -> Path:
         PANDAS_MANIFEST_CID,
         1421,
     )
-    return corpus.root
+    # Construction loci use the distribution-recorded seat (site-packages).
+    # Corpus identity is over the package root; import binding seats one level up.
+    return corpus.root.parent
 
 
 def _real_tree():
@@ -52,6 +55,12 @@ def _line_32_with(tree):
         for node in tree.nodes()
         if node.kind == "With" and node.line_col_span().start_line == 32
     )
+
+
+def _nested_manager_sugars(site):
+    """Both managers of a multi-item With, outer then inner, after nesting."""
+    nested = site._nest_items()
+    return nested.sugar(), nested.body[0].sugar()
 
 
 def test_local_two_name_managers_project_both_reaching_calls(tmp_path: Path) -> None:
@@ -112,18 +121,43 @@ def test_projection_is_a_transaction_and_does_not_mutate_the_source_tree() -> No
     assert [item.context_expr.kind for item in site.items] == ["Name", "Name"]
 
 
-def test_pandas_303_assigned_manager_keeps_provider_refusal_loud() -> None:
-    """Projection reaches the provider but never invents a resource value."""
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+def test_pandas_303_both_option_context_managers_construct_through_bindings() -> None:
+    """Name → binding coordinate → provider Call → generator protocol edges.
 
+    Before: populate raised SourceCallBindingGap("unconsumed call actual") while
+    resolving OptionError constructors inside the provider module, so neither
+    manager seated a frame.  After: both bare-Name heads construct as
+    GeneratorWithSugar through their reaching option_context providers.
+    """
     tree = _real_tree()
     root = _pandas_root()
-    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
-        populate_source_derived_resource_refs(
-            tree,
-            root=root,
-            path=root / "pandas/tests/io/formats/test_ipython_compat.py",
+    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+    site = _line_32_with(tree)
+    context = tree.root.unit.construction_context
+
+    populate_source_derived_resource_refs(tree, root=root, path=path)
+
+    seats = sorted(
+        (coordinate.start_line, coordinate.start_col)
+        for coordinate in context.source_manager_provider_calls
+        if coordinate.start_line == 32
+    )
+    assert seats == [(32, 13), (32, 18)]
+    frames = sorted(
+        (
+            coordinate.start_line,
+            coordinate.start_col,
+            frame.generator_steps is not None,
         )
+        for coordinate, frame in context.source_call_frames.items()
+        if coordinate.start_line in {21, 30}
+    )
+    assert frames == [(21, 14, True), (30, 21, True)]
+
+    outer, inner = _nested_manager_sugars(site)
+    assert isinstance(outer, GeneratorWithSugar)
+    assert isinstance(inner, GeneratorWithSugar)
+    assert isinstance(site.sugar(), GeneratorWithSugar)
 
 
 def test_undecided_rebinding_does_not_invent_a_second_manager_call(
@@ -154,3 +188,141 @@ def test_undecided_rebinding_does_not_invent_a_second_manager_call(
         if coordinate.start_line == 5
     ]
     assert rows == [(5, 9, 2)]
+
+
+def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) -> None:
+    """Lying twin: names cannot authorize managers independently of bindings."""
+    source = tmp_path / "lying.py"
+    source.write_text(
+        "def exercise(opt_value, latex_value):\n"
+        "    opt = opt_value\n"
+        "    with_latex = latex_value\n"
+        "    with opt, with_latex:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    tree = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
+    site = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 4
+    )
+    context = tree.root.unit.construction_context
+    populate_source_derived_resource_refs(tree, root=tmp_path, path=source)
+
+    assert context.source_manager_provider_calls == {}
+    assert _projected_manager_call_uses(tree) == {}
+    # No reaching provider Call: construction stays loud at the use coordinate.
+    with pytest.raises(Exception) as caught:
+        site.sugar()
+    assert "no context-manager derivation" in str(caught.value)
+
+
+def test_bare_name_construction_path_contains_no_vendor_name_literals() -> None:
+    """The structural constructor cannot admit this site by manager spelling."""
+    import ast
+    import inspect
+    import textwrap
+
+    import sugar_lift_python_source.manager_summary_derivation as derivation
+
+    module = ast.parse(textwrap.dedent(inspect.getsource(derivation)))
+    literals = {
+        node.value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert literals.isdisjoint(
+        {
+            "opt",
+            "with_latex",
+            "option_context",
+            "pytest.raises",
+            "external_error_raised",
+        }
+    )
+
+
+def test_exception_subclass_without_init_accepts_message_args(tmp_path: Path) -> None:
+    """Inherited BaseException constructor law — not an empty zero-formal lie."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "class RenamedFault(AttributeError, KeyError):\n"
+        "    pass\n"
+        "def exercise():\n"
+        '    raise RenamedFault("needle")\n'
+    )
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, str(tmp_path / "fault.py"), blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
+    )
+    class_node = next(node for node in tree.nodes() if isinstance(node, ClassDef))
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    frame = class_node.source_visible_constructor_frame()
+    assert frame.parameters == ("args",)
+    assert frame.parameter_kinds == ("vararg",)
+    span = call.line_col_span()
+    context.source_call_frames[
+        SourceFragmentCoordinateV1(
+            tree.root.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    ] = frame
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    # Must not raise SourceCallBindingGap("unconsumed call actual").
+    function.source_visible_call_frame()
+
+
+def test_non_exception_class_without_init_still_refuses_extra_actuals(
+    tmp_path: Path,
+) -> None:
+    """Lying twin: object construction does not inherit exception *args."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "class RenamedPlain:\n"
+        "    pass\n"
+        "def exercise():\n"
+        "    return RenamedPlain(1)\n"
+    )
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, str(tmp_path / "plain.py"), blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
+    )
+    class_node = next(node for node in tree.nodes() if isinstance(node, ClassDef))
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    frame = class_node.source_visible_constructor_frame()
+    assert frame.parameters == ()
+    span = call.line_col_span()
+    context.source_call_frames[
+        SourceFragmentCoordinateV1(
+            tree.root.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    ] = frame
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
+        function.source_visible_call_frame()

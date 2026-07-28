@@ -189,6 +189,11 @@ class TreeConstructionContextV1:
     # construction consumes the testimony only when execution reaches the call.
     opaque_source_call_obligations: dict = field(default_factory=dict)
     source_derived_contract_refs: dict = field(default_factory=dict)
+    # Reaching provider Calls for bare-Name manager uses, keyed by the immutable
+    # manager-use coordinate.  Binding coordinates own identity: the Name at the
+    # With head is not the provider; this table seats the authenticated Call
+    # that the Name reaches so With construction never re-resolves by spelling.
+    source_manager_provider_calls: dict = field(default_factory=dict)
     # Runtime-only, prebound class-base Sugar children keyed by the exact
     # subclass definition coordinate.  These are never serialized; the class
     # definition projects their sealed CIDs into its own preimage.

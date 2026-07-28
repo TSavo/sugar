@@ -203,9 +203,7 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
             and isinstance(face.value.statements[-1].value, PredicateValue)
         ):
             predicates.append(face.value.statements[-1].value.formula)
-    if predicates and all(
-        predicate == predicates[0] for predicate in predicates[1:]
-    ):
+    if predicates and all(predicate == predicates[0] for predicate in predicates[1:]):
         formula = predicates[0]
     else:
         formula = _guarded_literal_suppression_formula(exit_set)
@@ -338,9 +336,7 @@ def _guarded_literal_suppression_formula(exit_set):
                 if literal is None:
                     return None
                 if literal:
-                    resolved = _resolve_branch_result_guards(
-                        face.guard, authenticated
-                    )
+                    resolved = _resolve_branch_result_guards(face.guard, authenticated)
                     if resolved is None:
                         return None
                     saw_true = True
@@ -674,6 +670,12 @@ def populate_source_derived_resource_refs(
             frame, _ = frame_result
             if frame.generator_steps is not None:
                 _install_source_call_frame(context, call, frame)
+                # Seat the provider Call at the manager-use coordinate so a
+                # bare-Name With head resolves through its reaching binding
+                # rather than by spelling.  Direct Call heads already key the
+                # frame by their own span; the use-site seat is what carries
+                # assigned multi-manager projection.
+                context.source_manager_provider_calls[coordinate] = call
                 continue
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
         from sugar_lift_py_tests.temporal import builtin_name_temporal
@@ -807,9 +809,7 @@ def _projected_manager_call_uses(source_file):
                 if not projected_names and hasattr(item, "manager_use_site_start_line"):
                     continue
                 span = expr.line_col_span()
-                start_line, start_col, end_line, end_col = (
-                    item._manager_use_site_span()
-                )
+                start_line, start_col, end_line, end_col = item._manager_use_site_span()
                 if projected_names and (
                     start_line,
                     start_col,
