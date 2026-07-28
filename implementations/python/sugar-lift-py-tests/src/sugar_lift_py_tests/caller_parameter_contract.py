@@ -749,8 +749,8 @@ class NativeOperationExitCarrierV1:
             site=site,
         )
 
-    def and_then(self, step, *, pre_effect_state=_PRE_EFFECT_STATE_UNSET):
-        """Retain work and, at the reducer seam, the exact pre-effect state."""
+    def _enroll_pre_effect_state(self, pre_effect_state):
+        """Enroll reducer testimony without adding an expression continuation."""
         testimony = self.pre_effect_state
         if pre_effect_state is not _PRE_EFFECT_STATE_UNSET:
             if not isinstance(pre_effect_state, ReducerPreEffectStateV1):
@@ -775,10 +775,14 @@ class NativeOperationExitCarrierV1:
                 )
             if testimony is None:
                 testimony = pre_effect_state
+        return replace(self, pre_effect_state=testimony)
+
+    def and_then(self, step, *, pre_effect_state=_PRE_EFFECT_STATE_UNSET):
+        """Retain work and, at the reducer seam, the exact pre-effect state."""
+        enrolled = self._enroll_pre_effect_state(pre_effect_state)
         return replace(
-            self,
-            continuations=(*self.continuations, step),
-            pre_effect_state=testimony,
+            enrolled,
+            continuations=(*enrolled.continuations, step),
         )
 
     def guarded(self, guard, face=None):
@@ -1005,6 +1009,10 @@ class NativeOperationExitCarrierV1:
             def resume(value, *, step=continuation):
                 next_outcome = step(value)
                 if isinstance(next_outcome, NativeOperationExitCarrierV1):
+                    if self.pre_effect_state is not None:
+                        next_outcome = next_outcome._enroll_pre_effect_state(
+                            self.pre_effect_state
+                        )
                     return next_outcome.discharge(actuals_by_formal_coordinate)
                 return next_outcome
 

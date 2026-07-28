@@ -267,6 +267,65 @@ def test_short_circuit_missing_second_leg_actual_remains_explicitly_undischarged
         composed.discharge({left.coordinate_cid: TermValue(1)})
 
 
+def test_continuation_carrier_inherits_enclosing_reducer_pre_effect_state():
+    first, left, right = _carrier(operator="less_than")
+    second_left = _coordinate("second_left", 2)
+    second_right = _coordinate("second_right", 3)
+    second = NativeOperationExitCarrierV1.mint(
+        site=_site(),
+        operator="less_than",
+        operands=(
+            SymbolicValue(make_var("second_left"), second_left),
+            SymbolicValue(make_var("second_right"), second_right),
+        ),
+        coordinates=(second_left, second_right),
+    )
+    state = _ReducedBlock((TermValue(71),), True, ())
+    testimony = ReducerPreEffectStateV1._from_reducer(state)
+    chained = first.and_then(
+        lambda _value: second,
+        pre_effect_state=testimony,
+    )
+
+    exits = chained.discharge(
+        {
+            left.coordinate_cid: TermValue(1),
+            right.coordinate_cid: TermValue(2),
+            second_left.coordinate_cid: NoneValue(),
+            second_right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
+    assert halted.state is state
+
+
+def test_continuation_carrier_rejects_conflicting_pre_effect_state():
+    first, left, right = _carrier(operator="less_than")
+    outer_state = _ReducedBlock((TermValue(71),), True, ())
+    conflicting_state = _ReducedBlock((TermValue(72),), True, ())
+    second, _second_left, _second_right = _carrier(operator="less_than")
+    second = second.and_then(
+        lambda value: Complete(value),
+        pre_effect_state=ReducerPreEffectStateV1._from_reducer(conflicting_state),
+    )
+    chained = first.and_then(
+        lambda _value: second,
+        pre_effect_state=ReducerPreEffectStateV1._from_reducer(outer_state),
+    )
+
+    with pytest.raises(
+        ConstructionPanic,
+        match="a second conflicting reducer pre-effect state",
+    ):
+        chained.discharge(
+            {
+                left.coordinate_cid: TermValue(1),
+                right.coordinate_cid: TermValue(2),
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("method", "operator"),
     (
