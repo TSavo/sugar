@@ -23,6 +23,7 @@ class ObjectMethodValue(FloorValue):
     source_call_frame_cid: str | None = None
     formal_coordinate_cids: tuple[str, ...] = ()
     source_call_frame: object | None = field(default=None, compare=False, repr=False)
+    descriptor_kind: str | None = None
 
     def __post_init__(self) -> None:
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
