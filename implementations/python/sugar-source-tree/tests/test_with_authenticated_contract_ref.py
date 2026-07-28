@@ -192,6 +192,29 @@ def test_open_gap_is_the_builtin_authority_discrimination_arm():
     assert exit_gap.reason.startswith("authenticated source definition")
 
 
+def test_source_defined_coordinate_and_builtin_gap_are_distinct_door_outcomes():
+    """Both authorities use With.sugar; only source testimony constructs."""
+    source = (
+        "from pandas import option_context\n"
+        "def f():\n"
+        "    with option_context('display.max_rows', 10) as resource:\n"
+        "        return resource\n"
+    )
+    tree = _source_with_resolution(
+        (source, "source-defined-resource.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=_native_protocol_definitions,
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    expected_enter = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    expected_exit = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    assert boundary.enter_definition == expected_enter
+    assert boundary.exit_definition == expected_exit
+    assert boundary.enter.native_definition_coordinate == expected_enter
+    assert boundary.exit.native_definition_coordinate == expected_exit
+    assert boundary.desugar() is not None
+
+
 @pytest.mark.parametrize(
     "missing_slot", [NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT]
 )
