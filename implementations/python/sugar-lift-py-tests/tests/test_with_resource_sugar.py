@@ -28,6 +28,8 @@ from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 from sugar_lift_py_tests.ir import atomic, make_var, not_
 from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import exit_disposition as exit_disposition_module
+from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
 from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -173,6 +175,80 @@ def _resource(
         exit_definition=exit_definition,
         site=None,
     )
+
+
+def test_runtime_selected_authenticates_completed_face_without_mutation():
+    value = object()
+    incoming = Completed(true_guard(), value)
+
+    assert exit_disposition_effect(RuntimeSelected(), incoming) is None
+    assert incoming.value is value
+
+
+def test_runtime_selected_authenticates_halted_face_preserving_identity():
+    effect = RaiseEffect(exception_name="ValueError", occurrence="law.py:1:0")
+    state = object()
+    incoming = Halted(true_guard(), effect, state)
+
+    assert exit_disposition_effect(RuntimeSelected(), incoming) is effect
+    assert incoming.effect is effect
+    assert incoming.state is state
+
+
+def test_none_disposition_refuses_completed_face_without_mutation():
+    value = object()
+    incoming = Completed(true_guard(), value)
+
+    with pytest.raises(TypeError) as raised:
+        exit_disposition_effect(None, incoming)
+
+    assert str(raised.value) == (
+        "exit disposition must be NeverSuppresses, ExitSuppressionContract, "
+        "RuntimeSelected, Suppresses, or EffectBoundaryDisposition; got NoneType"
+    )
+    assert incoming.value is value
+
+
+def test_none_disposition_refuses_halted_face_without_mutation():
+    effect = RaiseEffect(exception_name="ValueError", occurrence="law.py:2:0")
+    state = object()
+    incoming = Halted(true_guard(), effect, state)
+
+    with pytest.raises(TypeError) as raised:
+        exit_disposition_effect(None, incoming)
+
+    assert str(raised.value) == (
+        "exit disposition must be NeverSuppresses, ExitSuppressionContract, "
+        "RuntimeSelected, Suppresses, or EffectBoundaryDisposition; got NoneType"
+    )
+    assert incoming.effect is effect
+    assert incoming.state is state
+
+
+def test_none_disposition_compatibility_paths_are_structurally_absent():
+    module_tree = ast.parse(inspect.getsource(exit_disposition_module))
+
+    none_arms = [
+        node
+        for node in ast.walk(module_tree)
+        if isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id == "disposition"
+        and any(isinstance(op, ast.Is) for op in node.ops)
+        and any(
+            isinstance(comparator, ast.Constant) and comparator.value is None
+            for comparator in node.comparators
+        )
+    ]
+    production_mappers = [
+        node
+        for node in ast.walk(module_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "RuntimeSelected"
+    ]
+    assert none_arms == []
+    assert production_mappers == []
 
 
 def test_manager_expression_evaluated_exactly_once():
