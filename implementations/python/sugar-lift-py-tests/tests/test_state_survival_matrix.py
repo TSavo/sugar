@@ -38,12 +38,16 @@ Seam-3 residual list (rows that pin a weaker or incomplete surface):
       identity (try/except ``and_exit`` and NeverSuppresses *do* retain
       ``is``). Effect object identity is still exact. Owner: unmatched
       residual path inside WithEffectBoundarySugar / observation attach —
-      not a missing store producer.
-  R2. Source ``try: a[i]=q except IndexError`` leaves an undischarged
-      NativeOperationExitCarrier at helper desugar; the green try path is
-      formal discharge then ``and_exit`` routing (row a). Closing R2 is
-      composition of TrySugar with undischarged native store carriers,
-      not a second binder.
+      not a missing store producer. Honorably red instrument:
+      test_unmatched_boundary_state_identity.py (grok-4 boundary lane).
+
+  R2. CLOSED by #6685 (codex-1): Try composes over deferred native exits.
+      Helper alone still retains one undischarged setitem carrier (deferred
+      formal — correct). Authenticated source call discharges through Try:
+      IndexError routes to handler; success bypasses handler. Pinned green
+      in test_try_native_store_carrier.py and matrix row ``r2_source_try_*``
+      below. Residual half that remains is intentional deferral at helper
+      desugar, not a missing Try×carrier composition.
 """
 
 from __future__ import annotations
@@ -79,6 +83,7 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.effect_router import ObservedEffectBinding
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
@@ -90,7 +95,7 @@ from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
     WithEffectBoundarySugar,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import FunctionDef
+from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 # ---------------------------------------------------------------------------
@@ -544,6 +549,71 @@ def test_e_with_then_assertion_observation_still_real_occurrence() -> None:
     assert binding is not None
     assert binding.effect is halted.effect
     assert binding.effect.occurrence == halted.effect.occurrence
+
+
+# ===========================================================================
+# R2 confirmation after #6685 — source try × deferred formal setitem
+# ===========================================================================
+
+_SOURCE_TRY_SETITEM = (
+    "def helper(a, i, q):\n"
+    "    try:\n"
+    "        a[i] = q\n"
+    "    except IndexError:\n"
+    "        return 1\n"
+    "    return 0\n"
+)
+
+
+def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
+    """#6685: helper desugar remains one undischarged setitem carrier (correct)."""
+    tree = _tree(_SOURCE_TRY_SETITEM, "r2_try_helper.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    pending = function.sugar().desugar(None)
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "setitem"
+    assert pending.pre_effect_state is not None
+
+
+def test_r2_source_try_indexerror_routes_to_handler_on_authenticated_call() -> None:
+    """#6685 FLIP: source call discharges through Try; IndexError → handler return 1."""
+    tree = _tree(_SOURCE_TRY_SETITEM + "\nhelper([0], 4, 9)\n", "r2_try_halt.py")
+    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
+    outcome = call.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    face = outcome.exits[0]
+    assert isinstance(face, Completed)
+    value = face.value
+    if isinstance(value, CallSiteValue):
+        value = value._dig_floor_or_none(None, owner="r2-try-handler")
+    returns = [
+        entry
+        for entry in getattr(value, "statements", ())
+        if isinstance(entry, ReturnValue)
+    ]
+    assert len(returns) == 1
+    assert returns[0].value == TermValue(1)
+
+
+def test_r2_source_try_success_bypasses_handler() -> None:
+    """#6685 FLIP: in-range store completes through try → return 0."""
+    tree = _tree(_SOURCE_TRY_SETITEM + "\nhelper([0], 0, 9)\n", "r2_try_ok.py")
+    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
+    outcome = call.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    face = outcome.exits[0]
+    assert isinstance(face, Completed)
+    value = face.value
+    if isinstance(value, CallSiteValue):
+        value = value._dig_floor_or_none(None, owner="r2-try-success")
+    returns = [
+        entry
+        for entry in getattr(value, "statements", ())
+        if isinstance(entry, ReturnValue)
+    ]
+    assert len(returns) == 1
+    assert returns[0].value == TermValue(0)
 
 
 # ===========================================================================
