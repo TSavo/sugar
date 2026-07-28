@@ -425,7 +425,8 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     1. Positional roster members zip by source leaf index, never by name keys.
     2. Formal setitem store leaf mints discharge coordinates (receiver, index,
        value); a lying twin with swapped index/value slots is distinguishable.
-    3. A formal missing from discharge actuals cannot silently complete.
+    3. A formal missing from discharge actuals is the typed SugarNotWritten
+       undischarged refusal — never a silent Complete.
     """
     from types import SimpleNamespace
 
@@ -438,6 +439,7 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
         PositionalUnpackOperation,
         UnpackMemberRoster,
     )
+    from sugar_source_tree.panic import SugarNotWritten
 
     site = _site("def f(a, i, xs):\n    a[i], name = xs\n")
     # --- positional roster: members by index, no string keys ---
@@ -454,8 +456,14 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     assert roster_out.value.members[0] == TermValue(10)
     assert roster_out.value.members[1] == TermValue(20)
     assert not hasattr(roster_out.value, "bindings")
+    assert roster_out.value.occurrence is site
+    assert roster_out.value.demand_cid == op.demand_cid()
     # Wrong position twin: swapping members is not the truthful roster.
-    lying_roster = UnpackMemberRoster((TermValue(20), TermValue(10)))
+    lying_roster = UnpackMemberRoster(
+        (TermValue(20), TermValue(10)),
+        occurrence=roster_out.value.occurrence,
+        demand_cid=roster_out.value.demand_cid,
+    )
     assert lying_roster != roster_out.value
     with pytest.raises(AssertionError):
         assert lying_roster == roster_out.value
@@ -501,12 +509,93 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     assert lying.demand.operand_coordinate_cids != cids
     with pytest.raises(AssertionError):
         assert lying.demand.operand_coordinate_cids == cids
-    # Missing a formal among the discharge map cannot complete the store.
-    with pytest.raises(Exception):
+    # Missing formals → typed undischarged refusal, never Complete.
+    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent") as missing:
         projected.discharge({})
-    # Supplying only one of two formals is still incomplete / loud.
-    with pytest.raises(Exception):
+    assert "cid:a" in str(missing.value)
+    # Lying twin: claiming missing actuals greened a Complete is impossible.
+    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
+        out = projected.discharge({})
+        assert isinstance(out, Complete)
+    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent") as partial:
         projected.discharge({"cid:a": ListValue((TermValue(0),))})
+    assert "cid:i" in str(partial.value)
+    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
+        out = projected.discharge({"cid:a": ListValue((TermValue(0),))})
+        assert isinstance(out, Complete)
+
+
+def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:
+    """Successful roster testifies which source unpack demand produced it."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.operations.positional_unpack_operation import (
+        PositionalUnpackOperation,
+        UnpackMemberRoster,
+    )
+
+    site = _site("def f(obj, xs):\n    a, b = xs\n")
+    foreign_site = _site("def g(obj, ys):\n    c, d = ys\n")
+    op = PositionalUnpackOperation(
+        fixed_prefix=2,
+        fixed_suffix=0,
+        has_star=False,
+        owner="DynamicUnpackStoreAssignSugar",
+        blame=site,
+    )
+    out = op.submit(ListValue((TermValue(1), TermValue(2))), None)
+    assert isinstance(out, Complete)
+    roster = out.value
+    assert isinstance(roster, UnpackMemberRoster)
+    assert roster.occurrence is site
+    assert roster.demand_cid == op.demand_cid()
+    assert roster.demand_cid.startswith("blake3-512:")
+    # Same members under a foreign occurrence/demand are not this unpack.
+    foreign_op = PositionalUnpackOperation(
+        fixed_prefix=2,
+        fixed_suffix=0,
+        has_star=False,
+        owner="DynamicUnpackStoreAssignSugar",
+        blame=foreign_site,
+    )
+    assert foreign_op.demand_cid() != roster.demand_cid
+    wrong_occurrence = replace(roster, occurrence=foreign_site)
+    assert wrong_occurrence.members == roster.members
+    assert wrong_occurrence.demand_cid == roster.demand_cid
+    sugar = DynamicUnpackStoreAssignSugar(
+        value=_FloorSugar(ListValue((TermValue(1), TermValue(2)))),
+        targets=(NameUnpackTarget("a"), NameUnpackTarget("b")),
+        site=site,
+    )
+    with pytest.raises(ConstructionPanic, match="occurrence") as caught:
+        sugar._apply_authenticated_roster(
+            wrong_occurrence,
+            expected_demand_cid=roster.demand_cid,
+            ctx=None,
+        )
+    assert "occurrence" in str(caught.value).lower()
+    wrong_demand = replace(roster, demand_cid=foreign_op.demand_cid())
+    with pytest.raises(ConstructionPanic, match="demand_cid") as demand_caught:
+        sugar._apply_authenticated_roster(
+            wrong_demand,
+            expected_demand_cid=roster.demand_cid,
+            ctx=None,
+        )
+    assert "demand_cid" in str(demand_caught.value)
+    # Missing occurrence is unconstructable on the roster type.
+    with pytest.raises(ValueError, match="occurrence"):
+        UnpackMemberRoster(
+            members=(TermValue(1), TermValue(2)),
+            occurrence=None,
+            demand_cid=roster.demand_cid,
+        )
+    with pytest.raises(ValueError, match="demand_cid"):
+        UnpackMemberRoster(
+            members=(TermValue(1), TermValue(2)),
+            occurrence=site,
+            demand_cid="",
+        )
 
 
 def test_opaque_formal_is_sequence_unpack_effect() -> None:
@@ -562,12 +651,13 @@ def test_positional_roster_has_no_string_keys() -> None:
         UnpackMemberRoster,
     )
 
+    site = _site()
     op = PositionalUnpackOperation(
         fixed_prefix=1,
         fixed_suffix=0,
         has_star=True,
         owner="test",
-        blame=_site(),
+        blame=site,
     )
     out = op.submit(ListValue((TermValue(1), TermValue(2), TermValue(3))), None)
     assert isinstance(out, Complete)
@@ -576,3 +666,5 @@ def test_positional_roster_has_no_string_keys() -> None:
     assert out.value.members[1] == ListValue((TermValue(2), TermValue(3)))
     # Roster is positional tuple only — not a name map.
     assert not hasattr(out.value, "bindings")
+    assert out.value.occurrence is site
+    assert out.value.demand_cid == op.demand_cid()

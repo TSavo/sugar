@@ -203,18 +203,71 @@ class DynamicUnpackStoreAssignSugar(Sugar):
             owner=type(self).__name__,
             blame=self.site,
         )
+        expected_demand_cid = operation.demand_cid()
         return self.value.desugar(ctx).and_then(
             lambda value: operation.submit(value, ctx).and_then(
-                lambda roster: reduce_block_to_exitset(
-                    tuple(
-                        ApplyUnpackMemberSugar(target, member, self.site)
-                        for target, member in zip(
-                            self.targets, roster.members, strict=True
-                        )
-                    ),
-                    ctx,
+                lambda roster: self._apply_authenticated_roster(
+                    roster,
+                    expected_demand_cid=expected_demand_cid,
+                    ctx=ctx,
                 )
             )
+        )
+
+    def _apply_authenticated_roster(
+        self, roster, *, expected_demand_cid: str, ctx
+    ):
+        """Zip targets only after the roster testifies this unpack occurrence."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            UnpackMemberRoster,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+            ApplyUnpackMemberSugar,
+        )
+
+        if not isinstance(roster, UnpackMemberRoster):
+            construction_panic_gap(
+                owner=type(self).__name__,
+                blame=self.site,
+                observed=type(roster).__name__,
+                requested="UnpackMemberRoster with occurrence and demand_cid",
+                fix="mint members through PositionalUnpackOperation.mint_roster",
+            )
+        if roster.demand_cid != expected_demand_cid:
+            construction_panic_gap(
+                owner=type(self).__name__,
+                blame=self.site,
+                observed=f"roster demand_cid={roster.demand_cid!r}",
+                requested=f"unpack demand_cid={expected_demand_cid!r}",
+                fix=(
+                    "apply only the roster minted by this statement's "
+                    "PositionalUnpackOperation; same members under a foreign "
+                    "occurrence/demand are not this unpack"
+                ),
+            )
+        if roster.occurrence is not self.site and roster.occurrence != self.site:
+            construction_panic_gap(
+                owner=type(self).__name__,
+                blame=self.site,
+                observed=f"roster occurrence={roster.occurrence!r}",
+                requested=f"unpack occurrence={self.site!r}",
+                fix=(
+                    "require the roster occurrence to be this statement fragment; "
+                    "same members under a substituted occurrence are refused"
+                ),
+            )
+        return reduce_block_to_exitset(
+            tuple(
+                ApplyUnpackMemberSugar(target, member, self.site)
+                for target, member in zip(
+                    self.targets, roster.members, strict=True
+                )
+            ),
+            ctx,
         )
 
     def _fixed_counts(self) -> tuple[int, int, bool]:

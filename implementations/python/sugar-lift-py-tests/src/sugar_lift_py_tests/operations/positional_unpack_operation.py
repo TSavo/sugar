@@ -6,6 +6,10 @@ fabricating string binding identities for non-name targets.
 
 Same floor door: ``project_sequence_with``.  Same arity / opaque laws.
 Star middle is a ``ListValue`` in the roster at the star leaf position.
+
+Successful rosters carry the authenticated unpack **occurrence** and
+**demand_cid** (content address of site + arity layout) so consumers can
+testify which source unpack produced the members.
 """
 
 from __future__ import annotations
@@ -20,9 +24,26 @@ class UnpackMemberRoster:
 
     Star positions hold ``ListValue`` of the middle slice.  No string keys —
     consumers zip with typed projection targets by position.
+
+    ``occurrence`` and ``demand_cid`` are the unpack operation's authority:
+    which source unpack demand produced these members.  A roster of bare
+    members without them is unconstructable.
     """
 
     members: tuple  # FloorValue per leaf, source order
+    occurrence: object  # authenticated source fragment (operation blame)
+    demand_cid: str  # content address of unpack demand (site + arity)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.demand_cid, str) or not self.demand_cid:
+            raise ValueError(
+                "UnpackMemberRoster requires a nonempty demand_cid from the "
+                "positional unpack operation"
+            )
+        if self.occurrence is None:
+            raise ValueError(
+                "UnpackMemberRoster requires an authenticated unpack occurrence"
+            )
 
 
 @dataclass(frozen=True)
@@ -54,6 +75,46 @@ class PositionalUnpackOperation:
     @property
     def is_starred(self) -> bool:
         return self.has_star
+
+    def demand_cid(self) -> str:
+        """Content address of this unpack demand (site + arity layout)."""
+        from sugar_lift_py_tests.caller_parameter_contract import _cid, source_coordinate
+
+        try:
+            source_node = source_coordinate(self.blame)
+            source_wire = source_node.wire()
+        except (AttributeError, TypeError) as exc:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner=f"{self.owner}.demand_cid",
+                blame=self.blame,
+                observed=f"{type(self.blame).__name__} cannot source-coordinate",
+                requested="authenticated source fragment for positional unpack",
+                fix=(
+                    "thread the statement fragment as PositionalUnpackOperation.blame "
+                    f"(cause={exc})"
+                ),
+            )
+        preimage = {
+            "kind": "positional-unpack-demand",
+            "schemaVersion": "1",
+            "owner": self.owner,
+            "sourceNode": source_wire,
+            "fixedPrefix": self.fixed_prefix,
+            "fixedSuffix": self.fixed_suffix,
+            "hasStar": self.has_star,
+            "arity": self.arity,
+        }
+        return _cid(preimage)
+
+    def mint_roster(self, members: tuple) -> UnpackMemberRoster:
+        """Seal members under this operation's occurrence and demand_cid."""
+        return UnpackMemberRoster(
+            members=members,
+            occurrence=self.blame,
+            demand_cid=self.demand_cid(),
+        )
 
     def submit(self, value: Any, ctx: Any) -> Any:
         return value.project_sequence_with(self, ctx)
@@ -89,7 +150,7 @@ class PositionalUnpackOperation:
         if not self.has_star:
             if len(members) != self.arity:
                 return self._arity_mismatch_exit(value, len(members), display)
-            return Complete(UnpackMemberRoster(members))
+            return Complete(self.mint_roster(members))
 
         fixed = self.arity
         if len(members) < fixed:
@@ -108,7 +169,7 @@ class PositionalUnpackOperation:
             ListValue(tuple(mid_vals)),
             *suffix_vals,
         )
-        return Complete(UnpackMemberRoster(roster))
+        return Complete(self.mint_roster(roster))
 
     def _runtime_cardinality(self, value: Any) -> Any:
         from sugar_lift_py_tests.effect import (
