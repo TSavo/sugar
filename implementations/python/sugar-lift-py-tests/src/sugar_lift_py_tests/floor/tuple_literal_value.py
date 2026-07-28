@@ -10,6 +10,22 @@ from .floor_value import FloorValue
 class TupleLiteralValue(FloorValue):
     items: tuple[FloorValue, ...]
 
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleLiteralValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleLiteralValue.delitem"
+        )
+
     def __post_init__(self) -> None:
         if not all(isinstance(item, FloorValue) for item in self.items):
             raise TypeError("TupleLiteralValue items must be floor values")
