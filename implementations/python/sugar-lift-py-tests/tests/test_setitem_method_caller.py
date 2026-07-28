@@ -28,7 +28,14 @@ setitem, or parameter-name maps — consumer/test only.
 from __future__ import annotations
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+from sugar_lift_py_tests.context_manager_contract import (
+    AuthenticatedRaiseMatcher,
+    EffectBoundaryDisposition,
+)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect.expectation_not_met_effect import (
+    ExpectationNotMetEffect,
+)
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
@@ -135,6 +142,11 @@ def _assert_named_halt(outcome) -> Halted:
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate is not None
     assert halted.effect.occurrence_id is not None
+    # #6640: exceptional discharge stamps the reducer-owned pre-effect state.
+    assert halted.state is not None, (
+        "NativeOperationResolutionV1.project omitted the formal setitem "
+        "halt's real pre-effect state"
+    )
     return halted
 
 
@@ -298,11 +310,79 @@ def test_invalid_index_method_call_halts_with_named_indexerror() -> None:
     )
     halted = _assert_named_halt(site.producer_outcome(None))
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    # Pre-effect state is the exact object carried on the halt (not None).
+    assert halted.state is not None
+
+
+def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
+    """#6640 join: bound-method setitem IndexError carries enrolled pre-state.
+
+    Method alone mints the setitem carrier; the reducer enrolls
+    ``pre_effect_state`` before discharge.  Exceptional projection must stamp
+    that same testimony onto ``Halted.state`` — matching boundary resume and
+    wrong-boundary retention both depend on identity, not a fabricated empty
+    block.
+    """
+    _holder, pending = _source_holder_receiver()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    testimony = pending.pre_effect_state
+    assert testimony is not None, (
+        "method body reducer did not enroll ReducerPreEffectStateV1 on the "
+        "formal setitem carrier"
+    )
+
+    obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
+    exits = pending.discharge(
+        {
+            obj_cid: ListValue((TermValue(0),)),
+            key_cid: TermValue(4),
+            value_cid: TermValue(9),
+        }
+    )
+    halted = _assert_named_halt(exits)
+    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert halted.state is testimony.state
+
+    # Matching boundary consumes the halt and restores the same pre-effect state.
+    class _Expected:
+        def __init__(self, name: str):
+            self.identity = _identity(name)
+
+        def exception_type_identity(self):
+            return self.identity
+
+    routed = exits.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(expected=_Expected("IndexError")),
+            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+        ),
+    )
+    assert len(routed.exits) == 1
+    completed = routed.exits[0]
+    assert isinstance(completed, Completed)
+    assert completed.value is testimony.state
+
+    # Wrong boundary retains the identical effect and pre-effect state.
+    retained = exits.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
+            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+        ),
+    )
+    assert len(retained.exits) == 1
+    face = retained.exits[0]
+    assert isinstance(face, Halted)
+    assert face.effect is halted.effect
+    assert face.state is halted.state
 
 
 def test_discrimination_in_range_index_is_not_indexerror() -> None:
     outcome = _method_call_outcome(METHOD_BODY + "\nHolder().store([0], 0, 9)\n")
     _assert_completed_call(outcome)
+    # Discrimination: completion is not a Halted face with pre-effect state.
+    assert not isinstance(outcome, ExitSet)
 
 
 # ---------------------------------------------------------------------------

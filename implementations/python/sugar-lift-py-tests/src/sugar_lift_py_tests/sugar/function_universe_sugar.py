@@ -571,6 +571,21 @@ def reduce_body(statements: tuple, ctx: object = None):
                 )
             )
         )
+    # #6640 join: a sole Halted arm that carries reducer pre-effect state must
+    # not collapse through Incomplete.  Incomplete has no state field, so the
+    # conversion would drop the exact pre-effect object that matching/wrong
+    # boundaries later re-identify.  Bound-method producer_outcome and free
+    # formal discharge both need that identity on the halt face.
+    from sugar_lift_py_tests.outcome.exit_set import Halted, true_guard
+
+    sole = exits.exits
+    if (
+        len(sole) == 1
+        and isinstance(sole[0], Halted)
+        and sole[0].state is not None
+        and sole[0].guard == true_guard()
+    ):
+        return exits
     collapsed = exits.collapse()
     if isinstance(collapsed, Incomplete):
         return collapsed
