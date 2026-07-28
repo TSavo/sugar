@@ -393,6 +393,17 @@ def _native_operation_projector_arity(projector) -> int:
     return len(inspect.signature(projector).parameters) - 1
 
 
+def _conjoin_guards(guards):
+    guards = tuple(guards)
+    if not guards:
+        return None
+    if len(guards) == 1:
+        return guards[0]
+    from sugar_lift_py_tests.ir import and_
+
+    return and_(list(guards))
+
+
 @dataclass(frozen=True)
 class NativeOperationExitCarrierV1:
     """Deferred native operation whose discharge codomain is an ``ExitSet``.
@@ -413,7 +424,7 @@ class NativeOperationExitCarrierV1:
     coordinates: tuple[object | None, ...]
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
-    guards: tuple = dataclass_field(default=(), compare=False, repr=False)
+    guards: tuple = dataclass_field(default=(), repr=False)
 
     def __post_init__(self):
         operand_count = len(self.operands)
@@ -551,14 +562,15 @@ class NativeOperationExitCarrierV1:
             exits = outcome_to_exitset(projected)
 
         for continuation in self.continuations:
-            def resume(value, continuation=continuation):
-                next_outcome = continuation(value)
+            def resume(value, *, step=continuation):
+                next_outcome = step(value)
                 if isinstance(next_outcome, NativeOperationExitCarrierV1):
                     return next_outcome.discharge(actuals_by_formal_coordinate)
                 return next_outcome
 
             exits = exits.and_then(resume)
-        for guard in self.guards:
+        guard = _conjoin_guards(self.guards)
+        if guard is not None:
             exits = exits.guarded(guard)
         return exits
 
