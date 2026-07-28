@@ -413,6 +413,7 @@ class NativeOperationExitCarrierV1:
     coordinates: tuple[object | None, ...]
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
+    guards: tuple = dataclass_field(default=(), compare=False, repr=False)
 
     def __post_init__(self):
         operand_count = len(self.operands)
@@ -466,6 +467,11 @@ class NativeOperationExitCarrierV1:
     def and_then(self, step):
         """Retain enclosing expression work until the operation discharges."""
         return replace(self, continuations=(*self.continuations, step))
+
+    def guarded(self, guard, face=None):
+        """Guard the deferred operation without discharging or losing its demand."""
+        del face
+        return replace(self, guards=(*self.guards, guard))
 
     def discharge(self, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits.
@@ -546,6 +552,8 @@ class NativeOperationExitCarrierV1:
 
         for continuation in self.continuations:
             exits = exits.and_then(continuation)
+        for guard in self.guards:
+            exits = exits.guarded(guard)
         return exits
 
 
