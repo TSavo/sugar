@@ -1,5 +1,31 @@
 from __future__ import annotations
 
+from pathlib import Path
+import re
+
+
+def test_lexical_consumer_side_doors_are_retired_to_closed_lookup_rows() -> None:
+    """Red instrument for the queued NestedFunctionLookupV1 migration."""
+    root = Path(__file__).parents[1]
+    targets = (
+        root / "src/sugar_lift_python_source/source_call_preconstruction.py",
+        root / "src/sugar_lift_python_source/manager_construction.py",
+    )
+    forbidden = re.compile(
+        r"(first[-_ ]match|name[_ ]map|coordinate[_ ]reconstruction|span[_ ]scan|\.walk\()",
+        re.IGNORECASE,
+    )
+    offenders = []
+    for path in targets:
+        for line_no, line in enumerate(path.read_text().splitlines(), 1):
+            if forbidden.search(line):
+                offenders.append(f"{path}:{line_no}: {line.strip()}")
+    assert not offenders, (
+        "R_lexical consumer side doors remains nonempty; replace each offender "
+        "with authenticated NestedFunctionLookupV1 rows keyed by source CID, "
+        "definition/call loci, and lexical scope.\n" + "\n".join(offenders)
+    )
+
 import csv
 from dataclasses import replace
 import importlib.metadata
