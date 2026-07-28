@@ -12,7 +12,12 @@ from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
+from sugar_lift_py_tests.sugar.collection_sugar import (
+    DictSugar,
+    ListSugar,
+    SetSugar,
+    TupleSugar,
+)
 from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.comprehension_sugar import (
@@ -135,6 +140,10 @@ def test_generator_payload_admission_refuses_arbitrary_sugar():
         lambda child, site: EqualityOpSugar(child, _Operand("right"), site),
         lambda child, site: BoolOpSugar("And", (child, _Operand("right")), site),
         lambda child, site: TupleSugar((child,), site),
+        lambda child, site: ListSugar((child,), site),
+        lambda child, site: SetSugar((child,), site),
+        lambda child, site: DictSugar((child,), (_Operand("value"),), site),
+        lambda child, site: DictSugar((_Operand("key"),), (child,), site),
         lambda child, site: IfExpSugar(child, _Operand("body"), _Operand("else"), site),
         lambda child, site: CallSiteSugar("ignored", (child,), site),
         lambda child, site: CallSiteSugar("ignored", (), site, (("key", child),)),
@@ -188,6 +197,10 @@ def test_generator_payload_admission_refuses_arbitrary_sugar():
         "equality",
         "bool-op",
         "tuple",
+        "list",
+        "set",
+        "dict-key",
+        "dict-value",
         "if-expression",
         "call-arg",
         "call-keyword",
@@ -256,3 +269,73 @@ def test_changed_resolved_contract_authority_changes_call_term():
 )
 def test_changed_call_preimage_changes_term(variant):
     assert _call().to_term(owner="baseline") != variant.to_term(owner="variant")
+
+
+@pytest.mark.parametrize(
+    "build",
+    (
+        lambda site: ListSugar((_Operand("a"), _Operand("b")), site),
+        lambda site: SetSugar((_Operand("a"), _Operand("b")), site),
+        lambda site: DictSugar(
+            (_Operand("a"), _Operand("b")),
+            (_Operand("1"), _Operand("2")),
+            site,
+        ),
+    ),
+    ids=("list", "set", "dict"),
+)
+def test_collection_reconstruction_and_occurrence_discriminate(build):
+    first, second = _call_sites()
+    assert build(first).to_term(owner="first") == build(first).to_term(
+        owner="reconstructed"
+    )
+    assert build(first).to_term(owner="first") != build(second).to_term(
+        owner="second"
+    )
+
+
+@pytest.mark.parametrize(
+    "build",
+    (
+        lambda site, values: ListSugar(tuple(_Operand(v) for v in values), site),
+        lambda site, values: SetSugar(tuple(_Operand(v) for v in values), site),
+    ),
+    ids=("list", "set"),
+)
+def test_ordered_collection_child_testimony_discriminates(build):
+    site = _call_sites()[0]
+    assert build(site, ("a", "b")).to_term(owner="forward") != build(
+        site, ("b", "a")
+    ).to_term(owner="reverse")
+
+
+def test_dict_term_preserves_exact_ordered_key_value_pairing():
+    site = _call_sites()[0]
+    baseline = DictSugar(
+        (_Operand("k1"), _Operand("k2")),
+        (_Operand("v1"), _Operand("v2")),
+        site,
+    )
+    crossed = DictSugar(
+        (_Operand("k1"), _Operand("k2")),
+        (_Operand("v2"), _Operand("v1")),
+        site,
+    )
+    reordered_pairs = DictSugar(
+        (_Operand("k2"), _Operand("k1")),
+        (_Operand("v2"), _Operand("v1")),
+        site,
+    )
+
+    term = baseline.to_term(owner="baseline")
+    assert term != crossed.to_term(owner="crossed")
+    assert term != reordered_pairs.to_term(owner="reordered")
+    assert term.name == "python:dict-construction"
+    pairs = term.args[1]
+    assert pairs.name == "python:dict-entries"
+    assert [pair.name for pair in pairs.args] == ["python:dict-entry"] * 2
+
+
+def test_dict_key_value_arity_mismatch_refuses_at_construction():
+    with pytest.raises(ValueError, match="equal key/value arity"):
+        DictSugar((_Operand("key"),), (), _call_sites()[0])
