@@ -9,6 +9,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationResolutionV1,
     _NATIVE_OPERATION_PROJECTORS,
     authenticated_exceptional_resolution_count,
+    production_native_operation_operators,
     source_coordinate,
 )
 from sugar_lift_py_tests.context_manager_contract import (
@@ -324,7 +325,9 @@ def test_lying_exception_type_is_rejected_without_inventing_identity():
 
 
 def test_identity_operation_never_acquires_a_fabricated_exceptional_edge():
-    carrier, left, right = _carrier("is_identical")
+    # Production identity comparisons do not mint a carrier today; equals on
+    # two equal ground terms is the closest completed-only native discharge.
+    carrier, left, right = _carrier("equals")
 
     exits = carrier.discharge(
         {
@@ -662,3 +665,84 @@ def test_mismatched_operand_coordinate_lengths_still_construction_panic():
     carrier, left, _right = _carrier()
     with pytest.raises(ConstructionPanic, match="one authenticated coordinate slot"):
         replace(carrier, coordinates=(left,))
+
+
+def test_production_minted_operators_equal_projector_table_exactly():
+    """Every production-minted operator has exactly one projector, and vice versa.
+
+    This is the durable fix for the integration-loss class where a producer
+    mints ``operator="subscript"`` (or any new name) while discharge has no
+    projector: the mint site stays green, the acceptance grep stays green, and
+    discharge silently undischarges.  Both directions must go red on drift.
+    """
+    production = production_native_operation_operators()
+    projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
+    missing_projectors = production - projectors
+    orphan_projectors = projectors - production
+    assert missing_projectors == frozenset(), (
+        "production mints operators with no projector: "
+        f"{sorted(missing_projectors)}"
+    )
+    assert orphan_projectors == frozenset(), (
+        "projectors with no production mint path: "
+        f"{sorted(orphan_projectors)}"
+    )
+    assert "subscript" in projectors
+    assert "setitem" in projectors
+    assert "setattr_named" in projectors
+
+
+def test_symbolic_formal_subscript_discharges_completed_through_projector():
+    """Integration tooth: SymbolicValue.subscript → mint → table → Completed.
+
+    A unit poke of the table would pass while ``subscript`` was missing from
+    it.  This path starts at the #6611 producer, mints the carrier, and
+    discharges through the projector to a completed list element.
+    """
+    receiver_coordinate = _coordinate("receiver", 0)
+    formal = SymbolicValue(make_var("receiver"), receiver_coordinate)
+    index = TermValue(0)
+    site = _site()
+
+    outcome = formal.subscript(index, site)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "subscript"
+    assert outcome.demand.operand_coordinate_cids == (
+        receiver_coordinate.coordinate_cid,
+        None,
+    )
+
+    exits = outcome.discharge(
+        {
+            receiver_coordinate.coordinate_cid: ListValue(
+                (TermValue(7), TermValue(8))
+            ),
+        }
+    )
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    assert completed.value == TermValue(7)
+
+
+def test_symbolic_formal_subscript_discharges_authenticated_exceptional_through_projector():
+    """Integration tooth: SymbolicValue.subscript → mint → table → named halt.
+
+    ``None[0]`` is TypeError with an authenticated exception-type coordinate.
+    The projector must route the Floor face; a missing projector would undischarge
+    with ``projector unavailable`` instead.
+    """
+    receiver_coordinate = _coordinate("receiver", 0)
+    formal = SymbolicValue(make_var("receiver"), receiver_coordinate)
+    outcome = formal.subscript(TermValue(0), _site())
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "subscript"
+
+    exits = outcome.discharge(
+        {receiver_coordinate.coordinate_cid: NoneValue()}
+    )
+    assert len(exits.exits) == 1
+    halted = exits.exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
+    assert halted.effect.occurrence is not None

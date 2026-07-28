@@ -249,6 +249,83 @@ class NativeOperationDemandV1:
         )
 
 
+def _ast_minted_native_operator_constants() -> frozenset[str]:
+    """String ``operator=`` kwargs that feed native-operation carrier mints.
+
+    Discovers:
+
+    * ``NativeOperationExitCarrierV1.mint(operator="...")`` literals
+    * ``defer_formal_native_operation(..., operator="...")`` and other call
+      sites that pass a floor-method name through to ``mint``
+
+    Dynamic ``operator=owner`` / ``operator=method`` paths are not string
+    constants; :func:`production_native_operation_operators` unions the tables
+    those paths draw from so the coverage tooth still closes both directions.
+
+    Single-character / non-identifier strings (e.g. ``BinaryOperatorOperation``
+    term coordinates ``"+"``) are excluded — those are term spellings, not
+    carrier operator names.
+    """
+    import ast
+    from pathlib import Path
+
+    package_root = Path(__file__).resolve().parent
+    found: set[str] = set()
+    for path in package_root.rglob("*.py"):
+        if path.name == "caller_parameter_contract.py":
+            # This module defines projectors and mint plumbing, not producers.
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "operator":
+                    continue
+                value = keyword.value
+                if not (
+                    isinstance(value, ast.Constant) and isinstance(value.value, str)
+                ):
+                    continue
+                name = value.value
+                # Carrier operators are Floor method names (identifiers), never
+                # binary term spellings like "+" / "//".
+                if name.isidentifier():
+                    found.add(name)
+    return frozenset(found)
+
+
+def production_native_operation_operators() -> frozenset[str]:
+    """Every operator production code mints onto the native-operation carrier.
+
+    Sources (union — each is a real mint path, not a guess):
+
+    * AST string constants on ``NativeOperationExitCarrierV1.mint(operator=...)``
+    * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
+    * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
+    * contracted store operators whose producers pin the mint shape for this
+      table even when the live store path still carries dual-face Incomplete
+      instrumentation (``setitem`` window 10876, ``setattr_named`` window 17534)
+
+    The projector table's key set must equal this set exactly, both directions.
+    """
+    from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
+
+    # Store producers pin these operator strings for n-ary discharge.  Keep
+    # them in the production set so a missing projector cannot merge green.
+    contracted_store_operators = frozenset({"setitem", "setattr_named"})
+    return (
+        _ast_minted_native_operator_constants()
+        | frozenset(_BINARY_OPERATOR_COORDINATE)
+        | frozenset(COMPARE_METHODS.values())
+        | contracted_store_operators
+    )
+
+
 # Explicit projectors for authenticated native operations.
 #
 # Each entry names its own Floor signature.  A generic
@@ -262,20 +339,19 @@ class NativeOperationDemandV1:
 # resolved operation is called as ``receiver.setitem(index, value)``.  Those
 # two orders are distinct; producers (windows 10876 / 17534) own the source
 # chain, and these projectors own the call signature.
+#
+# Key set must equal :func:`production_native_operation_operators` exactly.
 _NATIVE_OPERATION_PROJECTORS = {
-    # Unary Floor methods (one operand + site).
+    # Unary / adapter Floor methods.
     "truth": lambda value, site: value.truth(site),
     "boolop_truth": lambda value, site: value.boolop_truth(site),
-    "unary_minus": lambda value, site: value.unary_minus(site),
-    "unary_plus": lambda value, site: value.unary_plus(site),
-    "bitwise_invert": lambda value, site: value.bitwise_invert(site),
-    # Binary adapters and Floor methods (two operands + site).
     "unary_truth": lambda value, unit, site: value.unary_truth(unit, site),
     "attribute_named": lambda receiver, name, site: receiver.attribute_named(
         name, site
     ),
     # Formal subscript load (#6611): receiver[index] — binary, not the store.
     "subscript": lambda receiver, index, site: receiver.subscript(index, site),
+    # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys).
     "add": lambda left, right, site: left.add(right, site),
     "subtract": lambda left, right, site: left.subtract(right, site),
     "multiply": lambda left, right, site: left.multiply(right, site),
@@ -289,8 +365,8 @@ _NATIVE_OPERATION_PROJECTORS = {
     "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
     "left_shift": lambda left, right, site: left.left_shift(right, site),
     "right_shift": lambda left, right, site: left.right_shift(right, site),
+    # Equality, ordering, membership (compare / equality sugars).
     "equals": lambda left, right, site: left.equals(right, site),
-    "is_identical": lambda left, right, site: left.is_identical(right, site),
     "less_than": lambda left, right, site: left.less_than(right, site),
     "less_equal": lambda left, right, site: left.less_equal(right, site),
     "greater_than": lambda left, right, site: left.greater_than(right, site),
