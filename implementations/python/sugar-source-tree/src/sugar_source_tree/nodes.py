@@ -2529,6 +2529,7 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.generator_construction import (
             AssignStepV1,
             FinallyStepV1,
+            ForStepV1,
             IfStepV1,
             InertStepV1,
             OpaqueStepV1,
@@ -2644,6 +2645,29 @@ class FunctionDef(Statement):
                     )
                 )
             if (
+                isinstance(statement, For)
+                and not statement.orelse
+                and not self._owns_yield((statement,))
+            ):
+                body_steps = branch_steps(statement.body)
+                target_coordinates = generator_for_target_coordinates(statement)
+                iterable = statement.iter.sugar()
+                if (
+                    body_steps is None
+                    or target_coordinates is None
+                    or not isinstance(iterable, ConstructedTermSugar)
+                ):
+                    return absent_step
+                return _GeneratorNamedStepV1(
+                    ForStepV1(
+                        iterable=iterable,
+                        target_coordinates=target_coordinates,
+                        body_steps=body_steps,
+                        module_cid=generator_for_module_cid(statement),
+                        fragment_cid=statement.fragment.seal().cid,
+                    )
+                )
+            if (
                 isinstance(statement, Try)
                 and not statement.handlers
                 and not statement.orelse
@@ -2661,6 +2685,14 @@ class FunctionDef(Statement):
                     cleanup_step = FinallyStepV1(cleanup.terms)
                     return _GeneratorTryFinallyStepsV1(
                         compose_finally(body_steps, cleanup_step)
+                    )
+                cleanup_steps = branch_steps(statement.finalbody)
+                if body_steps is not None and cleanup_steps is not None:
+                    return _GeneratorTryFinallyStepsV1(
+                        compose_finally(
+                            body_steps,
+                            FinallyStepV1((), cleanup_steps=cleanup_steps),
+                        )
                     )
                 if body_steps is None and self._owns_yield(statement.body):
                     return _GeneratorTryFinallyExpansionV1(statement, cleanup)
@@ -2686,6 +2718,46 @@ class FunctionDef(Statement):
                     continue
                 return None
             return tuple(collected)
+
+        def generator_for_target_coordinates(statement):
+            """Mint one authenticated coordinate per lexical target leaf."""
+            from .binding_state import mint_binding_coordinate_v1
+
+            scope_owner_cid = generator_for_module_cid(statement)
+
+            def collect(target, path):
+                if isinstance(target, Name):
+                    return (
+                        mint_binding_coordinate_v1(
+                            scope_owner_cid=scope_owner_cid,
+                            binding_site=target.fragment,
+                            projection_path=("target", *path),
+                        ),
+                    )
+                if isinstance(target, (Tuple_, List)):
+                    coordinates = []
+                    for index, child in enumerate(target.elts):
+                        nested = collect(child, (*path, index))
+                        if nested is None:
+                            return None
+                        coordinates.extend(nested)
+                    return tuple(coordinates) if coordinates else None
+                return None
+
+            return collect(statement.target, ())
+
+        def generator_for_module_cid(statement):
+            """Authenticate module identity separately from content/span CID."""
+            from sugar_lift_python_source.canonical import cid_of_json
+
+            return cid_of_json(
+                {
+                    "kind": "generator-for-module",
+                    "schemaVersion": "1",
+                    "filename": statement.unit.filename,
+                    "sourceCid": statement.unit.source_cid,
+                }
+            )
 
         def compose_finally(body_steps, cleanup_step):
             """Seat cleanup before every terminal face and on fall-through."""
@@ -2726,6 +2798,10 @@ class FunctionDef(Statement):
             for item in finalbody:
                 if isinstance(item, Pass):
                     continue
+                if isinstance(item, For):
+                    # A structured cleanup step is not a term. Let the typed
+                    # step path below own it without probing ``For.sugar``.
+                    return absent_cleanup
                 if isinstance(item, Expr) and not self._owns_yield((item,)):
                     value_sugar = item.value.sugar()
                     if isinstance(value_sugar, ConstructedTermSugar):

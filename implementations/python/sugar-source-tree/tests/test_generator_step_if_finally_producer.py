@@ -566,8 +566,9 @@ def test_unsupported_x_yield_in_branch_keeps_whole_if_opaque() -> None:
     assert steps[0].carries_suspension is True
 
 
-def test_unnameable_finally_keeps_try_opaque_with_suspension() -> None:
-    # for-loop cleanup is not a ConstructedTermSugar term path → opaque Try
+def test_structured_for_cleanup_stays_owned_by_finally() -> None:
+    from sugar_lift_py_tests.generator_construction import FinallyStepV1, ForStepV1
+
     steps = _steps(
         "def manager():\n"
         "    try:\n"
@@ -576,10 +577,9 @@ def test_unnameable_finally_keeps_try_opaque_with_suspension() -> None:
         "        for x in items:\n"
         "            pass\n"
     )
-    assert any(
-        isinstance(s, OpaqueStepV1) and s.observed == "Try" and s.carries_suspension
-        for s in steps
-    )
+    cleanup = next(s for s in steps if isinstance(s, FinallyStepV1))
+    assert len(cleanup.cleanup_steps) == 1
+    assert isinstance(cleanup.cleanup_steps[0], ForStepV1)
 
 
 def test_cleanup_construction_invariant_failure_stays_loud() -> None:
@@ -592,17 +592,18 @@ def test_cleanup_construction_invariant_failure_stays_loud() -> None:
         "            pass\n"
     )
     cleanup_for = next(node for node in function.walk() if node.kind == "For")
-    original = type(cleanup_for).sugar
+    iterable_type = type(cleanup_for.iter)
+    original = iterable_type.sugar
 
     def invariant_failure(self):
         raise RuntimeError("cleanup constructor invariant")
 
-    type(cleanup_for).sugar = invariant_failure
+    iterable_type.sugar = invariant_failure
     try:
         with pytest.raises(RuntimeError, match="cleanup constructor invariant"):
             _steps_of(function)
     finally:
-        type(cleanup_for).sugar = original
+        iterable_type.sugar = original
 
 
 def test_cleanup_call_is_term_step_when_bare_expr_before_yield() -> None:
