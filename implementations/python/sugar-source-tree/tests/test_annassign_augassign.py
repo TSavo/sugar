@@ -56,9 +56,8 @@ def test_name_augassign_constructs_explicit_read_op_store_child():
     substituted = function.substitute({})
     sugar = substituted.body[1].sugar()
     assert isinstance(sugar, AugAssignSugar)
-    assert isinstance(sugar.read_op, BinOpSugar)
-    assert sugar.read_op.op_kind == "Add"
-    assert sugar.operator == "iadd"
+    assert isinstance(sugar.operation, BinOpSugar)
+    assert sugar.operation.op_kind == "Add"
 
 
 def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
@@ -77,7 +76,7 @@ def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
         if statement.kind == "AugAssign"
     )
     assert isinstance(sugar, AugAssignSugar)
-    assert type(sugar.left).__name__ == "IfExpSugar"
+    assert type(sugar.operation.left).__name__ == "IfExpSugar"
 
 
 def _red_effects(source):

@@ -4284,9 +4284,11 @@ class AugAssign(Statement):
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of, rewrite
 
-        # Structural operator site before any rewrite (Compare-style gap).
+        # Structural operator site before any rewrite (Attribute/Subscript only).
+        # Name targets rebind via _make_binop; operator_site for Name is owned by
+        # the separate Name AugAssign vertical (must not dual-eval project_inplace).
         pre_sub_operator_site = None
-        if isinstance(self.target, (Name, Attribute, Subscript)):
+        if isinstance(self.target, (Attribute, Subscript)):
             pre_sub_operator_site = getattr(self, "operator_site", None)
             if pre_sub_operator_site is None:
                 pre_sub_operator_site = self._mint_operator_site_from_structure()
@@ -4328,11 +4330,7 @@ class AugAssign(Statement):
             ShadowNode(
                 desc.kind,
                 desc.raw_span or self.span,
-                (
-                    *desc.slots,
-                    ("operation", Child(_handle_of(operation))),
-                    ("operator_site", Leaf(pre_sub_operator_site)),
-                ),
+                (*desc.slots, ("operation", Child(_handle_of(operation)))),
             ),
             self.reporter,
         )
@@ -4415,19 +4413,11 @@ class AugAssign(Statement):
             operation = getattr(self, "operation", None)
             if not isinstance(operation, Node):
                 return super()._construct_sugar()
-            binop_sugar = operation.sugar()
-            op_site = getattr(self, "operator_site", None)
-            if op_site is None:
-                op_site = self._mint_operator_site_from_structure()
-            # Same project_inplace substrate as attribute/subscript AugAssign.
+            # Name rebind owns the BinOp binding; do not dual-eval project_inplace
+            # here while discard-the-result would leave __add__ as the rebind.
             return AugAssignSugar(
-                left=binop_sugar.left,
-                right=binop_sugar.right,
-                operator=type(self.op).inplace_operator,
-                operation=self.op.project_inplace,
-                op_site=op_site,
+                operation=operation.sugar(),
                 site=self.fragment,
-                read_op=binop_sugar,
             )
         if isinstance(self.target, Attribute):
             from sugar_lift_py_tests.sugar.augassign_sugar import (

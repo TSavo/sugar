@@ -14,26 +14,16 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class AugAssignSugar(Sugar):
-    """Lexical Name ``x OP= rhs`` — evaluate once via project_inplace, rebind is substitute.
+    """Lexical Name ``x OP= rhs`` — rebind threaded by substitute; effects from operation.
 
-    The binding update is threaded by ``AugAssign.substitute`` /
-    ``substitution_binding`` (the rebind rides into the tail).  This sugar
-    evaluates the read-op for real effects through the **same**
-    ``project_augmented`` / ``InplaceBinaryOperatorOperation`` substrate as
-    attribute and subscript AugAssign, then falls through as an empty block
-    row.  Halt faces (RaiseValue, Incomplete, undischarged carriers) bypass
-    the empty-block continuation and stay loud — never a fabricated
-    completion of the pre-update binding.
+    Name-target AugAssign ownership of authenticated ``project_inplace`` as the
+    **binding** (not a discarded side evaluation) is a separate vertical —
+    do not fold partial iadd evaluation here while substitute still binds
+    ordinary ``_make_binop`` (__add__).  See banked Name AugAssign backlog.
     """
 
-    left: Sugar
-    right: Sugar
-    operator: str
-    operation: Callable
-    op_site: object = dataclass_field(compare=False)
+    operation: Sugar
     site: object = dataclass_field(compare=False)
-    # Structural BinOp sugar for binding-thread witnesses / join reads.
-    read_op: Sugar | None = None
 
     @classmethod
     def witnesses(cls):
@@ -49,20 +39,9 @@ class AugAssignSugar(Sugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Complete
 
-        # Evaluate left OP right through authenticated inplace (not bare BinOp add).
-        return self.left.desugar(ctx).and_then(
-            lambda left: self.right.desugar(ctx).and_then(
-                lambda right: project_augmented(
-                    left,
-                    right,
-                    operator=self.operator,
-                    projector=self.operation,
-                    site=self.op_site,
-                ).and_then(
-                    # Discard ordinary value: lexical rebind already threaded.
-                    lambda _value: Complete(BlockValue((), can_fall_through=True))
-                )
-            )
+        # Evaluate the threaded read-op for effects; rebind already owns the tail.
+        return self.operation.desugar(ctx).and_then(
+            lambda _value: Complete(BlockValue((), can_fall_through=True))
         )
 
 
