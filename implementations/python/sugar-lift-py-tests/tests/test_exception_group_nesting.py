@@ -6,7 +6,8 @@ Laws:
 2. Outer ``except*`` partitions nested groups; residual keeps nested shape.
 3. Nested ``TryStar`` inside an outer ``except*`` handler partitions the
    inner group; outer residual continues and regroups.
-4. Leaf occurrence identities survive two levels of partition/reraise.
+4. Leaf occurrence identities survive two levels — residual leaves equal the
+   authenticated original sealed raise-site occurrences (not mere distinctness).
 5. Twins: wrong-type nested leaf is residual; full inner consume leaves only
    outer residual; never first-leaf-only over nested twins.
 
@@ -62,6 +63,41 @@ def _grouped_halt(outcome) -> GroupedRaiseEffect:
     return effect
 
 
+def _leaf_occurrence_map(effect) -> dict[str, list[str]]:
+    """Map exception_name -> ordered occurrence list for all leaves."""
+    by_name: dict[str, list[str]] = {}
+    for leaf in _leaves(effect):
+        assert leaf.occurrence is not None, leaf
+        by_name.setdefault(leaf.exception_name, []).append(leaf.occurrence)
+    return by_name
+
+
+def _assert_residual_preserves_original_occurrences(
+    *, original: GroupedRaiseEffect, residual: GroupedRaiseEffect, names: list[str]
+) -> None:
+    """Each residual leaf keeps the authenticated original occurrence identity.
+
+    Compares residual leaf occurrences to the construction-only group for the
+    same sealed raise sites (line-aligned sources, same filename) — not mere
+    non-null/distinctness.
+    """
+    orig_map = _leaf_occurrence_map(original)
+    res_map = _leaf_occurrence_map(residual)
+    for name in names:
+        assert name in orig_map, (name, orig_map)
+        assert name in res_map, (name, res_map)
+        # Every residual occurrence of this type must be one of the originals
+        # (routed subgroup retains the sealed raise-site identity).
+        for occ in res_map[name]:
+            assert occ in orig_map[name], (
+                f"residual {name} occurrence {occ!r} not in original "
+                f"{orig_map[name]!r} — partition must preserve authenticated "
+                f"source occurrence identity, not mint a new site"
+            )
+        # Count: residual cannot invent extra leaves of this type.
+        assert len(res_map[name]) <= len(orig_map[name]), (name, res_map, orig_map)
+
+
 # ---------------------------------------------------------------------------
 # Nested construction topology
 # ---------------------------------------------------------------------------
@@ -102,20 +138,29 @@ def test_nested_exception_group_constructs_without_flattening():
 
 def test_outer_except_star_partitions_nested_group_preserving_topology():
     """except* TypeError extracts nested TypeError; residual keeps nested KeyError."""
+    # Line-aligned construction twin (``if True`` pads to the same raise line
+    # as ``try``) so residual leaf occurrences can equal sealed originals.
+    name = "outer_part_nested.py"
+    raise_body = (
+        "        raise ExceptionGroup(\n"
+        "            'outer',\n"
+        "            [\n"
+        "                ValueError('a'),\n"
+        "                ExceptionGroup('inner', [TypeError('t'), KeyError('k')]),\n"
+        "            ],\n"
+        "        )\n"
+    )
+    original = _grouped_halt(
+        _desugar("def f():\n    if True:\n" + raise_body, name=name)
+    )
     effect = _grouped_halt(
         _desugar(
             "def f():\n"
             "    try:\n"
-            "        raise ExceptionGroup(\n"
-            "            'outer',\n"
-            "            [\n"
-            "                ValueError('a'),\n"
-            "                ExceptionGroup('inner', [TypeError('t'), KeyError('k')]),\n"
-            "            ],\n"
-            "        )\n"
-            "    except* TypeError:\n"
+            + raise_body
+            + "    except* TypeError:\n"
             "        pass\n",
-            name="outer_part_nested.py",
+            name=name,
         )
     )
     assert isinstance(effect.children[0], RaiseEffect)
@@ -123,10 +168,13 @@ def test_outer_except_star_partitions_nested_group_preserving_topology():
     nested = effect.children[1]
     assert isinstance(nested, GroupedRaiseEffect)
     assert [leaf.exception_name for leaf in nested.children] == ["KeyError"]
-    # Nested residual leaf keeps its construction occurrence (two-level survival).
-    assert nested.children[0].occurrence is not None
-    assert nested.children[0].exception_name == "KeyError"
-    assert nested.children[0].occurrence != effect.children[0].occurrence
+    # Authenticated original occurrence identity — not merely non-null/distinct.
+    _assert_residual_preserves_original_occurrences(
+        original=original, residual=effect, names=["ValueError", "KeyError"]
+    )
+    # Nested residual KeyError is the same sealed raise-site as construction.
+    orig_ke = [leaf for leaf in _leaves(original) if leaf.exception_name == "KeyError"]
+    assert nested.children[0].occurrence == orig_ke[0].occurrence
 
 
 # ---------------------------------------------------------------------------
@@ -199,65 +247,114 @@ def test_outer_handler_raises_new_group_regroups_with_outer_residual():
 
 
 # ---------------------------------------------------------------------------
-# Occurrence identities survive two levels
+# Occurrence identities survive two levels (authenticated originals)
 # ---------------------------------------------------------------------------
 
 
 def test_occurrence_identities_survive_two_level_partition():
-    """Two-level leaves keep distinct occurrences through outer except*."""
-    effect = _grouped_halt(
+    """Residual leaves keep the sealed original raise-site occurrences.
+
+    Construction twin (line-aligned, same filename) is the authenticated
+    original; residual after except* TypeError must equal those originals for
+    ValueError and KeyError — not merely non-null/distinct.
+    """
+    name = "occ_two_level.py"
+    raise_body = (
+        "        raise ExceptionGroup(\n"
+        "            'outer',\n"
+        "            [\n"
+        "                ValueError('a'),\n"
+        "                ExceptionGroup(\n"
+        "                    'inner',\n"
+        "                    [TypeError('t1'), TypeError('t2'), KeyError('k')],\n"
+        "                ),\n"
+        "            ],\n"
+        "        )\n"
+    )
+    original = _grouped_halt(
+        _desugar("def f():\n    if True:\n" + raise_body, name=name)
+    )
+    residual = _grouped_halt(
         _desugar(
             "def f():\n"
             "    try:\n"
-            "        raise ExceptionGroup(\n"
-            "            'outer',\n"
-            "            [\n"
-            "                ValueError('a'),\n"
-            "                ExceptionGroup(\n"
-            "                    'inner',\n"
-            "                    [TypeError('t1'), TypeError('t2'), KeyError('k')],\n"
-            "                ),\n"
-            "            ],\n"
-            "        )\n"
-            "    except* TypeError:\n"
+            + raise_body
+            + "    except* TypeError:\n"
             "        pass\n",
-            name="occ_two_level.py",
+            name=name,
         )
     )
-    leaves = _leaves(effect)
+    leaves = _leaves(residual)
     names = [leaf.exception_name for leaf in leaves]
     assert names == ["ValueError", "KeyError"], names
-    ve, ke = leaves[0], leaves[1]
-    assert ve.occurrence is not None and ke.occurrence is not None
-    assert ve.occurrence != ke.occurrence
-    # Construction-side: two TypeError leaves were distinct before extract —
-    # residual KeyError occurrence is still the original inner leaf site.
-    assert "KeyError" in ke.exception_name or ke.exception_name == "KeyError"
+    _assert_residual_preserves_original_occurrences(
+        original=original, residual=residual, names=["ValueError", "KeyError"]
+    )
+    # Extracted TypeErrors are gone; their original occurrences are not on residual.
+    orig_te = _leaf_occurrence_map(original)["TypeError"]
+    assert len(orig_te) == 2
+    res_occs = {leaf.occurrence for leaf in leaves}
+    assert not any(occ in res_occs for occ in orig_te), (orig_te, res_occs)
+    # Twin: residual KeyError is not a new site at the except* line.
+    assert "except*" not in (leaves[1].occurrence or "")
+    assert leaves[1].occurrence == _leaf_occurrence_map(original)["KeyError"][0]
 
 
 def test_bare_reraise_at_inner_level_preserves_inner_occurrences_with_outer_residual():
-    """Inner bare re-raise rebuilds inner group; outer residual TypeError continues."""
-    effect = _grouped_halt(
+    """Inner bare re-raise restores authenticated inner leaf occurrences.
+
+    Outer TypeError residual keeps its outer construction occurrence; KeyError
+    (re-raised) and OSError keep the inner group's sealed raise-site identities
+    (filename:line:col of the original raise constructors).
+    """
+    name = "inner_bare_reraise.py"
+    composed = (
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
+        "    except* ValueError:\n"
+        "        try:\n"
+        "            raise ExceptionGroup(\n"
+        "                'inner', [KeyError('k'), OSError('o')]\n"
+        "            )\n"
+        "        except* KeyError:\n"
+        "            raise\n"
+    )
+    # Construction-only outer, line-aligned with composed outer raise (line 3).
+    outer_original = _grouped_halt(
         _desugar(
             "def f():\n"
-            "    try:\n"
-            "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
-            "    except* ValueError:\n"
-            "        try:\n"
-            "            raise ExceptionGroup(\n"
-            "                'inner', [KeyError('k'), OSError('o')]\n"
-            "            )\n"
-            "        except* KeyError:\n"
-            "            raise\n",
-            name="inner_bare_reraise.py",
+            "    if True:\n"
+            "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n",
+            name=name,
         )
     )
+    effect = _grouped_halt(_desugar(composed, name=name))
     leaves = _leaves(effect)
     names = [leaf.exception_name for leaf in leaves]
     assert "KeyError" in names and "OSError" in names and "TypeError" in names, names
     assert "ValueError" not in names, names
-    occs = [leaf.occurrence for leaf in leaves]
-    assert len(occs) == len(set(occs)), occs
+
+    # Sealed raise-site lines from the composed source (authenticated originals).
+    lines_by_ctor: dict[str, int] = {}
+    for i, line in enumerate(composed.splitlines(), 1):
+        for ctor in ("KeyError(", "OSError(", "TypeError("):
+            if ctor in line:
+                lines_by_ctor[ctor[:-1]] = i
+
+    by_name = {leaf.exception_name: leaf for leaf in leaves}
+    for ctor_name, line in lines_by_ctor.items():
+        leaf = by_name[ctor_name]
+        assert leaf.occurrence is not None
+        assert leaf.occurrence.startswith(f"{name}:{line}:"), (
+            f"{ctor_name} occurrence {leaf.occurrence!r} must be the sealed "
+            f"raise site at {name}:{line}, not a reminted residual site"
+        )
+
+    # Outer residual TypeError equals construction-only outer original.
+    outer_te = _leaf_occurrence_map(outer_original)["TypeError"][0]
+    assert by_name["TypeError"].occurrence == outer_te
+    assert len({leaf.occurrence for leaf in leaves}) == 3
 
 
 # ---------------------------------------------------------------------------
