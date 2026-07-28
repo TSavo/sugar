@@ -154,3 +154,26 @@ def test_second_conflicting_state_enrollment_panics() -> None:
             lambda value: Complete(value),
             pre_effect_state=conflicting,
         )
+
+
+def test_equal_state_reenrollment_retains_original_testimony() -> None:
+    pending, _ = _pending_and_receiver()
+    original = pending.pre_effect_state
+    assert original is not None
+    state = original.state
+    equal_state = _ReducedBlock(
+        state.entries,
+        state.can_fall_through,
+        state.fall_through,
+        state.transforms,
+        state.context,
+    )
+    assert equal_state == state
+    assert equal_state is not state
+
+    retained = pending.and_then(
+        lambda value: Complete(value),
+        pre_effect_state=ReducerPreEffectStateV1._from_reducer(equal_state),
+    )
+
+    assert retained.pre_effect_state is original
