@@ -41,6 +41,7 @@ from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCar
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
 from sugar_lift_py_tests.floor import (
+    BytesValue,
     FloorValue,
     ListValue,
     NoneValue,
@@ -215,6 +216,29 @@ def test_readable_immutable_receiver_raises_on_store(tmp_path):
     assert isinstance(outcome, Incomplete)
     assert outcome.effect.exception_name == "AttributeError"
     assert outcome.effect.producer_node_owner == "TupleValue.setattr"
+
+
+@pytest.mark.parametrize(
+    ("receiver", "owner"),
+    ((StringValue("abc"), "StringValue.setattr"), (BytesValue(b"abc"), "BytesValue.setattr")),
+)
+def test_immutable_scalar_attribute_store_has_exact_owner_occurrence(
+    tmp_path, receiver, owner
+):
+    site = _site(tmp_path)
+    outcome = _store(receiver, TermValue(7), [], site).desugar()
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect.exception_name == "AttributeError"
+    assert outcome.effect.producer_node_owner == owner
+    assert outcome.effect.occurrence_id == str(site)
+
+
+@pytest.mark.parametrize("receiver", (StringValue("abc"), BytesValue(b"abc")))
+def test_immutable_scalar_attribute_store_cannot_fabricate_completion(
+    tmp_path, receiver
+):
+    outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
+    assert not isinstance(outcome, Complete)
 
 
 def test_none_setattr_is_attribute_error_on_store_path(tmp_path):
