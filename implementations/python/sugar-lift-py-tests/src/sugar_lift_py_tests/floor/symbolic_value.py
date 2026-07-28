@@ -269,9 +269,20 @@ class SymbolicValue(FloorValue):
         )
 
     def unary_minus(self, site):
-        # The term does not state a runtime type, so it cannot decide whether
-        # ``-`` returns a value or raises TypeError.  A symbolic ``py.neg``
-        # coordinate for the success face would erase that exceptional face.
+        # Formal operands: defer to authenticated discharge (same door as
+        # truth / binary).  A free/open symbol still cannot invent success vs
+        # TypeError — that remains the undecided refusal on the base law.
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="unary_minus",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         return super().unary_minus(site)
 
     def absolute(self, site):
@@ -417,15 +428,34 @@ class SymbolicValue(FloorValue):
         return self._runtime_bitwise_dispatch(other, site, "@")
 
     def unary_plus(self, site):
-        # The term does not state a runtime type, so it cannot decide whether
-        # ``+`` is identity or raises TypeError (e.g. DatetimeArray).  Completing
-        # as the operand erases that exceptional face.
+        # Formal operands: authenticated discharge.  Open symbols stay refused
+        # (success vs TypeError is not source-decidable without a type).
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="unary_plus",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         return super().unary_plus(site)
 
     def bitwise_invert(self, site):
-        # The term does not state a runtime type, so it cannot decide whether
-        # ``~`` returns a value or raises TypeError.  A symbolic coordinate for
-        # the success face would erase that exceptional face.
+        # Formal operands: authenticated discharge.  Open symbols stay refused.
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="bitwise_invert",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         return super().bitwise_invert(site)
 
     def subscript(self, index, site):
