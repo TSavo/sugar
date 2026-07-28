@@ -60,7 +60,7 @@ reference = "ghcr.io/tsavo/sugar-env@sha256:0cdfae5249ffbd4232f4675230b4e414bfe8
 [images."core,vampire"]
 reference = "ghcr.io/tsavo/sugar-env@sha256:d5a3076102ad9e57a0022f52de95f8047df448ba689b1d9afc96d519a35ebe86"
 [images."core,python-scientific,python-test,solver-z3"]
-reference = "ghcr.io/tsavo/sugar-env@sha256:f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3"
+reference = "ghcr.io/tsavo/sugar-env@sha256:da7ea2ff7359fd1d8590a84fece1f3ee98a576d0527ded196d24c27a4262c0f6"
 [images."core,java,node,python-scientific,python-test,solver-coq,solver-z3,vampire"]
 reference = "ghcr.io/tsavo/sugar-env@sha256:f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e"
 
