@@ -236,6 +236,10 @@ def reduce_block_to_exitset(
     statements: tuple, ctx: object = None
 ) -> ExitSet[_ReducedBlock]:
     """Reduce a suite to guarded exits before the linear compatibility view."""
+    if ctx is None:
+        from sugar_lift_py_tests.context import ReduceContext
+
+        ctx = ReduceContext.root(owner="reduce_block_to_exitset")
     exits = ExitSet.completed(
         _ReducedBlock(entries=(), can_fall_through=True, fall_through=(), context=ctx)
     )
