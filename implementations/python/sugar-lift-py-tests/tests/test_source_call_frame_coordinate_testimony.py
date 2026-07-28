@@ -46,6 +46,27 @@ def test_binder_returns_ordered_typed_coordinate_testimony() -> None:
     )
 
 
+def test_bound_actuals_equality_requires_authenticated_coordinate_testimony() -> None:
+    """Equal values cannot erase their source-coordinate authority."""
+    frame = _frame()
+    foreign = _frame(name="other", filename="foreign_equality.py")
+    values = (TermValue(1), TermValue(2))
+    truthful = BoundSourceCallActualsV1(
+        values,
+        frame.formal_coordinates,
+        frame.native_operation_formal_coordinates,
+    )
+    lying = BoundSourceCallActualsV1(
+        values,
+        foreign.formal_coordinates,
+        foreign.native_operation_formal_coordinates,
+    )
+
+    assert truthful != lying
+    assert truthful != values
+    assert values != truthful
+
+
 @pytest.mark.parametrize("variant", ("missing", "duplicate", "reordered", "foreign"))
 def test_binder_refuses_corrupt_formal_coordinate_roster(variant: str) -> None:
     frame = _frame()
