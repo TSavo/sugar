@@ -372,12 +372,19 @@ def test_display_arity_mismatch_does_not_fabricate_completion(tmp_path: Path) ->
 def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
     tmp_path: Path,
 ) -> None:
-    """Face (d): starred pattern is not forced through exact-arity completion."""
+    """Face (d): starred pattern retains typed unpack; never exact-arity completion."""
+    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
     path = tmp_path / "star.py"
     path.write_text("def f(xs):\n    a, *rest = xs\n    return a\n")
     fn = next(SourceFile(path_source(str(path))).functions())
-    with pytest.raises(SugarNotWritten, match="Assign"):
-        fn.sugar()
+    outcome = fn.sugar().desugar(None)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
+    assert not isinstance(outcome, Complete)
+    with pytest.raises(AssertionError):
+        assert isinstance(outcome, Complete), "opaque starred unpack completed"
 
 
 # ---------------------------------------------------------------------------

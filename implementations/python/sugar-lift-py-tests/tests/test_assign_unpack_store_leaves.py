@@ -568,8 +568,21 @@ def _assert_loud(tmp_path: Path, source: str, stem: str) -> None:
 
 
 def test_star_against_opaque_iterable_stays_loud(tmp_path: Path) -> None:
-    """Starred opaque unpack is not a replacement binding door (#6078)."""
-    _assert_loud(tmp_path, "def f(xs):\n    a, *rest = xs\n    return a\n", "star")
+    """Starred opaque unpack retains typed obligation — never completion.
+
+    Post-starred-unpack: ``DynamicUnpackAssignSugar`` constructs for
+    ``a, *rest = xs``; desugar keeps ``SequenceUnpackRuntimeEffect`` and binds
+    nothing. Display twins still construct via MultiAssignSugar.
+    """
+    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    outcome = _function_sugar(
+        tmp_path, "def f(xs):\n    a, *rest = xs\n    return a\n", "star"
+    ).desugar(None)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
+    assert not isinstance(outcome, Complete)
 
     # Discrimination arm: a starred unpack against a CONCRETE display is a
     # different shape and must still construct -- "loud" is about the opaque
