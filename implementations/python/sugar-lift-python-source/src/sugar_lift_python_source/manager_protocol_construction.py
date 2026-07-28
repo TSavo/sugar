@@ -567,6 +567,11 @@ def enter_generator_resource_outcome(protocol, *, ctx: object = None):
             entry_cid=entry_cid,
         )
         return Complete(entered)
+    # Nested enter can surface Incomplete (inner raise before yield).
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    if isinstance(result, Incomplete):
+        return result
     if isinstance(result, GeneratorTerminationV1):
         # Never-yield enter: Python's manager protocol raises at entry.
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from sugar_lift_python_source.canonical import cid_of_json
 
@@ -124,6 +124,34 @@ class IfStepV1:
     fragment_cid: str
 
 
+@dataclass(frozen=True)
+class NestedManagerStepV1:
+    """Nested source-defined manager enter wrapping a body step sequence.
+
+    Real shape: ``with inner(): yield outer_resource`` (and peers with
+    Assign/If setup inside the With). Enter runs the nested protocol once,
+    records :class:`NestedEnteredBindingV1`, splices ``body_steps`` plus an
+    exit step, then continues. Unhandled nested shapes stay Opaque and loud.
+    """
+
+    nested_protocol: object = field(compare=False, repr=False)
+    body_steps: tuple
+    fragment_cid: str
+    occurrence_cid: str
+
+
+@dataclass(frozen=True)
+class NestedManagerExitStepV1:
+    """Exit the nested manager entered by the matching NestedManagerStepV1.
+
+    Sits after the With body (after the yield suspension for the classic
+    nested form). On resume *and* on throw, nested cleanup runs before the
+    outer machine continues — inner cleanup before outer yield-resume.
+    """
+
+    occurrence_cid: str
+
+
 GeneratorStepV1 = (
     YieldStepV1
     | ReturnStepV1
@@ -132,6 +160,8 @@ GeneratorStepV1 = (
     | AssignStepV1
     | FinallyStepV1
     | IfStepV1
+    | NestedManagerStepV1
+    | NestedManagerExitStepV1
 )
 
 
@@ -151,6 +181,13 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "name": value.name,
             "fragmentCid": value.fragment_cid,
             "value": _generator_value_testimony(value.value, owner=owner),
+        }
+    if isinstance(value, NestedEnteredBindingV1):
+        return {
+            "kind": "nested-entered-binding",
+            "occurrenceCid": value.occurrence_cid,
+            "nestedProtocolConstructionCid": value.nested_protocol_construction_cid,
+            "nestedEntryCid": value.nested_entry_cid,
         }
     # Sealed BindingEntryV1: require producer-minted ConstructedValueTestimonyV1.
     # Consumer never fabricates testimony; unsealed entries refuse here.
@@ -251,6 +288,24 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
                 _generator_step_testimony(item, owner=owner) for item in step.else_steps
             ],
         }
+    if isinstance(step, NestedManagerStepV1):
+        nested_cid = getattr(
+            step.nested_protocol, "protocol_construction_cid", None
+        )
+        return {
+            "kind": "nested-manager",
+            "fragmentCid": step.fragment_cid,
+            "occurrenceCid": step.occurrence_cid,
+            "nestedProtocolConstructionCid": nested_cid,
+            "bodySteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.body_steps
+            ],
+        }
+    if isinstance(step, NestedManagerExitStepV1):
+        return {
+            "kind": "nested-manager-exit",
+            "occurrenceCid": step.occurrence_cid,
+        }
     raise TypeError(
         f"{owner} cannot content-address step of type {type(step).__name__}"
     )
@@ -269,6 +324,21 @@ class GeneratorAssignBindingV1:
     name: str
     value: object
     fragment_cid: str
+
+
+@dataclass(frozen=True)
+class NestedEnteredBindingV1:
+    """Nested manager entered while executing NestedManagerStepV1.
+
+    Carries enough to exit the nested layer exactly once (occurrence + nested
+    protocol construction CID + nested entry CID + the entered state handle).
+    """
+
+    occurrence_cid: str
+    nested_protocol_construction_cid: str
+    nested_entry_cid: str
+    nested_protocol: object = field(compare=False, repr=False)
+    nested_entered: object = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -401,6 +471,17 @@ class GeneratorConstructionV1:
         require_effect(effect)
         incoming = ExitSet.halted(effect, state=self)
         if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], NestedManagerExitStepV1
+        ):
+            # Halted edge: nested cleanup BEFORE outer yield-resume / halt.
+            step = self.steps[self.cursor]
+            after = self._exit_nested_manager(step, requested="throw")
+            if isinstance(after, GeneratorTransitionGapV1):
+                return ExitSet.halted(effect, state=self)
+            if isinstance(after, GeneratorConstructionV1):
+                return ExitSet.halted(effect, state=after)
+            return incoming
+        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
             step = self.steps[self.cursor]
@@ -408,6 +489,15 @@ class GeneratorConstructionV1:
         return incoming
 
     def close(self):
+        if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], NestedManagerExitStepV1
+        ):
+            step = self.steps[self.cursor]
+            after = self._exit_nested_manager(step, requested="close")
+            if isinstance(after, GeneratorConstructionV1):
+                return after.close()
+            if isinstance(after, GeneratorTransitionGapV1):
+                return after
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
@@ -444,6 +534,13 @@ class GeneratorConstructionV1:
                 binding_state=(*self.binding_state, binding),
             )
             return machine._transition(requested)
+        if isinstance(step, NestedManagerStepV1):
+            return self._transition_nested_manager(step, requested)
+        if isinstance(step, NestedManagerExitStepV1):
+            after = self._exit_nested_manager(step, requested=requested)
+            if isinstance(after, GeneratorTransitionGapV1):
+                return after
+            return after._transition(requested)
         if isinstance(step, FinallyStepV1):
             cleanup = self._reduce_finally(step)
             from sugar_lift_py_tests.outcome import Completed, Halted
@@ -469,6 +566,66 @@ class GeneratorConstructionV1:
             suspended_resume_coordinate=resume_coordinate,
         )
         return YieldEffect(value, resume_coordinate, machine)
+
+    def _transition_nested_manager(self, step: NestedManagerStepV1, requested: str):
+        """Enter nested protocol, bind entered state, splice body + exit step."""
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        enter = getattr(step.nested_protocol, "enter_resource_outcome", None)
+        if not callable(enter):
+            return self._gap(requested, "nested manager without enter_resource_outcome")
+        outcome = enter()
+        if isinstance(outcome, Incomplete):
+            return outcome
+        if not isinstance(outcome, Complete):
+            return self._gap(
+                requested, f"nested enter observed {type(outcome).__name__}"
+            )
+        nested_entered = outcome.value
+        nested_cid = getattr(
+            step.nested_protocol, "protocol_construction_cid", ""
+        ) or getattr(nested_entered, "protocol_construction_cid", "")
+        entry_cid = getattr(nested_entered, "entry_cid", "")
+        binding = NestedEnteredBindingV1(
+            occurrence_cid=step.occurrence_cid,
+            nested_protocol_construction_cid=nested_cid,
+            nested_entry_cid=entry_cid,
+            nested_protocol=step.nested_protocol,
+            nested_entered=nested_entered,
+        )
+        steps = (
+            *self.steps[: self.cursor],
+            *step.body_steps,
+            NestedManagerExitStepV1(step.occurrence_cid),
+            *self.steps[self.cursor + 1 :],
+        )
+        machine = replace(
+            self,
+            steps=steps,
+            binding_state=(*self.binding_state, binding),
+            # cursor stays at first body step (same index as NestedManagerStep)
+        )
+        return machine._transition(requested)
+
+    def _exit_nested_manager(self, step: NestedManagerExitStepV1, *, requested: str):
+        """Exit the nested layer for this occurrence; advance past the exit step."""
+        binding = None
+        for item in reversed(self.binding_state):
+            if (
+                isinstance(item, NestedEnteredBindingV1)
+                and item.occurrence_cid == step.occurrence_cid
+            ):
+                binding = item
+                break
+        if binding is None:
+            return self._gap(
+                requested, f"nested exit without enter ({step.occurrence_cid})"
+            )
+        exit_for = getattr(binding.nested_protocol, "exit_outcome_for", None)
+        if not callable(exit_for):
+            return self._gap(requested, "nested manager without exit_outcome_for")
+        exit_for(binding.nested_entered)
+        return replace(self, cursor=self.cursor + 1)
 
     def _transition_branch(self, step: "IfStepV1", requested: str):
         """A branch is a two-face partition, or a splice when the guard decides.
