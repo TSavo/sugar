@@ -17,6 +17,7 @@ from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -288,7 +289,7 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
         ("GtE", ">=", "py.ge"),
     ),
 )
-def test_undecided_symbolic_ordering_emits_completed_and_exceptional_edges(
+def test_rich_comparison_dispatch_law_emits_completed_and_exceptional_edges(
     op_kind: str, operator: str, atom: str
 ) -> None:
     """Ordering keeps its solver atom and the native dispatch halt together."""
@@ -299,7 +300,7 @@ def test_undecided_symbolic_ordering_emits_completed_and_exceptional_edges(
     _assert_dual_dispatch(outcome, atom=atom, blame=str(node.fragment))
 
 
-def test_symbolic_equality_keeps_solver_atom_and_exceptional_edge() -> None:
+def test_equality_dispatch_law_keeps_py_eq_and_exceptional_edge() -> None:
     """The landed ``py.eq`` atom survives beside possible native ``__eq__`` halt."""
     node = _synthetic_compare("left == 1")
     outcome = EqualityOpSugar(
@@ -323,21 +324,25 @@ def test_two_symbolic_equality_operands_keep_both_dispatch_faces() -> None:
 
 def test_ground_decided_equality_still_completes() -> None:
     """Lying twin: two decided scalars do not gain a dispatch split."""
-    from sugar_lift_py_tests.floor import PredicateValue
-
     outcome = EqualityOpSugar(
         _ValueSugar(TermValue(1)),
         _ValueSugar(TermValue(2)),
         "compare-site",
     ).desugar(None)
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
 
 
-def test_undecided_symbolic_membership_emits_completed_and_exceptional_edges() -> None:
-    node = _synthetic_compare("1 in container")
+@pytest.mark.parametrize(
+    ("op_kind", "expression"),
+    (("In", "1 in container"), ("NotIn", "1 not in container")),
+)
+def test_membership_law_routes_through_authenticated_contains(
+    op_kind: str, expression: str
+) -> None:
+    node = _synthetic_compare(expression)
     outcome = ComparisonOpSugar(
-        "In",
+        op_kind,
         _ValueSugar(TermValue(1)),
         _ValueSugar(SymbolicValue(make_var("container"))),
         node.fragment,
@@ -345,16 +350,55 @@ def test_undecided_symbolic_membership_emits_completed_and_exceptional_edges() -
     _assert_dual_dispatch(outcome, atom="py.in", blame=str(node.fragment))
 
 
-def test_identity_never_gains_an_exceptional_dispatch_edge() -> None:
+@pytest.mark.parametrize(
+    ("op_kind", "expression"),
+    (("Is", "left is 1"), ("IsNot", "left is not 1")),
+)
+def test_identity_law_is_non_raising_and_total(
+    op_kind: str, expression: str
+) -> None:
     """LYING TWIN: ``is`` is total and must not inherit rich-operation edges."""
-    node = _synthetic_compare("left is 1")
+    node = _synthetic_compare(expression)
     outcome = ComparisonOpSugar(
-        "Is",
+        op_kind,
         _ValueSugar(SymbolicValue(make_var("left"))),
         _ValueSugar(TermValue(1)),
         node.fragment,
     ).desugar(None)
     assert isinstance(outcome, Complete)
+
+
+def test_chained_comparison_law_short_circuits_as_exitset_sequence() -> None:
+    """A halt in the first pair prevents the second pair from running."""
+    from sugar_lift_py_tests.ir import and_, atomic, not_, or_
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    node = _synthetic_compare("left < container < 1")
+    outcome = node.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+
+    halted = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(halted) == 1  # normalization merges the same Compare effect
+
+    left = make_var("left")
+    middle = make_var("container")
+    one = TermValue(1).to_term(owner="chain right operand")
+    first_raises = atomic("python.lt_dispatch_raises", [left, middle])
+    first_true = atomic("py.lt", [left, middle])
+    second_raises = atomic("python.lt_dispatch_raises", [middle, one])
+    assert halted[0].guard == or_(
+        [
+            first_raises,
+            and_([not_(first_raises), and_([first_true, second_raises])]),
+        ]
+    )
+    assert any(
+        edge.guard == and_([not_(first_raises), not_(first_true)])
+        for edge in completed
+    )
+    assert halted[0].effect.producer_node_owner == "Compare"
 
 
 def test_ground_decided_membership_still_completes() -> None:

@@ -44,16 +44,15 @@ _DISPATCH_RAISE_COORDINATE = {
 }
 
 
-def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome):
-    """Retain both native-dispatch faces when operand types are undecided.
+def _publish_undecided_dispatch_edges(left, right, site, op_kind: str, outcome):
+    """Mechanical two-face constructor shared by the three dispatch laws.
 
     Ordering, membership, and equality are not total over undecided runtime types:
     Python may select a rich method that completes or raises (``Series`` vs
     ``str`` raises ``TypeError``; unknown containers may raise from
-    ``__contains__``). Emitting ``py.lt`` / ``py.in`` invents completion;
-    inventing ``TypeError`` invents an exception identity. Both stay refused
-    until native operand types are source-authenticated — the same producer
-    law BinOp/BoolOp already own.
+    ``__contains__``). Emitting only ``py.lt`` / ``py.in`` invents totality;
+    inventing ``TypeError`` invents an exception identity. The undecided
+    dispatch therefore retains both guarded faces.
 
     Equality is total only after both native operand types are decided.  An
     undecided value may dispatch ``__eq__`` / ``__ne__`` that completes or
@@ -120,6 +119,26 @@ def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome)
     ).normalize()
 
 
+def publish_undecided_equality_edges(left, right, site, op_kind: str, outcome):
+    """Keep ``py.eq`` beside the possible ``__eq__``/``__ne__`` halt."""
+    assert op_kind in {"Eq", "NotEq"}
+    return _publish_undecided_dispatch_edges(left, right, site, op_kind, outcome)
+
+
+def publish_undecided_contains_edges(item, container, site, op_kind: str, outcome):
+    """Keep authenticated ``contains`` completion beside its possible halt."""
+    assert op_kind in {"In", "NotIn"}
+    return _publish_undecided_dispatch_edges(
+        item, container, site, op_kind, outcome
+    )
+
+
+def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
+    """Keep rich-comparison completion beside possible native dispatch halt."""
+    assert op_kind in COMPARE_METHODS
+    return _publish_undecided_dispatch_edges(left, right, site, op_kind, outcome)
+
+
 @dataclass(frozen=True)
 class ComparisonOpSugar(Sugar):
     op_kind: str
@@ -153,14 +172,14 @@ class ComparisonOpSugar(Sugar):
         loud at the Compare producer.
         """
         outcome = container.contains(item, self.site)
-        return publish_undecided_comparison_edges(
+        return publish_undecided_contains_edges(
             item, container, self.site, self.op_kind, outcome
         )
 
     def _apply(self, left, right):
         if self.op_kind == "NotEq":
             # a != b is not (a == b): stand on the equals floor, negate.
-            return publish_undecided_comparison_edges(
+            return publish_undecided_equality_edges(
                 left,
                 right,
                 self.site,
@@ -186,7 +205,7 @@ class ComparisonOpSugar(Sugar):
                 lambda predicate: predicate.negate()
             )
         method = COMPARE_METHODS[self.op_kind]
-        return publish_undecided_comparison_edges(
+        return publish_undecided_ordering_edges(
             left,
             right,
             self.site,
