@@ -176,7 +176,7 @@ def _resource_verdict(disposition: object, effect: object) -> str:
     )
     from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 
-    if disposition is None or isinstance(disposition, RuntimeSelected):
+    if isinstance(disposition, RuntimeSelected):
         return "open"
 
     if isinstance(disposition, (NeverSuppresses, NeverSuppressesDispositionV1)):
