@@ -265,6 +265,39 @@ class NativeOperationExitCarrierV1:
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
 
+    def __post_init__(self):
+        operand_count = len(self.operands)
+        coordinate_count = len(self.coordinates)
+        demand_count = len(self.demand.operand_coordinate_cids)
+        if len({operand_count, coordinate_count, demand_count}) != 1:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(operand_count, coordinate_count, demand_count),
+                requested="one authenticated coordinate slot per ordered operand",
+                fix="rebuild the carrier with aligned operands and coordinates",
+                gap_kind=GapKind.FLOOR,
+            )
+        stored_cids = tuple(
+            None if coordinate is None else coordinate.coordinate_cid
+            for coordinate in self.coordinates
+        )
+        if stored_cids != self.demand.operand_coordinate_cids:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(stored_cids, self.demand.operand_coordinate_cids),
+                requested="stored coordinates authenticating to the demand CID tuple",
+                fix="preserve ordered coordinate identity when constructing the carrier",
+                gap_kind=GapKind.FLOOR,
+            )
+
     @classmethod
     def mint(cls, *, site, operator, operands, coordinates):
         operands = tuple(operands)
