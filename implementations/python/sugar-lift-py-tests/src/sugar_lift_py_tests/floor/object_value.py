@@ -264,6 +264,47 @@ class ObjectValue(FloorValue):
             )
         return Complete(self.with_field_store(name, value))
 
+    def delattr(self, name, site):
+        """``del self.name`` via instance-field delete or property refusal.
+
+        Properties are data descriptors: a getter without an authenticated
+        deleter raises ``AttributeError`` on the **delete** path — never by
+        consulting :meth:`attribute` / the read path.  Missing ordinary
+        fields also raise ``AttributeError``.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+
+        if any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
+        ):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="ObjectValue.delattr",
+            )
+        remaining = tuple(field for field in self.fields if field.name != name)
+        if len(remaining) == len(self.fields):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="ObjectValue.delattr",
+            )
+        return Complete(
+            ObjectValue(
+                self.class_name,
+                remaining,
+                self.methods,
+                self.class_fields,
+                self.identity,
+                self.deferred_helper_fields,
+            )
+        )
+
     def with_deferred_helper_fields(self) -> "ObjectValue":
         names = self.helper_receiver_field_names()
         return ObjectValue(

@@ -213,17 +213,13 @@ class DictValue(FloorValue):
                             )
                         )
                     )
-            from sugar_lift_py_tests.effect import (
-                KeyErrorRuntimeEffect,
-                runtime_effect_evidence,
-            )
+            # Ground missing key: decidable KeyError — not a RuntimeEffect mint.
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-            return Incomplete(
-                KeyErrorRuntimeEffect(
-                    "dict deletion key missing runtime boundary: "
-                    f"key={index!r}; owner=DictValue.delitem site={site}",
-                    **runtime_effect_evidence("py.delitem", index, site),
-                )
+            return ground_exceptional_exit(
+                exception_name="KeyError",
+                site=site,
+                owner="DictValue.delitem",
             )
 
         from sugar_lift_py_tests.effect import (

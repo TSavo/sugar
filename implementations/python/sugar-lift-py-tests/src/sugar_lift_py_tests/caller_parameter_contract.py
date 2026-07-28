@@ -385,15 +385,38 @@ def production_native_operation_operators() -> frozenset[str]:
     from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
     from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
 
-    # Store producers pin these operator strings for n-ary discharge.  Keep
-    # them in the production set so a missing projector cannot merge green.
-    contracted_store_operators = frozenset({"setitem", "setattr_named"})
+    # Store/delete producers pin these operator strings for n-ary discharge.
+    # Keep them in the production set so a missing projector cannot merge green.
+    # Equality tooth: this frozenset union MUST equal
+    # frozenset(_NATIVE_OPERATION_PROJECTORS) both directions.
+    contracted_store_operators = frozenset(
+        {"setitem", "setattr_named", "delitem", "delattr_named"}
+    )
     return (
         _ast_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
         | frozenset(COMPARE_METHODS.values())
         | contracted_store_operators
     )
+
+
+def _project_delitem(receiver, index, site):
+    """Python protocol ``__delitem__(self, key)`` — discharge order (receiver, index).
+
+    Ordered operands and formal coordinates match this signature exactly.
+    Name deletion (``del name``) is out of scope for this projector.
+    """
+    return receiver.delitem(index, site)
+
+
+def _project_delattr_named(receiver, name, site):
+    """Python protocol ``__delattr__(self, name)`` — (receiver, StringValue name).
+
+    ``name`` arrives as StringValue from the mint; unwrap with ``.value``.
+    Readability never authorizes deletion: Floor ``delattr`` refuses
+    getter-only properties without consulting the read path.
+    """
+    return receiver.delattr(name.value, site)
 
 
 # Explicit projectors for authenticated native operations.
@@ -409,6 +432,11 @@ def production_native_operation_operators() -> frozenset[str]:
 # resolved operation is called as ``receiver.setitem(index, value)``.  Those
 # two orders are distinct; producers (windows 10876 / 17534) own the source
 # chain, and these projectors own the call signature.
+#
+# Delete protocol (store-family twin):
+#   delitem        → ``receiver.delitem(index, site)``   (__delitem__)
+#   delattr_named  → ``receiver.delattr(name.value, site)`` (__delattr__)
+# Name deletion (``del name`` / DeleteNameSugar) is out of scope here.
 #
 # Key set must equal :func:`production_native_operation_operators` exactly.
 _NATIVE_OPERATION_PROJECTORS = {
@@ -453,6 +481,9 @@ _NATIVE_OPERATION_PROJECTORS = {
     "setattr_named": lambda receiver, name, value, site: receiver.setattr(
         name.value, value, site
     ),
+    # Binary delete protocol — explicit projectors (Python protocol signatures).
+    "delitem": _project_delitem,
+    "delattr_named": _project_delattr_named,
 }
 
 
