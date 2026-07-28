@@ -1,8 +1,9 @@
-"""Typed unpack projection targets — each owns how one member is applied.
+"""Typed unpack projection targets — one obligation owns ``apply_member``.
 
-Replaces string-tag leaf ladders (``\"name\"`` / ``\"attr\"`` / …) with closed
-variants: Name, Star, Attribute store, Subscript store.  Application is
-left-to-right over an ``UnpackMemberRoster`` (positional members).
+Replaces string-tag leaf ladders with closed variants under a single typed
+base: ``UnpackProjectionTarget``.  Application is left-to-right over an
+``UnpackMemberRoster`` (positional members).  There is no kinds-tuple
+``isinstance`` membrane at apply time — the target *is* the obligation.
 
 Store leaves route the **already-reduced** roster member through the shared
 store projection doors (``AttributeStoreEffectSugar.project_setattr`` /
@@ -12,6 +13,7 @@ Sugar stands in for the member field.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -19,8 +21,24 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
 
+class UnpackProjectionTarget(ABC):
+    """One unpack leaf: owns how its positional roster member is applied.
+
+    Construction (tree / tests) admits only concrete subclasses.  Apply is
+    dispatch on the target object — never a closed-type ladder at the sugar.
+    """
+
+    @abstractmethod
+    def apply_member(self, member, ctx) -> Outcome:
+        """Apply one authenticated roster member to this target leaf."""
+
+    def occupies_star_slot(self) -> bool:
+        """True only for the single starred middle leaf (UNPACK_EX layout)."""
+        return False
+
+
 @dataclass(frozen=True)
-class NameUnpackTarget:
+class NameUnpackTarget(UnpackProjectionTarget):
     """Lexical name: rebind to the projected member."""
 
     name: str
@@ -33,10 +51,13 @@ class NameUnpackTarget:
 
 
 @dataclass(frozen=True)
-class StarUnpackTarget:
+class StarUnpackTarget(UnpackProjectionTarget):
     """Starred name: rebind to the projected middle ``ListValue``."""
 
     name: str
+
+    def occupies_star_slot(self) -> bool:
+        return True
 
     def apply_member(self, member, ctx) -> Outcome:
         del ctx
@@ -46,7 +67,7 @@ class StarUnpackTarget:
 
 
 @dataclass(frozen=True)
-class AttributeUnpackTarget:
+class AttributeUnpackTarget(UnpackProjectionTarget):
     """Attribute store leaf: ``receiver.attr = member`` via shared setattr door."""
 
     receiver: Sugar
@@ -68,7 +89,7 @@ class AttributeUnpackTarget:
 
 
 @dataclass(frozen=True)
-class SubscriptUnpackTarget:
+class SubscriptUnpackTarget(UnpackProjectionTarget):
     """Subscript store leaf: ``receiver[index] = member`` via shared setitem door."""
 
     receiver: Sugar
@@ -89,22 +110,20 @@ class SubscriptUnpackTarget:
         )
 
 
-# Closed set of projection-target kinds (construction admits only these).
-UNPACK_PROJECTION_TARGET_TYPES = (
-    NameUnpackTarget,
-    StarUnpackTarget,
-    AttributeUnpackTarget,
-    SubscriptUnpackTarget,
-)
-
-
 @dataclass(frozen=True)
 class ApplyUnpackMemberSugar(Sugar):
     """One left-to-right step: typed target applies one roster member."""
 
-    target: object  # one of UNPACK_PROJECTION_TARGET_TYPES
+    target: UnpackProjectionTarget
     member: object  # FloorValue
     site: object = dataclass_field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, UnpackProjectionTarget):
+            raise TypeError(
+                "ApplyUnpackMemberSugar.target must be UnpackProjectionTarget; "
+                f"got {type(self.target).__name__}"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -115,8 +134,5 @@ class ApplyUnpackMemberSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        if not isinstance(self.target, UNPACK_PROJECTION_TARGET_TYPES):
-            raise AssertionError(
-                f"unknown unpack projection target: {type(self.target).__name__}"
-            )
+        # One obligation: the target owns apply_member. No kinds ladder.
         return self.target.apply_member(self.member, ctx)

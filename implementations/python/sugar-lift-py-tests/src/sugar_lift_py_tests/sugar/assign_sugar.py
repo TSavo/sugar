@@ -186,12 +186,15 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.unpack_projection_targets import (
             ApplyUnpackMemberSugar,
-            AttributeUnpackTarget,
-            NameUnpackTarget,
-            StarUnpackTarget,
-            SubscriptUnpackTarget,
+            UnpackProjectionTarget,
         )
 
+        for target in self.targets:
+            if not isinstance(target, UnpackProjectionTarget):
+                raise TypeError(
+                    "DynamicUnpackStoreAssignSugar.targets must be "
+                    f"UnpackProjectionTarget; got {type(target).__name__}"
+                )
         prefix, suffix, has_star = self._fixed_counts()
         operation = PositionalUnpackOperation(
             fixed_prefix=prefix,
@@ -215,16 +218,17 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         )
 
     def _fixed_counts(self) -> tuple[int, int, bool]:
-        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
-            StarUnpackTarget,
-        )
+        """Positional UNPACK layout from target-owned star-slot testimony.
 
+        Star position is an obligation method on ``UnpackProjectionTarget`` —
+        not a kinds ``isinstance`` ladder over concrete leaf classes.
+        """
         prefix = 0
         suffix = 0
         has_star = False
         seen_star = False
         for target in self.targets:
-            if isinstance(target, StarUnpackTarget):
+            if target.occupies_star_slot():
                 if has_star:
                     raise AssertionError("at most one star unpack target")
                 has_star = True

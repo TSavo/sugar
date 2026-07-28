@@ -536,6 +536,26 @@ def test_no_fabricated_unpack_store_identity_in_module() -> None:
     assert offenders == [], offenders
 
 
+def test_no_kinds_tuple_isinstance_membrane_at_apply() -> None:
+    """Apply is one typed obligation — not a closed kinds-tuple ladder."""
+    import sugar_lift_py_tests.sugar.unpack_projection_targets as targets
+
+    assert not hasattr(targets, "UNPACK_PROJECTION_TARGET_TYPES")
+    assert not hasattr(targets, "_MemberViaDesugarStore")
+    # Non-obligation target is refused at construction of the apply sugar.
+    from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+        ApplyUnpackMemberSugar,
+        UnpackProjectionTarget,
+    )
+
+    assert issubclass(NameUnpackTarget, UnpackProjectionTarget)
+    assert issubclass(StarUnpackTarget, UnpackProjectionTarget)
+    assert issubclass(AttributeUnpackTarget, UnpackProjectionTarget)
+    assert issubclass(SubscriptUnpackTarget, UnpackProjectionTarget)
+    with pytest.raises(TypeError, match="UnpackProjectionTarget"):
+        ApplyUnpackMemberSugar(target=object(), member=TermValue(1), site=_site())
+
+
 def test_positional_roster_has_no_string_keys() -> None:
     from sugar_lift_py_tests.operations.positional_unpack_operation import (
         PositionalUnpackOperation,
