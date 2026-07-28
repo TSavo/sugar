@@ -94,6 +94,27 @@ def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:
     assert summary.construction_panics == 1
 
 
+def test_report_names_every_refusal_coordinate_and_panic_node_owner() -> None:
+    report = attribute_body_probes(
+        (
+            _probe(ProducerFamily.BINOP, _named_refusal),
+            _probe(ProducerFamily.SUBSCRIPT, _construction_panic),
+        )
+    )
+
+    rendered = report.render()
+
+    assert (
+        "namedRefusal body=pandas/example.py:1:BinOp "
+        "coordinate=native-producer" in rendered
+    )
+    assert (
+        "constructionPanic body=pandas/example.py:1:Subscript "
+        "node=Subscript owner=producer-construction" in rendered
+    )
+    assert report.construction_panic_count == 1
+
+
 def test_report_keeps_all_six_families_separate() -> None:
     probes = tuple(_probe(family, _named_refusal) for family in ProducerFamily)
     report = attribute_body_probes(probes)
@@ -123,11 +144,20 @@ def test_escaped_construction_panic_remains_a_separate_loud_axis() -> None:
     assert report.bodies[0].outcome is AttributionOutcome.CONSTRUCTION_PANIC
 
 
-def test_silent_completion_is_not_a_fourth_outcome() -> None:
-    with pytest.raises(AttributionInvariantError, match="completed without"):
-        attribute_body_probes(
-            (_probe(ProducerFamily.BOOLOP, lambda: Complete(object())),)
-        )
+def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.BOOLOP, lambda: Complete(object())),)
+    )
+
+    assert report.by_family[ProducerFamily.BOOLOP].enrolled == 1
+    assert report.outcome_total == 0
+    assert report.loud_failure_count == 1
+    assert len(report.discrepancies) == 1
+    assert "completed without" in report.discrepancies[0].detail
+    assert (
+        "OUTCOME TOTAL DISCREPANCY enrolled=1 threeOutcomeTotal=0 unaccounted=1"
+        in report.render()
+    )
 
 
 def _table_payload() -> dict:
