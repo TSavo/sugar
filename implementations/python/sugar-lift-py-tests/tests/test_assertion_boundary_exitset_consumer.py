@@ -498,3 +498,424 @@ def test_boundary_is_invariant_under_authenticated_producer_replacement():
 
     assert binop.native_shape != subscript.native_shape
     assert _route(binop.exit_set()) == _route(subscript.exit_set())
+
+
+# --- factored message-pattern faces with authenticated ``as excinfo`` binding ---
+
+
+def _factored_boundary_faces():
+    """match=None face and pattern face as guarded EffectBoundary alternatives."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed
+
+    none_face = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        NoMessagePatternV1(),
+        ExceptionInfoBindingV1(),
+    )
+    pattern_face = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        ExceptionInfoBindingV1(),
+    )
+    return ExitSet(
+        (
+            Completed(_Atomic("match-none-face", ()), none_face),
+            Completed(_Atomic("match-pattern-face", ()), pattern_face),
+        )
+    )
+
+
+def _factored_boundary_from_exitset(
+    body: ExitSet,
+    *,
+    expected=None,
+    pattern=None,
+    observation_slot_id: str | None = "excinfo",
+):
+    """Production WithEffectBoundarySugar over factored message-pattern faces."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        CallParameterV1,
+        ImportSignatureV2,
+        LiteralDefaultV1,
+        NoDefaultV1,
+        PositionalOrKeywordV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    class Fixed(Sugar):
+        def __init__(self, outcome):
+            self.outcome = outcome
+
+        def desugar(self, ctx=None):
+            del ctx
+            return self.outcome
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    expected = expected or _Expected("ValueError")
+    if pattern is None:
+        from sugar_lift_py_tests.floor import StringValue
+
+        pattern = StringValue("needle")
+    actuals = (expected, pattern)
+    parameters = (
+        CallParameterV1(
+            "expected",
+            PrimitiveSort("Value"),
+            PositionalOrKeywordV1(),
+            True,
+            NoDefaultV1(),
+        ),
+        CallParameterV1(
+            "match",
+            PrimitiveSort("Value"),
+            PositionalOrKeywordV1(),
+            False,
+            LiteralDefaultV1({"kind": "ctor", "name": "None", "args": []}),
+        ),
+    )
+    manager_value = CallSiteValue(
+        target_name="expect",
+        arg_values=actuals,
+        parameters=tuple(parameter.name for parameter in parameters),
+        term=ctor("call:expect", []),
+        body=None,
+        keyword_names=(),
+    )
+    return WithEffectBoundarySugar(
+        manager=Fixed(Complete(manager_value)),
+        body=(Fixed(body),),
+        semantics=None,
+        contract_ref=SimpleNamespace(
+            import_signature=ImportSignatureV2(parameters)
+        ),
+        context_manager_edge=None,
+        boundary_faces=_factored_boundary_faces(),
+        observation_slot_id=observation_slot_id,
+        site="factored-as-binding.py:1:0",
+    )
+
+
+def _observed_binding(face):
+    from sugar_lift_py_tests.effect_router import ObservedEffectBinding
+
+    record = face.value if isinstance(face, Completed) else face.state
+    entries = getattr(record, "entries", ()) or ()
+    return next(
+        (entry for entry in entries if isinstance(entry, ObservedEffectBinding)),
+        None,
+    )
+
+
+def test_factored_none_face_consumes_matching_raise_and_binds_exact_occurrence():
+    """Positive: match=None face consumes typed raise and binds that occurrence."""
+    from sugar_lift_py_tests.floor import StringValue
+
+    occurrence = "producer.py:4:8:factored-none"
+    producer = RaiseEffect(
+        exception_name="ValueError",
+        blame=occurrence,
+        occurrence=occurrence,
+        exception_type_coordinate=_identity("ValueError"),
+        exception_type_mro=(_identity("ValueError"),),
+        raised_value=CallSiteValue(
+            "ValueError",
+            (StringValue("boom"),),
+            ("message",),
+            ctor("call:ValueError", []),
+            None,
+        ),
+        producer_node_owner="Compare.desugar",
+    )
+    body = ExitSet((Halted(true_guard(), producer, _state("none-face-body")),))
+
+    routed = _factored_boundary_from_exitset(body).desugar()
+
+    # Under match-none-face the raise is fully decided and consumed with binding.
+    none_consumed = [
+        face
+        for face in routed.exits
+        if isinstance(face, Completed)
+        and "match-none-face" in str(face.guard)
+        and _observed_binding(face) is not None
+    ]
+    assert len(none_consumed) == 1, routed.exits
+    binding = _observed_binding(none_consumed[0])
+    assert binding.slot_id == "excinfo"
+    assert binding.effect is producer
+    assert binding.effect.occurrence == occurrence
+    assert binding.effect.exception_type_coordinate is producer.exception_type_coordinate
+    assert binding.effect.producer_node_owner == "Compare.desugar"
+
+
+def test_factored_pattern_face_binds_only_on_held_arm_not_complement():
+    """Pattern face: message obligation retained; bind held only; halt has no bind."""
+    from sugar_lift_py_tests.floor import StringValue
+
+    occurrence = "producer.py:8:4:factored-pattern"
+    producer = RaiseEffect(
+        exception_name="ValueError",
+        blame=occurrence,
+        occurrence=occurrence,
+        exception_type_coordinate=_identity("ValueError"),
+        exception_type_mro=(_identity("ValueError"),),
+        raised_value=CallSiteValue(
+            "ValueError",
+            (StringValue("cannot convert"),),
+            ("message",),
+            ctor("call:ValueError", []),
+            None,
+        ),
+        producer_node_owner="BinOp.desugar",
+    )
+    # Symbolic pattern keeps the message predicate open → held + complement.
+    pattern = SymbolicValue(make_var("msg_pattern"))
+    body = ExitSet((Halted(true_guard(), producer, _state("pattern-face-body")),))
+
+    routed = _factored_boundary_from_exitset(body, pattern=pattern).desugar()
+
+    pattern_faces = [
+        face
+        for face in routed.exits
+        if "match-pattern-face" in str(face.guard)
+        and "py.re_search" in str(face.guard)
+    ]
+    assert {type(face).__name__ for face in pattern_faces} == {
+        "Completed",
+        "Halted",
+    }, routed.exits
+    held = next(face for face in pattern_faces if isinstance(face, Completed))
+    failed = next(face for face in pattern_faces if isinstance(face, Halted))
+
+    held_binding = _observed_binding(held)
+    assert held_binding is not None
+    assert held_binding.slot_id == "excinfo"
+    assert held_binding.effect is producer
+    assert held_binding.effect.occurrence == occurrence
+
+    # Complement preserves the original halt and authenticates no slot.
+    assert failed.effect is producer
+    assert _observed_binding(failed) is None
+
+
+def test_factored_as_binding_faces_keep_distinct_guards_and_identities():
+    """Discrimination: none and pattern face identities never recombine."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.floor import StringValue
+
+    producer = RaiseEffect(
+        exception_name="ValueError",
+        blame="producer.py:1:0",
+        occurrence="producer.py:1:0",
+        exception_type_coordinate=_identity("ValueError"),
+        exception_type_mro=(_identity("ValueError"),),
+        raised_value=CallSiteValue(
+            "ValueError",
+            (StringValue("x"),),
+            ("message",),
+            ctor("call:ValueError", []),
+            None,
+        ),
+    )
+    body = ExitSet((Halted(true_guard(), producer, _state("dual")),))
+    pattern = SymbolicValue(make_var("open_pattern"))
+
+    sugar = _factored_boundary_from_exitset(body, pattern=pattern)
+    guarded = sugar._guarded_semantics()
+    face_ids = {guard.name for guard, _ in guarded}
+    assert face_ids == {"match-none-face", "match-pattern-face"}
+    operands = {semantics.message_pattern_operand for _, semantics in guarded}
+    assert operands == {
+        NoMessagePatternV1(),
+        OptionalFormalArgumentProjectionV1(1),
+    }
+
+    routed = sugar.desugar()
+    guard_text = " ".join(str(face.guard) for face in routed.exits)
+    # Both face identities reach the routed ExitSet (normalize may OR equal
+    # destinations, but must not drop either identity or its obligation).
+    assert "match-none-face" in guard_text
+    assert "match-pattern-face" in guard_text
+    assert "py.re_search" in guard_text
+    # Regex obligation only rides the pattern face identity.
+    for face in routed.exits:
+        text = str(face.guard)
+        if "py.re_search" in text:
+            assert "match-pattern-face" in text
+
+
+def test_factored_none_face_without_as_slot_consumes_without_binding():
+    """Discrimination twin: no observation slot means no binding testimony."""
+    from sugar_lift_py_tests.floor import StringValue
+
+    producer = RaiseEffect(
+        exception_name="ValueError",
+        blame="producer.py:2:0",
+        occurrence="producer.py:2:0",
+        exception_type_coordinate=_identity("ValueError"),
+        exception_type_mro=(_identity("ValueError"),),
+        raised_value=CallSiteValue(
+            "ValueError",
+            (StringValue("boom"),),
+            ("message",),
+            ctor("call:ValueError", []),
+            None,
+        ),
+    )
+    body = ExitSet((Halted(true_guard(), producer, _state("no-slot")),))
+
+    routed = _factored_boundary_from_exitset(
+        body, observation_slot_id=None
+    ).desugar()
+
+    none_completed = [
+        face
+        for face in routed.exits
+        if isinstance(face, Completed) and "match-none-face" in str(face.guard)
+    ]
+    assert none_completed
+    assert all(_observed_binding(face) is None for face in none_completed)
+
+
+def test_factored_disagreeing_expected_type_never_uses_face_zero():
+    """Lying twin: differing expected-type testimony must refuse, not face zero."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_source_tree.panic import SugarNotWritten
+    from types import SimpleNamespace
+
+    face_a = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        NoMessagePatternV1(),
+        ExceptionInfoBindingV1(),
+    )
+    face_b = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(1),  # different expected-type formal
+        OptionalFormalArgumentProjectionV1(2),
+        ExceptionInfoBindingV1(),
+    )
+    ref = FactoredSourceDerivedContextManagerRefV1(
+        SourceFragmentCoordinateV1("blake3-512:" + ("11" * 64), 1, 0, 1, 10),
+        "disagree-expected-protocol",
+        "enter-cid",
+        "exit-cid",
+        ExitSet(
+            (
+                Completed(_Atomic("face-zero", ()), face_a),
+                Completed(_Atomic("face-one", ()), face_b),
+            )
+        ),
+        SimpleNamespace(parameters=()),
+        SimpleNamespace(),
+    )
+
+    with pytest.raises(SugarNotWritten) as caught:
+        _ = ref.shared_expected_type_operand
+
+    assert "expected_type_operand" in caught.value.observed
+    assert "disagree" in caught.value.observed or "FormalArgumentProjectionV1" in (
+        caught.value.observed
+    )
+    assert "face zero" in caught.value.fix or "first completed face" in caught.value.fix
+
+
+def test_factored_disagreeing_binding_never_uses_face_zero():
+    """Lying twin: differing binding testimony must refuse, not face zero."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoBindingV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_source_tree.panic import SugarNotWritten
+    from types import SimpleNamespace
+
+    face_a = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        NoMessagePatternV1(),
+        ExceptionInfoBindingV1(),
+    )
+    face_b = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        NoBindingV1(),  # different binding
+    )
+    ref = FactoredSourceDerivedContextManagerRefV1(
+        SourceFragmentCoordinateV1("blake3-512:" + ("22" * 64), 1, 0, 1, 10),
+        "disagree-binding-protocol",
+        "enter-cid",
+        "exit-cid",
+        ExitSet(
+            (
+                Completed(_Atomic("bind-zero", ()), face_a),
+                Completed(_Atomic("bind-one", ()), face_b),
+            )
+        ),
+        SimpleNamespace(parameters=()),
+        SimpleNamespace(),
+    )
+
+    with pytest.raises(SugarNotWritten) as caught:
+        _ = ref.shared_binding
+
+    assert "binding" in caught.value.observed
+    assert "NoBindingV1" in caught.value.observed or "ExceptionInfoBindingV1" in (
+        caught.value.observed
+    )
+    # Must not silently return face zero's ExceptionInfoBindingV1.
+    assert caught.value.__class__.__name__ == "SugarNotWritten"

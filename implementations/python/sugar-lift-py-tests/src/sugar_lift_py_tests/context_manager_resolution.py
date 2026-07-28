@@ -177,23 +177,61 @@ class FactoredSourceDerivedContextManagerRefV1:
     import_signature: ImportSignatureV2
     protocol: object = field(compare=False, repr=False)
 
-    def _first_boundary_semantics(self):
+    def _completed_boundary_semantics(self):
         from sugar_lift_py_tests.outcome import Completed
 
-        for face in self.boundary_faces.exits:
-            if isinstance(face, Completed):
-                return face.value
-        raise ValueError("factored boundary has no completed EffectBoundary face")
+        return tuple(
+            face.value
+            for face in self.boundary_faces.exits
+            if isinstance(face, Completed)
+        )
+
+    def _shared_authority_field(self, field_name: str):
+        """Authority shared by every face, or refuse when faces disagree.
+
+        Expected-type and binding testimony authorize ALL message-pattern faces
+        (nodes.py observation slot / exception authentication). Face zero must
+        never speak for a sibling with different testimony.
+        """
+        from sugar_source_tree.panic import SugarNotWritten
+
+        faces = self._completed_boundary_semantics()
+        if not faces:
+            raise ValueError("factored boundary has no completed EffectBoundary face")
+        values = tuple(getattr(face, field_name) for face in faces)
+        first = values[0]
+        if any(value != first for value in values[1:]):
+            observed = ", ".join(
+                f"{type(value).__name__}={value!r}" for value in values
+            )
+            raise SugarNotWritten(
+                blame=self.use_site,
+                owner=f"FactoredSourceDerivedContextManagerRefV1.shared_{field_name}",
+                observed=(
+                    f"factored EffectBoundary faces disagree on {field_name}: "
+                    f"{observed}"
+                ),
+                requested=(
+                    f"identical {field_name} testimony on every completed "
+                    "message-pattern face"
+                ),
+                fix=(
+                    "never authorize all faces from the first completed face when "
+                    "expected-type or binding testimony differs; keep the "
+                    "disagreement loud"
+                ),
+            )
+        return first
 
     @property
     def shared_expected_type_operand(self):
         """Expected-type operand shared by every message-pattern face."""
-        return self._first_boundary_semantics().expected_type_operand
+        return self._shared_authority_field("expected_type_operand")
 
     @property
     def shared_binding(self):
         """Binding declaration shared by every message-pattern face."""
-        return self._first_boundary_semantics().binding
+        return self._shared_authority_field("binding")
 
 
 @dataclass(frozen=True)

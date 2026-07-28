@@ -1977,6 +1977,223 @@ def test_uniform_none_source_derived_ref_stays_single_sealed_summary():
     assert type(factored) is not type(sealed)
 
 
+def test_factored_ref_as_clause_authenticates_observation_slot(tmp_path):
+    """Production join: factored ref + ``as info`` grants the observation slot."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+    from sugar_source_tree.nodes import With
+
+    consumer = (
+        "def use_boundary():\n"
+        "    with boundary(ValueError, 'needle') as info:\n"
+        "        raise ValueError('needle')\n"
+    )
+    path = tmp_path / "factored-as-consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    node = next(item for item in tree.nodes() if isinstance(item, With))
+    expr = node.items[0].context_expr
+    span = expr.line_col_span()
+    coordinate = SourceFragmentCoordinateV1(
+        node.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            "factored-protocol",
+            "enter-cid",
+            "exit-cid",
+            _factored_boundary_faces(),
+            _factored_import_signature(),
+            SimpleNamespace(),
+        )
+    )
+
+    sugar = node.sugar()
+
+    assert isinstance(sugar, WithEffectBoundarySugar)
+    assert sugar.observation_slot_id is not None
+    assert sugar.observation_slot_id.endswith("#observation")
+    assert sugar.boundary_faces is not None
+    # Both faces still present after as-clause construction.
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.outcome import Completed
+
+    operands = {
+        face.value.message_pattern_operand
+        for face in sugar.boundary_faces.exits
+        if isinstance(face, Completed)
+    }
+    assert operands == {
+        NoMessagePatternV1(),
+        OptionalFormalArgumentProjectionV1(1),
+    }
+
+
+def test_factored_ref_without_as_clause_has_no_observation_slot(tmp_path):
+    """Discrimination: no ``as`` name means factored sugar carries no slot."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+    from sugar_source_tree.nodes import With
+
+    consumer = (
+        "def use_boundary():\n"
+        "    with boundary(ValueError, 'needle'):\n"
+        "        raise ValueError('needle')\n"
+    )
+    path = tmp_path / "factored-no-as-consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    node = next(item for item in tree.nodes() if isinstance(item, With))
+    expr = node.items[0].context_expr
+    span = expr.line_col_span()
+    coordinate = SourceFragmentCoordinateV1(
+        node.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            "factored-protocol",
+            "enter-cid",
+            "exit-cid",
+            _factored_boundary_faces(),
+            _factored_import_signature(),
+            SimpleNamespace(),
+        )
+    )
+
+    sugar = node.sugar()
+
+    assert isinstance(sugar, WithEffectBoundarySugar)
+    assert sugar.observation_slot_id is None
+
+
+def test_factored_ref_disagreeing_binding_refuses_at_with_construction(tmp_path):
+    """Lying twin: With construction never authorizes all faces from face zero."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoBindingV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_source_tree.nodes import With
+    from sugar_source_tree.panic import SugarNotWritten
+
+    consumer = (
+        "def use_boundary():\n"
+        "    with boundary(ValueError, 'needle') as info:\n"
+        "        raise ValueError('needle')\n"
+    )
+    path = tmp_path / "factored-disagree-binding.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    node = next(item for item in tree.nodes() if isinstance(item, With))
+    expr = node.items[0].context_expr
+    span = expr.line_col_span()
+    coordinate = SourceFragmentCoordinateV1(
+        node.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    disagreeing = ExitSet(
+        (
+            Completed(
+                _Atomic("bind-zero", ()),
+                EffectBoundarySemanticsV1(
+                    ExpectsModeV1(),
+                    RaiseEffectKindV1(),
+                    FormalArgumentProjectionV1(0),
+                    NoMessagePatternV1(),
+                    ExceptionInfoBindingV1(),
+                ),
+            ),
+            Completed(
+                _Atomic("bind-one", ()),
+                EffectBoundarySemanticsV1(
+                    ExpectsModeV1(),
+                    RaiseEffectKindV1(),
+                    FormalArgumentProjectionV1(0),
+                    OptionalFormalArgumentProjectionV1(1),
+                    NoBindingV1(),
+                ),
+            ),
+        )
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            "disagree-binding-protocol",
+            "enter-cid",
+            "exit-cid",
+            disagreeing,
+            _factored_import_signature(),
+            SimpleNamespace(),
+        )
+    )
+
+    with pytest.raises(SugarNotWritten) as caught:
+        node.sugar()
+
+    assert "binding" in caught.value.observed
+    assert "first completed face" in caught.value.fix or "face zero" in (
+        caught.value.fix
+    )
+
+
 def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
     fixture = (
         Path(__file__).parents[2]
