@@ -409,6 +409,58 @@ class SourceUnit:
             return None
         return definition
 
+    def source_function_definition_for_call(
+        self, call: "Call"
+    ) -> "FunctionDef | AsyncFunctionDef | None":
+        """Resolve one ordinary source function at an exact lexical call site.
+
+        The name is only a lookup key. Authority is the unique typed module
+        binding plus CPython's scope classification at this occurrence. A
+        parameter, local, free, nonlocal, ambiguous, or recursive binding is
+        not silently treated as this module definition.
+        """
+        if not isinstance(call.func, Name) or self.typed_module is None:
+            return None
+        span = call.line_col_span()
+        containing = []
+        for candidate in self.function_nodes:
+            owner_span = candidate.line_col_span()
+            if (
+                (owner_span.start_line, owner_span.start_col)
+                <= (span.start_line, span.start_col)
+                <= (owner_span.end_line, owner_span.end_col)
+            ):
+                containing.append(candidate)
+        if containing:
+            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
+            try:
+                symbol = table.lookup(call.func.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_parameter()
+                or symbol.is_local()
+                or symbol.is_free()
+                or symbol.is_nonlocal()
+            ):
+                return None
+
+        bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
+        if len(bindings) != 1 or not isinstance(
+            bindings[0], (FunctionDef, AsyncFunctionDef)
+        ):
+            return None
+        definition = bindings[0]
+        definition_span = definition.line_col_span()
+        if (
+            (definition_span.start_line, definition_span.start_col)
+            <= (span.start_line, span.start_col)
+            <= (definition_span.end_line, definition_span.end_col)
+        ):
+            return None
+        return definition
+
     @staticmethod
     def source_class_has_authenticated_default_attribute_behavior(
         definition: "ClassDef",
@@ -435,7 +487,13 @@ class SourceUnit:
             )
             or any(
                 isinstance(member, FunctionDef)
-                and (member.name in forbidden_methods or member.decorators)
+                and (
+                    member.name in forbidden_methods
+                    or (
+                        member.decorators
+                        and definition._method_descriptor_kind(member) is None
+                    )
+                )
                 for member in definition.body
             )
         )
@@ -784,9 +842,7 @@ class SourceUnit:
         for handler in statement.handlers:
             if handler.name == name:
                 return True
-            if any(
-                self._statement_rebinds_name(body, name) for body in handler.body
-            ):
+            if any(self._statement_rebinds_name(body, name) for body in handler.body):
                 return True
         return any(
             self._statement_rebinds_name(tail, name)
@@ -2858,6 +2914,25 @@ class ClassDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "bases", "keywords", "body")
 
+    def _method_descriptor_kind(self, method: "FunctionDef") -> Optional[str]:
+        """Authenticate one language descriptor decorator by lexical binding.
+
+        The decorator spelling is only a lookup key.  A same-named module
+        binding defeats the builtin coordinate, so it can never grant property
+        or class/static method semantics.
+        """
+        if len(method.decorators) != 1:
+            return None
+        decorator = method.decorators[0]
+        if not isinstance(decorator, Name):
+            return None
+        if decorator.id not in {"property", "classmethod", "staticmethod"}:
+            return None
+        bindings = (self.unit.module_direct_bindings or {}).get(decorator.id, ())
+        if bindings:
+            return None
+        return decorator.id
+
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
         the type params then bind for the bases, keywords, and body. The body is
@@ -3010,6 +3085,7 @@ class ClassDef(Statement):
                 method.fragment.seal().cid,
                 method.sugar(),
                 method.source_visible_call_frame(),
+                self._method_descriptor_kind(method),
             )
             for method in methods
         )
@@ -5934,11 +6010,15 @@ class Raise(Statement):
             ):
                 if isinstance(type_operand, Name):
                     identity = self.unit.exception_type_identity(type_operand)
-                    mro = self.unit.exception_type_mro(type_operand)
+                    if identity is None:
+                        identity = self.unit.imported_exception_type_identity(
+                            type_operand
+                        )
+                        mro = None
+                    else:
+                        mro = self.unit.exception_type_mro(type_operand)
                 else:
-                    identity = self.unit.imported_exception_type_identity(
-                        type_operand
-                    )
+                    identity = self.unit.imported_exception_type_identity(type_operand)
                     mro = None
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
@@ -8002,6 +8082,15 @@ class Call(Expression):
                 contract_ref = resolution
 
             source_call_frame = None
+            formal_function_sugar = None
+            formal_coordinate_cids = ()
+            function_definition = self.unit.source_function_definition_for_call(self)
+            if function_definition is not None:
+                formal_function_sugar = function_definition.sugar()
+                formal_coordinate_cids = tuple(
+                    coordinate.coordinate_cid
+                    for coordinate in function_definition.formal_coordinates()
+                )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
@@ -8034,6 +8123,8 @@ class Call(Expression):
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
                 source_call_frame=source_call_frame,
+                formal_function_sugar=formal_function_sugar,
+                formal_coordinate_cids=formal_coordinate_cids,
             )
         if isinstance(self.func, Attribute):
             # Lexical import binding is the ONLY door to a closed callee

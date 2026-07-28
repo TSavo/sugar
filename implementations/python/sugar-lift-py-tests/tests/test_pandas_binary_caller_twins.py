@@ -11,6 +11,9 @@ import pytest
 from pandas import Series, Timedelta
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+from sugar_lift_py_tests.floor import CallSiteValue, StringValue
+from sugar_lift_py_tests.ir import ctor
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -133,8 +136,8 @@ def test_helper_alone_has_only_formals_so_exception_identity_is_undischarged() -
     )
 
 
-def test_real_caller_actuals_name_the_exception_from_the_operation() -> None:
-    """The actual operands, not pytest's expectation, establish TypeError."""
+def test_runtime_truth_names_the_candidate_exception_without_licensing_floor() -> None:
+    """Runtime identifies TypeError; this alone cannot authenticate the Floor."""
     _pair()
     left, right = _actuals()
 
@@ -149,8 +152,35 @@ def test_real_caller_actuals_name_the_exception_from_the_operation() -> None:
     assert assert_invalid_addsub_type(left, right) is None
 
 
-def test_wrong_expected_type_does_not_consume_the_real_caller_exception() -> None:
-    """A ValueError boundary leaves the operation's TypeError outside it."""
+def test_candidate_pair_existing_floor_remains_undischarged() -> None:
+    """The current call-result floor cannot authenticate TimedeltaArray + str.
+
+    Caller substitution constructs ``tdarr`` through ``tm.box_expected``.  Its
+    current Floor category is therefore a call result, not a source-decided
+    TimedeltaArray.  The binary law conserves both runtime faces, but its halt
+    has no exception-type coordinate.  #6588 classifies exactly this shape as
+    Undischarged; borrowing ``pytest.raises(TypeError)`` would fabricate it.
+    """
+    pair = _pair()
+    left = CallSiteValue(
+        "tm.box_expected",
+        (),
+        (),
+        ctor("call:tm.box_expected", []),
+        None,
+    )
+
+    outcome = left.add(StringValue("a"), f"{HELPER_PATH}:{pair.operation.lineno}")
+
+    halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+    completed = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    assert len(halted) == 1
+    assert len(completed) == 1
+    assert halted[0].effect.exception_type_coordinate is None
+
+
+def test_runtime_wrong_expected_type_does_not_consume_candidate_exception() -> None:
+    """At runtime a ValueError boundary leaves the candidate TypeError outside."""
     _pair()
     left, right = _actuals()
 
@@ -161,8 +191,8 @@ def test_wrong_expected_type_does_not_consume_the_real_caller_exception() -> Non
     assert type(escaped.value) is TypeError
 
 
-def test_same_operation_coordinate_completes_for_normal_actuals() -> None:
-    """Changing actuals changes discharge, not the helper's BinOp identity."""
+def test_runtime_candidate_completes_for_normal_actuals() -> None:
+    """Runtime completion is a candidate twin, not authenticated Floor proof."""
     pair = _pair()
     left, _ = _actuals()
 

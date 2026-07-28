@@ -147,6 +147,53 @@ class ObjectValue(FloorValue):
                 from sugar_lift_py_tests.outcome import Complete
 
                 return Complete(field.value)
+        for method in reversed(self.methods):
+            if method.name != name or method.descriptor_kind != "property":
+                continue
+            from dataclasses import replace
+
+            from sugar_lift_py_tests.effect import RaiseEffect
+            from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+
+            def invoke(callsite):
+                outcome = callsite.producer_outcome()
+                if not isinstance(outcome, ExitSet):
+                    return outcome
+                return ExitSet(
+                    tuple(
+                        (
+                            Halted(
+                                face.guard,
+                                (
+                                    replace(
+                                        face.effect,
+                                        producer_node_owner="Attribute",
+                                    )
+                                    if isinstance(face.effect, RaiseEffect)
+                                    else face.effect
+                                ),
+                                face.state,
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                            if isinstance(face, Halted)
+                            else Completed(
+                                face.guard,
+                                face.value,
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                        )
+                        for face in outcome.exits
+                    )
+                ).normalize()
+
+            return self.call_method_value(
+                name,
+                (),
+                owner="ObjectValue.attribute.property",
+                blame=site,
+            ).and_then(invoke)
         if name in self.deferred_helper_fields:
             from sugar_lift_py_tests.floor.getattr_coordinate import (
                 getattr_coordinate,
@@ -162,6 +209,22 @@ class ObjectValue(FloorValue):
 
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
         """Return this receiver identity after one authenticated field store."""
+        if any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
+        ):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=f"{self.class_name}.{name}",
+                owner="ObjectValue.with_field_store",
+                observed="source-authenticated property data descriptor",
+                requested="the descriptor's authenticated assignment behavior",
+                fix=(
+                    "construct the property's setter before treating the write "
+                    "as an instance-field store"
+                ),
+            )
         remaining = tuple(field for field in self.fields if field.name != name)
         return ObjectValue(
             self.class_name,
@@ -170,6 +233,13 @@ class ObjectValue(FloorValue):
             self.class_fields,
             self.identity,
             self.deferred_helper_fields,
+        )
+
+    def authenticates_plain_attribute_store(self, name: str) -> bool:
+        """Whether ``self.name = value`` is an ordinary instance-field store."""
+        return not any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
         )
 
     def with_deferred_helper_fields(self) -> "ObjectValue":
