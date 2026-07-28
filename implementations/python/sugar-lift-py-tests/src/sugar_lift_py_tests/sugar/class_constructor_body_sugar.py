@@ -93,6 +93,7 @@ class ClassConstructorBodySugar(Sugar):
                 isinstance(statement, EllipsisValue) for statement in block.statements
             ):
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="ClassConstructorBodySugar.desugar",
                     observed="initializer body is EllipsisValue only",
                     requested="one source-visible runtime initializer implementation",

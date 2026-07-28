@@ -431,6 +431,7 @@ class ConstructionTestimonyReporterV1:
         from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 
         panic = ConstructedValueTestimonyNotWritten(
+            blame=node.fragment,
             owner="CollectingReporter.present_construction",
             observed=(
                 f"{canonicalized} of {type(value).__name__} at "

@@ -16,6 +16,7 @@ def test_census_returns_nonzero_when_construction_hits_backend_defect(
     def backend_crash(*args, **kwargs):
         del args, kwargs
         raise BackendDefect(
+            blame=tmp_path / "crash.py",
             owner="planted census tooth",
             observed="a malformed backend answer",
             requested="a valid constructed source tree",

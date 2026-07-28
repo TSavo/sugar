@@ -116,6 +116,7 @@ def _boundary_halted_edge(disposition, incoming):
     # settled and the retained face. Demand it before either.
     if incoming.state is None:
         raise SugarNotWritten(
+            blame=incoming.effect.occurrence_id,
             owner="EffectBoundaryDisposition",
             observed="matching raise face omitted its pre-effect state",
             requested="ExitSet Halted face carrying the real pre-halt state",

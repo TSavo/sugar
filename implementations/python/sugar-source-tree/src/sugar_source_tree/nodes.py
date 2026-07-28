@@ -120,9 +120,10 @@ class ControlConstructionContextV1:
             raise LoopWireError("loop-control occurrence has no enclosing loop")
         return self.loop_targets[-1]
 
-    def nearest_exception_slot(self) -> str:
+    def nearest_exception_slot(self, *, blame: object) -> str:
         if not self.exception_slots:
             raise SugarNotWritten(
+                blame=blame,
                 owner="ControlConstructionContextV1.nearest_exception_slot",
                 observed="bare raise has no authenticated in-flight exception slot",
                 requested="an enclosing except handler effect-slot coordinate",
@@ -283,10 +284,11 @@ class SourceUnit:
             ),
         )
 
-    def _require_typed_module(self, owner: str) -> "Module":
+    def _require_typed_module(self, owner: str, *, blame: object) -> "Module":
         module = self.typed_module
         if module is None:
             raise SourceTreePanic(
+                blame=blame,
                 owner=owner,
                 observed="typed Module is not bound on this SourceUnit",
                 requested=(
@@ -315,6 +317,7 @@ class SourceUnit:
         visit(self.module_symtable)
         if len(matches) != 1:
             raise SourceTreePanic(
+                blame=f"{self.filename}:{lineno}:0",
                 owner="SourceUnit.function_symtable",
                 observed=(
                     f"{len(matches)} function symtables for {name!r} at line {lineno}"
@@ -331,7 +334,10 @@ class SourceUnit:
         ``FunctionDef`` / ``AsyncFunctionDef`` children only) — never a second
         parse of the source text as semantic authority.
         """
-        module = self._require_typed_module("SourceUnit.is_module_level_function")
+        module = self._require_typed_module(
+            "SourceUnit.is_module_level_function",
+            blame=f"{self.filename}:{lineno}:0",
+        )
         for statement in module.body:
             if statement.kind not in ("FunctionDef", "AsyncFunctionDef"):
                 continue
@@ -443,6 +449,7 @@ class SourceUnit:
         """
         if not isinstance(node, Call):
             raise SourceTreePanic(
+                blame=node.fragment,
                 owner="SourceUnit.construction_generation",
                 observed=type(node).__name__,
                 requested="one exact Call construction occurrence",
@@ -493,7 +500,9 @@ class SourceUnit:
             BUILTIN_EXCEPTION_NAMES,
         )
 
-        self._require_typed_module("SourceUnit.exception_type_identity")
+        self._require_typed_module(
+            "SourceUnit.exception_type_identity", blame=node.fragment
+        )
         span = node.line_col_span()
         cache_key = (
             node.id,
@@ -662,7 +671,9 @@ class SourceUnit:
         builtin_ancestry = self._builtin_exception_ancestry(identity)
         if builtin_ancestry is not None:
             return builtin_ancestry
-        module = self._require_typed_module("SourceUnit.exception_type_mro")
+        module = self._require_typed_module(
+            "SourceUnit.exception_type_mro", blame=node.fragment
+        )
         definitions = [
             statement
             for statement in module.body
@@ -716,6 +727,7 @@ class SourceUnit:
         mro = self.exception_type_mro(node)
         if identity is None or mro is None:
             raise SugarNotWritten(
+                blame=node.fragment,
                 owner="SourceUnit.exception_class_value",
                 observed="exception class lacks a closed authenticated base graph",
                 requested="source-authenticated ClassValue ancestry",
@@ -736,7 +748,9 @@ class SourceUnit:
                 cache[identity] = value
                 return value
 
-        module = self._require_typed_module("SourceUnit.exception_class_value")
+        module = self._require_typed_module(
+            "SourceUnit.exception_class_value", blame=node.fragment
+        )
         definitions = [
             statement
             for statement in module.body
@@ -744,6 +758,7 @@ class SourceUnit:
         ]
         if len(definitions) != 1:
             raise SugarNotWritten(
+                blame=node.fragment,
                 owner="SourceUnit.exception_class_value",
                 observed="authenticated identity has no unique source class",
                 requested="one lexical exception class definition",
@@ -805,6 +820,7 @@ class Typed(Typeable):
             # built an abstract instance. Raised as the common base directly
             # — deliberately, not a guess at which subclass fits.
             raise SourceTreePanic(
+                blame=tp,
                 owner="nodes.Typed.resolve_type",
                 observed=f"instance of abstract node class {tp.__name__}",
                 requested="a concrete grammar class",
@@ -937,6 +953,7 @@ class Node(Typed):
                 return value
         if name in _declared_fields(type(self)):
             vocabulary_missing(
+                blame=self.ref,
                 owner="nodes.Node.__getattr__",
                 observed=(
                     f"backend answer for {type(self).__name__} has no slot "
@@ -957,6 +974,7 @@ class Node(Typed):
             # Our own adapter's anchor-rule vocabulary is incomplete for a
             # kind it has not seen positioned before: a MISSING, not a defect.
             vocabulary_missing(
+                blame=self.ref,
                 owner="nodes.Node.span",
                 observed=(
                     f"{self.kind} with neither a backend position nor any spanned child"
@@ -993,6 +1011,7 @@ class Node(Typed):
         except SourceTreePanic:
             pass
         raise SubstituteNotWritten(
+            blame=self.fragment,
             owner=f"{type(self).__name__}.substitute",
             observed=f"{self.kind} at {where} has no substitution written",
             requested="a deliberate substitution (recurse, mask, bind, or inert)",
@@ -1120,6 +1139,7 @@ class Node(Typed):
 
         if not isinstance(left, Node) or not isinstance(right, Node):
             backend_defect(
+                blame=self.fragment,
                 owner="nodes.Node._make_binop",
                 observed=(
                     "a synthesized binary operation received non-Node "
@@ -1214,6 +1234,7 @@ class Node(Typed):
             lc = self.line_col_span()
         except SourceTreePanic as exc:
             raise SugarNotWritten(
+                blame=exc.blame,
                 owner=f"{type(self).__name__}._effect_slot_id",
                 observed=f"{self.kind} has no stable source span for an effect slot",
                 requested="a deterministic file:line:col extent for the binding site",
@@ -1535,6 +1556,7 @@ class Node(Typed):
         except SourceTreePanic:
             pass  # an unpositioned kind still panics usefully, by file
         panic = SugarNotWritten(
+            blame=self.fragment,
             owner=f"{type(self).__name__}.sugar",
             observed=f"{self.kind} at {where} has no sugar written",
             requested="a constructed sugar object",
@@ -2362,6 +2384,7 @@ class FunctionDef(Statement):
             from .panic import BackendDefect
 
             raise BackendDefect(
+                blame=parameter.fragment,
                 owner="FunctionDef._formal_coordinate",
                 observed=parameter.param_kind,
                 requested="one canonical Python parameter kind",
@@ -2541,6 +2564,7 @@ class FunctionDef(Statement):
                     relative = Path(self.unit.filename)
                     if relative.is_absolute():
                         raise SugarNotWritten(
+                            blame=self.fragment,
                             owner="FunctionDef.bridge_source_symbol",
                             observed=f"absolute source locus `{self.unit.filename}`",
                             requested="workspace-relative source locus",
@@ -2666,6 +2690,7 @@ class ClassDef(Statement):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
+                blame=unsupported[0].fragment,
                 owner="ClassDef._construct_sugar",
                 observed=f"unsupported class member {unsupported[0].kind}",
                 requested="a total source-visible class member construction arm",
@@ -2730,6 +2755,7 @@ class ClassDef(Statement):
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
+                    blame=item.fragment,
                     owner="ClassDef._construct_sugar",
                     observed=f"unsupported conditional class member {item.kind}",
                     requested="a constructed field assignment or pass",
@@ -4045,6 +4071,7 @@ class For(Statement):
                     # case set `elements = None` above and falls through.)
                     raise SugarNotWritten(
                         owner="For.substitute",
+                        blame=self.target.fragment,
                         observed=(
                             f"concrete for-loop target {self.target.kind} does not "
                             "destructure its elements"
@@ -4642,6 +4669,7 @@ class If(Statement):
             slot = BranchResultSlot(self.branch_result_slot_id)
         except AttributeError:
             backend_defect(
+                blame=self.fragment,
                 owner="If._construct_sugar",
                 observed="If without a stored branch-result slot",
                 requested="consume the slot minted once by If.substitute",
@@ -4686,6 +4714,7 @@ class With(Statement):
 
         if not isinstance(context, TreeConstructionContextV1):
             backend_defect(
+                blame=self.fragment,
                 owner="With._construct_sugar",
                 observed="tree construction context is not TreeConstructionContextV1",
                 requested="the immutable prereq-2 contract-ref table",
@@ -4708,6 +4737,7 @@ class With(Statement):
             from .panic import WithConstructionGap, WithConstructionGapKind
 
             panic = WithConstructionGap(
+                blame=self.fragment,
                 gap_kind=WithConstructionGapKind.NO_DERIVED_CONTRACT,
                 coordinate=coordinate,
                 owner="With._construct_sugar",
@@ -4729,6 +4759,7 @@ class With(Statement):
         # fused `kind:detail` key used to smuggle into the key itself.
         detail = getattr(resolution, "detail", None)
         panic = ContextManagerResolutionConstructionGap(
+            blame=resolution.use_site,
             kind=resolution.kind,
             demand_cid=resolution.demand_cid,
             candidate_member_cids=resolution.candidate_member_cids,
@@ -4801,6 +4832,7 @@ class With(Statement):
             resolution, (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1)
         ):
             backend_defect(
+                blame=self.fragment,
                 owner="With._construct_sugar",
                 observed=f"unexpected resolution value {type(resolution).__name__}",
                 requested="ContextManagerContractRefV1 or ContextManagerResolutionGapV1",
@@ -4827,6 +4859,7 @@ class With(Statement):
         )
         if not (admitted_resource or admitted_boundary):
             panic = UnsupportedContextManagerSemantics(
+                blame=self.fragment,
                 demand_cid=resolution.demand_cid,
                 member_cid=resolution.contract_cid,
                 owner="With._construct_sugar",
@@ -5053,6 +5086,7 @@ class With(Statement):
                     from .panic import UnsupportedWithBindingTarget
 
                     panic = UnsupportedWithBindingTarget(
+                        blame=item.optional_vars.fragment,
                         owner="With._construct_sugar",
                         observed=(
                             "EffectBoundary as-binding to a "
@@ -5088,6 +5122,7 @@ class With(Statement):
 
             if not isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
                 backend_defect(
+                    blame=self.fragment,
                     owner="With._construct_sugar",
                     observed="closed CM resolver returned an unknown semantics variant",
                     requested="ProtocolResourceSemanticsV1 or EffectBoundarySemanticsV1",
@@ -5112,6 +5147,7 @@ class With(Statement):
                 site=self.fragment,
             )
         panic = RuntimeSelectedContextManager(
+            blame=self.fragment,
             owner="With.sugar",
             observed="With manager has no injected authenticated preconstruction authority",
             requested="one resolved ContextManagerContractRefV1 at the exact use-site",
@@ -5273,6 +5309,7 @@ class With(Statement):
             from .panic import UnsupportedWithBindingTarget
 
             panic = UnsupportedWithBindingTarget(
+                blame=self.fragment,
                 owner="With._construct_sugar",
                 observed=(
                     "source binds an EffectBoundary result the authenticated "
@@ -5354,6 +5391,7 @@ class AsyncWith(Statement):
         from .panic import AsyncContextManagerUnsupported
 
         panic = AsyncContextManagerUnsupported(
+            blame=self.fragment,
             owner="AsyncWith._construct_sugar",
             observed="async context manager is outside the narrow synchronous arm",
             requested="one synchronous pre-resolved NeverSuppresses manager",
@@ -5419,7 +5457,9 @@ class Raise(Statement):
                 cause=None,
                 exception_name=None,
                 site=self.fragment,
-                in_flight_slot=self.control_context.nearest_exception_slot(),
+                in_flight_slot=self.control_context.nearest_exception_slot(
+                    blame=self.fragment
+                ),
             )
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
         from dataclasses import replace
@@ -5448,6 +5488,7 @@ class Raise(Statement):
                 leaf_name = node.id
             if leaf_identity is None:
                 raise SugarNotWritten(
+                    blame=node.fragment,
                     owner="Raise._construct_sugar",
                     observed="exception-group leaf lacks authenticated exception identity",
                     requested="a source-authenticated exception type",
@@ -5478,6 +5519,7 @@ class Raise(Statement):
                 or not isinstance(call.args[1], (List, Tuple))
             ):
                 raise SugarNotWritten(
+                    blame=call.fragment,
                     owner="Raise._construct_sugar",
                     observed="unsupported native exception-group construction",
                     requested="ExceptionGroup(message, finite list-or-tuple members)",
@@ -5498,6 +5540,7 @@ class Raise(Statement):
         if group_call(self.exc):
             if self.cause is not None:
                 raise SugarNotWritten(
+                    blame=self.fragment,
                     owner="Raise._construct_sugar",
                     observed="exception-group raise with explicit cause",
                     requested="group cause regroup semantics",
@@ -5942,6 +5985,7 @@ class Try(Statement):
                 if identity is None:
                     raise SugarNotWritten(
                         owner="Try._construct_sugar",
+                        blame=self.fragment,
                         observed="typed except handler lacks authenticated exception identity",
                         requested="a constructed exception-type coordinate",
                         fix="resolve the handler type lexically or keep the try loud",
@@ -6001,6 +6045,7 @@ class TryStar(Statement):
             # run an except* body twice on a group holding both.
             if handler.type_ is None:
                 raise SugarNotWritten(
+                    blame=self.fragment,
                     owner="TryStar._construct_sugar",
                     observed="unsupported except* handler type",
                     requested="one authenticated exception type operand",
@@ -6015,6 +6060,7 @@ class TryStar(Statement):
                 not isinstance(type_node, Name) for type_node in type_nodes
             ):
                 raise SugarNotWritten(
+                    blame=self.fragment,
                     owner="TryStar._construct_sugar",
                     observed="unsupported except* handler type",
                     requested="one authenticated exception type operand",
@@ -6026,6 +6072,7 @@ class TryStar(Statement):
                 if identity is None:
                     raise SugarNotWritten(
                         owner="TryStar._construct_sugar",
+                        blame=self.fragment,
                         observed="except* type lacks authenticated exception identity",
                         requested="a constructed exception-type coordinate",
                         fix="resolve the handler type lexically or keep it loud",
@@ -7437,6 +7484,7 @@ class Call(Expression):
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
+                    blame=self.fragment,
                     owner="Call._construct_sugar",
                     observed=type(source_call_resolution).__name__,
                     requested="closed source-call preconstruction result",
@@ -7450,6 +7498,7 @@ class Call(Expression):
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
+                    blame=self.fragment,
                     owner="Call._construct_sugar",
                     observed="source-call ref/frame mismatch",
                     requested="byte-identical prebound source frame CID",
@@ -7484,6 +7533,7 @@ class Call(Expression):
 
                     raise BackendDefect(
                         owner="Call._construct_sugar",
+                        blame=self.fragment,
                         observed=self.func.kind,
                         requested="attribute callee for authenticated method dispatch",
                         fix="bind the method ref to its exact attribute-call occurrence",
@@ -7547,6 +7597,7 @@ class Call(Expression):
 
                         raise BackendDefect(
                             owner="Call._construct_sugar",
+                            blame=self.fragment,
                             observed="enrolled call demand missing from resolution table",
                             requested="one typed resolution row for every enrolled imported call",
                             fix="repair call-contract preconstruction; never fall through to an ordinary call",
@@ -7848,6 +7899,7 @@ class FormattedValue(Expression):
             conversion = chr(self.conversion)
         else:
             backend_defect(
+                blame=self.fragment,
                 owner="FormattedValue._construct_sugar",
                 observed=f"unsupported f-string conversion slot {self.conversion!r}",
                 requested="-1 or the codepoint for 'a', 'r', or 's'",
@@ -7856,6 +7908,7 @@ class FormattedValue(Expression):
         format_spec = self.format_spec
         if format_spec is not None and not isinstance(format_spec, JoinedStr):
             backend_defect(
+                blame=self.fragment,
                 owner="FormattedValue._construct_sugar",
                 observed=f"format_spec constructed as {type(format_spec).__name__}",
                 requested="None or a nested JoinedStr",
@@ -8456,9 +8509,12 @@ class Name(Expression):
         if isinstance(bound, Node):
             return bound
         span = self.line_col_span()
-        if self.unit.import_bound_name_target(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
-        ) is not None:
+        if (
+            self.unit.import_bound_name_target(
+                (span.start_line, span.start_col, span.end_line, span.end_col)
+            )
+            is not None
+        ):
             # The sole lexical import pass proves that this exact use has one
             # reaching import definition.  Preserve the source node so its
             # consumer can project that coordinate; do not replace it with an
@@ -9076,6 +9132,7 @@ def resolve_kind(kind: str, observed_at: str) -> type[Node]:
     cls = KIND_REGISTRY.get(kind)
     if cls is None or cls in _ABSTRACT:
         vocabulary_missing(
+            blame=observed_at,
             owner="nodes.resolve_kind",
             observed=f"backend kind {kind!r} at {observed_at} has no node class",
             requested="a concrete Node subclass for every constructible shape",

@@ -1557,6 +1557,7 @@ def _install_opaque_call_obligation(
     coordinate = _call_coordinate(call)
     if obligation.coordinate != coordinate:
         raise BackendDefect(
+            blame=call.fragment,
             owner="manager_construction._install_opaque_call_obligation",
             observed="obligation/call coordinate mismatch",
             requested="exact source-call coordinate testimony",
@@ -1564,6 +1565,7 @@ def _install_opaque_call_obligation(
         )
     if coordinate in context.source_call_frames:
         raise BackendDefect(
+            blame=call.fragment,
             owner="manager_construction._install_opaque_call_obligation",
             observed="frame/obligation collision",
             requested="one source-call classification at the exact coordinate",
@@ -1572,6 +1574,7 @@ def _install_opaque_call_obligation(
     existing = context.opaque_source_call_obligations.get(coordinate)
     if existing is not None and existing != obligation:
         raise BackendDefect(
+            blame=call.fragment,
             owner="manager_construction._install_opaque_call_obligation",
             observed="conflicting opaque-call obligation",
             requested="byte-identical duplicate testimony",
@@ -1590,6 +1593,7 @@ def _install_source_call_frame(
     coordinate = _call_coordinate(call)
     if coordinate in context.opaque_source_call_obligations:
         raise BackendDefect(
+            blame=call.fragment,
             owner="manager_construction._install_source_call_frame",
             observed="frame/obligation collision",
             requested="one source-call classification at the exact coordinate",
@@ -1598,6 +1602,7 @@ def _install_source_call_frame(
     existing = context.source_call_frames.get(coordinate)
     if existing is not None and existing != frame:
         raise BackendDefect(
+            blame=call.fragment,
             owner="manager_construction._install_source_call_frame",
             observed="conflicting source-call frame",
             requested="byte-identical duplicate frame testimony",

@@ -80,6 +80,7 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
         operation = raised.test_python_subtype
     if operation is None:
         raise SugarNotWritten(
+            blame=site,
             owner="GroupedRaiseEffect.partition",
             observed="group leaf lacks an authenticated subtype floor",
             requested="RaiseEffect leaf with authenticated exception type testimony",
@@ -88,6 +89,7 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
     outcome = operation(expected, site)
     if not isinstance(outcome, Complete):
         raise SugarNotWritten(
+            blame=site,
             owner="GroupedRaiseEffect.partition",
             observed="symbolic subtype partition",
             requested="closed true/false subtype partition for group topology",
@@ -98,6 +100,7 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
     if isinstance(outcome.value, FalseBoolLiteralSugar):
         return False
     raise SugarNotWritten(
+        blame=site,
         owner="GroupedRaiseEffect.partition",
         observed=type(outcome.value).__name__,
         requested="closed boolean subtype partition",

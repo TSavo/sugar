@@ -95,6 +95,7 @@ class SourceFile:
                 root = materialize(self.unit, backend_root, reporter)
             if not isinstance(root, Module):
                 backend_defect(
+                    blame=root.fragment,
                     owner="tree.SourceFile",
                     observed=f"backend root constructed as {type(root).__name__}",
                     requested="a Module at the root",

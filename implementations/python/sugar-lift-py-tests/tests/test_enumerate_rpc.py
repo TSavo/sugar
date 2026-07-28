@@ -167,6 +167,7 @@ def _script_roll_call(monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
             reporter.report_gap(
                 absent,
                 SugarNotWritten(
+                    blame=absent.fragment,
                     owner="rpc-roll-call-twin",
                     observed=absent.kind,
                     requested="written tree sugar",

@@ -46,8 +46,8 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
     from sugar_source_tree.panic import SugarNotWritten
 
     operator = _BOOL_OPERATOR_COORDINATE[op_kind]
-    del site
     raise SugarNotWritten(
+        blame=site,
         owner="boolean_operation_exception_floor",
         observed=f"{type(value).__name__} {operator}",
         requested=(

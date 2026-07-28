@@ -552,8 +552,8 @@ class FloorValue:
         """
         from sugar_source_tree.panic import SugarNotWritten
 
-        del site
         raise SugarNotWritten(
+            blame=site,
             owner=owner,
             observed=(
                 "undecided receiver runtime type or index semantics: "
@@ -605,8 +605,8 @@ class FloorValue:
         """
         from sugar_source_tree.panic import SugarNotWritten
 
-        del site
         raise SugarNotWritten(
+            blame=site,
             owner=owner,
             observed=(
                 "undecided receiver runtime type or member semantics: "
@@ -763,6 +763,7 @@ class FloorValue:
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(
+            blame=site,
             owner="unary_operation_exception_floor",
             observed=f"{type(self).__name__} {operator}",
             requested=(

@@ -136,6 +136,7 @@ class ClassDefinitionValue(GuardStableValue):
                 continue
             if statement.receiver.identity != receiver.identity:
                 raise SugarNotWritten(
+                    blame=receiver_coordinate_cid,
                     owner="ClassDefinitionValue.construct_receiver_state",
                     observed="receiver coordinate mismatch",
                     requested="stores projected from this exact constructed receiver",
@@ -211,6 +212,7 @@ class ClassDefinitionValue(GuardStableValue):
             )
             if candidate is None:
                 raise SugarNotWritten(
+                    blame=self.class_definition_cid,
                     owner="ClassDefinitionValue._c3_tail",
                     observed="inconsistent authenticated local base order",
                     requested="one valid C3 linearization",

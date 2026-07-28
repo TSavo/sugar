@@ -27,6 +27,7 @@ class YieldSuspensionSugar(Sugar):
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(
+            blame=self.site,
             owner="YieldSuspensionSugar.desugar",
             observed="yield suspension reached eager expression reduction",
             requested="GeneratorConstructionV1 transition consumption",

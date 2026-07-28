@@ -45,8 +45,8 @@ def refuse_undecided_unary_truth(value, site) -> None:
 
     from sugar_source_tree.panic import SugarNotWritten
 
-    del site
     raise SugarNotWritten(
+        blame=site,
         owner="unary_operation_exception_floor",
         observed=f"{type(value).__name__} not",
         requested=(

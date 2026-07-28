@@ -111,6 +111,7 @@ def test_source_file_unwritten_is_typed_gap(
 
     def _typed_gap(*_args, **_kwargs):
         raise SugarNotWritten(
+            blame=tmp_path / "fixture.py",
             owner="RenamedNode.sugar",
             observed="renamed node has no construction",
             requested="a constructed sugar object",

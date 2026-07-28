@@ -48,6 +48,7 @@ class TryStarSugar(Sugar):
                 continue
             if not isinstance(exit_.effect, GroupedRaiseEffect):
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="TryStarSugar.desugar",
                     observed=type(exit_.effect).__name__,
                     requested="GroupedRaiseEffect for except* routing",
@@ -72,6 +73,7 @@ class TryStarSugar(Sugar):
                     expected = matcher.desugar(ctx)
                     if not isinstance(expected, Complete):
                         raise SugarNotWritten(
+                            blame=self.site,
                             owner="TryStarSugar.desugar",
                             observed="symbolic except* type",
                             requested="authenticated subtype partition operand",
@@ -92,7 +94,9 @@ class TryStarSugar(Sugar):
                     continue
                 matched = regroup_except_star(residual, matched_parts)
                 residual = handler_residual
-                handler_ctx = bind_in_flight_effect(ctx, slot_id, matched)
+                handler_ctx = bind_in_flight_effect(
+                    ctx, slot_id, matched, blame=self.site
+                )
                 if slot_id is not None:
                     observer = getattr(handler_ctx, "with_observed_effect", None)
                     if observer is not None:
@@ -102,6 +106,7 @@ class TryStarSugar(Sugar):
                 )
                 if len(handler_exits.exits) != 1:
                     raise SugarNotWritten(
+                        blame=self.site,
                         owner="TryStarSugar.desugar",
                         observed="symbolically branching except* handler",
                         requested="one closed handler exit for exact regrouping",

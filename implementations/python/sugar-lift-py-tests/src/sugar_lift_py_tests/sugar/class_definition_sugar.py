@@ -98,12 +98,14 @@ class ClassDefinitionSugar(Sugar):
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="ClassDefinitionSugar.desugar",
                     observed="class base did not construct to ClassDefinitionValue",
                     requested="one authenticated source-visible base definition",
                     fix="keep dynamic or opaque inheritance loud",
                 )
             base_values.append(outcome.value)
+
         def append_field(item):
             if isinstance(item, ConstructedClassConditionalFieldsV1):
                 condition = item.condition_sugar.desugar(ctx)
@@ -120,6 +122,7 @@ class ClassDefinitionSugar(Sugar):
                     from sugar_source_tree.panic import SugarNotWritten
 
                     raise SugarNotWritten(
+                        blame=self.site,
                         owner="ClassDefinitionSugar.desugar",
                         observed="class conditional guard is not a ground bool literal",
                         requested=(
@@ -141,6 +144,7 @@ class ClassDefinitionSugar(Sugar):
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="ClassDefinitionSugar.desugar",
                     observed=f"class field {item.name} did not construct completely",
                     requested="one exact constructed class-field value",
