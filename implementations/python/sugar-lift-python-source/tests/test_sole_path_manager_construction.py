@@ -1219,6 +1219,61 @@ def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_p
     ), summary
 
 
+def test_deferred_import_cannot_override_the_manager_the_helper_returns(tmp_path):
+    """One-line return mutation decides the manager; the local import does not."""
+    from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
+
+    implementation = (
+        "class ImportedBoundary:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        if effect_type is None:\n"
+        "            raise RuntimeError()\n"
+        "        return effect_type is self.expected\n"
+        "class OrdinaryResource:\n"
+        "    def __init__(self, expected):\n"
+        "        self.expected = expected\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, effect_type, effect, traceback):\n"
+        "        return False\n"
+        "def external_error_raised(expected):\n"
+        "    import arbitrary.manager as deferred\n"
+        "    return {returned}(expected)\n"
+    )
+
+    def summary_for(label: str, returned: str):
+        root = tmp_path / label
+        root.mkdir()
+        graph, resolved, actual, call_site = _resolved_type_actual(
+            root,
+            implementation.format(returned=returned),
+            exported="external_error_raised",
+        )
+        behavior = construct_manager_behavior(
+            resolved, graph=graph, actuals=(actual,), call_site=call_site
+        )
+        assert isinstance(behavior, ConstructedManagerBehaviorV1)
+        protocol = construct_manager_protocol(
+            behavior, exit_face_id=f"deferred-import-{returned}"
+        )
+        assert isinstance(protocol, ConstructedManagerProtocolV1)
+        return derive_manager_summary(protocol, behavior=behavior)
+
+    truthful = summary_for("truthful", "deferred.ImportedBoundary")
+    lying = summary_for("lying", "OrdinaryResource")
+
+    assert isinstance(truthful, DerivedManagerSummaryV1)
+    assert isinstance(truthful.semantics, EffectBoundarySemanticsV1)
+    assert not (
+        isinstance(lying, DerivedManagerSummaryV1)
+        and isinstance(lying.semantics, EffectBoundarySemanticsV1)
+    ), lying
+
+
 def test_renamed_returned_assertion_manager_is_derived_from_protocol(tmp_path):
     """A source-authenticated returned manager is the truthful native twin."""
     graph, resolved, actual, call_site = _resolved_type_actual(

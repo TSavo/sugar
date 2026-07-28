@@ -20,7 +20,8 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     summarize_attribution_outcomes,
     validate_shared_demand_table,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome.exit_set import Completed, true_guard
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -29,6 +30,9 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
         body_id=f"pandas/example.py:1:{family.value}",
         family=family,
         evaluator=evaluator,
+        consumer_coordinate="pandas/example.py:1:9-1:30",
+        producer_coordinate="pandas/example.py:2:8-2:17",
+        producer_call_descendants=0,
     )
 
 
@@ -65,6 +69,15 @@ def test_truthful_authenticated_body_is_counted_as_an_exceptional_exit() -> None
     assert row.named_refusals == 0
     assert row.construction_panics == 0
     assert report.bodies[0].outcome is AttributionOutcome.AUTHENTICATED_EXIT
+    assert report.bodies[0].consumer_coordinate == "pandas/example.py:1:9-1:30"
+    assert report.bodies[0].producer_coordinate == "pandas/example.py:2:8-2:17"
+    assert report.bodies[0].producer_call_descendants == 0
+    assert report.bodies[0].render() == (
+        "outcome=authenticated-exceptional-exit "
+        "consumer=pandas/example.py:1:9-1:30 "
+        "producer=pandas/example.py:2:8-2:17 "
+        "producerCallDescendants=0 detail=Complete"
+    )
 
 
 def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
@@ -77,6 +90,9 @@ def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
     assert row.construction_panics == 0
     assert row.failures == 0
     assert report.bodies[0].outcome is AttributionOutcome.NAMED_REFUSAL
+    assert report.bodies[0].detail == (
+        "native-producer:source-visible operands do not decide the failure mode"
+    )
 
 
 def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:
@@ -142,6 +158,9 @@ def test_escaped_construction_panic_remains_a_separate_loud_axis() -> None:
     assert row.construction_panics == 1
     assert row.failures == 1
     assert report.bodies[0].outcome is AttributionOutcome.CONSTRUCTION_PANIC
+    assert report.bodies[0].detail == (
+        "producer-construction:missing native operand construction"
+    )
 
 
 def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
@@ -158,6 +177,17 @@ def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
         "OUTCOME TOTAL DISCREPANCY enrolled=1 threeOutcomeTotal=0 unaccounted=1"
         in report.render()
     )
+
+
+def test_empty_exitset_cannot_impersonate_an_authenticated_non_raising_body() -> None:
+    with pytest.raises(AttributionInvariantError, match="completed without"):
+        attribute_body_probe(_probe(ProducerFamily.SUBSCRIPT, lambda: ExitSet(())))
+
+
+def test_completed_only_exitset_cannot_impersonate_a_matching_halted_edge() -> None:
+    completed_only = ExitSet((Completed(true_guard(), object(), frozenset(), ()),))
+    with pytest.raises(AttributionInvariantError, match="completed without"):
+        attribute_body_probe(_probe(ProducerFamily.SUBSCRIPT, lambda: completed_only))
 
 
 def _table_payload() -> dict:

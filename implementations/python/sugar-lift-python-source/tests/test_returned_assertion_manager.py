@@ -19,13 +19,16 @@ import subprocess
 import tempfile
 from functools import cache
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerResolutionGapV1,
+    ResolvedContractRefsV1,
     SourceDerivedContextManagerRefV1,
+    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
@@ -37,7 +40,8 @@ from sugar_lift_py_tests.no_call_body_attribution import (
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 
-
+_TABLE_CID = "blake3-512:" + "t" * 128
+_CATALOG_CID = "blake3-512:" + "c" * 128
 _SOURCE_CID = (
     "blake3-512:3a71aa9c523d26a6a541cb6fdc124d37c364245b959d41873619701b421fbe370"
     "7b50d44f9d87083a783b17ec779000a4480863c8dc8435761e6f17238dd3ee0"
@@ -157,9 +161,9 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
         reference.detail or ""
     )
     assert "SymbolicValue + CallSiteValue" not in (reference.detail or "")
-    # Current residual names the exit-face comparison on unfloored field state.
+    # Current residual names the exit-face negation on unfloored call state.
     assert reference.kind == "exit-may-halt"
-    assert "comparison_operation_exception_floor" in (reference.detail or "")
+    assert reference.detail == "unary_operation_exception_floor:CallSiteValue not"
 
 
 def test_external_error_raised_population_is_the_authenticated_47_with_sites() -> None:
@@ -233,9 +237,7 @@ def _external_error_attributions():
                 (),
             )
         context = TreeConstructionContextV1(
-            ResolvedContractRefsV1(
-                _CATALOG_CID, _TABLE_CID, MappingProxyType(refs)
-            ),
+            ResolvedContractRefsV1(_CATALOG_CID, _TABLE_CID, MappingProxyType(refs)),
             workspace_root=str(corpus.root.parent),
         )
         tree = SourceFile(
@@ -277,12 +279,30 @@ def _external_error_attributions():
                 return reduce_block_to_exitset(boundary.body, None)
 
             relative = path.relative_to(corpus.root).as_posix()
+            manager_span = manager.items[0].context_expr.line_col_span()
+            producer_node = manager.body[0]
+            if len(manager.body) == 1 and producer_node.kind == "Expr":
+                producer_node = producer_node.value
+            producer_span = producer_node.line_col_span()
             attributed.append(
                 attribute_body_probe(
                     BodyProbe(
                         body_id=f"{relative}:{site.start_line}",
-                        family="ReturnedManager",
+                        family=producer_node.kind,
                         evaluator=evaluate,
+                        consumer_coordinate=(
+                            f"{relative}:{manager_span.start_line}:"
+                            f"{manager_span.start_col}-{manager_span.end_line}:"
+                            f"{manager_span.end_col}"
+                        ),
+                        producer_coordinate=(
+                            f"{relative}:{producer_span.start_line}:"
+                            f"{producer_span.start_col}-{producer_span.end_line}:"
+                            f"{producer_span.end_col}"
+                        ),
+                        producer_call_descendants=sum(
+                            node.kind == "Call" for node in producer_node.walk()
+                        ),
                     )
                 )
             )
@@ -290,23 +310,69 @@ def _external_error_attributions():
 
 
 def test_external_error_raised_47_site_outcome_partition() -> None:
-    summary = summarize_attribution_outcomes(_external_error_attributions())
+    from collections import Counter
+
+    attributions = _external_error_attributions()
+    summary = summarize_attribution_outcomes(attributions)
 
     assert summary.enrolled == 47
     assert summary.authenticated_exceptional_exits == 0
-    assert summary.named_refusals == 42
-    assert summary.construction_panics == 5
+    assert summary.named_refusals == 47
+    assert summary.construction_panics == 0
+    assert len({body.consumer_coordinate for body in attributions}) == 47
+    assert all(body.consumer_coordinate.startswith("tests/") for body in attributions)
+    assert all(body.producer_coordinate.startswith("tests/") for body in attributions)
+    assert {body.outcome for body in attributions} == {AttributionOutcome.NAMED_REFUSAL}
+    rendered = tuple(body.render() for body in attributions)
+    assert len(set(rendered)) == 47
+    assert all(
+        line.startswith("outcome=named-refusal consumer=tests/") for line in rendered
+    )
+    assert Counter(body.detail for body in attributions) == {
+        "With._construct_sugar:authenticated preconstruction resolution gap: "
+        "exit-may-halt [unary_operation_exception_floor:CallSiteValue not]": 42,
+        "SymbolicValue.attribute:undecided receiver runtime type or member "
+        "semantics: SymbolicValue.ArrowInvalid": 4,
+        "SymbolicValue.attribute:undecided receiver runtime type or member "
+        "semantics: SymbolicValue.ArrowException": 1,
+    }
 
 
-def test_external_error_raised_refusal_and_gap_twins_are_concrete_sites() -> None:
+def test_external_error_raised_subscript_seeds_name_both_independent_coordinates():
+    """Three source sites expand independently of the returned manager route."""
+    by_producer = {
+        body.producer_coordinate: body for body in _external_error_attributions()
+    }
+    expected = {
+        "tests/series/accessors/test_list_accessor.py:101:8-101:26": "tests/series/accessors/test_list_accessor.py:100:9-100:50",
+        "tests/series/accessors/test_list_accessor.py:133:8-133:20": "tests/series/accessors/test_list_accessor.py:132:9-132:50",
+        "tests/series/accessors/test_list_accessor.py:135:8-135:19": "tests/series/accessors/test_list_accessor.py:134:9-134:50",
+    }
+
+    assert set(expected) <= set(by_producer)
+    for producer_coordinate, consumer_coordinate in expected.items():
+        attribution = by_producer[producer_coordinate]
+        assert attribution.consumer_coordinate == consumer_coordinate
+        assert attribution.family == "Subscript"
+        assert attribution.producer_call_descendants == 0
+
+
+def test_external_error_raised_former_panics_are_now_named_at_concrete_sites() -> None:
     by_id = {body.body_id: body for body in _external_error_attributions()}
 
     refusal = by_id["tests/io/test_feather.py:40"]
-    gap = by_id["tests/extension/test_arrow.py:1715"]
+    former_panic = by_id["tests/extension/test_arrow.py:1715"]
     assert refusal.outcome is AttributionOutcome.NAMED_REFUSAL
-    assert refusal.detail == "With._construct_sugar"
-    assert gap.outcome is AttributionOutcome.CONSTRUCTION_PANIC
-    assert gap.detail == "SymbolicValue.attribute"
+    assert former_panic.outcome is AttributionOutcome.NAMED_REFUSAL
+    assert refusal.consumer_coordinate == "tests/io/test_feather.py:40:13-40:48"
+    assert former_panic.consumer_coordinate == (
+        "tests/extension/test_arrow.py:1715:9-1715:50"
+    )
+    assert "exit-may-halt" in refusal.detail
+    assert former_panic.detail == (
+        "SymbolicValue.attribute:undecided receiver runtime type or member "
+        "semantics: SymbolicValue.ArrowInvalid"
+    )
 
 
 def test_external_error_raised_emits_complete_consumer_testimony() -> None:
@@ -331,8 +397,8 @@ def test_external_error_raised_emits_complete_consumer_testimony() -> None:
             surviving=(
                 CallerAttribution(
                     AttributionOutcome.NAMED_REFUSAL,
-                    "force-floor:binary_operation_exception_floor:"
-                    "SymbolicValue + CallSiteValue",
+                    "exit-may-halt:unary_operation_exception_floor:"
+                    "CallSiteValue not",
                 ),
             ),
         ),
@@ -340,9 +406,7 @@ def test_external_error_raised_emits_complete_consumer_testimony() -> None:
 
     assert len(report.lines()) == 8
     assert report.lines()[4].endswith("pandas/tests/io/test_feather.py:40:13")
-    assert report.lines()[-1].startswith(
-        "survivingTypedGapsOrReattributions reported"
-    )
+    assert report.lines()[-1].startswith("survivingTypedGapsOrReattributions reported")
 
 
 def test_adjacent_computed_class_raises_stays_typed_opaque() -> None:

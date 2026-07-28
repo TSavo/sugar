@@ -71,6 +71,9 @@ class BodyProbe:
     body_id: str
     family: ProducerFamily | str
     evaluator: Callable[[], object]
+    consumer_coordinate: str
+    producer_coordinate: str
+    producer_call_descendants: int
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,21 @@ class BodyAttribution:
     family: ProducerFamily | str
     outcome: AttributionOutcome
     detail: str
+    consumer_coordinate: str
+    producer_coordinate: str
+    producer_call_descendants: int
+
+    def render(self) -> str:
+        """One earned outcome with both sides of the manager/producer boundary."""
+        return " ".join(
+            (
+                f"outcome={self.outcome.value}",
+                f"consumer={self.consumer_coordinate}",
+                f"producer={self.producer_coordinate}",
+                f"producerCallDescendants={self.producer_call_descendants}",
+                f"detail={self.detail}",
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -207,14 +225,20 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             probe.body_id,
             probe.family,
             AttributionOutcome.NAMED_REFUSAL,
-            refusal.owner,
+            f"{refusal.owner}:{refusal.observed}",
+            probe.consumer_coordinate,
+            probe.producer_coordinate,
+            probe.producer_call_descendants,
         )
     except ConstructionPanic as panic:
         return BodyAttribution(
             probe.body_id,
             probe.family,
             AttributionOutcome.CONSTRUCTION_PANIC,
-            panic.info.owner,
+            f"{panic.info.owner}:{panic.info.observed}",
+            probe.consumer_coordinate,
+            probe.producer_coordinate,
+            probe.producer_call_descendants,
         )
 
     if _exceptional_exit_present(outcome):
@@ -223,6 +247,9 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             probe.family,
             AttributionOutcome.AUTHENTICATED_EXIT,
             type(outcome).__name__,
+            probe.consumer_coordinate,
+            probe.producer_coordinate,
+            probe.producer_call_descendants,
         )
     raise AttributionInvariantError(
         f"{probe.body_id} "
@@ -536,10 +563,10 @@ def discover_no_call_body_probes(
                 continue
             if families is not None and family not in families:
                 continue
-            body_id = (
-                f"{path.relative_to(corpus_root).as_posix()}:"
-                f"{expression.line_col_span().start_line}:{family.value}"
-            )
+            relative_path = path.relative_to(corpus_root).as_posix()
+            expression_span = expression.line_col_span()
+            manager_span = with_node.items[0].context_expr.line_col_span()
+            body_id = f"{relative_path}:{expression_span.start_line}:{family.value}"
             if body_id in seen:
                 raise AttributionInvariantError(f"duplicate body enrollment: {body_id}")
             seen.add(body_id)
@@ -549,6 +576,19 @@ def discover_no_call_body_probes(
                     family=family,
                     evaluator=lambda expression=expression: expression.sugar().desugar(
                         None
+                    ),
+                    consumer_coordinate=(
+                        f"{relative_path}:{manager_span.start_line}:"
+                        f"{manager_span.start_col}-{manager_span.end_line}:"
+                        f"{manager_span.end_col}"
+                    ),
+                    producer_coordinate=(
+                        f"{relative_path}:{expression_span.start_line}:"
+                        f"{expression_span.start_col}-{expression_span.end_line}:"
+                        f"{expression_span.end_col}"
+                    ),
+                    producer_call_descendants=sum(
+                        node.kind == "Call" for node in expression.walk()
                     ),
                 )
             )
