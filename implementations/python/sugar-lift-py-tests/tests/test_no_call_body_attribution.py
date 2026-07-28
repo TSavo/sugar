@@ -129,10 +129,7 @@ def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
 
 def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
     report = attribute_body_probes(
-        tuple(
-            _probe(ProducerFamily.COMPARE, _nameless_raise_value)
-            for _ in range(503)
-        )
+        tuple(_probe(ProducerFamily.COMPARE, _nameless_raise_value) for _ in range(503))
     )
 
     row = report.by_family[ProducerFamily.COMPARE]
@@ -300,7 +297,7 @@ def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing
     assert report.loud_failure_count == 2
     assert "constructionPanic body=pandas/example.py:1:Subscript" in report.render()
     assert (
-            "OUTCOME TOTAL DISCREPANCY enrolled=2 outcomeTotal=1 unaccounted=1"
+        "OUTCOME TOTAL DISCREPANCY enrolled=2 outcomeTotal=1 unaccounted=1"
         in report.render()
     )
 
