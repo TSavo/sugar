@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     NativeOperationResolutionV1,
+    ReducerPreEffectStateV1,
     _NATIVE_OPERATION_PROJECTORS,
     authenticated_exceptional_resolution_count,
     production_native_operation_operators,
@@ -43,7 +44,9 @@ from sugar_lift_py_tests.outcome import (
     outcome_to_exitset,
     true_guard,
 )
+from sugar_lift_py_tests.outcome.exit_set import complement_guard, partition
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -87,6 +90,181 @@ def _carrier(operator: str = "add"):
         coordinates=(left_coordinate, right_coordinate),
     )
     return carrier, left_coordinate, right_coordinate
+
+
+def test_short_circuit_truthful_second_leg_joins_untouched_stopping_face():
+    """A completed second leg runs only under the continuing partition face."""
+    carrier, left, right = _carrier(operator="less_than")
+    continuing_guard = atomic("test:first-leg-truth", [])
+    continuing_face, stopped_face = partition("test:carrier-short-circuit")
+    stopped_value = TermValue(41)
+    stopped = ExitSet.completed(
+        stopped_value, complement_guard(continuing_guard)
+    )
+
+    exits = carrier.short_circuit(
+        continuing_guard=continuing_guard,
+        stopped=stopped,
+        continuing_face=continuing_face,
+        stopped_face=stopped_face,
+    ).discharge(
+        {
+            left.coordinate_cid: TermValue(1),
+            right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    assert len(exits.exits) == 2
+    continuing = next(
+        exit_
+        for exit_ in exits.exits
+        if isinstance(exit_, Completed) and exit_.value != stopped_value
+    )
+    stopping = next(
+        exit_
+        for exit_ in exits.exits
+        if isinstance(exit_, Completed) and exit_.value == stopped_value
+    )
+    assert continuing.guard == continuing_guard
+    assert continuing.faces == frozenset({continuing_face})
+    assert stopping.guard == complement_guard(continuing_guard)
+    assert stopping.faces == frozenset({stopped_face})
+
+
+def test_short_circuit_lying_second_leg_retains_its_authentic_halt_occurrence():
+    """A halting second leg is guarded, never rebuilt as a made-up occurrence."""
+    carrier, left, right = _carrier(operator="less_than")
+    continuing_guard = atomic("test:first-leg-truth", [])
+    continuing_face, stopped_face = partition("test:carrier-short-circuit-halt")
+    stopped = ExitSet.completed(
+        TermValue(42), complement_guard(continuing_guard)
+    )
+
+    raw = carrier.discharge(
+        {
+            left.coordinate_cid: NoneValue(),
+            right.coordinate_cid: TermValue(2),
+        }
+    )
+    authentic = next(exit_ for exit_ in raw.exits if isinstance(exit_, Halted))
+    exits = carrier.short_circuit(
+        continuing_guard=continuing_guard,
+        stopped=stopped,
+        continuing_face=continuing_face,
+        stopped_face=stopped_face,
+    ).discharge(
+        {
+            left.coordinate_cid: NoneValue(),
+            right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
+    assert halted.guard == continuing_guard
+    assert halted.effect == authentic.effect
+    assert halted.effect.occurrence_id == authentic.effect.occurrence_id
+    assert halted.faces == frozenset({continuing_face})
+    assert any(
+        isinstance(exit_, Completed) and exit_.value == TermValue(42)
+        for exit_ in exits.exits
+    )
+
+
+def test_short_circuit_preserves_first_leg_halt_without_stopping_face():
+    """The first comparison's halt bypasses both truth-value partition arms."""
+    first, first_left, first_right = _carrier(operator="less_than")
+    first_result = first.discharge(
+        {
+            first_left.coordinate_cid: NoneValue(),
+            first_right.coordinate_cid: TermValue(2),
+        }
+    )
+    first_halt = next(exit_ for exit_ in first_result.exits if isinstance(exit_, Halted))
+
+    second, second_left, second_right = _carrier(operator="less_than")
+    continuing_guard = atomic("test:first-leg-completed-truthy", [])
+    continuing_face, stopped_face = partition("test:first-leg-halt-bypass")
+    stopped_value = TermValue(43)
+    stopped = ExitSet(
+        (
+            first_halt,
+            ExitSet.completed(
+                stopped_value, complement_guard(continuing_guard)
+            ).exits[0],
+        )
+    )
+
+    exits = second.short_circuit(
+        continuing_guard=continuing_guard,
+        stopped=stopped,
+        continuing_face=continuing_face,
+        stopped_face=stopped_face,
+    ).discharge(
+        {
+            second_left.coordinate_cid: TermValue(1),
+            second_right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    retained = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
+    assert retained == first_halt
+    assert retained.faces == first_halt.faces
+    stopping = next(
+        exit_
+        for exit_ in exits.exits
+        if isinstance(exit_, Completed) and exit_.value == stopped_value
+    )
+    assert stopping.faces == frozenset({stopped_face})
+
+
+def test_short_circuit_exception_keeps_actual_map_and_exact_temporal_state():
+    """Second-leg discharge consumes caller actuals without replacing state."""
+    carrier, left, right = _carrier(operator="less_than")
+    state = _ReducedBlock((TermValue(17),), True, ())
+    testimony = ReducerPreEffectStateV1._from_reducer(state)
+    carrier = carrier.and_then(
+        lambda value: Complete(value), pre_effect_state=testimony
+    )
+    continuing_guard = atomic("test:first-leg-truth", [])
+    continuing_face, stopped_face = partition("test:short-circuit-state")
+    actuals = {
+        left.coordinate_cid: NoneValue(),
+        right.coordinate_cid: TermValue(2),
+    }
+
+    exits = carrier.short_circuit(
+        continuing_guard=continuing_guard,
+        stopped=ExitSet.completed(
+            TermValue(0), complement_guard(continuing_guard)
+        ),
+        continuing_face=continuing_face,
+        stopped_face=stopped_face,
+    ).discharge(actuals)
+
+    halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
+    assert halted.state is state
+    assert halted.faces == frozenset({continuing_face})
+    assert actuals == {
+        left.coordinate_cid: NoneValue(),
+        right.coordinate_cid: TermValue(2),
+    }
+
+
+def test_short_circuit_missing_second_leg_actual_remains_explicitly_undischarged():
+    carrier, left, _right = _carrier(operator="less_than")
+    continuing_guard = atomic("test:first-leg-truth", [])
+    continuing_face, stopped_face = partition("test:short-circuit-undischarged")
+    composed = carrier.short_circuit(
+        continuing_guard=continuing_guard,
+        stopped=ExitSet.completed(
+            TermValue(0), complement_guard(continuing_guard)
+        ),
+        continuing_face=continuing_face,
+        stopped_face=stopped_face,
+    )
+
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        composed.discharge({left.coordinate_cid: TermValue(1)})
 
 
 @pytest.mark.parametrize(
