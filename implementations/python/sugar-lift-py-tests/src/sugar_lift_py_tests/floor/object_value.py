@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
         InplaceBinaryOperatorOperation,
     )
+    from sugar_lift_py_tests.operations.iterator_operation import IteratorOperation
     from sugar_lift_py_tests.operations.method_call_operation import (
         MethodCallOperation,
     )
@@ -418,6 +419,18 @@ class ObjectValue(FloorValue):
         self, operation: AsyncNextOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:
         return operation.async_next_object(self, ctx)
+
+    def iter_with(
+        self, operation: IteratorOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
+        """``iter(obj)`` is the constructor-bound ``__iter__`` data-model method."""
+        del ctx
+        return self.call_method_value(
+            "__iter__",
+            (),
+            owner=operation.owner,
+            blame=operation.blame,
+        )
 
     def next_with(
         self, operation: NextOperation, ctx: FactoryBuildContext | None

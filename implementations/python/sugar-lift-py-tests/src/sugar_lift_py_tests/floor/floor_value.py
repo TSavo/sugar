@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.operations.method_call_operation import (
         MethodCallOperation,
     )
+    from sugar_lift_py_tests.operations.iterator_operation import IteratorOperation
     from sugar_lift_py_tests.operations.next_operation import NextOperation
     from sugar_lift_py_tests.operations.reflected_binary_operator_operation import (
         ReflectedBinaryOperatorOperation,
@@ -421,6 +422,12 @@ class FloorValue:
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "missing_with")
+
+    def iter_with(
+        self, operation: IteratorOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome:
+        del ctx
+        return self._operation_construction_gap(operation, "iter_with")
 
     def next_with(
         self, operation: NextOperation, ctx: FactoryBuildContext | None

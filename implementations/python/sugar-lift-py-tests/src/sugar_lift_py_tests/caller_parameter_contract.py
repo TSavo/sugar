@@ -530,6 +530,30 @@ def project_imatmul(left, right, site):
     return discharge_inplace(left, right, site, surface="@")
 
 
+def project_iter(receiver, site):
+    """``iter(receiver)`` — established ``iter_with`` floor edge.
+
+    Not yet enrolled in ``_NATIVE_OPERATION_PROJECTORS``: production has no
+    carrier mint for ``iter`` until loop/comprehension demand lands. Callers
+    and acceptance tests use this named projector; enrollment joins the
+    production set when the first sugar mints the operator.
+    """
+    from sugar_lift_py_tests.operations.iterator_operation import discharge_iter
+
+    return discharge_iter(receiver, site, owner="project_iter")
+
+
+def project_next(receiver, site):
+    """``next(receiver)`` — established ``next_with`` floor edge.
+
+    Same enrollment deferral as :func:`project_iter`: surface is live; the
+    native-operation table stays closed until a production mint exists.
+    """
+    from sugar_lift_py_tests.operations.next_operation import discharge_next
+
+    return discharge_next(receiver, site, owner="project_next")
+
+
 # Enrolled i* projectors — keys must equal production_augassign_inplace_operators().
 # Selection is operator-owned (BinaryOperator.project_inplace); this table is
 # discharge enrollment only — not a kind ladder.
