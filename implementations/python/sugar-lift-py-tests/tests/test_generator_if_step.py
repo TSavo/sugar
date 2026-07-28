@@ -47,6 +47,7 @@ from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     GeneratorTerminationV1,
     IfStepV1,
+    InertStepV1,
     OpaqueStepV1,
     ReturnStepV1,
     YieldEffect,
@@ -113,12 +114,40 @@ def test_a_branch_step_carries_both_sides_and_its_own_fragment(tmp_path) -> None
     assert not hasattr(step, "partition")
 
 
-def test_an_if_without_a_suspension_is_untouched() -> None:
-    """The discriminating face: this arm must not claim every branch."""
+def test_an_if_without_a_suspension_is_pre_yield_guarded_setup() -> None:
+    """Pre-yield guarded setup (pass / assign) is IfStep when wholly nameable.
+
+    Real managers use ``if cond: x = …`` before yield. Pass-only and assign
+    branches are nameable peers; unhandled kinds (raise, for, x=yield) keep
+    the whole If opaque and loud.
+    """
     steps = _steps("def g(c):\n    if c:\n        pass\n    yield 2\n")
 
-    assert isinstance(steps[0], OpaqueStepV1)
+    assert isinstance(steps[0], IfStepV1)
+    assert isinstance(steps[0].then_steps[0], InertStepV1)
+    assert steps[0].else_steps == ()
     assert isinstance(steps[1], YieldStepV1)
+
+
+def test_pre_yield_if_assign_is_nameable_guarded_setup() -> None:
+    steps = _steps(
+        "def g(c):\n    if c:\n        prior = None\n    yield 1\n"
+    )
+    assert isinstance(steps[0], IfStepV1)
+    from sugar_lift_py_tests.generator_construction import AssignStepV1
+
+    assert isinstance(steps[0].then_steps[0], AssignStepV1)
+    assert steps[0].then_steps[0].name == "prior"
+
+
+def test_pre_yield_if_with_raise_stays_opaque_and_loud() -> None:
+    """Unhandled Raise inside a branch keeps the whole If Opaque (never skip)."""
+    steps = _steps(
+        "def g(c):\n    if c:\n        raise ValueError('boom')\n    yield 1\n"
+    )
+    assert isinstance(steps[0], OpaqueStepV1)
+    assert steps[0].observed == "If"
+    assert steps[0].carries_suspension is False
 
 
 # -- the three transition arms -----------------------------------------------

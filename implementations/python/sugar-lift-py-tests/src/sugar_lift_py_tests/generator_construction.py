@@ -110,9 +110,11 @@ class IfStepV1:
     its own partition. That is the property the key exists for.
 
     Admitted by the producer only when EVERY step in both branches is one the
-    vocabulary can already execute. A branch holding a shape we cannot resume --
-    `x = yield v`, whose resumed value reaches no name -- keeps the whole `If`
-    an `OpaqueStepV1` and loud. Naming a step we cannot resume is worse than an
+    vocabulary can already execute — including pre-yield guarded setup
+    (``if cond: x = …`` before yield) and suspension-owning branches
+    (``if c: yield 1``). A branch holding a shape we cannot resume or perform
+    -- ``x = yield v``, ``raise``, ``for``, etc. -- keeps the whole `If` an
+    `OpaqueStepV1` and loud. Naming a step we cannot perform is worse than an
     honest opaque one.
     """
 
