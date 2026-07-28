@@ -57,12 +57,15 @@ from sugar_lift_py_tests.floor import BlockValue, NoneValue
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
+    ContextManagerResolutionGapV1,
     ImportSignatureV2,
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
     _hash_json,
 )
+from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
@@ -70,6 +73,8 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.tree import SourceFile
 
 # ---------------------------------------------------------------- tree fixture
@@ -184,8 +189,7 @@ def _no_warning_ref(use_site) -> ContextManagerContractRefV1:
 
 
 HEADER = (
-    "from dependency import manager\n"
-    "from pytest import raises as expect_raises\n"
+    "from dependency import manager\n" "from pytest import raises as expect_raises\n"
 )
 
 RESOURCE_FIRST = HEADER + (
@@ -201,9 +205,7 @@ BOUNDARY_FIRST = HEADER + (
 )
 
 RESOURCE_ONLY = HEADER + (
-    "def f():\n"
-    "    with manager():\n"
-    '        raise ValueError("boom")\n'
+    "def f():\n" "    with manager():\n" '        raise ValueError("boom")\n'
 )
 
 NO_WARNING_RESOURCE = (
@@ -214,6 +216,15 @@ NO_WARNING_RESOURCE = (
     '        emit("test", category=warn_category)\n'
 )
 
+PANDAS_TEST_ERRORS_SOURCE_CID = (
+    "blake3-512:e0c0e46661f4028ee20659af69bba7b9f87b047b6b1126491bfd5d5c941119c1"
+    "113df8ed9daeb5413832a45b7434689a4768068013d513dc0f634e683b212a33"
+)
+PANDAS_MANIFEST_CID = (
+    "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda1"
+    "c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
+)
+
 
 def _mixed_sugar(tmp_path, source: str, *, refs):
     """Construct ``f``'s sugar, resolving each With item by ``refs`` position.
@@ -222,7 +233,13 @@ def _mixed_sugar(tmp_path, source: str, *, refs):
     as resource-then-boundary or boundary-then-resource without any manager
     spelling reaching production.
     """
-    path = tmp_path / "mixed.py"
+    source_file = _mixed_source_file(tmp_path, source, refs=refs)
+    return next(source_file.functions()).sugar()
+
+
+def _mixed_source_file(tmp_path, source: str, *, refs):
+    """Build the same native site while retaining its per-item resolution table."""
+    path = tmp_path / "mixed_resolution.py"
     path.write_text(source, encoding="utf-8")
     identity = path_source(str(path))
     probe = SourceFile(identity)
@@ -234,8 +251,7 @@ def _mixed_sugar(tmp_path, source: str, *, refs):
     context = TreeConstructionContextV1(
         ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
     )
-    source_file = SourceFile(identity, construction_context=context)
-    return next(source_file.functions()).sugar()
+    return SourceFile(identity, construction_context=context)
 
 
 def _with_chain(sugar):
@@ -487,14 +503,140 @@ def test_discrimination_the_same_reduction_carries_a_surviving_halt(tmp_path):
 
 def test_discrimination_single_manager_site_builds_one_router(tmp_path):
     """BITE: the two-router count above is caused by the MIX, not by the walk."""
-    chain = _with_chain(
-        _mixed_sugar(tmp_path, RESOURCE_ONLY, refs=(_resource_ref,))
-    )
+    chain = _with_chain(_mixed_sugar(tmp_path, RESOURCE_ONLY, refs=(_resource_ref,)))
     assert len(chain) == 1
     assert isinstance(chain[0], WithResourceSugar)
 
 
 # ------------------ LAW: inverted warning assertion + resource juxtaposition
+
+
+def test_authenticated_pandas_303_site_has_two_independent_manager_items():
+    """The concrete reproducer is the canonical corpus site, not a path guess."""
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
+        "3.0.3",
+        PANDAS_MANIFEST_CID,
+        1421,
+    )
+    path = corpus.root / "tests/test_errors.py"
+    assert blake3_512_of(path.read_bytes()) == PANDAS_TEST_ERRORS_SOURCE_CID
+    tree = open_source_file_for_construction(
+        path,
+        root=corpus.root.parent,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
+    site = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 142
+    )
+
+    assert len(site.items) == 2
+    assert [item.context_expr.kind for item in site.items] == ["Call", "Call"]
+    assert [item.context_expr.func.kind for item in site.items] == [
+        "Attribute",
+        "Attribute",
+    ]
+    assert [
+        (
+            item.context_expr.line_col_span().start_line,
+            item.context_expr.line_col_span().start_col,
+            item.context_expr.line_col_span().end_col,
+        )
+        for item in site.items
+    ] == [(142, 9, 41), (142, 43, 68)]
+
+
+def test_mixed_site_reads_one_resolution_per_item_coordinate(tmp_path):
+    """Truthful twin: later resource testimony cannot inherit item zero's law."""
+    source_file = _mixed_source_file(
+        tmp_path,
+        NO_WARNING_RESOURCE,
+        refs=(_no_warning_ref, _resource_ref),
+    )
+    site = next(node for node in source_file.nodes() if node.kind == "With")
+    resolutions = [site._prebound_manager_resolution(item) for item in site.items]
+
+    assert len(resolutions) == 2
+    assert isinstance(resolutions[0], ContextManagerContractRefV1)
+    assert isinstance(resolutions[0].semantics, EffectBoundarySemanticsV1)
+    assert isinstance(resolutions[0].semantics.effect_kind, WarningEffectKindV1)
+    assert isinstance(resolutions[1], ContextManagerContractRefV1)
+    assert isinstance(resolutions[1].semantics, ProtocolResourceSemanticsV1)
+
+
+def test_later_incompatible_resolution_is_not_painted_from_item_zero(tmp_path):
+    """Load-bearing lying twin: first-item painting fails this exact assertion."""
+    source_file = _mixed_source_file(
+        tmp_path,
+        NO_WARNING_RESOURCE,
+        refs=(_no_warning_ref, _resource_ref),
+    )
+    site = next(node for node in source_file.nodes() if node.kind == "With")
+    first = site._require_narrow_cm_ref(site.items[0])
+    later = site._require_narrow_cm_ref(site.items[1])
+
+    assert isinstance(first.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(first.semantics.effect_kind, WarningEffectKindV1)
+    assert isinstance(later.semantics, ProtocolResourceSemanticsV1)
+    assert type(first.semantics) is not type(later.semantics)
+    outer, inner = _with_chain(next(source_file.functions()).sugar())
+    assert isinstance(outer, WithEffectBoundarySugar)
+    assert isinstance(inner, WithResourceSugar)
+
+
+def test_undecided_later_item_stays_named_and_does_not_contaminate_sibling(
+    tmp_path,
+):
+    """UNDECIDED is typed testimony at item one, never False or item zero's ref."""
+
+    def undecided(use_site):
+        return ContextManagerResolutionGapV1(
+            demand_cid=_cid("d"),
+            use_site=use_site,
+            target_symbol=None,
+            kind="runtime-selected",
+            candidate_member_cids=(),
+            detail="later manager remains source-undecided",
+        )
+
+    source_file = _mixed_source_file(
+        tmp_path,
+        NO_WARNING_RESOURCE,
+        refs=(_no_warning_ref, undecided),
+    )
+    site = next(node for node in source_file.nodes() if node.kind == "With")
+    first = site._prebound_manager_resolution(site.items[0])
+    later = site._prebound_manager_resolution(site.items[1])
+
+    assert isinstance(first, ContextManagerContractRefV1)
+    assert isinstance(first.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(first.semantics.effect_kind, WarningEffectKindV1)
+    assert isinstance(later, ContextManagerResolutionGapV1)
+    assert later.kind == "runtime-selected"
+    assert later.detail == "later manager remains source-undecided"
+    assert later.use_site == _coordinate(site.items[1].context_expr)
+    assert later.use_site != first.use_site
+
+    with pytest.raises(ContextManagerResolutionConstructionGap) as caught:
+        next(source_file.functions()).sugar()
+    assert caught.value.kind == "runtime-selected"
+    assert caught.value.coordinate == later.use_site
+
+
+def test_each_mixed_item_keeps_its_own_runtime_outcome(tmp_path):
+    """The inner resource completes while the outer no-warning contract fails."""
+    warning = WarningObservationValue(WarningEffect("computed-warning"))
+    outer, inner = _mixed_no_warning_sugar(tmp_path, entries=(warning,))
+
+    inner_outcome = inner.desugar()
+    outer_outcome = outer.desugar()
+    assert isinstance(inner_outcome, Complete)
+    assert len(outer_outcome.exits) == 1
+    assert isinstance(outer_outcome.exits[0], Halted)
+    assert isinstance(outer_outcome.exits[0].effect, ExpectationNotMetEffect)
 
 
 def test_no_warning_resource_site_retains_both_routers_in_source_order(tmp_path):
