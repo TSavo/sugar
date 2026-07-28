@@ -839,6 +839,26 @@ def _lexical_revalidation_snapshot(
     return snapshot
 
 
+def _paired_source_cid(source: str, claimed_source_cid: str) -> str:
+    """Content-address of the retained source string (path_source law).
+
+    Import-use receipts pin ``source`` + ``source_cid`` together. A dual-door
+    mint — ``read_text()`` for the string and ``blake3(read_bytes())`` for the
+    CID — goes stale under CRLF/universal-newlines translation: the retained
+    source no longer recomputes to the claimed CID, and
+    ``AuthenticatedImportUseV1`` refuses before any nested producer can run.
+
+    The oracle door is one line: CID = blake3(source.encode("utf-8")). When the
+    claim disagrees, repair the pair from the retained source text. This is not
+    a consumer recompute and not a disk re-read — it restores the only identity
+    the lexical pass can honestly authenticate (the text it was given).
+    """
+    expected = blake3_512_of(source.encode("utf-8"))
+    if claimed_source_cid != expected:
+        return expected
+    return claimed_source_cid
+
+
 def authenticated_import_uses(
     root: Path,
     path: Path,
@@ -846,6 +866,7 @@ def authenticated_import_uses(
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
+    source_cid = _paired_source_cid(source, source_cid)
     module = SourceFile((source, str(path), source_cid)).root
     module_name = module_name_for_path(root, path)
     identities = module_identities or {}
@@ -903,6 +924,9 @@ def authenticated_import_use_receipts(
     module_identities: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
     """Return typed, final-checked receipts from the sole lexical pass."""
+    # Pair before the pass so use-site / demand preimages embed the same CID
+    # AuthenticatedImportUseV1 will require of the retained source.
+    source_cid = _paired_source_cid(source, source_cid)
     rows, outcomes = authenticated_import_uses(
         root, path, source, source_cid, module_identities=module_identities
     )
