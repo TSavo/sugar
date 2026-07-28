@@ -79,6 +79,7 @@ class BodyAttribution:
     family: ProducerFamily | str
     outcome: AttributionOutcome
     detail: str
+    exceptional_exit_coordinates: tuple[tuple[object | None, object | None], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,12 @@ class AttributionDiscrepancy:
     body_id: str
     family: ProducerFamily | str
     detail: str
+
+
+@dataclass(frozen=True)
+class ExceptionalExitIdentityDiscrepancy:
+    body_id: str
+    missing: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,14 @@ class FamilyAttribution:
         """Only the hard construction-panic axis is a harness failure."""
         return self.construction_panics
 
+    @property
+    def outcome_total(self) -> int:
+        return (
+            self.authenticated_exceptional_exits
+            + self.named_refusals
+            + self.construction_panics
+        )
+
 
 @dataclass(frozen=True)
 class AttributionOutcomeSummary:
@@ -114,6 +129,9 @@ class AttributionOutcomeSummary:
 class AttributionReport:
     bodies: tuple[BodyAttribution, ...]
     discrepancies: tuple[AttributionDiscrepancy, ...]
+    exceptional_exit_identity_discrepancies: tuple[
+        ExceptionalExitIdentityDiscrepancy, ...
+    ]
     by_family: Mapping[ProducerFamily, FamilyAttribution]
 
     def rows(self) -> tuple[FamilyAttribution, ...]:
@@ -134,7 +152,11 @@ class AttributionReport:
 
     @property
     def loud_failure_count(self) -> int:
-        return self.construction_panic_count + len(self.discrepancies)
+        return (
+            self.construction_panic_count
+            + len(self.discrepancies)
+            + len(self.exceptional_exit_identity_discrepancies)
+        )
 
     def render(self) -> str:
         lines = []
@@ -150,8 +172,25 @@ class AttributionReport:
                     )
                 )
             )
+            if row.outcome_total != row.enrolled:
+                lines.append(
+                    "FAMILY OUTCOME DISCREPANCY "
+                    f"family={row.family.value} enrolled={row.enrolled} "
+                    f"threeOutcomeTotal={row.outcome_total} "
+                    f"unaccounted={row.enrolled - row.outcome_total}"
+                )
         for body in self.bodies:
-            if body.outcome is AttributionOutcome.NAMED_REFUSAL:
+            if body.outcome is AttributionOutcome.AUTHENTICATED_EXIT:
+                for (
+                    exception_type_coordinate,
+                    raise_occurrence,
+                ) in body.exceptional_exit_coordinates:
+                    lines.append(
+                        f"authenticatedExceptionalExit body={body.body_id} "
+                        f"exceptionTypeCoordinate={exception_type_coordinate!r} "
+                        f"raiseOccurrence={raise_occurrence}"
+                    )
+            elif body.outcome is AttributionOutcome.NAMED_REFUSAL:
                 lines.append(
                     f"namedRefusal body={body.body_id} coordinate={body.detail}"
                 )
@@ -161,6 +200,11 @@ class AttributionReport:
                     f"node={getattr(body.family, 'value', body.family)} "
                     f"owner={body.detail}"
                 )
+        for discrepancy in self.exceptional_exit_identity_discrepancies:
+            lines.append(
+                f"NAMELESS HALTED FACE body={discrepancy.body_id} "
+                f"missing={','.join(discrepancy.missing)}"
+            )
         for discrepancy in self.discrepancies:
             lines.append(
                 f"unaccounted body={discrepancy.body_id} "
@@ -239,6 +283,10 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             probe.family,
             AttributionOutcome.AUTHENTICATED_EXIT,
             detail,
+            tuple(
+                (effect.exception_type_coordinate, effect.occurrence_id)
+                for effect in exceptional_effects
+            ),
         )
     raise AttributionInvariantError(
         f"{probe.body_id} "
@@ -272,9 +320,27 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
     materialized = tuple(probes)
     bodies = []
     discrepancies = []
+    identity_discrepancies = []
     for probe in materialized:
         try:
-            bodies.append(attribute_body_probe(probe))
+            body = attribute_body_probe(probe)
+            bodies.append(body)
+            for (
+                exception_type_coordinate,
+                raise_occurrence,
+            ) in body.exceptional_exit_coordinates:
+                missing = tuple(
+                    name
+                    for name, coordinate in (
+                        ("exceptionTypeCoordinate", exception_type_coordinate),
+                        ("raiseOccurrence", raise_occurrence),
+                    )
+                    if coordinate is None
+                )
+                if missing:
+                    identity_discrepancies.append(
+                        ExceptionalExitIdentityDiscrepancy(body.body_id, missing)
+                    )
         except AttributionInvariantError as error:
             discrepancies.append(
                 AttributionDiscrepancy(probe.body_id, probe.family, str(error))
@@ -301,6 +367,7 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
     return AttributionReport(
         bodies=attributed,
         discrepancies=tuple(discrepancies),
+        exceptional_exit_identity_discrepancies=tuple(identity_discrepancies),
         by_family=rows,
     )
 
