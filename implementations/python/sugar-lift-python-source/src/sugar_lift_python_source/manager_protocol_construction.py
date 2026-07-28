@@ -413,6 +413,34 @@ class ManagerProtocolConstructionGapV1:
 
 
 @dataclass(frozen=True)
+class EnteredGeneratorManagerStateV1:
+    """Exact generator suspension after authenticated enter (first yield).
+
+    Carries the yielded resource value and the suspended machine. Exit must
+    resume/throw this machine — never a re-allocated twin. Bound to the
+    protocol construction CID so a wrong-face resume refuses.
+    """
+
+    enter_value: object
+    machine: object = field(compare=False, repr=False)
+    protocol_construction_cid: str
+    entry_cid: str
+
+    def __post_init__(self) -> None:
+        if not self.protocol_construction_cid.startswith("blake3-512:"):
+            raise ValueError(
+                "entered generator state requires protocol construction CID"
+            )
+        if not self.entry_cid.startswith("blake3-512:"):
+            raise ValueError("entered generator state requires entry CID")
+        suspended = getattr(self.machine, "suspended_resume_coordinate", None)
+        if suspended is None:
+            raise ValueError(
+                "entered generator state requires a machine suspended at yield"
+            )
+
+
+@dataclass(frozen=True)
 class GeneratorBackedManagerProtocolV1:
     """Closed protocol testimony for authenticated generator managers.
 
@@ -421,6 +449,11 @@ class GeneratorBackedManagerProtocolV1:
     authenticated method spans of the decorator helper's returned class.
     This is not an ObjectValue receiver and cannot be minted from coordinates
     alone or from a non-generator frame.
+
+    Lifecycle performance: :meth:`enter_resource_outcome` runs the generator
+    to its first yield and returns the resource with exact machine state;
+    :meth:`exit_outcome_for` resumes/throws that state once and exposes
+    authenticated suppression testimony.
     """
 
     protocol_construction_cid: str
@@ -461,6 +494,247 @@ class GeneratorBackedManagerProtocolV1:
             raise ValueError(
                 "generator-backed protocol CID does not match its preimage"
             )
+        # One-shot exit log + enter ordinal for this protocol instance.
+        object.__setattr__(self, "_exited_entry_cids", set())
+        object.__setattr__(self, "_enter_ordinal", 0)
+
+    def enter_resource_outcome(self, ctx: object = None):
+        """Enter the authenticated generator lifecycle; return yield + machine."""
+        return enter_generator_resource_outcome(self, ctx=ctx)
+
+    def exit_outcome_for(self, entered, ctx: object = None):
+        """Resume/throw the exact entered machine once; expose suppression."""
+        return exit_generator_resource_outcome_for(self, entered, ctx=ctx)
+
+
+def enter_generator_resource_outcome(protocol, *, ctx: object = None):
+    """Allocate and resume the generator frame to its first yield.
+
+    Shared by :class:`GeneratorBackedManagerProtocolV1` and lifecycle wrappers
+    that duck-type the same fields. Returns ``Complete(EnteredGeneratorManagerStateV1)``
+    on yield; typed-loud refusal when the machine cannot enter.
+    """
+    del ctx
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorConstructionV1,
+        GeneratorTerminationV1,
+        GeneratorTransitionGapV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
+
+    frame = protocol.generator_frame
+    steps = getattr(frame, "generator_steps", None)
+    if steps is None:
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+            observed="non-generator frame",
+            requested="authenticated generator_steps on the protocol frame",
+            fix="publish a generator-backed protocol or keep enter loud",
+        )
+    bindings = tuple(getattr(frame, "runtime_entries", ()) or ())
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate=protocol.protocol_construction_cid,
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=bindings,
+        steps=steps,
+    )
+    result = machine.resume()
+    if isinstance(result, YieldEffect):
+        enter_value = _floor_enter_value(result.value)
+        # Per-protocol enter ordinal distinguishes successive enters that
+        # content-address to the same machine suspension (double-exit is
+        # per entry, not per content twin).
+        ordinal = int(getattr(protocol, "_enter_ordinal", 0))
+        object.__setattr__(protocol, "_enter_ordinal", ordinal + 1)
+        entry_cid = cid_of_json(
+            {
+                "kind": "generator-resource-entry",
+                "schemaVersion": "1",
+                "protocolConstructionCid": protocol.protocol_construction_cid,
+                "instanceCoordinate": result.machine.instance_coordinate,
+                "resumeCoordinate": result.resume_coordinate,
+                "cursor": result.machine.cursor,
+                "enterOrdinal": ordinal,
+            }
+        )
+        entered = EnteredGeneratorManagerStateV1(
+            enter_value=enter_value,
+            machine=result.machine,
+            protocol_construction_cid=protocol.protocol_construction_cid,
+            entry_cid=entry_cid,
+        )
+        return Complete(entered)
+    if isinstance(result, GeneratorTerminationV1):
+        # Never-yield enter: Python's manager protocol raises at entry.
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        refusal = observed_entry_refusal()
+        blame = str(machine.instance_coordinate)
+        return Incomplete(
+            RaiseEffect(
+                exception_name=refusal.exception_name,
+                blame=blame,
+                occurrence=f"generator-entry-refusal:{blame}",
+                raised_value=refusal.message,
+            )
+        )
+    if isinstance(result, GeneratorTransitionGapV1):
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+            observed=result.observed,
+            requested="first yield of the authenticated generator lifecycle",
+            fix="construct the transition or retain this typed loud boundary",
+        )
+    raise SugarNotWritten(
+        blame=protocol.exit_face_id,
+        owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+        observed=type(result).__name__,
+        requested="YieldEffect from GeneratorConstructionV1.resume",
+        fix="construct the enter transition or keep enter loud",
+    )
+
+
+def exit_generator_resource_outcome_for(protocol, entered, *, ctx: object = None):
+    """Resume/throw the exact entered machine once; return suppression testimony.
+
+    - Wrong protocol / wrong face → refuse.
+    - Double exit of the same entry → refuse.
+    - Suppression is only the authenticated exit outcome (BlockValue return),
+      never a fabricated constant.
+    """
+    del ctx
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorTerminationV1,
+        GeneratorTransitionGapV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if not isinstance(entered, EnteredGeneratorManagerStateV1):
+        raise TypeError(
+            "GeneratorBackedManagerProtocolV1.exit_outcome_for requires "
+            f"EnteredGeneratorManagerStateV1, not {type(entered).__name__}"
+        )
+    if entered.protocol_construction_cid != protocol.protocol_construction_cid:
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed="entered state protocol construction CID mismatch",
+            requested="exit of the same protocol that performed enter",
+            fix="do not resume a foreign entered generator face",
+        )
+    exited = getattr(protocol, "_exited_entry_cids", None)
+    if exited is None:
+        object.__setattr__(protocol, "_exited_entry_cids", set())
+        exited = protocol._exited_entry_cids
+    if entered.entry_cid in exited:
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed="double exit of the same entered generator state",
+            requested="at most one exit_outcome_for per enter_resource_outcome",
+            fix="consume the entered state once; do not re-exit the same entry",
+        )
+    machine = entered.machine
+    if getattr(machine, "suspended_resume_coordinate", None) is None:
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed="entered machine is not suspended at yield",
+            requested="exact post-enter suspension from enter_resource_outcome",
+            fix="pass the EnteredGeneratorManagerStateV1 from enter without reallocation",
+        )
+    exited.add(entered.entry_cid)
+    # Normal body completion path: resume the suspended machine (send None).
+    # Body-raise paths are combined by the consumer via and_exit / throw on
+    # the machine; this method exposes the authenticated exit outcome for the
+    # resume/close face. Suppression is the returned FloorValue only.
+    after = machine.resume()
+    if isinstance(after, ExitSet):
+        return after
+    if isinstance(after, YieldEffect):
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed="generator yielded during exit",
+            requested="GeneratorTerminationV1 after the resource body",
+            fix="construct single-yield generator managers or keep exit loud",
+        )
+    if isinstance(after, GeneratorTransitionGapV1):
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed=after.observed,
+            requested="authenticated generator exit transition",
+            fix="construct the exit transition or retain this typed loud boundary",
+        )
+    if not isinstance(after, GeneratorTerminationV1):
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.exit_outcome_for",
+            observed=type(after).__name__,
+            requested="GeneratorTerminationV1 from post-yield resume",
+            fix="construct the exit transition or keep exit loud",
+        )
+    # Authenticated suppression: generator CM exit is falsy unless the
+    # machine returns an explicit truthy residual (none for ordinary GCM).
+    # Never invent True — only the termination's return_value may speak.
+    return Complete(_suppression_block(after.return_value))
+
+
+def _floor_enter_value(value: object):
+    """Project a yield payload into FloorValue currency when needed."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+    if isinstance(value, FloorValue):
+        return value
+    if isinstance(value, Sugar):
+        outcome = value.desugar()
+        if isinstance(outcome, Complete):
+            return _floor_enter_value(outcome.value)
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame="generator-enter-yield",
+            owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+            observed=type(outcome).__name__,
+            requested="Complete FloorValue from yielded sugar",
+            fix="construct the yield value or keep enter loud",
+        )
+    if value is None:
+        from sugar_lift_py_tests.floor import NoneValue
+
+        return NoneValue()
+    if isinstance(value, (int, float, str, bool)):
+        return TermValue(value)
+    return TermValue(value)
+
+
+def _suppression_block(return_value: object):
+    """BlockValue carrying the authenticated exit return for suppression truth."""
+    from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    if return_value is None:
+        # contextlib generator __exit__ returns False on normal StopIteration.
+        value: object = TermValue(False)
+    elif isinstance(return_value, FloorValue):
+        value = return_value
+    elif isinstance(return_value, bool):
+        value = TermValue(return_value)
+    else:
+        value = _floor_enter_value(return_value)
+    return BlockValue((ReturnValue(value),), can_fall_through=False)
 
 
 def construct_generator_backed_protocol(

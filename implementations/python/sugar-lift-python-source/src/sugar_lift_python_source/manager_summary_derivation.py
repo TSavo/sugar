@@ -280,6 +280,21 @@ class GeneratorBackedLifecycleProtocolV1:
         if self.lifecycle_cid and self.lifecycle_cid != expected:
             raise ValueError("generator lifecycle CID does not match its preimage")
         object.__setattr__(self, "lifecycle_cid", expected)
+        # One-shot exit log + enter ordinal (shared lifecycle performance law).
+        object.__setattr__(self, "_exited_entry_cids", set())
+        object.__setattr__(self, "_enter_ordinal", 0)
+
+    def enter_resource_outcome(self, ctx: object = None):
+        """Enter via the shared generator lifecycle producer (no name arms)."""
+        from .manager_protocol_construction import enter_generator_resource_outcome
+
+        return enter_generator_resource_outcome(self, ctx=ctx)
+
+    def exit_outcome_for(self, entered, ctx: object = None):
+        """Exit via the shared generator lifecycle producer (one-shot)."""
+        from .manager_protocol_construction import exit_generator_resource_outcome_for
+
+        return exit_generator_resource_outcome_for(self, entered, ctx=ctx)
 
     @property
     def lifecycle_preimage(self) -> dict:
