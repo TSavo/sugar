@@ -80,11 +80,36 @@ class DerivedManagerSummaryGapV1:
     detail: str
 
 
+@dataclass(frozen=True)
+class FactoredEffectBoundarySummaryV1:
+    """Both message-pattern edges under their face guards.
+
+    Undecided ``match`` stays partitioned:
+
+    - ``match=None`` face → ``NoMessagePatternV1``
+    - ``match=pattern`` face → pattern obligation
+
+    as guarded alternatives. Faces are never recombined into one
+    ``message_pattern_operand`` and never collapsed into a uniform sealed
+    summary CID.
+    """
+
+    protocol_construction_cid: str
+    enter_testimony_cid: str
+    exit_testimony_cid: str
+    boundary_faces: object
+    import_signature: ImportSignatureV2
+
+
 def derive_manager_summary(
     protocol: ConstructedManagerProtocolV1,
     *,
     behavior=None,
-) -> DerivedManagerSummaryV1 | DerivedManagerSummaryGapV1:
+) -> (
+    DerivedManagerSummaryV1
+    | DerivedManagerSummaryGapV1
+    | FactoredEffectBoundarySummaryV1
+):
     """Derive only the theorem directly present in constructed outcomes.
 
     This first arm proves ``NeverSuppresses`` iff every enter face completes
@@ -92,6 +117,7 @@ def derive_manager_summary(
     Symbolic truthiness remains loud; it is never interpreted by target name.
     """
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.outcome import ExitSet
 
     from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
 
@@ -128,6 +154,8 @@ def derive_manager_summary(
         )
         if isinstance(soft, DerivedManagerSummaryGapV1):
             return soft
+        if isinstance(soft, ExitSet):
+            return _factored_effect_boundary_summary(protocol, soft, behavior)
         if soft is not None:
             signature = _signature_for_behavior(behavior, soft)
             return _sealed_summary(protocol, soft, signature)
@@ -145,6 +173,8 @@ def derive_manager_summary(
         )
         if isinstance(soft, DerivedManagerSummaryGapV1):
             return soft
+        if isinstance(soft, ExitSet):
+            return _factored_effect_boundary_summary(protocol, soft, behavior)
         if soft is not None:
             signature = _signature_for_behavior(behavior, soft)
             return _sealed_summary(protocol, soft, signature)
@@ -198,13 +228,31 @@ def _sealed_summary(protocol, semantics, signature):
     )
 
 
+def _factored_effect_boundary_summary(protocol, boundary_faces, behavior):
+    """Keep both message-pattern edges; do not seal a uniform summary."""
+    signature = _signature_for_factored_boundaries(behavior, boundary_faces)
+    return FactoredEffectBoundarySummaryV1(
+        protocol.protocol_construction_cid,
+        protocol.enter_frame_cid,
+        protocol.exit_frame_cid,
+        boundary_faces,
+        signature,
+    )
+
+
 def _construct_message_pattern_operand(
     projected_match,
     *,
     site,
     construct_message_obligation,
 ):
-    """Construct the message obligation on the source-authorized match face."""
+    """Construct the message obligation on the source-authorized match face.
+
+    ``match=None`` constructs ``NoMessagePatternV1`` without reading
+    ``.pattern``. Non-None faces project ``.pattern`` then construct the
+    regex obligation. Multi-face projections stay partitioned: each face
+    keeps its own answer under its own guard.
+    """
     from sugar_lift_py_tests.floor import NoneValue
 
     return projected_match.and_then(
@@ -221,7 +269,7 @@ def _construct_message_pattern_operand(
 def _project_receiver_match(receiver, *, site):
     """Project only source-written receiver faces that carry ``match``."""
     from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.outcome import ExitSet
 
     if isinstance(receiver, ObjectValue):
         if not any(field.name == "match" for field in receiver.fields):
@@ -243,23 +291,33 @@ def _project_receiver_match(receiver, *, site):
     return ExitSet(tuple(projected)) if projected else None
 
 
-def _uniform_message_operand_or_gap(
-    projected_operand,
-    *,
-    protocol_construction_cid,
-    coordinate,
-):
-    """Collapse identical message faces or return one located summary gap."""
-    projected_faces = outcome_to_exitset(projected_operand).exits
-    if projected_faces and all(
-        isinstance(face, Completed) and face.value == projected_faces[0].value
-        for face in projected_faces
-    ):
-        return projected_faces[0].value
-    return DerivedManagerSummaryGapV1(
-        "exit-may-halt",
-        protocol_construction_cid,
-        f"non-uniform-message-pattern-faces:{coordinate.cid}",
+def _message_pattern_operand_faces(projected_operand):
+    """Uniform faces collapse; non-uniform faces stay as both ExitSet edges.
+
+    Identical completed answers may share one operand. Distinct answers —
+    ``NoMessagePatternV1`` vs a pattern obligation — remain guarded
+    alternatives. There is no gap and no silent pick-one summary.
+    """
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    projected = outcome_to_exitset(projected_operand)
+    completed = tuple(
+        face for face in projected.exits if isinstance(face, Completed)
+    )
+    if not completed:
+        return None
+    if all(face.value == completed[0].value for face in completed):
+        return completed[0].value
+    return ExitSet(completed)
+
+
+def _effect_boundary_for_message_operand(expected_index, message_operand):
+    return EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(expected_index),
+        message_operand,
+        ExceptionInfoBindingV1(),
     )
 
 
@@ -279,7 +337,14 @@ def _soft_effect_boundary_from_exception_formals(
     ``EffectBoundarySemanticsV1(ExpectsModeV1, …)`` dual-mode factories seal
     when their simpler exit bodies construct — without inventing a suppression
     predicate or message pattern the formals do not state.
+
+    When receiver ``match`` faces disagree (None vs pattern), both EffectBoundary
+    edges are emitted under their face guards. They are never recombined into
+    one operand and never collapsed into a uniform sealed summary.
     """
+    del protocol_construction_cid  # reserved for gap location; non-uniform is not a gap
+    from sugar_lift_py_tests.outcome import ExitSet
+
     if behavior is None:
         return None
     actuals = tuple(getattr(behavior, "formal_actual_values", ()) or ())
@@ -315,20 +380,42 @@ def _soft_effect_boundary_from_exception_formals(
             site=site,
             construct_message_obligation=lambda _pattern: Complete(message_operand),
         )
-        message_operand = _uniform_message_operand_or_gap(
-            projected_operand,
-            protocol_construction_cid=protocol_construction_cid,
-            coordinate=site,
-        )
-        if isinstance(message_operand, DerivedManagerSummaryGapV1):
-            return message_operand
-    return EffectBoundarySemanticsV1(
-        ExpectsModeV1(),
-        RaiseEffectKindV1(),
-        FormalArgumentProjectionV1(expected_index),
-        message_operand,
-        ExceptionInfoBindingV1(),
-    )
+        resolved = _message_pattern_operand_faces(projected_operand)
+        if resolved is None:
+            return None
+        if isinstance(resolved, ExitSet):
+            return ExitSet(
+                tuple(
+                    Completed(
+                        face.guard,
+                        _effect_boundary_for_message_operand(
+                            expected_index, face.value
+                        ),
+                        faces=face.faces,
+                        pending_contracts=face.pending_contracts,
+                    )
+                    for face in resolved.exits
+                    if isinstance(face, Completed)
+                )
+            )
+        message_operand = resolved
+    return _effect_boundary_for_message_operand(expected_index, message_operand)
+
+
+def _signature_for_factored_boundaries(behavior, boundary_faces):
+    """Signature for factored edges: include the message formal if any face needs it."""
+    representative = None
+    for face in boundary_faces.exits:
+        if not isinstance(face, Completed):
+            continue
+        semantics = face.value
+        if not isinstance(semantics, EffectBoundarySemanticsV1):
+            continue
+        if not isinstance(semantics.message_pattern_operand, NoMessagePatternV1):
+            return _signature_for_behavior(behavior, semantics)
+        if representative is None:
+            representative = semantics
+    return _signature_for_behavior(behavior, representative)
 
 
 def _derive_effect_boundary(exit_set, protocol, behavior):
