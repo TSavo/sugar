@@ -56,16 +56,18 @@ class RaiseSugar(Sugar):
         blame = f"{self.site.filename}:{self.site.line}:{self.site.col}"
 
         if self.exception is None:
+            # Bare re-raise: re-emit the authenticated in-flight effect. No new
+            # occurrence is minted — identity is the handler-routed RaiseEffect.
             if self.in_flight_slot is None:
                 from sugar_source_tree.panic import SugarNotWritten
 
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="RaiseSugar.desugar",
-                observed="bare raise lacks an authenticated in-flight effect slot",
-                requested="the enclosing handler's effect-slot coordinate",
-                fix="keep unowned bare raise loud",
-            )
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="RaiseSugar.desugar",
+                    observed="bare raise lacks an authenticated in-flight effect slot",
+                    requested="the enclosing handler's effect-slot coordinate",
+                    fix="keep unowned bare raise loud",
+                )
             from sugar_lift_py_tests.in_flight_effect import (
                 resolve_in_flight_effect,
             )
