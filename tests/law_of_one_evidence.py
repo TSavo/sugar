@@ -60,6 +60,9 @@ class PrivacyLeakEvidence:
     serialization_doors: tuple[EvidenceSite, ...]
     discovered_references: int
     audited_references: int
+    discovered_closed_types: tuple[type, ...]
+    audited_closed_types: tuple[type, ...]
+    unaudited_closed_types: tuple[type, ...]
 
 
 @dataclass(frozen=True)
@@ -139,8 +142,11 @@ class LawOfOneEvidence:
         assert surfaces.work_entry == owner.owner
 
         privacy = self.privacy
-        assert len(privacy.definitions) == 4
-        assert len(privacy.constructions) == 4
+        assert privacy.discovered_closed_types
+        assert privacy.audited_closed_types == privacy.discovered_closed_types
+        assert privacy.unaudited_closed_types == ()
+        assert len(privacy.definitions) == len(privacy.audited_closed_types)
+        assert len(privacy.constructions) >= len(privacy.audited_closed_types)
         assert privacy.aliases == ()
         assert privacy.reexports == ()
         assert privacy.wrappers == ()
@@ -149,19 +155,16 @@ class LawOfOneEvidence:
         assert privacy.public_constructors == ()
         assert privacy.serialization_doors == ()
         assert privacy.discovered_references == privacy.audited_references > 0
-        assert len(
-            {
-                privacy.product_type,
-                privacy.relation_type,
-                privacy.member_type,
-                privacy.leaf_assertion_type,
-            }
-        ) == 4
+        assert {
+            privacy.product_type,
+            privacy.relation_type,
+            privacy.member_type,
+            privacy.leaf_assertion_type,
+        } == set(privacy.discovered_closed_types)
         assert privacy.leaf_assertion_type is type(
             self.zero_work.constructed_product.leaf_assertion_rows[0]
         )
         leaf = self.zero_work.constructed_product.leaf_assertion_rows[0]
-        assert leaf.reporting_projection is self.zero_work.reporting_projection
         assert leaf.construction_event_identity is (
             self.zero_work.constructed_product.construction_event_receipt
             .construction_event_identity

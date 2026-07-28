@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections import Counter, defaultdict
+from dataclasses import fields, is_dataclass
 import inspect
 from pathlib import Path
 from typing import Callable
@@ -507,13 +508,27 @@ def audit_law_of_one(
     assert dict(truthful_protocol)["seal"] > 0
     assert dict(foreign_protocol)["seal"] > 0
 
+    discovered_closed_type_set = {product_type}
+    assert is_dataclass(product), "constructed product must expose closed fields"
+    for field in fields(product):
+        value = getattr(product, field.name)
+        if not isinstance(value, tuple):
+            continue
+        for item in value:
+            item_type = type(item)
+            if item_type.__module__ == product_type.__module__:
+                discovered_closed_type_set.add(item_type)
+    discovered_closed_types = tuple(
+        sorted(
+            discovered_closed_type_set,
+            key=lambda runtime_type: (
+                runtime_type.__module__, runtime_type.__qualname__
+            ),
+        )
+    )
+
     type_locations = {}
-    for runtime_type in (
-        product_type,
-        relation_type,
-        member_type,
-        leaf_assertion_type,
-    ):
+    for runtime_type in discovered_closed_types:
         type_locations[runtime_type] = (
             Path(inspect.getsourcefile(runtime_type) or "").resolve(),
             inspect.getsourcelines(runtime_type)[1],
@@ -535,6 +550,11 @@ def audit_law_of_one(
     definitions.extend(EvidenceSite(s.path, s.line, s.lexical, s.name) for s in opaque_symbols)
     opaque_edges = [edge for edge in graph.calls if set(edge.targets) & opaque_symbols]
     constructions.extend(EvidenceSite(e.path, e.line, e.caller.lexical, e.caller.name) for e in opaque_edges)
+    function_owners = {
+        binding.owner
+        for binding in graph.bindings
+        if binding.kind in {"parameter", "classmethod"}
+    }
     for binding in graph.bindings:
         if not (set(binding.targets) & opaque_symbols):
             continue
@@ -545,7 +565,7 @@ def audit_law_of_one(
             aliases.append(site)
         elif binding.kind == "reexport":
             reexports.append(site)
-        if "cache" in binding.name.lower():
+        if binding.kind == "alias" and binding.owner not in function_owners:
             caches.append(site)
     for symbol in opaque_symbols:
         if not symbol.name.startswith("_"):
@@ -600,6 +620,34 @@ def audit_law_of_one(
             or (isinstance(node, ast.Attribute) and node.attr in opaque_names)
         )
     ) + len(opaque_symbols)
+    audited_closed_types = tuple(
+        runtime_type
+        for runtime_type in discovered_closed_types
+        if len(
+            {
+                symbol
+                for symbol in opaque_symbols
+                if symbol.path.resolve() == type_locations[runtime_type][0]
+                and symbol.line == type_locations[runtime_type][1]
+            }
+        ) == 1
+        and any(
+            target.path.resolve() == type_locations[runtime_type][0]
+            and target.line == type_locations[runtime_type][1]
+            for edge in opaque_edges
+            for target in edge.targets
+        )
+    )
+    unaudited_closed_types = tuple(
+        runtime_type
+        for runtime_type in discovered_closed_types
+        if runtime_type not in audited_closed_types
+    )
+    errors.extend(
+        "unresolved closed runtime type: "
+        f"{runtime_type.__module__}.{runtime_type.__qualname__}"
+        for runtime_type in unaudited_closed_types
+    )
 
     work.clear()
     before_events = tuple(reporter.events)
@@ -655,6 +703,8 @@ def audit_law_of_one(
             tuple(wrappers), tuple(caches), tuple(second_product_doors),
             tuple(public), tuple(serializers),
             discovered_opaque_reference_count, audited_opaque_reference_count,
+            discovered_closed_types, audited_closed_types,
+            unaudited_closed_types,
         ),
         projection=ProjectionClosureEvidence(
             definition=projection_def,
