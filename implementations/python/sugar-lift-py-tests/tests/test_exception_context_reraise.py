@@ -292,10 +292,10 @@ def test_terminal_finally_raise_supersedes_incoming_body_exit():
 
 
 def test_terminal_finally_raise_retains_truthful_body_context():
-    """Finally raise should retain body First as authenticated context.
+    """Finally raise supersedes body while retaining First as context_effect.
 
-    Banks red if TrySugar finally reduces without binding the pre-finally halt
-    as in-flight context (shared finally algebra, not ExitSet).
+    TrySugar finally composition attaches the pre-finally RaiseEffect as
+    authenticated implicit context on the cleanup raise (not ExitSet).
     """
     source = (
         "def f():\n"
@@ -306,19 +306,6 @@ def test_terminal_finally_raise_retains_truthful_body_context():
     )
     effect = _halt_effect(_desugar(source, name="fin_ctx.py"))
     assert effect.exception_name == "RuntimeError"
-    if effect.context_effect is None:
-        pytest.fail(
-            "MISSING PRODUCER (TrySugar finally / in-flight context):\n"
-            "  observed: terminal finally raise has context_effect=None\n"
-            "  expected: RuntimeError primary with authenticated ValueError "
-            "context_effect (body occurrence), distinct from explicit from-cause\n"
-            "  owned: TrySugar finalbody reduction must bind the pre-finally "
-            "halt effect as in-flight when reducing finally statements — not "
-            "ExitSet.and_finally (frozen); not RaiseSugar alone\n"
-            "  fix: reduce finalbody under bind_in_flight_effect(ctx, slot, "
-            "incoming.effect) per halted face, or attach truthful context when "
-            "cleanup halt supersedes"
-        )
     assert isinstance(effect.context_effect, RaiseEffect)
     assert effect.context_effect.exception_name == "ValueError"
     assert effect.context_effect.occurrence != effect.occurrence
