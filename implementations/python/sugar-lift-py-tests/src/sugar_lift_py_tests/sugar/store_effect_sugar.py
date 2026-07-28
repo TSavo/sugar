@@ -179,6 +179,21 @@ class SubscriptStoreEffectSugar(Sugar):
         )
 
     def _store(self, receiver, index, value) -> Outcome:
+        coordinates = tuple(
+            getattr(operand, "formal_coordinate", None)
+            for operand in (receiver, index, value)
+        )
+        if any(coordinate is not None for coordinate in coordinates):
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=self.site,
+                operator="setitem",
+                operands=(receiver, index, value),
+                coordinates=coordinates,
+            )
         if not receiver.runtime_type_is_decided():
             from sugar_source_tree.panic import SugarNotWritten
 
