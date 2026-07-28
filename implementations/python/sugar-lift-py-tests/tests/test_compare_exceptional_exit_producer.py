@@ -317,6 +317,45 @@ def test_pandas_series_string_ordering_stays_source_undecided() -> None:
     )
 
 
+def test_source_decided_number_string_ordering_emits_type_error() -> None:
+    """Truthful twin of the enrolled ``obj < "a"`` site with decided types.
+
+    When both operands are source-visible ground values Python refuses to
+    order, Compare constructs an authenticated TypeError RaiseValue — not
+    ``py.lt`` and not a RuntimeEffect.  The enrolled pandas site still
+    refuses because ``obj`` is undecided; this twin isolates the floor law
+    on a workspace-relative locus the ground exit can cite.
+    """
+    from sugar_lift_py_tests.floor import RaiseValue, StringValue
+
+    path = _corpus_root() / "tests/arithmetic/test_numeric.py"
+    source = path.read_text(encoding="utf-8")
+    assert source.count('obj < "a"') == 1
+    _compare_at(path, source, line=146)
+
+    twin = 'def f():\n    return 1.0 < "a"\n'
+    tree = SourceFile(
+        (twin, "number-lt-string-twin.py", blake3_512_of(twin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(
+        n
+        for n in tree.nodes()
+        if isinstance(n, Compare) and n.line_col_span().start_line == 2
+    )
+    outcome = ComparisonOpSugar(
+        "Lt",
+        _ValueSugar(TermValue(1.0)),
+        _ValueSugar(StringValue("a")),
+        node.fragment,
+    ).desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+    assert outcome.value.effect.blame is not None
+
+
 @pytest.mark.parametrize(
     ("line", "op", "observed"),
     (

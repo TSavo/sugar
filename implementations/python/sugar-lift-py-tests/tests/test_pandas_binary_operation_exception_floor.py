@@ -183,3 +183,110 @@ def test_pandas_series_bitand_mixed_rights_stay_named_refusals(
         observed=observed,
         requested_contains="authenticated exceptional exit",
     )
+
+
+def test_source_decided_int_float_bitand_emits_type_error() -> None:
+    """Truthful twin of ``s_0123 & 3.14`` with both types source-decided.
+
+    Enrolled site: ``pandas/tests/series/test_logical_ops.py:98``.  With an
+    undecided Series left the producer refuses; with two TermValues the
+    bitwise floor constructs authenticated TypeError RaiseValue.  The twin is
+    built on a workspace-relative locus so the ground exit can cite source.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor import RaiseValue, TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import BinOp
+    from sugar_source_tree.tree import SourceFile
+
+    # Pin the enrolled shape, then desugar a relative-locus twin with decided types.
+    path = _corpus_file()
+    source = path.read_text(encoding="utf-8")
+    assert source.count("s_0123 & 3.14") == 1
+    _binop_at(source, path, line=98, kind="BitAnd")
+
+    twin = "def f():\n    return 1 & 3.14\n"
+    tree = SourceFile(
+        (twin, "int-bitand-float-twin.py", blake3_512_of(twin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(n for n in tree.nodes() if isinstance(n, BinOp))
+
+    @dataclass(frozen=True)
+    class _ValueSugar(Sugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+    operation = type(node.sugar())(
+        "BitAnd",
+        _ValueSugar(TermValue(1)),
+        _ValueSugar(TermValue(3.14)),
+        node.fragment,
+    )
+    outcome = operation.desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_source_decided_list_plus_int_emits_type_error() -> None:
+    """``list + int`` is source-decided TypeError — the ground field law.
+
+    Companion to enrolled mixed-right BitAnd sites: when the left is a
+    constructed ListValue and the right a TermValue, BinOp publishes
+    RaiseValue rather than panicking or inventing a concat coordinate.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.nodes import BinOp
+
+    source = "def f():\n    return [1] + 0\n"
+    tree = SourceFile(
+        (source, "list-plus-int.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(n for n in tree.nodes() if isinstance(n, BinOp))
+
+    @dataclass(frozen=True)
+    class _ValueSugar(Sugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+    operation = type(node.sugar())(
+        "Add",
+        _ValueSugar(ListValue((TermValue(1),))),
+        _ValueSugar(TermValue(0)),
+        node.fragment,
+    )
+    outcome = operation.desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"

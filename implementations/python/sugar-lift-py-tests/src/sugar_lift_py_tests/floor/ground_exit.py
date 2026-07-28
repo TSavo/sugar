@@ -80,3 +80,17 @@ def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome
             exception=ExceptionValue(exception_name, (), site),
         )
     )
+
+
+def ground_type_error(*, site, owner: str) -> Outcome:
+    """Authenticated TypeError partition for a source-decided ground pair.
+
+    Ground cross-type operations that Python rejects (``1 < "a"``, ``None + 1``,
+    ``[] + 0``, ``~3.5`` for bitwise invert on float) are not RuntimeEffects:
+    both operand types are lift-time decided, so the exceptional face is a
+    completed RaiseValue.  Undecided native dispatch stays on the named-refusal
+    / construction-panic laws; this door is only for the decided TypeError.
+    """
+    return ground_exceptional_exit(
+        exception_name="TypeError", site=site, owner=owner
+    )

@@ -90,11 +90,26 @@ class StringValue(GuardStableValue):
     # decides it, matching the 1==1 doctrine that equality is stated, not
     # pre-decided.
 
+    def _unorderable_ground_peer(self, other) -> bool:
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        return type(other) in (
+            TermValue,
+            NoneValue,
+            ListValue,
+            TupleValue,
+            SetValue,
+        )
+
     def less_than(self, other, site):
         # A string stands on the ordering floor: two strings order by Python's
         # lexicographic rule and fold to the True/False literal. Ground
-        # cross-type is TypeError -- a named runtime effect, not an emit.
-        # Symbolic falls to super() emit.
+        # cross-type is authenticated TypeError, not an emit. Symbolic falls
+        # to super() emit.
         if type(other) is StringValue:
             from sugar_lift_py_tests.outcome import Complete
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -109,26 +124,10 @@ class StringValue(GuardStableValue):
                 if self.value < other.value
                 else FalseBoolLiteralSugar(site=site)
             )
-        from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.floor.set_value import SetValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
-        if type(other) in (TermValue, NoneValue, ListValue, TupleValue, SetValue):
-            from sugar_lift_py_tests.effect import (
-                TypeErrorRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            return Incomplete(
-                TypeErrorRuntimeEffect(
-                    f"unorderable types runtime boundary: "
-                    f"StringValue and {type(other).__name__}; site={site}",
-                    **runtime_effect_evidence("py.less_than", other, site),
-                )
-            )
+            return ground_type_error(site=site, owner="StringValue.less_than")
         return super().less_than(other, site)
 
     def length(self, site):
@@ -330,15 +329,19 @@ class StringValue(GuardStableValue):
             )
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.add")
         return super().add(other, site)
 
     def subtract(self, other, site):
-        """Dispatch subtraction only when the right operand is runtime-opaque.
+        """``str - x``: undecided rights stay third-valued; decided rights TypeError.
 
         A body-less call result has no lift-time value, so Python's
-        ``__sub__``/``__rsub__`` choice is genuinely runtime-dependent.  A
-        call with a body is decidable machinery work and ground strings are a
-        Python TypeError; both stay on the loud subtraction floor.
+        ``__sub__``/``__rsub__`` choice is genuinely runtime-dependent.  Two
+        source-decided ground types never select a string subtraction — that
+        is authenticated TypeError, not a coordinate and not a RuntimeEffect.
         """
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
@@ -346,6 +349,10 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.effect import runtime_subtract
 
             return runtime_subtract(self, other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.subtract")
         return super().subtract(other, site)
 
     def multiply(self, other, site):

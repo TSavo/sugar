@@ -178,6 +178,12 @@ class ListValue(FloorValue):
 
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            # ``list + <decided non-list>`` is Python's TypeError.  Undecided
+            # rights stay on the shared third-value law via super().
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="ListValue.add")
         return super().add(other, site)
 
     def multiply(self, other, site):
