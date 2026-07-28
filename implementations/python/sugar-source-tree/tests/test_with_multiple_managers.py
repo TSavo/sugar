@@ -310,8 +310,25 @@ class _FloorValue:
 
 def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
     from sugar_lift_py_tests.context_manager_resolution import (
+        NativeProtocolSlot,
         SourceFragmentCoordinateV1,
     )
+
+    receiver = SourceFragmentCoordinateV1(
+        "blake3-512:" + slot.lower() * 128, 1, 0, 1, 1
+    )
+
+    class _NativeDefinitions:
+        def require_native_definition(self, requested_receiver, protocol_slot):
+            assert requested_receiver == receiver
+            line = 1 if protocol_slot is NativeProtocolSlot.CONTEXT_ENTER else 2
+            return SourceFragmentCoordinateV1(
+                "blake3-512:" + protocol_slot.value[0] * 128,
+                line,
+                0,
+                line,
+                1,
+            )
 
     exit_sugar = _FixedSugar(Complete(_FloorValue("exited")), probe=exit_probe)
     return WithResourceSugar(
@@ -322,12 +339,8 @@ def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
         exit_face_id=f"{slot}#exit_face",
         body=body if body is not None else (),
         disposition=NeverSuppresses(),
-        enter_definition=SourceFragmentCoordinateV1(
-            "blake3-512:" + "e" * 128, 1, 0, 1, 1
-        ),
-        exit_definition=SourceFragmentCoordinateV1(
-            "blake3-512:" + "x" * 128, 2, 0, 2, 1
-        ),
+        contract_refs=_NativeDefinitions(),
+        receiver_coordinate=receiver,
         site=None,
     )
 

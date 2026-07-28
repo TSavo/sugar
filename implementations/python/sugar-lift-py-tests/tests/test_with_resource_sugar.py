@@ -1,7 +1,4 @@
-"""Unit twins for resource ``WithResourceSugar`` — parametric exit, no desugar builds.
-
-Production ``open(...)`` stays RuntimeSelected.
-"""
+"""Unit twins for the authenticated builtin resource lifecycle."""
 
 from __future__ import annotations
 
@@ -17,8 +14,12 @@ from sugar_lift_py_tests.context_manager_contract import (
     RuntimeSelected,
 )
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.context_manager_resolution import (
+    NativeDefinitionCoordinateGapV1,
+    NativeProtocolSlot,
+)
 from sugar_lift_py_tests.effect import LoopControlEffect, RaiseEffect
-from sugar_lift_py_tests.floor import SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.floor.manager_coordinate import (
@@ -42,6 +43,7 @@ from sugar_lift_py_tests.sugar.resource_coord_sugar import (
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+from sugar_source_tree.panic import SugarNotWritten
 
 
 def test_authenticated_pandas_303_builtin_open_resource_coordinate():
@@ -80,6 +82,25 @@ class _FixedSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return ()
+
+
+class _ObservedNativeDefinitions:
+    def __init__(self, events=None, *, missing=()):
+        self.events = events if events is not None else []
+        self.missing = frozenset(missing)
+
+    def require_native_definition(self, receiver, slot):
+        self.events.append(f"require-{slot.value}")
+        if slot in self.missing:
+            return NativeDefinitionCoordinateGapV1(
+                receiver=receiver,
+                slot=slot,
+                reason="authenticated source definition coordinate is not enrolled",
+            )
+        line = 1 if slot is NativeProtocolSlot.CONTEXT_ENTER else 2
+        return SourceFragmentCoordinateV1(
+            "blake3-512:" + slot.value[0] * 128, line, 0, line, 1
+        )
 
 
 class _Pass(_FixedSugar):
@@ -131,6 +152,8 @@ def _resource(
     exit_face_id="X",
     enter_slot_id=None,
     exit_probe=None,
+    contract_refs=None,
+    receiver_coordinate=None,
 ):
     exit_sugar = exit
     if exit_sugar is None:
@@ -153,7 +176,8 @@ def _resource(
             exit_sugar = _ProbeExit()
 
     return WithResourceSugar(
-        manager=manager or _FixedSugar(Complete(_FloorValue("mgr"))),
+        manager=manager
+        or _FixedSugar(Complete(ObjectValue("native-resource", (), identity="mgr"))),
         manager_slot_id=manager_slot_id,
         enter=enter or _FixedSugar(Complete(_FloorValue("entered"))),
         exit=exit_sugar,
@@ -161,20 +185,60 @@ def _resource(
         body=body if body is not None else (_Pass(),),
         disposition=disposition or NeverSuppresses(),
         enter_slot_id=enter_slot_id,
-        enter_definition=SourceFragmentCoordinateV1(
-            "blake3-512:" + "e" * 128, 1, 0, 1, 1
-        ),
-        exit_definition=SourceFragmentCoordinateV1(
-            "blake3-512:" + "x" * 128, 2, 0, 2, 1
-        ),
+        contract_refs=contract_refs or _ObservedNativeDefinitions(),
+        receiver_coordinate=receiver_coordinate
+        or SourceFragmentCoordinateV1("blake3-512:" + "r" * 128, 1, 0, 1, 1),
         site=None,
     )
+
+
+def test_native_resource_flow_opens_enter_then_body_then_exit_definition():
+    events = []
+    refs = _ObservedNativeDefinitions(events)
+    sugar = _resource(
+        manager=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="mgr")),
+            probe=events,
+        ),
+        enter=_FixedSugar(Complete(_FloorValue("entered")), probe=events),
+        body=(_FixedSugar(Complete(BlockValue((), True)), probe=events),),
+        exit=_FixedSugar(Complete(TermValue(0)), probe=events),
+        contract_refs=refs,
+        disposition=ReturnTruthinessDispositionV1(),
+    )
+    sugar.desugar()
+    assert events == [
+        1,
+        "require-context-enter",
+        1,
+        1,
+        "require-context-exit",
+        1,
+    ]
+
+
+def test_missing_native_exit_definition_stays_typed_loud_after_body_reduction():
+    events = []
+    refs = _ObservedNativeDefinitions(
+        events, missing=(NativeProtocolSlot.CONTEXT_EXIT,)
+    )
+    with pytest.raises(
+        SugarNotWritten,
+        match="authenticated source definition coordinate is not enrolled",
+    ):
+        _resource(
+            body=(_FixedSugar(Complete(BlockValue((), True)), probe=events),),
+            contract_refs=refs,
+        ).desugar()
+    assert events == ["require-context-enter", 1, "require-context-exit"]
 
 
 def test_manager_expression_evaluated_exactly_once():
     seen = []
     sugar = _resource(
-        manager=_FixedSugar(Complete(_FloorValue("mgr")), probe=seen),
+        manager=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="mgr")), probe=seen
+        ),
         body=(_Pass(),),
     )
     sugar.desugar()
@@ -225,6 +289,102 @@ def test_enter_halt_skips_body_and_exit():
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert len(reds) == 1
     assert reds[0].effect == enter_halt
+
+
+def test_completed_body_runs_exit_with_three_explicit_none_coordinates():
+    """Face 2: normal completion authenticates all three None arguments."""
+    out = _resource(body=(_Pass(),), exit=_FixedSugar(Complete(TermValue(0)))).desugar()
+    invs = [entry for entry in out.value.contribution() if isinstance(entry, InvValue)]
+    exit_facts = [
+        inv
+        for inv in invs
+        if getattr(getattr(inv.formula, "args", (None,))[0], "name", None)
+        in {"exit_type", "exit_value", "exit_traceback"}
+    ]
+    assert len(exit_facts) == 3
+    assert {fact.formula.args[0].name for fact in exit_facts} == {
+        "exit_type",
+        "exit_value",
+        "exit_traceback",
+    }
+    assert all(fact.formula.args[1].value == "None" for fact in exit_facts)
+
+
+def test_raised_body_routes_exact_face_coordinates_to_exit():
+    """Face 3: type/value/traceback coordinates share the exact raised face."""
+    face_id = "raised-face-17"
+    effect = RaiseEffect(
+        exception_name="ValueError",
+        occurrence="source.py:17:8",
+    )
+    exit_sugar = _parametric_exit(face_id=face_id)
+    type_coord, value_coord, traceback_coord = (
+        argument.desugar().value for argument in exit_sugar.args
+    )
+    assert type_coord == ExitTypeCoordinate(face_id, None)
+    assert value_coord == ExitValueCoordinate(face_id, None)
+    assert traceback_coord == ExitTracebackCoordinate(face_id, None)
+
+    binding = ExitFaceBinding.from_body_exit(face_id, Halted(true_guard(), effect))
+    assert binding.face_id == face_id
+    facts = binding.to_facts()
+    assert {fact.formula.args[0].args[0].value for fact in facts} == {face_id}
+    assert any(
+        getattr(fact.formula.args[1], "value", None) == "ValueError" for fact in facts
+    )
+    assert any(
+        getattr(fact.formula.args[1], "name", None) == "python:raise_effect_occurrence"
+        and fact.formula.args[1].args[0].value == "source.py:17:8"
+        for fact in facts
+    )
+
+
+def test_falsy_source_exit_preserves_the_exact_original_halt():
+    """Face 4: falsity restores the same effect and pre-effect state objects."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:4:2")
+    state = ObjectValue("native-resource", (), identity="before-raise")
+    incoming = Halted(true_guard(), effect, state)
+    routed = ExitSet((incoming,)).and_source_resource_exit(
+        ExitSet.completed(TermValue(False)),
+        disposition=ReturnTruthinessDispositionV1(),
+        site="exit-site",
+    )
+    assert len(routed.exits) == 1
+    surviving = routed.exits[0]
+    assert isinstance(surviving, Halted)
+    assert surviving.effect is effect
+    assert surviving.state is state
+
+
+def test_truthy_source_exit_suppresses_the_original_raise():
+    """Face 5: source-testified truth consumes the raised edge."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:5:2")
+    routed = ExitSet((Halted(true_guard(), effect),)).and_source_resource_exit(
+        ExitSet.completed(TermValue(True)),
+        disposition=ReturnTruthinessDispositionV1(),
+        site="exit-site",
+    )
+    assert all(not isinstance(face, Halted) for face in routed.exits)
+
+
+def test_undecided_source_exit_keeps_both_faces_factored():
+    """Face 6: UNKNOWN truth is neither false nor true; both arms survive."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:6:2")
+    routed = ExitSet((Halted(true_guard(), effect),)).and_source_resource_exit(
+        ExitSet.completed(SymbolicValue(make_var("exit_result"))),
+        disposition=ReturnTruthinessDispositionV1(),
+        site="exit-site",
+    )
+    assert {type(face) for face in routed.exits} == {Completed, Halted}
+    halted = next(face for face in routed.exits if isinstance(face, Halted))
+    assert halted.effect is effect
+    assert len({partition for face in routed.exits for partition in face.faces}) == 2
 
 
 def test_never_suppresses_restores_body_halt():
@@ -521,8 +681,12 @@ def test_enter_result_and_manager_binding_facts():
     sugar = _resource(
         body=(_Pass(),),
         enter_slot_id="E",
-        enter=_FixedSugar(Complete(_FloorValue("entered-val"))),
-        manager=_FixedSugar(Complete(_FloorValue("mgr-val"))),
+        enter=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="entered-val"))
+        ),
+        manager=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="mgr-val"))
+        ),
     )
     out = sugar.desugar()
     invs = [e for e in out.value.contribution() if isinstance(e, InvValue)]
@@ -536,6 +700,13 @@ def test_enter_result_and_manager_binding_facts():
     assert "manager_slot_value" in names
     assert "enter_result_value" in names
     assert "exit_type" in names  # completed face testimony
+    enter_fact = next(
+        inv
+        for inv in invs
+        if getattr(inv.formula.args[0], "name", None) == "enter_result_value"
+    )
+    assert enter_fact.formula.args[1].name == "py.object.identity"
+    assert enter_fact.formula.args[1].args[1].value == "entered-val"
 
 
 def test_parametric_exit_args_are_exit_refs():
