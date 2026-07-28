@@ -1025,31 +1025,33 @@ class FloorValue:
         )
 
     def less_than(self, other, site):
+        # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.
+        # Default Floor emits the ordinary atom; GuardedValue distributes;
+        # NamedExpressionValue presents-and-carries. No concrete-kind membrane
+        # and no operation-string admission on this surface.
+        return other.less_than_from_left(self, site)
+
+    def less_than_from_left(self, left, site):
+        """Default RHS law for ``left < self`` — ordinary comparison atom.
+
+        Overrides (GuardedValue, NamedExpressionValue, …) replace this door.
+        Does not call ``left.less_than(self)`` (that would recurse).
+        """
         # Default: EMIT an operator-indexed atom. Fold when both sides are
         # ground (the literal pair overrides); emit when either side stands on
         # the term floor; panic only inside to_term when a side cannot enter
         # FOL at all. Vendor `<` is py.lt -- not SMT < -- so the sort universe
         # adjudicates (same NaN/reflexivity split as py.eq). Operand
         # CallSiteValues ride as operand_callsites.
-        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            NamedExpressionValue,
-        )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
         from sugar_lift_py_tests.outcome import Complete
 
-        if isinstance(other, GuardedValue):
-            return other.predicate_from_left("less_than", self, site)
-        # RHS walrus: typed double-dispatch — never predicate_from_left(str).
-        if isinstance(other, NamedExpressionValue):
-            return other.less_than_from_left(self, site)
-
         return Complete(
             PredicateValue(
-                resolve_comparison_atom("lt", self, other, owner=str(site)),
+                resolve_comparison_atom("lt", left, self, owner=str(site)),
                 site,
-                operand_callsites=(*self.callsites(), *other.callsites()),
+                operand_callsites=(*left.callsites(), *self.callsites()),
             )
         )
 

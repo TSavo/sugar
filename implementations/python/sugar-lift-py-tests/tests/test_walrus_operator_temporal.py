@@ -300,22 +300,39 @@ def test_no_string_predicate_from_left_door() -> None:
 
 
 def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
-    """Production tooth: ``0 < (n := 5)`` → FloorValue.less_than → less_than_from_left."""
+    """Production tooth: ``0 < (n := 5)`` → Floor protocol less_than_from_left."""
     left = TermValue(0)
     right = NamedExpressionValue("n", TermValue(5))
-    # Must hit typed double-dispatch (not string predicate_from_left).
+    # General double-dispatch: left.less_than → other.less_than_from_left.
     out = left.less_than(right, SITE)
     assert isinstance(out, Complete)
     assert isinstance(out.value, NamedExpressionValue)
     assert out.value.name == "n"
     assert out.value.assigned_value == TermValue(5)
-    # Direct typed door matches Floor routing.
     direct = right.less_than_from_left(left, SITE)
     assert isinstance(direct, Complete)
     assert isinstance(direct.value, NamedExpressionValue)
     assert direct.value.assigned_value == TermValue(5)
     scoped = out.value.extend_scope(_root("rhs"))
     assert _name("n").desugar(scoped).value == TermValue(5)
+
+
+def test_ordinary_rhs_term_uses_default_less_than_from_left() -> None:
+    """Non-walrus Floor twin: ordinary RHS uses protocol less_than_from_left, not NEV."""
+    left = TermValue(0)
+    right = TermValue(5)
+    out = left.less_than(right, SITE)
+    assert isinstance(out, Complete)
+    # Not walrus-kind membrane: ordinary RHS never yields NamedExpressionValue.
+    assert not isinstance(out.value, NamedExpressionValue)
+    # Protocol default door is present on FloorValue (not a NEV-only arm).
+    assert hasattr(type(right), "less_than_from_left")
+    direct = right.less_than_from_left(left, SITE)
+    assert isinstance(direct, Complete)
+    assert not isinstance(direct.value, NamedExpressionValue)
+    # Ground 0 < 5 is decided true-ish, not false.
+    assert type(out.value).__name__ != "FalseBoolLiteralSugar"
+    assert type(direct.value).__name__ != "FalseBoolLiteralSugar"
 
 
 def test_rhs_walrus_via_comparison_op_sugar_lt() -> None:

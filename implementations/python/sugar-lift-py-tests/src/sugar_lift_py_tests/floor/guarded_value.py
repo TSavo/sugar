@@ -249,6 +249,14 @@ class GuardedValue(FloorValue):
         )
         return _rejoin(joined)
 
+    def less_than_from_left(self, left, site):
+        """Typed Floor obligation: distribute ``left <`` across guarded arms.
+
+        Preserves existing guarded-predicate distribution; does not invent a
+        generic getattr/string surface on the Floor protocol.
+        """
+        return self.predicate_from_left("less_than", left, site)
+
     def predicate_from_left(self, method: str, left, site):
         """Distribute a binary predicate whose guarded value is the RHS."""
         return GuardedValue(
