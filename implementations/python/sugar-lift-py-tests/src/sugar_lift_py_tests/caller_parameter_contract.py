@@ -501,6 +501,9 @@ class NativeOperationExitCarrierV1:
     prefix_composition: object | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    exitset_continuations: tuple = dataclass_field(
+        default=(), compare=False, repr=False
+    )
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
@@ -591,6 +594,16 @@ class NativeOperationExitCarrierV1:
         del face
         return replace(self, guards=(*self.guards, guard))
 
+    def after_discharge(self, step) -> "NativeOperationExitCarrierV1":
+        """Defer an ExitSet-wide consumer until authenticated discharge."""
+        return replace(
+            self,
+            exitset_continuations=(
+                *self.exitset_continuations,
+                (len(self.continuations), step),
+            ),
+        )
+
     @classmethod
     def compose_prefix(cls, prefix, step):
         """Sequence a prefix without exposing a deferred carrier to ExitSet.
@@ -660,6 +673,17 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
+        def apply_exitset_steps(projected, continuation_count):
+            for enrolled_count, step in self.exitset_continuations:
+                if enrolled_count != continuation_count:
+                    continue
+                projected = step(projected)
+                if isinstance(projected, NativeOperationExitCarrierV1):
+                    projected = projected.discharge(actuals_by_formal_coordinate)
+                if not isinstance(projected, ExitSet):
+                    projected = outcome_to_exitset(projected)
+            return projected
+
         if self.prefix_composition is not None:
             resolved, deferred, continuation_count, guard_count = (
                 self.prefix_composition
@@ -681,6 +705,8 @@ class NativeOperationExitCarrierV1:
             guard = _conjoin_guards(self.guards[guard_count:])
             if guard is not None:
                 projected = projected.guarded(guard)
+            for count in range(len(self.continuations) + 1):
+                projected = apply_exitset_steps(projected, count)
             return projected
 
         def undischarged(reason):
@@ -750,7 +776,8 @@ class NativeOperationExitCarrierV1:
             # a normal completion.
             exits = outcome_to_exitset(projected)
 
-        for continuation in self.continuations:
+        exits = apply_exitset_steps(exits, 0)
+        for index, continuation in enumerate(self.continuations, start=1):
             def resume(value, *, step=continuation):
                 next_outcome = step(value)
                 if isinstance(next_outcome, NativeOperationExitCarrierV1):
@@ -758,6 +785,7 @@ class NativeOperationExitCarrierV1:
                 return next_outcome
 
             exits = exits.and_then(resume)
+            exits = apply_exitset_steps(exits, index)
         guard = _conjoin_guards(self.guards)
         if guard is not None:
             exits = exits.guarded(guard)
