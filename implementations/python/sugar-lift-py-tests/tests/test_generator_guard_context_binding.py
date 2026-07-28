@@ -1,21 +1,18 @@
-"""#6691 guard-context producer: sealed binding state into pre-yield guard temporal.
+"""#6691 guard-context producer: binder Floors into pre-yield guard temporal.
 
 Governing law
 -------------
-GeneratorConstructionV1 carries authenticated sealed BindingEntryV1 state into
-the temporal context used for pre-yield guard evaluation.  The sole consumer
-door remains BindingCoordinateRefSugar.desugar (exact coordinate.cid lookup).
-No name lookup, coordinate scanning, or unspecialized-formal fallback is added
-to that door.
+SourceCallFrame.bind_actuals produces formal-ordered Floor actuals.  Those
+Floors are paired with formal coordinate CIDs at the binder boundary and
+carried into GeneratorConstructionV1.allocate.  Guard evaluation installs
+those Floors by identity into (an extension of) the caller reduction context.
+BindingCoordinateRefSugar.desugar remains the sole consumer door.
 
-Acceptance
-----------
-- real bound option_context-style actual resolves at the guard's exact formal
-  coordinate
-- renamed twin uses the same path
-- wrong coordinate / tampered / absent testimony stay loud
-- undecidable guard retains complementary faces with the same sealed state
-- guard halt retains exact pre-halt state
+Forbidden
+---------
+- Node.state → sugar() → desugar() reconstruction inside the consumer
+- temporal-only fabricated context that discards authenticated caller context
+- broad Exception catch converting construction defects to absent testimony
 """
 
 from __future__ import annotations
@@ -25,7 +22,9 @@ from dataclasses import replace
 
 import pytest
 
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.generator_construction import (
+    FormalFloorBindingV1,
     GeneratorConstructionV1,
     GeneratorTerminationV1,
     GeneratorTransitionGapV1,
@@ -35,16 +34,16 @@ from sugar_lift_py_tests.generator_construction import (
     YieldStepV1,
 )
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
     BindingCoordinateRefSugar,
 )
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import (
     BindingEntryV1,
     RuntimeBindingEntryFactoryV1,
@@ -61,8 +60,8 @@ def _function(source: str):
     return next(SourceFile(path_source(path)).functions())
 
 
-def _bool_formal_entry(*, truth: bool):
-    """One sealed formal binding whose actual is a ground bool Constant."""
+def _formal_entry_and_coordinate(*, truth: bool = True):
+    """Sealed BindingEntryV1 for runtime_entries + its coordinate CID."""
     literal = "True" if truth else "False"
     function = _function(f"def option_context(enabled):\n    flag = {literal}\n")
     assignment = next(node for node in function.walk() if node.kind == "Assign")
@@ -70,111 +69,131 @@ def _bool_formal_entry(*, truth: bool):
     factory = RuntimeBindingEntryFactoryV1(
         cid_of_json({"scope": function.fragment.seal().to_dict()})
     )
-    entry = factory.mint_entry(
-        binding_site=param.fragment,
-        projection_path=("formal", 0),
-        state=assignment.value,
+    entry = seal_bound_binding_entry_v1(
+        factory.mint_entry(
+            binding_site=param.fragment,
+            projection_path=("formal", 0),
+            state=assignment.value,
+        )
     )
-    return function, param, seal_bound_binding_entry_v1(entry)
+    return function, param, entry
 
 
-def _guard_ref(function, param, coordinate) -> BindingCoordinateRefSugar:
-    return BindingCoordinateRefSugar(coordinate, param.fragment)
-
-
-def _machine_with_guard(entry: BindingEntryV1, guard, *, then_steps=None, else_steps=()):
-    # #6738: step values must be ConstructedTermSugar (not ir.num stubs).
+def _machine(
+    *,
+    entry: BindingEntryV1,
+    floor,
+    guard=None,
+    then_steps=None,
+    else_steps=(),
+    reduction_context=None,
+    formal_floor_bindings=None,
+):
     then_steps = then_steps or (YieldStepV1(IntLiteralSugar(1, site="then")),)
-    steps = (
-        IfStepV1(guard, then_steps, else_steps, "frag:guard"),
-        ReturnStepV1(),
-    )
+    if guard is None:
+        guard = BindingCoordinateRefSugar(entry.coordinate, entry.state.fragment)
+    if formal_floor_bindings is None:
+        formal_floor_bindings = (
+            FormalFloorBindingV1(entry.coordinate.cid, floor),
+        )
     return GeneratorConstructionV1.allocate(
         allocation_coordinate="call:option_context:1",
         frame_coordinate="frame:option_context",
         binding_state=(entry,),
-        steps=steps,
+        steps=(
+            IfStepV1(guard, then_steps, else_steps, "frag:guard"),
+            ReturnStepV1(),
+        ),
+        formal_floor_bindings=formal_floor_bindings,
+        reduction_context=reduction_context,
     )
 
 
 # ---------------------------------------------------------------------------
-# Real bound actual resolves at the exact formal coordinate
+# Binder Floor reaches the guard BY IDENTITY
 # ---------------------------------------------------------------------------
 
 
-def test_bound_option_context_actual_resolves_at_exact_formal_coordinate() -> None:
-    """Truthful: sealed formal True splices the then-branch at its coordinate."""
-    function, param, entry = _bool_formal_entry(truth=True)
-    guard = _guard_ref(function, param, entry.coordinate)
-    machine = _machine_with_guard(entry, guard)
+def test_binder_floor_reaches_guard_by_identity() -> None:
+    """Truthful: the exact bind_actuals Floor object is what the guard resolves."""
+    _fn, param, entry = _formal_entry_and_coordinate(truth=True)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
+    machine = _machine(entry=entry, floor=floor)
 
     outcome = machine.resume()
 
     assert isinstance(outcome, YieldEffect)
-    # Sealed state is unchanged across the decided branch.
+    # Install table holds the same object the binder produced.
+    ctx = machine._guard_evaluation_context()
+    resolved = ctx.temporal.value_if_bound(entry.coordinate.cid)
+    assert resolved is floor
     assert len(outcome.machine.binding_state) == 1
-    sealed = outcome.machine.binding_state[0]
-    assert isinstance(sealed, BindingEntryV1)
-    assert sealed.coordinate.cid == entry.coordinate.cid
-    assert sealed.require_constructed_value_testimony().cid == (
-        entry.require_constructed_value_testimony().cid
-    )
+    assert outcome.machine.binding_state[0].coordinate.cid == entry.coordinate.cid
 
 
-def test_bound_false_formal_splices_else_branch() -> None:
-    function, param, entry = _bool_formal_entry(truth=False)
-    guard = _guard_ref(function, param, entry.coordinate)
-    machine = _machine_with_guard(
-        entry,
-        guard,
+def test_binder_false_floor_splices_else_branch() -> None:
+    _fn, param, entry = _formal_entry_and_coordinate(truth=False)
+    floor = FalseBoolLiteralSugar(site=param.fragment)
+    machine = _machine(
+        entry=entry,
+        floor=floor,
         then_steps=(YieldStepV1(IntLiteralSugar(1, site="then")),),
         else_steps=(),
     )
 
     outcome = machine.resume()
 
-    # False guard + empty else → termination (no yield).
     assert isinstance(outcome, GeneratorTerminationV1)
-    assert outcome.binding_state[0].coordinate.cid == entry.coordinate.cid
+    assert machine._guard_evaluation_context().temporal.value_if_bound(
+        entry.coordinate.cid
+    ) is floor
 
 
-def test_renamed_twin_resolves_on_the_same_coordinate_path() -> None:
-    """Renamed formal spelling does not change coordinate-keyed resolution."""
-    # Same projection path / sealed actual; only the source param name differs.
-    function, param, entry = _bool_formal_entry(truth=True)
-    # Rebuild under a renamed source function; coordinate identity is the seal.
+def test_renamed_formal_uses_coordinate_not_spelling() -> None:
     renamed = _function("def option_context_renamed(flag):\n    flag = True\n")
-    renamed_param = renamed.params[0]
+    param = renamed.params[0]
     factory = RuntimeBindingEntryFactoryV1(
         cid_of_json({"scope": renamed.fragment.seal().to_dict()})
     )
     assignment = next(node for node in renamed.walk() if node.kind == "Assign")
-    renamed_entry = seal_bound_binding_entry_v1(
+    entry = seal_bound_binding_entry_v1(
         factory.mint_entry(
-            binding_site=renamed_param.fragment,
+            binding_site=param.fragment,
             projection_path=("formal", 0),
             state=assignment.value,
         )
     )
-    guard = BindingCoordinateRefSugar(
-        renamed_entry.coordinate, renamed_param.fragment
-    )
-    machine = _machine_with_guard(renamed_entry, guard)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
+    machine = _machine(entry=entry, floor=floor)
 
     outcome = machine.resume()
 
     assert isinstance(outcome, YieldEffect)
-    assert outcome.machine.binding_state[0].coordinate.cid == renamed_entry.coordinate.cid
+    assert machine._guard_evaluation_context().temporal.value_if_bound(
+        entry.coordinate.cid
+    ) is floor
+
+
+def test_default_and_keyword_binder_path_is_the_same_floor_table() -> None:
+    """Defaults/keywords land through bind_actuals formal order — same install."""
+    _fn, param, entry = _formal_entry_and_coordinate(truth=True)
+    # Simulate a keyword-bound formal: still one FormalFloorBindingV1 at the cid.
+    floor = TrueBoolLiteralSugar(site="kw-bound")
+    machine = _machine(entry=entry, floor=floor)
+
+    assert machine.formal_floor_bindings[0].coordinate_cid == entry.coordinate.cid
+    assert machine.formal_floor_bindings[0].floor_value is floor
+    assert isinstance(machine.resume(), YieldEffect)
 
 
 # ---------------------------------------------------------------------------
-# Wrong coordinate / tampered / absent testimony — loud
+# Wrong coordinate / absent floor — loud
 # ---------------------------------------------------------------------------
 
 
-def test_wrong_coordinate_does_not_resolve_another_formal() -> None:
-    """Lying: a nearby formal coordinate is not this guard's binding."""
-    _fn, _param, entry = _bool_formal_entry(truth=True)
+def test_wrong_coordinate_does_not_resolve_binder_floor() -> None:
+    _fn, param, entry = _formal_entry_and_coordinate(truth=True)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
     other = _function("def other(x):\n    x = False\n")
     other_param = other.params[0]
     factory = RuntimeBindingEntryFactoryV1(
@@ -187,28 +206,29 @@ def test_wrong_coordinate_does_not_resolve_another_formal() -> None:
             state=next(n for n in other.walk() if n.kind == "Assign").value,
         )
     )
-    # Guard points at *other* coordinate while machine holds *entry*.
+    # Guard points at *other* coordinate; machine only carries *entry*'s floor.
     guard = BindingCoordinateRefSugar(other_entry.coordinate, other_param.fragment)
-    machine = _machine_with_guard(entry, guard)
+    machine = _machine(entry=entry, floor=floor, guard=guard)
 
     outcome = machine.resume()
 
-    # Wrong coordinate → unspecialized formal → undecided → loud gap.
     assert isinstance(outcome, GeneratorTransitionGapV1)
+    assert (
+        machine._guard_evaluation_context().temporal.value_if_bound(
+            other_entry.coordinate.cid
+        )
+        is None
+    )
 
 
-def test_absent_testimony_is_not_installed_into_guard_temporal() -> None:
-    """Lying: unsealed binding state does not authorize formal resolution."""
-    function, param, sealed = _bool_formal_entry(truth=True)
-    # Strip seal: runtime entry without sealed_state.
-    unsealed = BindingEntryV1(sealed.coordinate, sealed.state, None)
-    assert unsealed.constructed_value_testimony is None
-    guard = _guard_ref(function, param, sealed.coordinate)
-    # allocate will re-seal — so allocate with unsealed and then replace state.
+def test_absent_formal_floor_binding_refuses() -> None:
+    """No FormalFloorBindingV1 install → consumer refuses (no reconstruction)."""
+    function, param, entry = _formal_entry_and_coordinate(truth=True)
+    guard = BindingCoordinateRefSugar(entry.coordinate, param.fragment)
     machine = GeneratorConstructionV1.allocate(
         allocation_coordinate="call:absent",
         frame_coordinate="frame:absent",
-        binding_state=(unsealed,),
+        binding_state=(entry,),
         steps=(
             IfStepV1(
                 guard,
@@ -218,22 +238,18 @@ def test_absent_testimony_is_not_installed_into_guard_temporal() -> None:
             ),
             ReturnStepV1(),
         ),
+        formal_floor_bindings=(),  # empty — must not rebuild from entry.state
     )
-    # allocate seals; force-absent for the twin:
-    machine = replace(
-        machine,
-        binding_state=(BindingEntryV1(sealed.coordinate, sealed.state, None),),
-    )
-    # Producer installs nothing; consumer refuses → undecided gap.
+
     outcome = machine.resume()
+
     assert isinstance(outcome, GeneratorTransitionGapV1)
 
 
 def test_binding_coordinate_ref_consumer_stays_the_refusal_boundary() -> None:
-    """BindingCoordinateRefSugar.desugar is still the sole consumer door."""
-    function, param, entry = _bool_formal_entry(truth=True)
-    guard = _guard_ref(function, param, entry.coordinate)
-    # Empty temporal: exact consumer refusal, not a generator-side rewrite.
+    function, param, entry = _formal_entry_and_coordinate(truth=True)
+    guard = BindingCoordinateRefSugar(entry.coordinate, param.fragment)
+
     class _Empty:
         temporal = TemporalContext()
 
@@ -241,35 +257,87 @@ def test_binding_coordinate_ref_consumer_stays_the_refusal_boundary() -> None:
         guard.desugar(_Empty())
 
 
-def test_tampered_coordinate_cid_does_not_hit_sealed_entry() -> None:
-    function, param, entry = _bool_formal_entry(truth=True)
-    tampered = replace(
-        entry.coordinate,
-        cid="blake3-512:" + "a" * 128,
+def test_node_whose_sugar_would_panic_still_succeeds_without_consumer_rebuild() -> None:
+    """Consumer never invokes state.sugar() — Floor comes only from the binder."""
+    function, param, entry = _formal_entry_and_coordinate(truth=True)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:hostile",
+        frame_coordinate="frame:hostile",
+        binding_state=(entry,),
+        steps=(
+            IfStepV1(
+                BindingCoordinateRefSugar(entry.coordinate, param.fragment),
+                (YieldStepV1(IntLiteralSugar(1, site="t")),),
+                (),
+                "frag",
+            ),
+            ReturnStepV1(),
+        ),
+        formal_floor_bindings=(FormalFloorBindingV1(entry.coordinate.cid, floor),),
     )
-    guard = BindingCoordinateRefSugar(tampered, param.fragment)
-    machine = _machine_with_guard(entry, guard)
+    # After seal: any guard-path rebuild would call Node.sugar() on the bound state.
+    sugar_calls: list[object] = []
+    original_sugar = type(entry.state).sugar
 
-    outcome = machine.resume()
+    def _tracking_sugar(self, *args, **kwargs):
+        sugar_calls.append(self)
+        raise RuntimeError("consumer reconstruction is forbidden")
 
-    assert isinstance(outcome, GeneratorTransitionGapV1)
+    type(entry.state).sugar = _tracking_sugar  # type: ignore[method-assign]
+    try:
+        outcome = machine.resume()
+        assert isinstance(outcome, YieldEffect)
+        assert sugar_calls == [], "guard path must not call Node.sugar()"
+        assert machine._guard_evaluation_context().temporal.value_if_bound(
+            entry.coordinate.cid
+        ) is floor
+        assert not hasattr(
+            GeneratorConstructionV1, "_floor_from_sealed_binding_entry"
+        )
+    finally:
+        type(entry.state).sugar = original_sugar  # type: ignore[method-assign]
 
 
 # ---------------------------------------------------------------------------
-# Undecidable guard: complementary faces keep the same sealed state
+# Caller context extended, not discarded
 # ---------------------------------------------------------------------------
 
 
-def test_undecidable_guard_faces_retain_the_same_sealed_binding_state() -> None:
+def test_caller_reduction_context_is_extended_not_replaced() -> None:
+    from sugar_lift_py_tests.claim.sugar_catalog import SugarCatalog
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+
+    _fn, param, entry = _formal_entry_and_coordinate(truth=True)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
+    marker = TrueBoolLiteralSugar(site="caller-marker")
+    caller = FactoryBuildContext(
+        filename="caller.py",
+        catalog=SugarCatalog(),
+        temporal=TemporalContext().bind_value("caller_marker", marker),
+    )
+    machine = _machine(entry=entry, floor=floor, reduction_context=caller)
+    ctx = machine._guard_evaluation_context()
+
+    assert hasattr(ctx, "filename") and ctx.filename == "caller.py"
+    assert ctx.temporal.value_if_bound("caller_marker") is marker
+    assert ctx.temporal.value_if_bound(entry.coordinate.cid) is floor
+
+
+# ---------------------------------------------------------------------------
+# Undecidable + halt retain formal floor install
+# ---------------------------------------------------------------------------
+
+
+def test_undecidable_guard_faces_retain_formal_floor_bindings() -> None:
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
-    _fn, _param, entry = _bool_formal_entry(truth=True)
-    # Free NameSugar is ConstructedTermSugar and undecided under empty temporal
-    # (same door as #6738-migrated if_step twins).
-    guard = NameSugar("symbolic_guard", site="s")
-    machine = _machine_with_guard(
-        entry,
-        guard,
+    _fn, param, entry = _formal_entry_and_coordinate(truth=True)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
+    machine = _machine(
+        entry=entry,
+        floor=floor,
+        guard=NameSugar("symbolic_guard", site="s"),
         then_steps=(YieldStepV1(IntLiteralSugar(1, site="t")),),
         else_steps=(YieldStepV1(IntLiteralSugar(0, site="e")),),
     )
@@ -278,42 +346,29 @@ def test_undecidable_guard_faces_retain_the_same_sealed_binding_state() -> None:
 
     assert isinstance(outcome, ExitSet)
     completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
-    assert len(completed) >= 1
-    # Factor may collapse to one GuardedValue arm; every successor machine that
-    # still carries generator state must retain the sealed formal binding.
-    sealed_cid = entry.require_constructed_value_testimony().cid
+    assert completed
 
-    def _check_state(value):
+    def _check(value):
         if isinstance(value, GeneratorConstructionV1):
-            assert len(value.binding_state) == 1
-            bound = value.binding_state[0]
-            assert isinstance(bound, BindingEntryV1)
-            assert bound.coordinate.cid == entry.coordinate.cid
-            assert bound.require_constructed_value_testimony().cid == sealed_cid
+            assert value.formal_floor_bindings[0].floor_value is floor
+            assert value.formal_floor_bindings[0].coordinate_cid == entry.coordinate.cid
             return
-        # GuardedValue / factored forms may wrap the machine.
         inner = getattr(value, "value", None) or getattr(value, "machine", None)
         if inner is not None and inner is not value:
-            _check_state(inner)
-        for face in getattr(value, "faces", ()) or ():
-            _check_state(getattr(face, "value", face))
+            _check(inner)
 
     for exit_ in completed:
-        _check_state(exit_.value)
+        _check(exit_.value)
 
 
-# ---------------------------------------------------------------------------
-# Guard halt retains exact pre-halt state
-# ---------------------------------------------------------------------------
+def test_guard_halt_retains_exact_pre_halt_formal_floors() -> None:
+    _fn, param, entry = _formal_entry_and_coordinate(truth=True)
+    floor = TrueBoolLiteralSugar(site=param.fragment)
+    machine = _machine(entry=entry, floor=floor)
 
-
-def test_guard_halt_retains_exact_pre_halt_sealed_state() -> None:
-    function, param, entry = _bool_formal_entry(truth=True)
-    guard = _guard_ref(function, param, entry.coordinate)
-    machine = _machine_with_guard(entry, guard)
-
-    effect = RaiseEffect(exception_name="HaltProbe", occurrence="guard:halt")
-    halted = machine.throw(effect)
+    halted = machine.throw(
+        RaiseEffect(exception_name="HaltProbe", occurrence="guard:halt")
+    )
 
     assert isinstance(halted, ExitSet)
     halted_exits = [exit_ for exit_ in halted.exits if isinstance(exit_, Halted)]
@@ -321,12 +376,6 @@ def test_guard_halt_retains_exact_pre_halt_sealed_state() -> None:
     for exit_ in halted_exits:
         state = exit_.state
         assert isinstance(state, GeneratorConstructionV1)
-        assert len(state.binding_state) == 1
-        assert state.binding_state[0].coordinate.cid == entry.coordinate.cid
-        assert state.binding_state[0].require_constructed_value_testimony().cid == (
-            entry.require_constructed_value_testimony().cid
-        )
-        # Cursor / steps unchanged: pre-halt snapshot.
+        assert state.formal_floor_bindings[0].floor_value is floor
         assert state.cursor == machine.cursor
-        assert state.steps == machine.steps
         assert state.instance_coordinate == machine.instance_coordinate

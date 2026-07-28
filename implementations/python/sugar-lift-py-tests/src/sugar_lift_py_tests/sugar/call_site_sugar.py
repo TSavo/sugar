@@ -271,15 +271,30 @@ class CallSiteSugar(ConstructedTermSugar):
             kw_values = ()
             if self.source_call_frame.generator_steps is not None:
                 from sugar_lift_py_tests.generator_construction import (
+                    FormalFloorBindingV1,
                     GeneratorConstructionV1,
                 )
 
+                # Binder boundary: pair each formal coordinate with the exact
+                # Floor actual bind_actuals already produced (object identity).
+                # Guard temporal installs these Floors; it never rebuilds from
+                # runtime_entries Nodes via sugar()/desugar().
+                formal_floor_bindings = tuple(
+                    FormalFloorBindingV1(coordinate.cid, floor)
+                    for coordinate, floor in zip(
+                        self.source_call_frame.formal_coordinates,
+                        positional,
+                        strict=True,
+                    )
+                )
                 return Complete(
                     GeneratorConstructionV1.allocate(
                         allocation_coordinate=str(self.site),
                         frame_coordinate=self.source_call_frame.frame_cid,
                         binding_state=self.source_call_frame.runtime_entries,
                         steps=self.source_call_frame.generator_steps,
+                        formal_floor_bindings=formal_floor_bindings,
+                        reduction_context=ctx,
                     )
                 )
         callsite = CallSiteValue(

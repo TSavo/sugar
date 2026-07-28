@@ -19,12 +19,24 @@ def _require_constructed_term(value: object, *, owner: str) -> None:
 
 
 @dataclass(frozen=True)
-class _GeneratorReduceCtx:
-    """Minimal reduction context for pre-yield guard / step Sugar.
+class FormalFloorBindingV1:
+    """One formal coordinate paired with its binder-produced Floor actual.
 
-    Only ``temporal`` is required: BindingCoordinateRefSugar.desugar reads
-    ``ctx.temporal.value_if_bound(coordinate.cid)``.  No name map, no
-    coordinate scan, no second door.
+    Minted at the SourceCallFrame.bind_actuals boundary: the Floor is the exact
+    object bind_actuals returned, never a consumer-side Node/Sugar rebuild.
+    """
+
+    coordinate_cid: str
+    floor_value: object = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class _BinderOnlyReduceCtx:
+    """Unit-test / no-caller shell: temporal is the only field that exists.
+
+    Production allocate always carries the authenticated caller reduction
+    context and extends it.  This shell is only for allocate sites that never
+    had a caller context (focused machine twins).
     """
 
     temporal: object
@@ -410,6 +422,15 @@ class GeneratorConstructionV1:
     instance_coordinate: str
     cursor: int = 0
     suspended_resume_coordinate: str | None = None
+    # Binder-produced formal Floors (coordinate.cid → FloorValue identity).
+    # Guard temporal installs these directly — never Node.sugar()/desugar().
+    formal_floor_bindings: tuple[FormalFloorBindingV1, ...] = field(
+        default=(), compare=False, repr=False
+    )
+    # Caller reduction context preserved from CallSiteSugar.desugar; guard
+    # evaluation extends its temporal rather than fabricating a temporal-only
+    # substitute context.
+    reduction_context: object | None = field(default=None, compare=False, repr=False)
 
     @classmethod
     def allocate(
@@ -419,6 +440,8 @@ class GeneratorConstructionV1:
         frame_coordinate: str,
         binding_state: tuple[object, ...],
         steps: tuple[GeneratorStepV1, ...],
+        formal_floor_bindings: tuple[FormalFloorBindingV1, ...] = (),
+        reduction_context: object | None = None,
     ) -> "GeneratorConstructionV1":
         from sugar_source_tree.binding_state import seal_generator_binding_state_v1
 
@@ -426,6 +449,7 @@ class GeneratorConstructionV1:
         # before the instance exists. Unavailable testimony gaps here, never as
         # a delayed BindingStateWireGap on a "successfully" sealed state.
         binding_state = seal_generator_binding_state_v1(binding_state)
+        formal_floor_bindings = tuple(formal_floor_bindings)
         instance_coordinate = cid_of_json(
             {
                 "kind": "python-generator-instance",
@@ -433,6 +457,9 @@ class GeneratorConstructionV1:
                 "allocationCoordinate": allocation_coordinate,
                 "frameCoordinate": frame_coordinate,
                 "bindingState": [repr(item) for item in binding_state],
+                "formalFloorCoordinateCids": [
+                    item.coordinate_cid for item in formal_floor_bindings
+                ],
             }
         )
         return cls(
@@ -441,6 +468,8 @@ class GeneratorConstructionV1:
             binding_state=binding_state,
             steps=tuple(steps),
             instance_coordinate=instance_coordinate,
+            formal_floor_bindings=formal_floor_bindings,
+            reduction_context=reduction_context,
         )
 
     def construction_term_preimage(self) -> dict:
@@ -738,64 +767,41 @@ class GeneratorConstructionV1:
         return _replace(self, steps=steps)
 
     def _guard_evaluation_context(self):
-        """Temporal context carrying this machine's authenticated sealed bindings.
+        """Caller reduction context extended with binder-produced formal Floors.
 
-        Pre-yield guards desugar BindingCoordinateRefSugar at exact formal
-        coordinates.  The producer installs only sealed BindingEntryV1 values
-        (coordinate.cid → FloorValue) and post-assign names already reduced on
-        this machine.  Absent/tampered/unsealed testimony is not installed —
-        BindingCoordinateRefSugar.desugar remains the sole refusal boundary
-        (no name lookup, coordinate scanning, or unspecialized-formal fallback
-        there).
+        Installs each :class:`FormalFloorBindingV1` by coordinate CID into the
+        temporal table (object identity of the binder Floor).  Also installs
+        post-assign names already reduced on this machine.  Extends the
+        authenticated caller context when one was carried into allocate; never
+        fabricates a temporal-only substitute that discards caller fields.
+        BindingCoordinateRefSugar.desugar remains the sole consumer door.
         """
         from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
-        from sugar_source_tree.binding_state import BindingEntryV1
 
-        temporal = TemporalContext()
+        base = self.reduction_context
+        if base is not None and hasattr(base, "temporal"):
+            temporal = base.temporal
+        else:
+            temporal = TemporalContext()
+
+        for binding in self.formal_floor_bindings:
+            temporal = temporal.bind_value(
+                binding.coordinate_cid, binding.floor_value
+            )
         for item in self.binding_state:
-            if isinstance(item, BindingEntryV1):
-                # Seal is mandatory at allocate; skip anything that lost it.
-                if item.constructed_value_testimony is None:
-                    continue
-                floor = self._floor_from_sealed_binding_entry(item)
-                if floor is None:
-                    continue
-                temporal = temporal.bind_value(item.coordinate.cid, floor)
-                continue
-            if isinstance(item, GeneratorAssignBindingV1):
-                # Assign already reduced to Floor on this machine; expose by name
-                # for later pre-yield steps that read the bound name.
-                if item.value is not None:
-                    temporal = temporal.bind_value(item.name, item.value)
-        return _GeneratorReduceCtx(temporal)
+            if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
+                temporal = temporal.bind_value(item.name, item.value)
 
-    @staticmethod
-    def _floor_from_sealed_binding_entry(entry) -> object | None:
-        """Recover the FloorValue of one sealed formal binding.
+        if base is not None and hasattr(base, "with_temporal"):
+            return base.with_temporal(temporal)
+        if base is not None:
+            from dataclasses import fields, is_dataclass, replace
 
-        The live Node state is the constructed actual.  It desugars without the
-        formal temporal (actuals are not BindingCoordinateRefs of *this*
-        frame).  When recovery fails, the formal stays absent and the guard
-        consumer refuses loudly.
-        """
-        from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.sugar_base import Sugar
-        from sugar_source_tree.nodes import Node
-
-        state = entry.state
-        if not isinstance(state, Node):
-            return None
-        try:
-            sugar = state.sugar()
-        except Exception:
-            return None
-        if not isinstance(sugar, Sugar):
-            return None
-        # No formal temporal here: the actual must stand as constructed content.
-        outcome = sugar.desugar()
-        if not isinstance(outcome, Complete):
-            return None
-        return outcome.value
+            if is_dataclass(base) and any(f.name == "temporal" for f in fields(base)):
+                return replace(base, temporal=temporal)
+        # No caller context (unit-test allocate): a context with only the
+        # binder floors is honest — there is nothing authenticated to discard.
+        return _BinderOnlyReduceCtx(temporal)
 
     def _guard_truth(self, guard: object):
         """The guard's TRUTH as a floor value, or None if it cannot stand.
@@ -808,7 +814,7 @@ class GeneratorConstructionV1:
         through `truth` keeps one owner for the question.
 
         Guard Sugar is reduced under :meth:`_guard_evaluation_context` so
-        BindingCoordinateRefSugar resolves sealed formal actuals at the exact
+        BindingCoordinateRefSugar resolves binder Floors at the exact
         coordinate CID (and only there).
         """
         from sugar_lift_py_tests.outcome import Complete
@@ -881,7 +887,8 @@ class GeneratorConstructionV1:
         try:
             outcome = value.desugar(ctx)
         except SugarNotWritten as exc:
-            return self._gap(requested, str(exc.observed) if hasattr(exc, "observed") else type(exc).__name__)
+            observed = getattr(exc, "observed", type(exc).__name__)
+            return self._gap(requested, str(observed))
         if isinstance(outcome, Complete):
             return outcome.value
         return self._gap(requested, type(outcome).__name__)
