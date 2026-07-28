@@ -144,6 +144,157 @@ class _PreconstructedStoreSugar(Sugar):
 
 
 @dataclass(frozen=True)
+class DynamicUnpackStoreAssignSugar(Sugar):
+    """Non-display RHS: flat Name|Attribute|Subscript|*Name unpack (LTR).
+
+    Python: evaluate RHS **once**, UNPACK materializes all members, then each
+    target applies its member **left-to-right**.  A halt on an earlier target
+    leaves later names unbound and later stores unrun; earlier completed
+    rebinds/stores survive on the halted face state.
+
+    Projection is positional (``PositionalUnpackOperation`` →
+    ``UnpackMemberRoster``) — no fabricated synthetic lexical binding keys.
+    Targets are typed variants (``unpack_projection_targets``) owning apply.
+    """
+
+    value: Sugar
+    targets: tuple  # Name|Star|Attribute|Subscript unpack targets, source order
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return typed_red_effect_witness(
+            name="dynamic_unpack_store_star",
+            owner_sugar="DynamicUnpackStoreAssignSugar",
+            source=(
+                "def A(o, xs):\n"
+                "    o.x, *rest = xs\n"
+                "    return rest\n"
+            ),
+            effect_class="SequenceUnpackRuntimeEffect",
+            reason_needle="sequence unpack",
+            blame_needle="at least 1 members",
+            wrong_reason_needle="unpack demands exactly 3 members",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            PositionalUnpackOperation,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+            ApplyUnpackMemberSugar,
+            UnpackProjectionTarget,
+        )
+
+        for target in self.targets:
+            if not isinstance(target, UnpackProjectionTarget):
+                raise TypeError(
+                    "DynamicUnpackStoreAssignSugar.targets must be "
+                    f"UnpackProjectionTarget; got {type(target).__name__}"
+                )
+        prefix, suffix, has_star = self._fixed_counts()
+        operation = PositionalUnpackOperation(
+            fixed_prefix=prefix,
+            fixed_suffix=suffix,
+            has_star=has_star,
+            owner=type(self).__name__,
+            blame=self.site,
+        )
+        expected_demand_cid = operation.demand_cid()
+        return self.value.desugar(ctx).and_then(
+            lambda value: operation.submit(value, ctx).and_then(
+                lambda roster: self._apply_authenticated_roster(
+                    roster,
+                    expected_demand_cid=expected_demand_cid,
+                    ctx=ctx,
+                )
+            )
+        )
+
+    def _apply_authenticated_roster(
+        self, roster, *, expected_demand_cid: str, ctx
+    ):
+        """Zip targets only after the roster testifies this unpack occurrence."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            UnpackMemberRoster,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+            ApplyUnpackMemberSugar,
+        )
+
+        if not isinstance(roster, UnpackMemberRoster):
+            construction_panic_gap(
+                owner=type(self).__name__,
+                blame=self.site,
+                observed=type(roster).__name__,
+                requested="UnpackMemberRoster with occurrence and demand_cid",
+                fix="mint members through PositionalUnpackOperation.mint_roster",
+            )
+        if roster.demand_cid != expected_demand_cid:
+            construction_panic_gap(
+                owner=type(self).__name__,
+                blame=self.site,
+                observed=f"roster demand_cid={roster.demand_cid!r}",
+                requested=f"unpack demand_cid={expected_demand_cid!r}",
+                fix=(
+                    "apply only the roster minted by this statement's "
+                    "PositionalUnpackOperation; same members under a foreign "
+                    "occurrence/demand are not this unpack"
+                ),
+            )
+        if roster.occurrence is not self.site and roster.occurrence != self.site:
+            construction_panic_gap(
+                owner=type(self).__name__,
+                blame=self.site,
+                observed=f"roster occurrence={roster.occurrence!r}",
+                requested=f"unpack occurrence={self.site!r}",
+                fix=(
+                    "require the roster occurrence to be this statement fragment; "
+                    "same members under a substituted occurrence are refused"
+                ),
+            )
+        return reduce_block_to_exitset(
+            tuple(
+                ApplyUnpackMemberSugar(target, member, self.site)
+                for target, member in zip(
+                    self.targets, roster.members, strict=True
+                )
+            ),
+            ctx,
+        )
+
+    def _fixed_counts(self) -> tuple[int, int, bool]:
+        """Positional UNPACK layout from target-owned star-slot testimony.
+
+        Star position is an obligation method on ``UnpackProjectionTarget`` —
+        not a kinds ``isinstance`` ladder over concrete leaf classes.
+        """
+        prefix = 0
+        suffix = 0
+        has_star = False
+        seen_star = False
+        for target in self.targets:
+            if target.occupies_star_slot():
+                if has_star:
+                    raise AssertionError("at most one star unpack target")
+                has_star = True
+                seen_star = True
+                continue
+            if seen_star:
+                suffix += 1
+            else:
+                prefix += 1
+        return prefix, suffix, has_star
+
+
+@dataclass(frozen=True)
 class UnpackStoreAssignSugar(Sugar):
     """Flat display unpack with Attribute/Subscript store leaves (and optional Names).
 
