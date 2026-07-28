@@ -221,6 +221,7 @@ class CallSiteSugar(ConstructedTermSugar):
         source_body = None
         source_frame_cid = None
         native_operation_actuals = None
+        bound_source_actuals = None
         if self.source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
             from sugar_source_tree.panic import SugarNotWritten
@@ -348,6 +349,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 if native_operation_actuals is None
                 else native_operation_actuals.source_actuals
             ),
+            bound_source_actuals=bound_source_actuals,
         )
         if native_operation_actuals is not None:
             pending = self.source_call_frame.pending_native_operation.discharge(
