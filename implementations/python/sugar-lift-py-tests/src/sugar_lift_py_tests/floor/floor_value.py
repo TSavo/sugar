@@ -616,6 +616,42 @@ class FloorValue:
             )
         return self.attribute(name_value.value, site)
 
+    def unary_truth(self, unit, site):
+        """Carrier adapter for ``bool(operand)`` under UnaryOp ``not`` after discharge.
+
+        ``NativeOperationDemandV1`` records two ordered Floor values.  Unary
+        ``not`` has one operand; the second slot is an inert unit (``NoneValue``)
+        with a null coordinate so discharge does not invent a second actual.
+        The producer then negates only a *completed* truth face — never a halt
+        (``Complete.and_then`` / ``ExitSet.sequence`` already skip halted tails).
+
+        An undecided actual must not emit ``py.truthy`` here: that would invent
+        a total ``bool`` completion after the formal door deferred honestly.
+        """
+        del unit
+        denotes = getattr(self, "denotes_value", None)
+        decided = getattr(self, "runtime_type_is_decided", None)
+        if callable(denotes) and callable(decided) and denotes() and not decided():
+            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if not isinstance(self, CallSiteValue):
+                raise SugarNotWritten(
+                    blame=site,
+                    owner="unary_operation_exception_floor",
+                    observed=f"{type(self).__name__} not",
+                    requested=(
+                        "source-visible native truth testimony selecting completion "
+                        "or an authenticated exceptional exit"
+                    ),
+                    fix=(
+                        "preserve the undecided third value at unary_truth discharge; "
+                        "resolve the actual's runtime type and __bool__/__len__ from "
+                        "source before completing or halting"
+                    ),
+                )
+        return self.truth(site)
+
     def undecided_attribute(self, name, site, *, owner: str):
         """Refuse lookup when source testimony decides neither outgoing edge.
 
