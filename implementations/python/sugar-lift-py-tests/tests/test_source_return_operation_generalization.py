@@ -663,3 +663,22 @@ def test_lambda_inside_nested_function_composes_with_source_return_projection() 
     assert call.sugar().desugar(None).value._dig_floor_or_none(
         None, owner="nested-lambda-return"
     ) == TermValue(6)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def outer():\n    def inner(value):\n        return value + 1\n    return inner(3)\n\nouter()\n",
+        "def inner(value):\n    return value + 10\n\ndef outer():\n    def inner(value):\n        return value + 1\n    return inner(3)\n\nouter()\n",
+        "def outer():\n    def inner(value):\n        return value + 1\n    return inner(3)\n\ndef other():\n    return inner(4)\n\nother()\n",
+    ],
+)
+def test_nested_lookup_lies_cannot_authorize_by_name_or_span(source: str) -> None:
+    tree, _, _ = _tree(source, bind=frozenset({"outer", "inner", "other"}))
+    nested_calls = [
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call) and getattr(node.func, "id", None) == "inner"
+    ]
+    assert nested_calls
+    assert all(node.unit.source_function_definition_for_call(node) is None for node in nested_calls)
