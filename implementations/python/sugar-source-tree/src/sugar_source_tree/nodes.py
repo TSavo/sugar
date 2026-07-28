@@ -7879,10 +7879,15 @@ class Lambda(Expression):
 
         from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 
+        frame = self.source_visible_call_frame()
         return LambdaSugar(
             formals=tuple(param.name for param in self.params),
             body=self.body.sugar(),
-            source_call_frame=self.source_visible_call_frame(),
+            source_call_frame=frame,
+            formal_coordinate_cids=tuple(
+                coordinate.cid for coordinate in frame.formal_coordinates
+            ),
+            body_fragment_cid=self.body.fragment.seal().cid,
             site=self.fragment,
         )
 

@@ -20,6 +20,8 @@ laws below go green and direct-value twins stay isomorphic.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
@@ -49,6 +51,7 @@ from sugar_source_tree.nodes import (
     Call,
     Compare,
     FunctionDef,
+    Lambda,
     Subscript,
 )
 from sugar_source_tree.panic import SugarNotWritten
@@ -534,6 +537,40 @@ def test_authenticated_lambda_return_flows_into_binop() -> None:
     )
 
     assert value == TermValue(6)
+
+
+def test_renamed_keyword_lambda_return_flows_into_binop() -> None:
+    tree, _, _ = _tree(
+        "def consume():\n"
+        "    return (lambda renamed: renamed + 1)(renamed=2) + 3\n\n"
+        "consume()\n",
+        bind=frozenset({"consume"}),
+    )
+    call = _calls_named(tree, "consume")[0]
+    value = call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="renamed-keyword-lambda-return"
+    )
+
+    assert value == TermValue(6)
+
+
+def test_lambda_rejects_foreign_body_and_formal_coordinate_testimony() -> None:
+    tree, _, _ = _tree(
+        "def consume():\n"
+        "    left = lambda value: value + 1\n"
+        "    right = lambda renamed: renamed + 2\n"
+        "    return left(2) + right(2)\n",
+        bind=frozenset({"consume"}),
+    )
+    lambdas = tuple(node for node in tree.nodes() if isinstance(node, Lambda))
+    assert len(lambdas) == 2
+    left, right = tuple(node.substitute({}).sugar() for node in lambdas)
+
+    with pytest.raises(TypeError, match="exact source body testimony"):
+        replace(left, body=right.body)
+
+    with pytest.raises(TypeError, match="producer-authenticated testimony"):
+        replace(left, formal_coordinate_cids=right.formal_coordinate_cids)
 
 
 def test_unauthenticated_lambda_callee_stays_loud() -> None:
