@@ -1185,7 +1185,7 @@ def test_renamed_source_visible_exit_derives_expects_raise_boundary(tmp_path):
 def test_external_error_raised_spelling_cannot_replace_native_return_shape(tmp_path):
     """A deferred assertion import cannot override the returned manager.
 
-    This is the lying twin for the returned-manager reproducer.  It binds the
+    This is the lying twin for the returned-manager reproducer. It binds the
     assertion provider at call time but returns an ordinary resource manager;
     native return testimony must keep it out of the EffectBoundary arm.
     """
@@ -1340,6 +1340,148 @@ def test_renamed_effect_boundary_derives_message_operand_from_real_formal(tmp_pa
     assert isinstance(summary.semantics, EffectBoundarySemanticsV1)
     assert summary.semantics.message_pattern_operand == (
         OptionalFormalArgumentProjectionV1(1)
+    )
+
+
+def test_none_match_branches_before_pattern_projection():
+    """Mutation tooth: moving ``.pattern`` after the join reads from None."""
+    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+    )
+
+    class PatternReadTrap(NoneValue):
+        def attribute(self, name, site):
+            raise AssertionError(
+                f"speculative {name!r} read reached authenticated match=None at {site}"
+            )
+
+    projected_match = Complete(PatternReadTrap())
+    result = _construct_message_pattern_operand(
+        projected_match,
+        site="match-none-mutation-tooth",
+        construct_message_obligation=lambda _pattern: (_ for _ in ()).throw(
+            AssertionError("match=None cannot construct a regex obligation")
+        ),
+    )
+
+    assert isinstance(result, Complete)
+    assert isinstance(result.value, NoMessagePatternV1)
+
+
+def test_uniform_none_match_faces_collapse_to_one_no_message_summary():
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
+    from sugar_lift_py_tests.floor import NoneValue
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+        _uniform_message_operand_or_gap,
+    )
+
+    projected = _construct_message_pattern_operand(
+        ExitSet(
+            (
+                Completed(_Atomic("none-face-a", ()), NoneValue()),
+                Completed(_Atomic("none-face-b", ()), NoneValue()),
+            )
+        ),
+        site="uniform-none-faces",
+        construct_message_obligation=lambda _pattern: (_ for _ in ()).throw(
+            AssertionError("None faces cannot construct a regex obligation")
+        ),
+    )
+    result = _uniform_message_operand_or_gap(
+        projected,
+        protocol_construction_cid="uniform-none-protocol",
+        coordinate=SimpleNamespace(cid="uniform-none-coordinate"),
+    )
+
+    assert isinstance(result, NoMessagePatternV1)
+
+
+def test_uniform_pattern_faces_collapse_to_one_pattern_obligation():
+    """Truthful twin: non-None faces construct one regex obligation."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.floor import FloorValue, StringValue
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+        _uniform_message_operand_or_gap,
+    )
+
+    class PatternCarrier(FloorValue):
+        def attribute(self, name, site):
+            assert (name, site) == ("pattern", "non-none-pattern-face")
+            return Complete(StringValue("^$"))
+
+    expected = OptionalFormalArgumentProjectionV1(1)
+    projected = _construct_message_pattern_operand(
+        ExitSet(
+            (
+                Completed(_Atomic("pattern-face-a", ()), PatternCarrier()),
+                Completed(_Atomic("pattern-face-b", ()), PatternCarrier()),
+            )
+        ),
+        site="non-none-pattern-face",
+        construct_message_obligation=lambda pattern: (
+            Complete(expected)
+            if pattern == StringValue("^$")
+            else (_ for _ in ()).throw(AssertionError(pattern))
+        ),
+    )
+    result = _uniform_message_operand_or_gap(
+        projected,
+        protocol_construction_cid="uniform-pattern-protocol",
+        coordinate=SimpleNamespace(cid="uniform-pattern-coordinate"),
+    )
+
+    assert result == expected
+
+
+def test_non_uniform_message_faces_return_located_derived_summary_gap():
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        DerivedManagerSummaryGapV1,
+        _uniform_message_operand_or_gap,
+    )
+
+    coordinate = SimpleNamespace(cid="non-uniform-formal-coordinate")
+    result = _uniform_message_operand_or_gap(
+        ExitSet(
+            (
+                Completed(_Atomic("none-message-face", ()), NoMessagePatternV1()),
+                Completed(
+                    _Atomic("pattern-message-face", ()),
+                    OptionalFormalArgumentProjectionV1(1),
+                ),
+            )
+        ),
+        protocol_construction_cid="non-uniform-protocol-coordinate",
+        coordinate=coordinate,
+    )
+
+    assert isinstance(result, DerivedManagerSummaryGapV1)
+    assert result.kind == "exit-may-halt"
+    assert result.protocol_construction_cid == "non-uniform-protocol-coordinate"
+    assert result.detail == (
+        "non-uniform-message-pattern-faces:non-uniform-formal-coordinate"
     )
 
 

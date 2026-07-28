@@ -126,7 +126,7 @@ def _with_at(line: int):
 
 
 def test_external_error_raised_follows_authenticated_returned_manager() -> None:
-    """Truthful: local import plus returned manager supplies the classification."""
+    """Truthful: written ``match=None`` constructs without reading pattern."""
     from sugar_lift_py_tests.context_manager_contract import (
         EffectBoundarySemanticsV1,
         NoMessagePatternV1,
