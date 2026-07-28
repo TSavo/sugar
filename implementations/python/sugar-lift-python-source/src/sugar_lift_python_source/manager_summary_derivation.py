@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from typing import Literal
 
@@ -78,6 +78,176 @@ class DerivedManagerSummaryGapV1:
     ]
     protocol_construction_cid: str
     detail: str
+
+
+@dataclass(frozen=True)
+class GeneratorEnterHaltFaceV1:
+    """Guarded pre-yield exceptional enter halt of a generator CM.
+
+    Derived from the authenticated generator body before the first yield —
+    never from decorator/provider spelling. ``exception_type_source`` is the
+    sealed source memento of the raise's exception expression; ``occurrence``
+    is the raise statement's sealed fragment. Optional ``guard_source`` is the
+    sealed if-test when the raise sits under a branch.
+    """
+
+    occurrence: dict
+    exception_type_source: dict
+    guard_source: dict | None
+    cid: str
+
+    @property
+    def preimage(self) -> dict:
+        return {
+            "kind": "generator-enter-halt-face",
+            "schemaVersion": "1",
+            "occurrence": self.occurrence,
+            "exceptionTypeSource": self.exception_type_source,
+            "guardSource": self.guard_source,
+        }
+
+    def __post_init__(self) -> None:
+        if cid_of_json(self.preimage) != self.cid:
+            raise ValueError(
+                "generator enter-halt face CID does not match its preimage"
+            )
+
+    @classmethod
+    def mint(
+        cls,
+        *,
+        occurrence: dict,
+        exception_type_source: dict,
+        guard_source: dict | None,
+    ) -> "GeneratorEnterHaltFaceV1":
+        preimage = {
+            "kind": "generator-enter-halt-face",
+            "schemaVersion": "1",
+            "occurrence": occurrence,
+            "exceptionTypeSource": exception_type_source,
+            "guardSource": guard_source,
+        }
+        return cls(
+            occurrence, exception_type_source, guard_source, cid_of_json(preimage)
+        )
+
+
+@dataclass(frozen=True)
+class GeneratorYieldFaceV1:
+    """Complementary yield face of generator enter (resource handoff).
+
+    Distinct from enter-halt: this is the suspension that publishes the
+    generator-backed resource, not an exceptional enter path.
+    """
+
+    occurrence: dict
+    resource_source: dict | None
+    cid: str
+
+    @property
+    def preimage(self) -> dict:
+        return {
+            "kind": "generator-yield-face",
+            "schemaVersion": "1",
+            "occurrence": self.occurrence,
+            "resourceSource": self.resource_source,
+        }
+
+    def __post_init__(self) -> None:
+        if cid_of_json(self.preimage) != self.cid:
+            raise ValueError("generator yield face CID does not match its preimage")
+
+    @classmethod
+    def mint(
+        cls, *, occurrence: dict, resource_source: dict | None
+    ) -> "GeneratorYieldFaceV1":
+        preimage = {
+            "kind": "generator-yield-face",
+            "schemaVersion": "1",
+            "occurrence": occurrence,
+            "resourceSource": resource_source,
+        }
+        return cls(occurrence, resource_source, cid_of_json(preimage))
+
+
+@dataclass(frozen=True)
+class GeneratorBackedLifecycleProtocolV1:
+    """Generator-backed protocol plus pre-yield enter-halt / yield faces.
+
+    Duck-types the fields ``SourceDerivedGeneratorResourceRefV1`` requires of
+    a generator-backed protocol, and carries producer-authenticated lifecycle
+    faces so consumers never confuse enter halt with yield handoff.
+    """
+
+    protocol_construction_cid: str
+    generator_frame_cid: str
+    enter_definition: object
+    exit_definition: object
+    exit_face_id: str
+    generator_frame: object = field(compare=False, repr=False)
+    enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = ()
+    yield_faces: tuple[GeneratorYieldFaceV1, ...] = ()
+    lifecycle_cid: str = ""
+
+    def __post_init__(self) -> None:
+        frame = self.generator_frame
+        if frame is None or getattr(frame, "generator_steps", None) is None:
+            raise ValueError(
+                "generator lifecycle protocol requires generator_steps on frame"
+            )
+        if getattr(frame, "frame_cid", None) != self.generator_frame_cid:
+            raise ValueError("generator frame CID does not match lifecycle protocol")
+        if self.enter_definition == self.exit_definition:
+            raise ValueError("generator enter/exit definition coordinates must differ")
+        for face in self.enter_halt_faces:
+            GeneratorEnterHaltFaceV1.mint(
+                occurrence=face.occurrence,
+                exception_type_source=face.exception_type_source,
+                guard_source=face.guard_source,
+            )
+            if face.cid != cid_of_json(face.preimage):
+                raise ValueError("enter-halt face CID mismatch")
+        for face in self.yield_faces:
+            if face.cid != cid_of_json(face.preimage):
+                raise ValueError("yield face CID mismatch")
+        expected = cid_of_json(self.lifecycle_preimage)
+        if self.lifecycle_cid and self.lifecycle_cid != expected:
+            raise ValueError("generator lifecycle CID does not match its preimage")
+        object.__setattr__(self, "lifecycle_cid", expected)
+
+    @property
+    def lifecycle_preimage(self) -> dict:
+        return {
+            "kind": "generator-backed-lifecycle-protocol",
+            "schemaVersion": "1",
+            "protocolConstructionCid": self.protocol_construction_cid,
+            "generatorFrameCid": self.generator_frame_cid,
+            "enterDefinition": self.enter_definition.wire(),
+            "exitDefinition": self.exit_definition.wire(),
+            "exitFaceId": self.exit_face_id,
+            "enterHaltFaceCids": [face.cid for face in self.enter_halt_faces],
+            "yieldFaceCids": [face.cid for face in self.yield_faces],
+        }
+
+    @classmethod
+    def from_protocol(
+        cls,
+        protocol,
+        *,
+        enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = (),
+        yield_faces: tuple[GeneratorYieldFaceV1, ...] = (),
+    ) -> "GeneratorBackedLifecycleProtocolV1":
+        return cls(
+            protocol.protocol_construction_cid,
+            protocol.generator_frame_cid,
+            protocol.enter_definition,
+            protocol.exit_definition,
+            protocol.exit_face_id,
+            protocol.generator_frame,
+            enter_halt_faces,
+            yield_faces,
+            "",
+        )
 
 
 @dataclass(frozen=True)
@@ -1403,6 +1573,12 @@ def _publish_generator_backed_resource_contract(
             type(protocol).__name__,
         )
         return
+    enter_halts, yield_faces = _project_generator_pre_yield_faces(generator_target)
+    lifecycle = GeneratorBackedLifecycleProtocolV1.from_protocol(
+        protocol,
+        enter_halt_faces=enter_halts,
+        yield_faces=yield_faces,
+    )
     # Generator exit truthiness is the GCM throw/resume result — not a forged
     # NeverSuppresses theorem from an ObjectValue receiver.
     semantics = ProtocolResourceSemanticsV1(
@@ -1413,10 +1589,13 @@ def _publish_generator_backed_resource_contract(
     summary_preimage = {
         "kind": "source-derived-generator-resource-summary",
         "schemaVersion": "1",
-        "protocolConstructionCid": protocol.protocol_construction_cid,
-        "generatorFrameCid": protocol.generator_frame_cid,
+        "protocolConstructionCid": lifecycle.protocol_construction_cid,
+        "generatorFrameCid": lifecycle.generator_frame_cid,
         "enterDefinition": enter.wire(),
         "exitDefinition": exit_.wire(),
+        "enterHaltFaceCids": [face.cid for face in lifecycle.enter_halt_faces],
+        "yieldFaceCids": [face.cid for face in lifecycle.yield_faces],
+        "lifecycleCid": lifecycle.lifecycle_cid,
         "semantics": json.loads(encode_jcs(semantics_to_value(semantics))),
         "importSignature": json.loads(encode_jcs(_signature_to_value(signature))),
     }
@@ -1426,8 +1605,104 @@ def _publish_generator_backed_resource_contract(
             cid_of_json(summary_preimage),
             semantics,
             signature,
-            protocol,
+            lifecycle,
         )
+    )
+
+
+def _project_generator_pre_yield_faces(
+    generator_target,
+) -> tuple[tuple[GeneratorEnterHaltFaceV1, ...], tuple[GeneratorYieldFaceV1, ...]]:
+    """Project pre-yield enter-halt faces and the complementary yield face(s).
+
+    Walks typed FunctionDef body statements only — never source text scanning
+    or decorator/provider spelling. Collects raises (and if-guarded raises)
+    before the first yield as enter-halt faces; each yield is a yield face.
+    Post-yield raises are not enter-halt (they are exit-side; separate law).
+    """
+    from sugar_source_tree.nodes import Expr, FunctionDef, If, Raise, Yield
+
+    if not isinstance(generator_target, FunctionDef):
+        return (), ()
+    enter_halts: list[GeneratorEnterHaltFaceV1] = []
+    yields: list[GeneratorYieldFaceV1] = []
+    past_yield = False
+    for statement in generator_target.body:
+        if _is_yield_expression_statement(statement):
+            past_yield = True
+            yields.append(_mint_yield_face(statement))
+            continue
+        if past_yield:
+            # Post-yield exceptional exits are a separate publication law.
+            continue
+        if isinstance(statement, Raise):
+            face = _mint_enter_halt_face(statement, guard_source=None)
+            if face is not None:
+                enter_halts.append(face)
+            continue
+        if isinstance(statement, If):
+            guard = statement.test.fragment.seal().to_dict()
+            for nested in statement.body:
+                if isinstance(nested, Raise):
+                    face = _mint_enter_halt_face(nested, guard_source=guard)
+                    if face is not None:
+                        enter_halts.append(face)
+            for nested in statement.orelse:
+                if isinstance(nested, Raise):
+                    # Complementary branch: distinct guard polarity is the
+                    # else-arm's source (not a recombined face).
+                    else_guard = {
+                        "kind": "generator-enter-halt-else-guard",
+                        "schemaVersion": "1",
+                        "ifTest": guard,
+                        "branch": "orelse",
+                    }
+                    face = _mint_enter_halt_face(nested, guard_source=else_guard)
+                    if face is not None:
+                        enter_halts.append(face)
+    return tuple(enter_halts), tuple(yields)
+
+
+def _is_yield_expression_statement(statement) -> bool:
+    from sugar_source_tree.nodes import Expr, Yield
+
+    return isinstance(statement, Expr) and isinstance(statement.value, Yield)
+
+
+def _mint_enter_halt_face(
+    raise_stmt, *, guard_source: dict | None
+) -> GeneratorEnterHaltFaceV1 | None:
+    """Mint one enter-halt face from a typed Raise node.
+
+    Exception type identity is the sealed source of the raise's exception
+    expression — not a spelling of the class name.
+    """
+    from sugar_source_tree.nodes import Raise
+
+    if not isinstance(raise_stmt, Raise):
+        return None
+    exc = getattr(raise_stmt, "exc", None)
+    if exc is None:
+        return None
+    occurrence = raise_stmt.fragment.seal().to_dict()
+    exception_type_source = exc.fragment.seal().to_dict()
+    return GeneratorEnterHaltFaceV1.mint(
+        occurrence=occurrence,
+        exception_type_source=exception_type_source,
+        guard_source=guard_source,
+    )
+
+
+def _mint_yield_face(statement) -> GeneratorYieldFaceV1:
+    from sugar_source_tree.nodes import Expr, Yield
+
+    assert isinstance(statement, Expr) and isinstance(statement.value, Yield)
+    yield_node = statement.value
+    occurrence = yield_node.fragment.seal().to_dict()
+    resource = yield_node.value
+    resource_source = None if resource is None else resource.fragment.seal().to_dict()
+    return GeneratorYieldFaceV1.mint(
+        occurrence=occurrence, resource_source=resource_source
     )
 
 
