@@ -20,17 +20,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class ComputedCallSugar(Sugar):
-    callee: Sugar
-    args: tuple  # the argument sugars, in source order
+class ComputedCallSugar(ConstructedTermSugar):
+    callee: ConstructedTermSugar
+    args: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
-    keywords: tuple = ()  # (name or explicit "**", sugar), source order
+    keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     source_call_frame: object | None = dataclass_field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(self.callee, owner="ComputedCallSugar.callee")
+        for argument in self.args:
+            require_constructed_term_sugar(argument, owner="ComputedCallSugar.args")
+        for _name, argument in self.keywords:
+            require_constructed_term_sugar(argument, owner="ComputedCallSugar.keywords")
 
     @classmethod
     def witnesses(cls):
@@ -42,6 +52,43 @@ class ComputedCallSugar(Sugar):
             owner_sugar="ComputedCallSugar",
             truthful=prefix + "def test_a():\n    assert A([lambda z: z], 5) == 5\n",
             lying=prefix + "def test_a():\n    assert A([lambda z: z], 5) == 6\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        frame = self.source_call_frame
+        authority = (
+            ctor("python:no-source-call-frame", ())
+            if frame is None
+            else ctor(
+                "python:source-call-frame",
+                (str_const(frame.frame_cid),),
+                symbol_kind="coordinate",
+            )
+        )
+        return ctor(
+            "python:computed-call-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.callee.to_term(owner=owner),
+                ctor(
+                    "python:positional-arguments",
+                    tuple(argument.to_term(owner=owner) for argument in self.args),
+                ),
+                ctor(
+                    "python:keyword-arguments",
+                    tuple(
+                        ctor(
+                            "python:keyword-argument",
+                            (str_const(name), argument.to_term(owner=owner)),
+                        )
+                        for name, argument in self.keywords
+                    ),
+                ),
+                authority,
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

@@ -14,22 +14,56 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class FormattedValueSugar(Sugar):
+class FormattedValueSugar(ConstructedTermSugar):
     """A Python-reference formatted-value coordinate, without execution."""
 
-    value: Sugar
+    value: ConstructedTermSugar
     conversion: str | None
     format_spec: JoinedStrSugar | None
     site: object = dataclass_field(compare=False)
 
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(self.value, owner="FormattedValueSugar.value")
+        if self.format_spec is not None:
+            require_constructed_term_sugar(
+                self.format_spec, owner="FormattedValueSugar.format_spec"
+            )
+
     @classmethod
     def witnesses(cls):
         return ()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        conversion = (
+            ctor("python:no-fstring-conversion", ())
+            if self.conversion is None
+            else str_const(self.conversion)
+        )
+        format_spec = (
+            ctor("python:no-format-spec", ())
+            if self.format_spec is None
+            else self.format_spec.to_term(owner=owner)
+        )
+        return ctor(
+            "python:formatted-value-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.value.to_term(owner=owner),
+                conversion,
+                format_spec,
+            ),
+            symbol_kind="coordinate",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.string_value import StringValue
@@ -81,11 +115,15 @@ class FormattedValueSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class JoinedStrSugar(Sugar):
+class JoinedStrSugar(ConstructedTermSugar):
     """The whole f-string: concatenate its parts left-to-right via `add`."""
 
-    parts: tuple
+    parts: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            require_constructed_term_sugar(part, owner="JoinedStrSugar.parts")
 
     @classmethod
     def witnesses(cls):
@@ -95,6 +133,21 @@ class JoinedStrSugar(Sugar):
             owner_sugar="JoinedStrSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == '5'\n",
             lying=prefix + "def test_a():\n    assert A(5) == '6'\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:joined-string-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor(
+                    "python:joined-string-parts",
+                    tuple(part.to_term(owner=owner) for part in self.parts),
+                ),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

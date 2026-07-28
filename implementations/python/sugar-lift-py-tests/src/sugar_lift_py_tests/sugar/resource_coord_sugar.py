@@ -9,11 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
 @dataclass(frozen=True)
-class ManagerRefSugar(Sugar):
+class ManagerRefSugar(ConstructedTermSugar):
     """Tree ``ManagerRef(M)`` — pure manager-slot coordinate."""
 
     slot_id: str
@@ -23,6 +23,15 @@ class ManagerRefSugar(Sugar):
     def witnesses(cls):
         return ()
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:manager-reference-construction",
+            (self.occurrence_term(owner=owner), str_const(self.slot_id)),
+            symbol_kind="coordinate",
+        )
+
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
         from sugar_lift_py_tests.floor.manager_coordinate import ManagerCoordinate
@@ -31,7 +40,7 @@ class ManagerRefSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class ExitTypeRefSugar(Sugar):
+class ExitTypeRefSugar(ConstructedTermSugar):
     """Tree ``ExitTypeRef(X)`` — pure parametric exit-type coordinate."""
 
     face_id: str
@@ -41,6 +50,15 @@ class ExitTypeRefSugar(Sugar):
     def witnesses(cls):
         return ()
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:exit-type-reference-construction",
+            (self.occurrence_term(owner=owner), str_const(self.face_id)),
+            symbol_kind="coordinate",
+        )
+
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
         from sugar_lift_py_tests.floor.manager_coordinate import ExitTypeCoordinate
@@ -49,7 +67,7 @@ class ExitTypeRefSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class ExitValueRefSugar(Sugar):
+class ExitValueRefSugar(ConstructedTermSugar):
     """Tree ``ExitValueRef(X)`` — pure parametric exit-value coordinate."""
 
     face_id: str
@@ -59,6 +77,15 @@ class ExitValueRefSugar(Sugar):
     def witnesses(cls):
         return ()
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:exit-value-reference-construction",
+            (self.occurrence_term(owner=owner), str_const(self.face_id)),
+            symbol_kind="coordinate",
+        )
+
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
         from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
@@ -67,7 +94,7 @@ class ExitValueRefSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class ExitTracebackRefSugar(Sugar):
+class ExitTracebackRefSugar(ConstructedTermSugar):
     """Tree ``ExitTracebackRef(X)`` — pure parametric exit-traceback coordinate."""
 
     face_id: str
@@ -76,6 +103,15 @@ class ExitTracebackRefSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return ()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:exit-traceback-reference-construction",
+            (self.occurrence_term(owner=owner), str_const(self.face_id)),
+            symbol_kind="coordinate",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx

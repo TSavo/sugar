@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class NameSugar(Sugar):
+class NameSugar(ConstructedTermSugar):
     """A name that survives to the meaning layer is a free formal or builtin.
 
     substitute runs before sugar (FunctionDef.sugar), so every temporal binding
@@ -37,6 +37,15 @@ class NameSugar(Sugar):
             owner_sugar="NameSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:name-construction",
+            (self.occurrence_term(owner=owner), str_const(self.name)),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

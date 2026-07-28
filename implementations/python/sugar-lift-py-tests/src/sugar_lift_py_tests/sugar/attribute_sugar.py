@@ -13,15 +13,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class AttributeSugar(Sugar):
-    receiver: Sugar
+class AttributeSugar(ConstructedTermSugar):
+    receiver: ConstructedTermSugar
     name: str
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(self.receiver, owner="AttributeSugar.receiver")
 
     @classmethod
     def witnesses(cls):
@@ -35,6 +41,19 @@ class AttributeSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:attribute-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.receiver.to_term(owner=owner),
+                str_const(self.name),
+            ),
+            symbol_kind="coordinate",
+        )
+
     @staticmethod
     def project_attribute(receiver, name: str, site, ctx: object = None) -> Outcome:
         """Producer-owned attribute **read** projection (one door).
@@ -44,7 +63,6 @@ class AttributeSugar(Sugar):
         1. Formal receiver → undischarged ``attribute_named`` carrier
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
         3. Else Floor ``receiver.attribute(name, site)``
-
         Callers that already hold a reduced receiver (AugAssign) enter here
         without re-evaluating the receiver expression.
         """

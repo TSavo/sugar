@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
@@ -31,22 +34,73 @@ class ComprehensionTargetSugar:
                 "comprehension target is exactly one of a name or a destructuring"
             )
 
+    def to_term(self):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        if self.source_name is not None:
+            return ctor("python:comprehension-name-target", (str_const(self.source_name),))
+        assert self.coordinates is not None
+        return ctor(
+            "python:comprehension-destructure-target",
+            tuple(coordinate.to_term() for coordinate in self.coordinates),
+        )
+
 
 @dataclass(frozen=True)
 class ComprehensionGeneratorSugar:
     target: ComprehensionTargetSugar
     binding_coordinate_cid: str
-    iterable: Sugar
-    filters: tuple[Sugar, ...]
+    iterable: ConstructedTermSugar
+    filters: tuple[ConstructedTermSugar, ...]
+
+    def __post_init__(self) -> None:
+        require_constructed_term_sugar(
+            self.iterable, owner="ComprehensionGeneratorSugar.iterable"
+        )
+        for filter_sugar in self.filters:
+            require_constructed_term_sugar(
+                filter_sugar, owner="ComprehensionGeneratorSugar.filters"
+            )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:comprehension-generator-construction",
+            (
+                self.target.to_term(),
+                str_const(self.binding_coordinate_cid),
+                self.iterable.to_term(owner=owner),
+                ctor(
+                    "python:comprehension-filters",
+                    tuple(value.to_term(owner=owner) for value in self.filters),
+                ),
+            ),
+            symbol_kind="coordinate",
+        )
 
 
 @dataclass(frozen=True)
-class ComprehensionSugar(Sugar):
+class ComprehensionSugar(ConstructedTermSugar):
     kind: str
     generators: tuple[ComprehensionGeneratorSugar, ...]
-    element: Sugar
-    key: Sugar | None = None
+    element: ConstructedTermSugar
+    key: ConstructedTermSugar | None = None
     site: object = dataclass_field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self.kind not in {
+            "py.listcomp",
+            "py.setcomp",
+            "py.dictcomp",
+            "py.generatorexp",
+        }:
+            raise ValueError(f"unknown comprehension kind {self.kind!r}")
+        require_constructed_term_sugar(
+            self.element, owner="ComprehensionSugar.element"
+        )
+        if self.key is not None:
+            require_constructed_term_sugar(self.key, owner="ComprehensionSugar.key")
 
     @classmethod
     def witnesses(cls):
@@ -56,6 +110,29 @@ class ComprehensionSugar(Sugar):
             owner_sugar="ComprehensionSugar",
             truthful=prefix + "def test_a():\n    assert A([1]) == [1]\n",
             lying=prefix + "def test_a():\n    assert A([1]) == [2]\n",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        key = (
+            ctor("python:no-comprehension-key", ())
+            if self.key is None
+            else self.key.to_term(owner=owner)
+        )
+        return ctor(
+            "python:comprehension-construction",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.kind),
+                ctor(
+                    "python:comprehension-generators",
+                    tuple(generator.to_term(owner=owner) for generator in self.generators),
+                ),
+                self.element.to_term(owner=owner),
+                key,
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

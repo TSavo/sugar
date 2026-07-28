@@ -24,7 +24,10 @@ from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _boolop_wrapped_pair
 
 # Comparison operator kind -> the floor method that owns its meaning. `Eq` is
@@ -264,11 +267,17 @@ def _publish_undecided_dispatch_edges(
 
 
 @dataclass(frozen=True)
-class ComparisonOpSugar(Sugar):
+class ComparisonOpSugar(ConstructedTermSugar):
     op_kind: str
-    left: Sugar
-    right: Sugar
+    left: ConstructedTermSugar
+    right: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        if self.op_kind not in COMPARISON_KINDS:
+            raise ValueError(f"unknown comparison operator {self.op_kind!r}")
+        require_constructed_term_sugar(self.left, owner="ComparisonOpSugar.left")
+        require_constructed_term_sugar(self.right, owner="ComparisonOpSugar.right")
 
     @classmethod
     def witnesses(cls):
@@ -277,6 +286,20 @@ class ComparisonOpSugar(Sugar):
             owner_sugar="ComparisonOpSugar",
             truthful="1 < 2",
             lying="2 < 1",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:comparison-construction",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.op_kind),
+                self.left.to_term(owner=owner),
+                self.right.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

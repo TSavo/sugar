@@ -8,11 +8,25 @@ import pytest
 from sugar_lift_py_tests.call_contract_resolution import ResolvedCallContractRefV1
 from sugar_lift_py_tests.ir import PrimitiveSort, str_const
 from sugar_lift_py_tests.generator_construction import YieldStepV1
+from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
+from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
+from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
+from sugar_lift_py_tests.sugar.comprehension_sugar import (
+    ComprehensionGeneratorSugar,
+    ComprehensionSugar,
+    ComprehensionTargetSugar,
+)
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+from sugar_lift_py_tests.sugar.fstring_sugar import FormattedValueSugar, JoinedStrSugar
+from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+from sugar_lift_py_tests.sugar.slice_sugar import SliceSugar
+from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
@@ -61,6 +75,15 @@ def _call_sites():
     source = "callee(a, b)\ncallee(a, b)\n"
     tree = SourceFile((source, "calls.py", blake3_512_of(source.encode())))
     return tuple(node.fragment for node in tree.nodes() if node.kind == "Call")
+
+
+def _comprehension_generator(iterable, *, filters=()):
+    return ComprehensionGeneratorSugar(
+        target=ComprehensionTargetSugar(source_name="item"),
+        binding_coordinate_cid="blake3-512:" + "g" * 128,
+        iterable=iterable,
+        filters=filters,
+    )
 
 
 def _contract(letter: str) -> ResolvedCallContractRefV1:
@@ -115,8 +138,78 @@ def test_generator_payload_admission_refuses_arbitrary_sugar():
         lambda child, site: IfExpSugar(child, _Operand("body"), _Operand("else"), site),
         lambda child, site: CallSiteSugar("ignored", (child,), site),
         lambda child, site: CallSiteSugar("ignored", (), site, (("key", child),)),
+        lambda child, site: AttributeSugar(child, "field", site),
+        lambda child, site: ComputedCallSugar(child, (_Operand("arg"),), site),
+        lambda child, site: ComputedCallSugar(_Operand("callee"), (child,), site),
+        lambda child, site: ComputedCallSugar(
+            _Operand("callee"), (), site, (("key", child),)
+        ),
+        lambda child, site: ComparisonOpSugar("Is", child, _Operand("right"), site),
+        lambda child, site: MethodCallSugar(child, "method", (), site),
+        lambda child, site: MethodCallSugar(
+            _Operand("receiver"), "method", (child,), site
+        ),
+        lambda child, site: MethodCallSugar(
+            _Operand("receiver"), "method", (), site, (("key", child),)
+        ),
+        lambda child, site: SubscriptSugar(child, _Operand("index"), site),
+        lambda child, site: UnaryOpSugar("Not", child, site),
+        lambda child, site: SliceSugar(child, None, None, site),
+        lambda child, site: BinOpSugar("Add", child, _Operand("right"), site),
+        lambda child, site: FormattedValueSugar(child, None, None, site),
+        lambda child, site: JoinedStrSugar((child,), site),
+        lambda child, site: ComprehensionSugar(
+            "py.generatorexp",
+            (_comprehension_generator(child),),
+            _Operand("element"),
+            site=site,
+        ),
+        lambda child, site: ComprehensionSugar(
+            "py.generatorexp",
+            (_comprehension_generator(_Operand("iterable"), filters=(child,)),),
+            _Operand("element"),
+            site=site,
+        ),
+        lambda child, site: ComprehensionSugar(
+            "py.generatorexp",
+            (_comprehension_generator(_Operand("iterable")),),
+            child,
+            site=site,
+        ),
+        lambda child, site: ComprehensionSugar(
+            "py.dictcomp",
+            (_comprehension_generator(_Operand("iterable")),),
+            _Operand("value"),
+            key=child,
+            site=site,
+        ),
     ),
-    ids=("equality", "bool-op", "tuple", "if-expression", "call-arg", "call-keyword"),
+    ids=(
+        "equality",
+        "bool-op",
+        "tuple",
+        "if-expression",
+        "call-arg",
+        "call-keyword",
+        "attribute",
+        "computed-callee",
+        "computed-arg",
+        "computed-keyword",
+        "comparison",
+        "method-receiver",
+        "method-arg",
+        "method-keyword",
+        "subscript",
+        "unary-op",
+        "slice",
+        "binary-op",
+        "formatted-value",
+        "joined-string",
+        "comprehension-iterable",
+        "comprehension-filter",
+        "comprehension-element",
+        "comprehension-key",
+    ),
 )
 def test_constructed_term_nested_children_are_closed_at_construction(build):
     site = _call_sites()[0]

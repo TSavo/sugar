@@ -11,19 +11,52 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 
 
 @dataclass(frozen=True)
-class SliceSugar(Sugar):
-    lower: object  # sugar or None (omitted bound)
-    upper: object
-    step: object
+class SliceSugar(ConstructedTermSugar):
+    lower: ConstructedTermSugar | None
+    upper: ConstructedTermSugar | None
+    step: ConstructedTermSugar | None
     site: object = dataclass_field(compare=False)
+
+    def __post_init__(self) -> None:
+        for name, bound in (
+            ("lower", self.lower),
+            ("upper", self.upper),
+            ("step", self.step),
+        ):
+            if bound is not None:
+                require_constructed_term_sugar(bound, owner=f"SliceSugar.{name}")
 
     @classmethod
     def witnesses(cls):
         return ()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        def bound_term(bound):
+            return (
+                ctor("python:omitted-slice-bound", ())
+                if bound is None
+                else bound.to_term(owner=owner)
+            )
+
+        return ctor(
+            "python:slice-construction",
+            (
+                self.occurrence_term(owner=owner),
+                bound_term(self.lower),
+                bound_term(self.upper),
+                bound_term(self.step),
+            ),
+            symbol_kind="coordinate",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         # A BOUND IS AN ORDINARY OPERAND, and an operand does not answer with
