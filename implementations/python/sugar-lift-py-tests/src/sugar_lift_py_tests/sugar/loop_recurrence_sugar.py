@@ -270,20 +270,21 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 isinstance(effect, LoopControlEffect)
                 and effect.target_cid == self.target_cid
             ):
-                state = face.state
-                if state is None:
-                    raise TypeError("loop control omitted its exact pre-exit state")
-                combined = (*entries, *state.entries)
+                state = self._require_loop_control_state(
+                    face.state,
+                    target_name=runtime.target_name,
+                    target_value=next_result.value,
+                )
                 if effect.action == "continue":
                     return self._advance_iterator(
                         next_result.advanced,
                         runtime,
-                        state.context,
-                        entries=combined,
+                        state,
+                        entries=entries,
                     )
                 if effect.action == "break":
                     return self._publish_runtime_bindings(
-                        runtime, state.context, entries=combined
+                        runtime, state, entries=entries
                     )
             return body
         if not isinstance(face, Completed):
@@ -298,6 +299,23 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             state.context,
             entries=combined,
         )
+
+    @staticmethod
+    def _require_loop_control_state(state, *, target_name, target_value):
+        """Authenticate the producer's exact current reduction context.
+
+        A loop-control halt carries the context it received at its source
+        occurrence.  The current target Floor was bound into that context by
+        this recurrence, so object identity authenticates the context without
+        rebuilding a reduced block or accepting an ambient/foreign scope.
+        """
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+
+        if not isinstance(state, ReduceContext):
+            raise TypeError("loop control omitted its exact ReduceContext state")
+        if state.temporal.value_if_bound(target_name) is not target_value:
+            raise TypeError("loop control state lacks exact iteration target identity")
+        return state
 
     def _finish_iterator(self, runtime, ctx, *, entries):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
+from sugar_lift_py_tests.context.reduce_context import ReduceContext
+from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
+from sugar_lift_py_tests.temporal import bind_temporal
 from sugar_source_tree.tree import SourceFile
 
 
@@ -62,3 +68,59 @@ def test_break_bypasses_later_next_calls_and_loop_else() -> None:
 
     post = _completed_post(_function(source).sugar().desugar())
     assert post.args[1].value == 0
+
+
+def test_continue_preserves_current_state_before_the_next_iteration() -> None:
+    source = (
+        "def helper():\n"
+        "    total = 0\n"
+        "    for item in [1, 2, 3]:\n"
+        "        total = total + item\n"
+        "        continue\n"
+        "    else:\n"
+        "        total = total + 10\n"
+        "    return total\n"
+    )
+
+    post = _completed_post(_function(source).sugar().desugar())
+    assert post.args[1].value == 16
+
+
+def test_loop_control_state_accepts_only_the_exact_iteration_binding_identity() -> None:
+    value = TermValue(7)
+    ambient = ReduceContext.root(owner="loop-control-ambient")
+    exact = bind_temporal(
+        ambient,
+        "item",
+        value,
+        owner="loop-control-exact",
+        blame="loop-control-exact",
+    )
+    foreign = bind_temporal(
+        ambient,
+        "item",
+        TermValue(7),
+        owner="loop-control-foreign",
+        blame="loop-control-foreign",
+    )
+
+    assert (
+        LoopRecurrenceSugar._require_loop_control_state(
+            exact,
+            target_name="item",
+            target_value=value,
+        )
+        is exact
+    )
+    with pytest.raises(TypeError, match="exact iteration target identity"):
+        LoopRecurrenceSugar._require_loop_control_state(
+            ambient,
+            target_name="item",
+            target_value=value,
+        )
+    with pytest.raises(TypeError, match="exact iteration target identity"):
+        LoopRecurrenceSugar._require_loop_control_state(
+            foreign,
+            target_name="item",
+            target_value=value,
+        )
