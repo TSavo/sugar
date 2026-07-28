@@ -29,11 +29,16 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    GuardedRaise,
     ListValue,
+    LoopControlValue,
+    RaiseValue,
     ReturnValue,
     TermValue,
     TupleValue,
 )
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -118,6 +123,35 @@ CODEX3_OWNER = (
     "Subscript, and store operands — not stop at BlockValue or leave "
     "CallSiteValue opaque. tests-only; no local CallSiteValue adaptation."
 )
+
+
+@pytest.mark.parametrize(
+    "competing_exit",
+    (
+        RaiseValue(RaiseEffect(exception_name="TypeError")),
+        GuardedRaise(
+            (TermValue(True).to_term(owner="guard"),),
+            RaiseEffect(exception_name="TypeError"),
+        ),
+        Incomplete(RaiseEffect(exception_name="TypeError")),
+        LoopControlValue("break", "helper.py:3"),
+    ),
+)
+def test_source_return_projection_refuses_any_competing_control_exit(
+    competing_exit,
+) -> None:
+    """One return is ineligible when any other authenticated exit survives."""
+    from sugar_lift_py_tests.floor.call_site_value import (
+        _project_authenticated_source_return,
+    )
+
+    body = BlockValue(
+        (ReturnValue(TermValue(3)), competing_exit),
+        fall_through=(),
+        can_fall_through=False,
+    )
+
+    assert _project_authenticated_source_return(body) is body
 
 
 # ---------------------------------------------------------------------------

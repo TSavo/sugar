@@ -153,7 +153,16 @@ class CallSiteSugar(ConstructedTermSugar):
         if remaining:
             head, *rest = remaining
             return head.desugar(ctx).and_then(
-                lambda value: self._collect(tuple(rest), accumulated + (value,), ctx)
+                lambda value: self._collect(
+                    tuple(rest),
+                    accumulated
+                    + (
+                        value.project_operation_receiver(
+                            ctx, owner="CallSiteSugar positional actual"
+                        ),
+                    ),
+                    ctx,
+                )
             )
         return self._collect_kwargs(self.keywords, (), accumulated, ctx)
 
@@ -164,7 +173,18 @@ class CallSiteSugar(ConstructedTermSugar):
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
                 lambda value: self._collect_kwargs(
-                    tuple(rest), kw_values + ((name, value),), positional, ctx
+                    tuple(rest),
+                    kw_values
+                    + (
+                        (
+                            name,
+                            value.project_operation_receiver(
+                                ctx, owner="CallSiteSugar keyword actual"
+                            ),
+                        ),
+                    ),
+                    positional,
+                    ctx,
                 )
             )
         if ctx is not None:

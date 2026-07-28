@@ -86,6 +86,16 @@ class BinOpSugar(ConstructedTermSugar):
         method = BINOP_METHODS[self.op_kind]
         return self.left.desugar(ctx).and_then(
             lambda left: self.right.desugar(ctx).and_then(
-                lambda right: getattr(left, method)(right, self.site)
+                lambda right: getattr(
+                    left.project_operation_receiver(
+                        ctx, owner="BinOpSugar left operation receiver"
+                    ),
+                    method,
+                )(
+                    right.project_operation_receiver(
+                        ctx, owner="BinOpSugar right operation receiver"
+                    ),
+                    self.site,
+                )
             )
         )

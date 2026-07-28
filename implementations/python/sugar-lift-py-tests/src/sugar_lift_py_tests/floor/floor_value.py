@@ -122,6 +122,16 @@ _BINARY_OPERATOR_COORDINATE = {
 
 
 class FloorValue:
+    def project_operation_receiver(self, ctx: object, *, owner: str):
+        """Return the value that owns the next operation dispatch.
+
+        Ordinary Floors already are their operation receiver. Producers whose
+        authenticated result is deferred may override this one protocol before
+        any operation family selects its concrete floor method.
+        """
+        del ctx, owner
+        return self
+
     def _floor_gap(
         self,
         *,

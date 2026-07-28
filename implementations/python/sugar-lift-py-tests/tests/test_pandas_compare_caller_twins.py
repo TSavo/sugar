@@ -11,7 +11,8 @@ import pytest
 from pandas import date_range
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.floor import CallSiteValue, FloorValue
+from sugar_lift_py_tests.floor import CallSiteValue
+from sugar_lift_py_tests.ir import ctor
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -153,24 +154,12 @@ def test_real_caller_runtime_actuals_raise_but_do_not_supply_floor_testimony() -
     assert assert_invalid_comparison(left, right, box) is None
 
 
-def test_opaque_floor_cannot_authenticate_this_pandas_ordering_exception() -> None:
-    """An opaque call remains undecided after source-return projection exists.
+def test_bodyless_call_remains_opaque_without_borrowing_ordering_testimony() -> None:
+    """A bodyless call is the negative twin, not a label for the real caller."""
+    opaque = CallSiteValue("opaque", (), (), ctor("call:opaque", []), None)
 
-    The caller's left actual is the result of ``tm.box_expected``.  Until that
-    call result authenticates a pandas datetime-array Floor value, substitution
-    yields ``CallSiteValue``.  Authenticated bodies now project their returned
-    Floor before ordering, but a body-less call cannot mint an exception
-    identity.  Neither the helper boundary nor pandas spelling may fill it.
-    """
-    pair = _pair()
-
-    assert ast.unparse(pair.operation) == "left < right"
-    assert CallSiteValue.less_than is not FloorValue.less_than
-    assert CallSiteValue(
-        "opaque", (), (), __import__("sugar_lift_py_tests.ir", fromlist=["ctor"]).ctor(
-            "call:opaque", []
-        ), None
-    )._dig_floor_or_none(None, owner="opaque compare twin") is None
+    assert "less_than" not in CallSiteValue.__dict__
+    assert opaque._dig_floor_or_none(None, owner="opaque compare twin") is None
 
 
 def test_lying_caller_coordinate_is_rejected_before_it_can_be_evidence() -> None:

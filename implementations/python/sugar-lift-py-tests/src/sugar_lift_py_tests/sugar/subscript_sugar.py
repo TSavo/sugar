@@ -158,6 +158,11 @@ class SubscriptSugar(ConstructedTermSugar):
     def _subscript(self, receiver, index, ctx):
         from sugar_lift_py_tests.floor import ObjectValue
 
+        receiver = receiver.project_operation_receiver(
+            ctx, owner="SubscriptSugar receiver"
+        )
+        index = index.project_operation_receiver(ctx, owner="SubscriptSugar index")
+
         if isinstance(receiver, ObjectValue):
             return receiver.call_method_value(
                 "__getitem__",
