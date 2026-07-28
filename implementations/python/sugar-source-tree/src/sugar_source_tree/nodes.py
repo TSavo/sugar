@@ -2501,9 +2501,12 @@ class FunctionDef(Statement):
             IfStepV1,
             InertStepV1,
             OpaqueStepV1,
+            RaiseStepV1,
             ReturnStepV1,
+            TermStepV1,
             YieldStepV1,
         )
+        from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
         steps = []
 
@@ -2513,6 +2516,10 @@ class FunctionDef(Statement):
             None is not a skip: the caller either keeps a containing `If`
             opaque or appends an honest `OpaqueStepV1`. Unhandled kinds stay
             loud SUGAR NOT WRITTEN at transition — never silently advanced.
+
+            Recurses into suspension-owning ``If`` and nested ``try/finally``
+            so real/renamed generator managers advance through source-visible
+            control to their first yield without consumer reconstruction.
             """
             if isinstance(statement, Expr) and isinstance(statement.value, Yield):
                 value = statement.value.value
@@ -2520,6 +2527,13 @@ class FunctionDef(Statement):
             if isinstance(statement, Return):
                 return ReturnStepV1(
                     None if statement.value is None else statement.value.sugar()
+                )
+            if isinstance(statement, Raise) and not self._owns_yield((statement,)):
+                # Validation arms (``if bad: raise …``) and cleanup raises —
+                # RaiseSugar rides the step; transition halts with the effect.
+                return RaiseStepV1(
+                    statement.sugar(),
+                    statement.fragment.seal().cid,
                 )
             if (
                 isinstance(statement, Expr)
@@ -2531,24 +2545,28 @@ class FunctionDef(Statement):
                 # binding and no suspension, so calling it opaque made the
                 # machine refuse at a statement that asks for nothing and name
                 # the WRONG blocker. It is stepped, not performed.
-                #
-                # The admission is structural (`Expr` holding `Constant`) and
-                # the suspension check is `_owns_yield`, the same authenticated
-                # predicate the rest of this producer reads -- never a judgement
-                # that a statement "looks harmless".
                 return InertStepV1(statement.kind)
             if isinstance(statement, Pass) and not self._owns_yield((statement,)):
-                # Peer of inert Constant: `pass` owes nothing.
                 return InertStepV1(statement.kind)
+            if (
+                isinstance(statement, Expr)
+                and not self._owns_yield((statement,))
+                and not isinstance(statement.value, (Yield, YieldFrom))
+            ):
+                # Bare expression statements (cleanup / setup calls): admit the
+                # *value* as ConstructedTermSugar — never ExprStatementSugar.
+                value_sugar = statement.value.sugar()
+                if isinstance(value_sugar, ConstructedTermSugar):
+                    return TermStepV1(
+                        value_sugar, statement.fragment.seal().cid
+                    )
+                return None
             if (
                 isinstance(statement, Assign)
                 and not self._owns_yield((statement,))
                 and len(statement.targets) == 1
                 and isinstance(statement.targets[0], Name)
             ):
-                # Pre-yield simple name assignment on the live generator machine
-                # (config-set / filter-push / temp-state save). Multi-target and
-                # non-Name stores stay unnameable until constructed.
                 return AssignStepV1(
                     statement.targets[0].id,
                     statement.value.sugar(),
@@ -2560,23 +2578,15 @@ class FunctionDef(Statement):
                 and isinstance(statement.target, Name)
                 and statement.value is not None
             ):
-                # Peer of simple Assign: annotated name bind without suspension.
                 return AssignStepV1(
                     statement.target.id,
                     statement.value.sugar(),
                     statement.fragment.seal().cid,
                 )
             if isinstance(statement, If):
-                # A BRANCH IS A TWO-FACE PARTITION and this producer owns it.
-                # Admitted for suspension-owning branches AND pre-yield guarded
-                # setup (`if cond: x = …` before yield) when BOTH sides are
-                # wholly nameable. Raise / For / x=yield / other unhandled
-                # kinds keep the whole `If` unnameable and loud.
-                #
-                # The partition is NOT minted here. Its key needs the machine's
-                # `instance_coordinate`, which `allocate` mints AFTER these
-                # steps exist, so the mint happens at transition time and this
-                # step stays instance-agnostic.
+                # Suspension-owning and pre-yield guarded If: both sides fully
+                # constructed (recursive), guard + If occurrence CID. Partial
+                # branches refuse the whole If as Opaque (never skip inside).
                 then_body = branch_steps(statement.body)
                 else_body = branch_steps(statement.orelse)
                 if then_body is None or else_body is None:
@@ -2587,46 +2597,96 @@ class FunctionDef(Statement):
                     else_body,
                     statement.fragment.seal().cid,
                 )
+            if (
+                isinstance(statement, Try)
+                and not statement.handlers
+                and not statement.orelse
+                and statement.finalbody
+            ):
+                # try/finally without handlers: fully nameable body+cleanup is
+                # one atomic producer unit; partial nameability expands body
+                # statement-by-statement so a yield is never swallowed by a
+                # single Opaque Try when only a peer loop is unnameable.
+                body_steps = branch_steps(statement.body)
+                cleanup = cleanup_terms(statement.finalbody)
+                if body_steps is not None and cleanup is not None:
+                    return ("try-finally", body_steps, FinallyStepV1(cleanup))
+                if body_steps is None and self._owns_yield(statement.body):
+                    return ("try-finally-expand", statement, cleanup)
+                return None
             return None
 
         def branch_steps(body):
-            """Steps for one branch, or None if any shape is unnameable.
+            """Steps for one branch/suite, or None if any shape is unnameable.
 
-            None keeps the whole `If` opaque. A partially-nameable branch is
-            not provable: `x = yield v` resumes to a value that reaches no
-            name, so naming the branch holding it would claim an execution we
-            cannot perform. An honest `OpaqueStepV1` is the better answer.
+            None keeps the containing If/try opaque. A partially-nameable
+            branch is not provable: never skip unsupported shapes inside.
             """
             collected = []
             for nested in body:
                 step = name_statement(nested)
                 if step is None:
                     return None
+                if isinstance(step, tuple) and step and step[0] == "try-finally":
+                    _, body_steps, finally_step = step
+                    collected.extend(body_steps)
+                    collected.append(finally_step)
+                    continue
                 collected.append(step)
             return tuple(collected)
 
+        def cleanup_terms(finalbody):
+            """Finally payloads: ConstructedTermSugar only (no ExprStatementSugar)."""
+            terms = []
+            for item in finalbody:
+                if isinstance(item, Pass):
+                    continue
+                if isinstance(item, Expr) and not self._owns_yield((item,)):
+                    value_sugar = item.value.sugar()
+                    if isinstance(value_sugar, ConstructedTermSugar):
+                        terms.append(value_sugar)
+                        continue
+                    return None
+                if isinstance(item, Raise) and not self._owns_yield((item,)):
+                    # Raise is a step, not a Finally term; refuse pure-term suite.
+                    return None
+                try:
+                    sugar = item.sugar()
+                except Exception:
+                    return None
+                if isinstance(sugar, ConstructedTermSugar):
+                    terms.append(sugar)
+                    continue
+                return None
+            return tuple(terms)
+
         def append_statement(statement):
             named = name_statement(statement)
+            if isinstance(named, tuple) and named and named[0] == "try-finally":
+                _, body_steps, finally_step = named
+                steps.extend(body_steps)
+                steps.append(finally_step)
+                return
+            if isinstance(named, tuple) and named and named[0] == "try-finally-expand":
+                _, try_stmt, cleanup = named
+                for nested in try_stmt.body:
+                    append_statement(nested)
+                if cleanup is not None:
+                    steps.append(FinallyStepV1(cleanup))
+                else:
+                    steps.append(
+                        OpaqueStepV1(
+                            "Finally",
+                            carries_suspension=False,
+                        )
+                    )
+                return
             if named is not None:
                 steps.append(named)
                 return
-            if (
-                isinstance(statement, Try)
-                and not statement.handlers
-                and not statement.orelse
-                and statement.finalbody
-                and self._owns_yield(statement.body)
-            ):
-                for nested in statement.body:
-                    append_statement(nested)
-                steps.append(
-                    FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
-                )
-                return
             if isinstance(statement, If):
                 # Branch held an unnameable shape. Keep the whole If opaque,
-                # but preserve suspension discrimination (#6439):
-                # `if c: x = yield 1` is not a plain `If` row.
+                # never skip unsupported shapes inside the arms.
                 steps.append(
                     OpaqueStepV1(
                         statement.kind,
@@ -2634,14 +2694,6 @@ class FunctionDef(Statement):
                     )
                 )
                 return
-            # The step vocabulary cannot name this shape. Say WHETHER it
-            # holds a suspension, because the two obligations differ:
-            # `x = 1` owes ordinary statement execution, `x = yield 1`
-            # owes the resumed value's binding. Bucketing them as one
-            # `Assign` row is why the suspension owners read as an
-            # undifferentiated mass. Read from `_owns_yield`, the same
-            # authenticated predicate that decided this body is a
-            # generator -- never from the statement's spelling.
             steps.append(
                 OpaqueStepV1(
                     statement.kind,

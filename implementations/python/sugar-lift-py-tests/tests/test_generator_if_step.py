@@ -141,14 +141,17 @@ def test_pre_yield_if_assign_is_nameable_guarded_setup() -> None:
     assert steps[0].then_steps[0].name == "prior"
 
 
-def test_pre_yield_if_with_raise_stays_opaque_and_loud() -> None:
-    """Unhandled Raise inside a branch keeps the whole If Opaque (never skip)."""
+def test_pre_yield_if_with_raise_is_raise_step_inside_if() -> None:
+    """Raise validation arms construct RaiseStepV1 — not Opaque whole-If."""
+    from sugar_lift_py_tests.generator_construction import RaiseStepV1
+
     steps = _steps(
         "def g(c):\n    if c:\n        raise ValueError('boom')\n    yield 1\n"
     )
-    assert isinstance(steps[0], OpaqueStepV1)
-    assert steps[0].observed == "If"
-    assert steps[0].carries_suspension is False
+    assert isinstance(steps[0], IfStepV1)
+    assert isinstance(steps[0].then_steps[0], RaiseStepV1)
+    assert steps[0].else_steps == ()
+    assert isinstance(steps[1], YieldStepV1)
 
 
 # -- the three transition arms -----------------------------------------------

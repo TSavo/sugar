@@ -160,11 +160,46 @@ class AssignStepV1:
 
 @dataclass(frozen=True)
 class FinallyStepV1:
+    """Cleanup suite as ConstructedTermSugar payloads only.
+
+    Never carries ExprStatementSugar or other non-term statement wrappers —
+    the producer projects each cleanup statement to its term sugar (e.g.
+    CallSiteSugar for a bare call expression).
+    """
+
     statements: tuple[ConstructedTermSugar, ...]
 
     def __post_init__(self) -> None:
         for statement in self.statements:
             _require_constructed_term(statement, owner="FinallyStepV1.statements")
+
+
+@dataclass(frozen=True)
+class RaiseStepV1:
+    """Authenticated ``raise`` as a generator-step vocabulary row.
+
+    Validation arms (``if bad: raise ValueError(...)``) and cleanup raises are
+    named here so suspension-owning ``IfStepV1`` branches stay fully
+    constructed. Transition desugars the RaiseSugar and halts with the effect.
+    """
+
+    raise_sugar: object = field(compare=False, repr=False)
+    fragment_cid: str
+
+
+@dataclass(frozen=True)
+class TermStepV1:
+    """One ConstructedTermSugar performed as a generator body statement.
+
+    Admits pre-yield / cleanup expression calls (``set_option(pat, val)``) by
+    the value's term sugar — never ExprStatementSugar.
+    """
+
+    term: ConstructedTermSugar
+    fragment_cid: str
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(self.term, owner="TermStepV1.term")
 
 
 @dataclass(frozen=True)
@@ -232,6 +267,8 @@ GeneratorStepV1 = (
     | InertStepV1
     | AssignStepV1
     | FinallyStepV1
+    | RaiseStepV1
+    | TermStepV1
     | IfStepV1
     | NestedManagerStepV1
     | NestedManagerExitStepV1
@@ -347,6 +384,18 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
                 _generator_value_testimony(item, owner=owner)
                 for item in step.statements
             ],
+        }
+    if isinstance(step, RaiseStepV1):
+        return {
+            "kind": "raise",
+            "fragmentCid": step.fragment_cid,
+            "raiseSugar": _generator_value_testimony(step.raise_sugar, owner=owner),
+        }
+    if isinstance(step, TermStepV1):
+        return {
+            "kind": "term",
+            "fragmentCid": step.fragment_cid,
+            "term": _generator_value_testimony(step.term, owner=owner),
         }
     if isinstance(step, IfStepV1):
         return {
@@ -652,6 +701,19 @@ class GeneratorConstructionV1:
                 cursor=self.cursor + 1,
                 binding_state=(*self.binding_state, binding),
             )
+            return machine._transition(requested)
+        if isinstance(step, RaiseStepV1):
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            outcome = step.raise_sugar.desugar(self._guard_evaluation_context())
+            if isinstance(outcome, Incomplete):
+                return ExitSet.halted(outcome.effect, state=self)
+            return self._gap(requested, f"raise did not halt ({type(outcome).__name__})")
+        if isinstance(step, TermStepV1):
+            value = self._reduce_value(step.term, requested)
+            if isinstance(value, GeneratorTransitionGapV1):
+                return value
+            machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, NestedManagerStepV1):
             return self._transition_nested_manager(step, requested)
