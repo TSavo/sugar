@@ -2665,6 +2665,7 @@ class FunctionDef(Statement):
                         body_steps=body_steps,
                         module_cid=generator_for_module_cid(statement),
                         fragment_cid=statement.fragment.seal().cid,
+                        occurrence=statement.fragment,
                     )
                 )
             if (
