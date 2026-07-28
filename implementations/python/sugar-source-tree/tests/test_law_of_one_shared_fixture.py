@@ -3,9 +3,44 @@
 import ast
 from pathlib import Path
 
+import pytest
+
 from law_of_one_evidence import LawOfOneEvidence, assert_test_owned_evidence
 from law_of_one_fixture import law_of_one_evidence
 from law_of_one_symbol_graph import SymbolGraph
+from sugar_source_tree.backend import Backend
+from sugar_source_tree.tree import SourceFile
+
+
+def test_from_path_enters_source_file_constructor_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "VALUE = 1\n"
+    path = tmp_path / "canonical-entry.py"
+    path.write_text(source, encoding="utf-8")
+    captured = []
+    original_init = SourceFile.__init__
+
+    def observe_init(self, identity, *args, **kwargs):
+        captured.append(identity)
+        return original_init(self, identity, *args, **kwargs)
+
+    monkeypatch.setattr(SourceFile, "__init__", observe_init)
+    SourceFile.from_path(path)
+
+    assert len(captured) == 1
+    captured_source, captured_filename, captured_source_cid = captured[0]
+    assert captured_source == source
+    assert captured_filename == str(path)
+    assert isinstance(captured_source_cid, str) and captured_source_cid
+
+
+def test_backend_materialize_module_is_the_canonical_event_owner() -> None:
+    assert "materialize_module" in Backend.__dict__, (
+        "R_missing_backend_materialize_module=1: Backend.materialize_module "
+        "must own the sole SourceFile construction event"
+    )
 
 
 def test_shared_law_of_one_evidence_is_typed_sealed_and_closed(

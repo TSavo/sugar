@@ -16,7 +16,13 @@ from law_of_one_evidence import LawOfOneEvidence, assert_test_owned_evidence
 
 @pytest.fixture
 def law_of_one_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LawOfOneEvidence:
+    from sugar_source_tree.backend import Backend
     from sugar_source_tree.tree import SourceFile
+
+    if "materialize_module" not in Backend.__dict__:
+        pytest.skip(
+            "dormant LAW_OF_ONE axes: R_missing_backend_materialize_module=1"
+        )
 
     repository_root = Path(__file__).resolve().parents[1]
     evidence = audit_law_of_one(

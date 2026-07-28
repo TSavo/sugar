@@ -52,6 +52,13 @@ def _called_leaf(call: ast.Call) -> str | None:
     return None
 
 
+def _subclasses(cls: type) -> set[type]:
+    result = set(cls.__subclasses__())
+    for child in tuple(result):
+        result.update(_subclasses(child))
+    return result
+
+
 def _production_files(root: Path) -> tuple[Path, ...]:
     base = root / "implementations" / "python"
     files = tuple(sorted(
@@ -324,7 +331,8 @@ def audit_law_of_one(
     backend_door_symbols = ()
     if backend_door is None:
         contract_reds.append(
-            "R_missing_backend_materialize_owner=1: Backend.materialize_module"
+            "R_missing_backend_materialize_module=1: Backend.materialize_module "
+            "must own the sole SourceFile construction event"
         )
     else:
         backend_door_file = Path(inspect.getsourcefile(backend_door) or "").resolve()
@@ -340,6 +348,20 @@ def audit_law_of_one(
                 "R_backend_materialize_owner_definitions="
                 f"{len(backend_door_symbols)}: expected exactly one"
             )
+    backend_door_overrides = tuple(
+        backend_type
+        for backend_type in _subclasses(Backend)
+        if "materialize_module" in backend_type.__dict__
+    )
+    if backend_door_overrides:
+        contract_reds.append(
+            "R_backend_materialize_overrides="
+            f"{len(backend_door_overrides)}: "
+            + ", ".join(
+                f"{backend_type.__module__}.{backend_type.__qualname__}"
+                for backend_type in backend_door_overrides
+            )
+        )
     legacy_materialize = backend_module.materialize
     legacy_materialize_file = Path(
         inspect.getsourcefile(legacy_materialize) or ""
@@ -441,7 +463,9 @@ def audit_law_of_one(
         f"{int(not backend_event_measured)}",
         "R_backend_materialize_event_mismatch="
         f"{int(backend_event_measured and construction_snapshot != expected_entry_work)}",
-        f"R_backend_materialize_owner_gap={int(len(backend_door_symbols) != 1)}",
+        f"R_missing_backend_materialize_module={int(backend_door is None)}",
+        f"R_backend_materialize_owner_definition_gap={abs(1 - len(backend_door_symbols))}",
+        f"R_backend_materialize_overrides={len(backend_door_overrides)}",
         f"R_legacy_materialize_wrappers={len(legacy_materialize_wrappers)}",
         f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
         f"R_legacy_leaf_name_doors={len(legacy_paths)}",
@@ -471,12 +495,6 @@ def audit_law_of_one(
     projection_line = inspect.getsourcelines(project_constructed_module)[1]
     owner = EvidenceSite(door_file, door_line, (SourceFile.__name__,), door.__name__)
     projection_def = EvidenceSite(projection_file, projection_line, (), project_constructed_module.__name__)
-
-    def subclasses(cls):
-        result = set(cls.__subclasses__())
-        for child in tuple(result):
-            result.update(subclasses(child))
-        return result
 
     owner_defs = [
         EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
@@ -514,7 +532,7 @@ def audit_law_of_one(
         )
     )
     overrides = []
-    for source_file_type in subclasses(SourceFile):
+    for source_file_type in _subclasses(SourceFile):
         override = source_file_type.__dict__.get(door.__name__)
         if override is None:
             continue
@@ -573,12 +591,15 @@ def audit_law_of_one(
     monkeypatch.setattr(SourceFile, "__init__", counted_door)
 
     original_backend_door = Backend.materialize_module
+    backend_products: list[object] = []
     def counted_backend_door(self, *args, **kwargs):
         work["backend_materialize_module"] += 1
-        return original_backend_door(self, *args, **kwargs)
+        product = original_backend_door(self, *args, **kwargs)
+        backend_products.append(product)
+        return product
     monkeypatch.setattr(Backend, "materialize_module", counted_backend_door)
 
-    for cls in subclasses(Node) | {Node}:
+    for cls in _subclasses(Node) | {Node}:
         method = cls.__dict__.get("sugar")
         if not inspect.isfunction(method):
             continue
@@ -590,7 +611,7 @@ def audit_law_of_one(
             return __method(self, *args, **kwargs)
         monkeypatch.setattr(cls, "sugar", counted_sugar)
 
-    protocol_classes = {SourceFile, Node, *subclasses(Node)}
+    protocol_classes = {SourceFile, Node, *_subclasses(Node)}
     for cls in protocol_classes:
         for name, method in tuple(cls.__dict__.items()):
             if not inspect.isfunction(method) or not inspect.isgeneratorfunction(method):
@@ -648,14 +669,19 @@ def audit_law_of_one(
         "first.py",
     )
     assert work["constructor"] == 1
+    assert len(backend_products) == 1
     post_construction_work = work.copy()
     product = first.constructed_module
+    assert product is backend_products[0]
+    assert first.root is product.root
+    assert first.closed_roll_call is product.closed_roll_call
     assert product.leaf_assertion_rows, (
         "assertion-bearing source must testify an authentic leaf assertion "
         "during the sole SourceFile construction event"
     )
     authentic_leaf_assertion = product.leaf_assertion_rows[0]
     receipt = product.construction_event_receipt
+    assert receipt.leaf_assertion_rows is product.leaf_assertion_rows
     assert work == post_construction_work, (
         "constructed product, authentic assertion rows, and receipt must be "
         "stored projections of the sole SourceFile event"
@@ -664,6 +690,7 @@ def audit_law_of_one(
     truthful_constructor_events = work["constructor"]
     truthful_protocol = tuple(sorted(work.items()))
     work.clear()
+    backend_products.clear()
     foreign, foreign_reporter = construct(
         "VALUE = 2\n"
         "def outer():\n"
@@ -674,6 +701,13 @@ def audit_law_of_one(
     )
     foreign_constructor_events = work["constructor"]
     foreign_product = foreign.constructed_module
+    assert len(backend_products) == 1
+    assert foreign_product is backend_products[0]
+    assert foreign.root is foreign_product.root
+    assert foreign.closed_roll_call is foreign_product.closed_roll_call
+    assert foreign_product.construction_event_receipt.leaf_assertion_rows is (
+        foreign_product.leaf_assertion_rows
+    )
     foreign_protocol = tuple(sorted(work.items()))
     relation_type = type(product.lexical_call_rows[0])
     member_type = type(product.provider_member_rows[0])
