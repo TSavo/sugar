@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import symtable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, ClassVar, Iterator, Optional, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover
     from .fragment import SourceFragment
@@ -45,6 +45,7 @@ from .operators import (
     UnaryOperator,
 )
 from .panic import (
+    BackendDefect,
     backend_defect,
     RuntimeSelectedContextManager,
     SourceTreePanic,
@@ -197,6 +198,145 @@ def _ordered_binding_keys(names):
 
 
 @dataclass(frozen=True)
+class BackendLexicalCallRowV1:
+    """Closed testimony minted by the sole typed-backend traversal."""
+
+    source_cid: str
+    definition_locus: LineColSpan
+    call_locus: LineColSpan
+    lexical_parent_identity: str
+    lexical_scope_identity: str
+    function_definition_identity: str
+    call_occurrence_identity: str
+    definition: object = field(compare=False)
+    call: object = field(compare=False)
+    _minted: tuple[object, ...] = field(compare=False, repr=False)
+
+    @classmethod
+    def mint(
+        cls,
+        definition: object,
+        call: object,
+        lexical_scope: object | None,
+    ) -> "BackendLexicalCallRowV1":
+        source_cid = definition.unit.source_cid
+        if call.unit.source_cid != source_cid:
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="BackendLexicalCallRowV1.mint",
+                observed="foreign call source CID",
+                requested="one authenticated source CID",
+                fix="emit rows only during typed backend materialization",
+            )
+        definition_locus = definition.line_col_span()
+        call_locus = call.line_col_span()
+        definition_identity = definition.fragment.seal().cid
+        call_identity = call.fragment.seal().cid
+        scope_identity = (
+            source_cid if lexical_scope is None else lexical_scope.fragment.seal().cid
+        )
+        values = (
+            source_cid,
+            definition_locus,
+            call_locus,
+            scope_identity,
+            scope_identity,
+            definition_identity,
+            call_identity,
+            definition,
+            call,
+        )
+        return cls(*values, _minted=values)
+
+    def __post_init__(self) -> None:
+        minted = self._minted
+        if self.definition.unit.source_cid != minted[0]:
+            self._panic("foreign definition source CID", "exact source CID")
+        if self.call.unit.source_cid != minted[0]:
+            self._panic("foreign call source CID", "exact source CID")
+        current = (
+            self.source_cid,
+            self.definition_locus,
+            self.call_locus,
+            self.lexical_parent_identity,
+            self.lexical_scope_identity,
+            self.function_definition_identity,
+            self.call_occurrence_identity,
+        )
+        requested = (
+            "exact source CID",
+            "definition locus",
+            "exact call occurrence",
+            "lexical parent identity",
+            "lexical scope identity",
+            "exact FunctionDef identity",
+            "exact call occurrence",
+        )
+        for observed, expected, law in zip(current, minted[:7], requested, strict=True):
+            if observed != expected:
+                self._panic(f"changed {law}", law)
+        if self.definition is not minted[7]:
+            self._panic("changed definition node", "exact FunctionDef identity")
+        if self.call is not minted[8]:
+            self._panic("changed call node", "exact call occurrence")
+
+    def _panic(self, observed: str, requested: str) -> None:
+        raise BackendDefect(
+            blame=self._minted[8],
+            owner="BackendLexicalCallRowV1",
+            observed=observed,
+            requested=requested,
+            fix="consume the closed row minted by backend materialization",
+        )
+
+
+@dataclass(frozen=True)
+class BackendMaterializationTraversalV1:
+    function_nodes: Tuple[object, ...]
+    lexical_call_rows: Tuple[BackendLexicalCallRowV1, ...]
+
+
+class _BackendMaterializationTraversalBuilderV1:
+    def __init__(self) -> None:
+        self.functions: list[object] = []
+        self.rows: list[BackendLexicalCallRowV1] = []
+        self.bindings: dict[tuple[int | None, str], object] = {}
+        self.scope_parents: dict[int, object | None] = {}
+
+    def observe(self, node: object, scope: object | None) -> None:
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+            self.functions.append(node)
+            self.scope_parents[id(node)] = scope
+            self.bindings[(self._scope_key(scope), node.name)] = node
+            return
+        if not isinstance(node, Call) or not isinstance(node.func, Name):
+            return
+        current_scope = scope
+        while True:
+            definition = self.bindings.get(
+                (self._scope_key(current_scope), node.func.id)
+            )
+            if definition is not None:
+                self.rows.append(
+                    BackendLexicalCallRowV1.mint(definition, node, current_scope)
+                )
+                return
+            if current_scope is None:
+                return
+            current_scope = self.scope_parents[id(current_scope)]
+
+    @staticmethod
+    def _scope_key(scope: object | None) -> int | None:
+        return None if scope is None else id(scope)
+
+    def freeze(self) -> BackendMaterializationTraversalV1:
+        return BackendMaterializationTraversalV1(
+            function_nodes=tuple(self.functions),
+            lexical_call_rows=tuple(self.rows),
+        )
+
+
+@dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
 
@@ -223,6 +363,10 @@ class SourceUnit:
     exception_class_values: object = field(init=False, default=None)
     module_direct_bindings: object = field(init=False, default=None)
     function_nodes: Tuple[object, ...] = field(init=False, default=())
+    backend_materialization_traversal: BackendMaterializationTraversalV1 = field(
+        init=False,
+        default_factory=lambda: BackendMaterializationTraversalV1((), ()),
+    )
     # Memo for exception_type_identity: full-module walk was ~12ms/call on
     # asserters and dominated Raise exclusive heat under Body.If.
     _exception_type_identity_cache: dict = field(init=False, default_factory=dict)
@@ -251,6 +395,11 @@ class SourceUnit:
         object.__setattr__(self, "exception_class_values", {})
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
+        object.__setattr__(
+            self,
+            "backend_materialization_traversal",
+            BackendMaterializationTraversalV1((), ()),
+        )
         object.__setattr__(self, "_exception_type_identity_cache", {})
         object.__setattr__(self, "_import_bound_name_targets", None)
         object.__setattr__(self, "_import_value_use_resolutions", {})
@@ -365,15 +514,11 @@ class SourceUnit:
             "module_direct_bindings",
             {name: tuple(items) for name, items in bindings.items()},
         )
-        object.__setattr__(
-            self,
-            "function_nodes",
-            tuple(
-                node
-                for node in module.walk()
-                if isinstance(node, (FunctionDef, AsyncFunctionDef))
-            ),
-        )
+        traversal_builder = _BackendMaterializationTraversalBuilderV1()
+        tuple(module.walk(traversal_builder.observe))
+        traversal = traversal_builder.freeze()
+        object.__setattr__(self, "backend_materialization_traversal", traversal)
+        object.__setattr__(self, "function_nodes", traversal.function_nodes)
         # Identity keys include spans against the bound module; drop stale rows.
         object.__setattr__(self, "_exception_type_identity_cache", {})
 
@@ -2029,13 +2174,26 @@ class Node(Typed):
                     if item is not None:
                         yield name, i, item
 
-    def walk(self) -> Iterator["Node"]:
+    def walk(
+        self,
+        observer: Callable[["Node", object | None], None] | None = None,
+    ) -> Iterator["Node"]:
         """Pre-order walk over the constructed graph. Iterative — never recursive."""
-        stack: list[Node] = [self]
+        stack: list[tuple[Node, object | None]] = [(self, None)]
         while stack:
-            node = stack.pop()
+            node, lexical_scope = stack.pop()
+            if observer is not None:
+                observer(node, lexical_scope)
             yield node
-            stack.extend(child for _, _, child in reversed(list(node.children())))
+            children = list(node.children())
+            for field_name, _, child in reversed(children):
+                child_scope = lexical_scope
+                if (
+                    isinstance(node, (FunctionDef, AsyncFunctionDef))
+                    and field_name == "body"
+                ):
+                    child_scope = node
+                stack.append((child, child_scope))
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.kind} [{self.span.start},{self.span.end})>"
