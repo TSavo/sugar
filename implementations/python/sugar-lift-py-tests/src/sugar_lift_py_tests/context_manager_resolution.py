@@ -156,6 +156,42 @@ class SourceDerivedContextManagerRefV1:
 
 
 @dataclass(frozen=True)
+class SourceDerivedGeneratorResourceRefV1:
+    """Closed source-derived resource contract for generator managers.
+
+    Requires authenticated generator lifecycle (source-visible frame with
+    ``generator_steps``) plus native enter/exit definition coordinates.
+    Coordinates alone cannot construct this ref; a non-generator frame cannot
+    acquire generator semantics. Protocol is generator-backed testimony, never
+    a fabricated ObjectValue receiver.
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    summary_cid: str
+    semantics: ContextManagerSemanticsV1
+    import_signature: ImportSignatureV2
+    protocol: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        protocol = self.protocol
+        if protocol is None:
+            raise ValueError(
+                "generator resource ref requires generator-backed protocol testimony"
+            )
+        frame = getattr(protocol, "generator_frame", None)
+        if frame is None or getattr(frame, "generator_steps", None) is None:
+            raise ValueError(
+                "generator resource ref refuses non-generator protocol testimony"
+            )
+        if getattr(protocol, "enter_definition", None) is None:
+            raise ValueError("generator resource ref requires enter definition")
+        if getattr(protocol, "exit_definition", None) is None:
+            raise ValueError("generator resource ref requires exit definition")
+        if protocol.enter_definition == protocol.exit_definition:
+            raise ValueError("generator enter/exit definitions must differ")
+
+
+@dataclass(frozen=True)
 class FactoredSourceDerivedContextManagerRefV1:
     """Source-derived EffectBoundary with factored message-pattern faces.
 

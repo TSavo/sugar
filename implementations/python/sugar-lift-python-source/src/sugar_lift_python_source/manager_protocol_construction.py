@@ -175,8 +175,7 @@ def _maximal_field_receivers(
     kept = []
     for candidate in receivers:
         if any(
-            other is not candidate and refines(other, candidate)
-            for other in receivers
+            other is not candidate and refines(other, candidate) for other in receivers
         ):
             continue
         kept.append(candidate)
@@ -402,9 +401,126 @@ def _apply_receiver_store(
 
 @dataclass(frozen=True)
 class ManagerProtocolConstructionGapV1:
-    kind: Literal["enter-missing", "exit-missing", "method-construction"]
+    kind: Literal[
+        "enter-missing",
+        "exit-missing",
+        "method-construction",
+        "generator-missing",
+        "generator-protocol",
+    ]
     manager_construction_cid: str
     detail: str
+
+
+@dataclass(frozen=True)
+class GeneratorBackedManagerProtocolV1:
+    """Closed protocol testimony for authenticated generator managers.
+
+    Generator lifecycle lives in the source-visible call frame
+    (``generator_steps``). Enter/exit definition coordinates are the
+    authenticated method spans of the decorator helper's returned class.
+    This is not an ObjectValue receiver and cannot be minted from coordinates
+    alone or from a non-generator frame.
+    """
+
+    protocol_construction_cid: str
+    generator_frame_cid: str
+    enter_definition: object
+    exit_definition: object
+    exit_face_id: str
+    generator_frame: object = field(compare=False, repr=False)
+
+    @property
+    def preimage(self):
+        enter = self.enter_definition
+        exit_ = self.exit_definition
+        return {
+            "kind": "generator-backed-manager-protocol",
+            "schemaVersion": "1",
+            "generatorFrameCid": self.generator_frame_cid,
+            "enterDefinition": enter.wire(),
+            "exitDefinition": exit_.wire(),
+            "exitFaceId": self.exit_face_id,
+        }
+
+    def __post_init__(self) -> None:
+        frame = self.generator_frame
+        if frame is None:
+            raise ValueError(
+                "generator-backed protocol requires a source-visible frame"
+            )
+        if getattr(frame, "generator_steps", None) is None:
+            raise ValueError(
+                "non-generator frame cannot acquire generator-backed protocol semantics"
+            )
+        if getattr(frame, "frame_cid", None) != self.generator_frame_cid:
+            raise ValueError("generator frame CID does not match protocol testimony")
+        if self.enter_definition == self.exit_definition:
+            raise ValueError("generator enter/exit definition coordinates must differ")
+        if cid_of_json(self.preimage) != self.protocol_construction_cid:
+            raise ValueError(
+                "generator-backed protocol CID does not match its preimage"
+            )
+
+
+def construct_generator_backed_protocol(
+    *,
+    frame,
+    enter_definition,
+    exit_definition,
+    exit_face_id: str,
+    construction_cid: str,
+) -> GeneratorBackedManagerProtocolV1 | ManagerProtocolConstructionGapV1:
+    """Mint generator-backed protocol from frame + native enter/exit definitions.
+
+    Refuses when the frame is missing, is not a generator suspension, or when
+    enter/exit coordinates are absent or identical. Coordinates alone cannot
+    construct this protocol — the generator frame is load-bearing.
+    """
+    if frame is None:
+        return ManagerProtocolConstructionGapV1(
+            "generator-missing", construction_cid, "source-visible frame required"
+        )
+    if getattr(frame, "generator_steps", None) is None:
+        return ManagerProtocolConstructionGapV1(
+            "generator-missing",
+            construction_cid,
+            "non-generator frame cannot acquire generator semantics",
+        )
+    if enter_definition is None or exit_definition is None:
+        return ManagerProtocolConstructionGapV1(
+            "generator-protocol",
+            construction_cid,
+            "native enter/exit definition coordinates required",
+        )
+    if enter_definition == exit_definition:
+        return ManagerProtocolConstructionGapV1(
+            "generator-protocol",
+            construction_cid,
+            "enter and exit definition coordinates must be distinct",
+        )
+    frame_cid = frame.frame_cid
+    preimage = {
+        "kind": "generator-backed-manager-protocol",
+        "schemaVersion": "1",
+        "generatorFrameCid": frame_cid,
+        "enterDefinition": enter_definition.wire(),
+        "exitDefinition": exit_definition.wire(),
+        "exitFaceId": exit_face_id,
+    }
+    try:
+        return GeneratorBackedManagerProtocolV1(
+            cid_of_json(preimage),
+            frame_cid,
+            enter_definition,
+            exit_definition,
+            exit_face_id,
+            frame,
+        )
+    except ValueError as exc:
+        return ManagerProtocolConstructionGapV1(
+            "generator-protocol", construction_cid, str(exc)
+        )
 
 
 def construct_manager_protocol(
