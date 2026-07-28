@@ -25,6 +25,17 @@ class AuthenticatedExceptionTypeSugar(Sugar):
         )
 
     def desugar(self, ctx=None):
+        """Project the authenticated type floor without re-asking Attribute.
+
+        Import-bound dotted operands already carry a closed
+        ``python:exception_type_identity(import, …)`` coordinate from the
+        lexical import pass.  That coordinate *is* the source-visible floor:
+        re-desugaring the Attribute sugar would ask an opaque module receiver
+        for a member it has no testimony for, inventing either a
+        ``py.getattr`` projection or a spelling-table arm.  Neither is
+        admitted.  Builtins and source-class leaves still reduce their
+        constructed value (or the projected ``class_value``) as before.
+        """
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
             AuthenticatedExceptionTypeValue,
         )
@@ -42,6 +53,15 @@ class AuthenticatedExceptionTypeSugar(Sugar):
                     self.class_value,
                 )
             )
+
+        import_floor = _import_bound_exception_floor(self.identity)
+        if import_floor is not None:
+            return Complete(
+                AuthenticatedExceptionTypeValue(
+                    import_floor, self.identity, self.mro, import_floor
+                )
+            )
+
         return self.value.desugar(ctx).and_then(
             lambda value: Complete(
                 AuthenticatedExceptionTypeValue(
@@ -49,3 +69,24 @@ class AuthenticatedExceptionTypeSugar(Sugar):
                 )
             )
         )
+
+
+def _import_bound_exception_floor(identity):
+    """The ExceptionClassValue named by an import identity, or None.
+
+    Only the ``import`` kind of ``python:exception_type_identity`` is closed
+    without further floor projection: its second argument is the qualified
+    export coordinate already joined from the authenticated import target and
+    the static Attribute chain.  Builtins and source-class identities keep
+    their existing leaf floors.
+    """
+    from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+
+    args = getattr(identity, "args", None)
+    if args is None or len(args) != 2:
+        return None
+    kind = getattr(args[0], "value", None)
+    qualified = getattr(args[1], "value", None)
+    if kind != "import" or not isinstance(qualified, str) or not qualified:
+        return None
+    return ExceptionClassValue(qualified)
