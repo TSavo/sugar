@@ -1636,6 +1636,347 @@ def test_soft_boundary_uniform_none_match_stays_one_no_message_summary():
     assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
 
 
+def _factored_boundary_faces():
+    """Two guarded EffectBoundary faces: NoMessagePattern + pattern obligation."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    none_face = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        NoMessagePatternV1(),
+        ExceptionInfoBindingV1(),
+    )
+    pattern_face = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        OptionalFormalArgumentProjectionV1(1),
+        ExceptionInfoBindingV1(),
+    )
+    return ExitSet(
+        (
+            Completed(_Atomic("match-none-face", ()), none_face),
+            Completed(_Atomic("match-pattern-face", ()), pattern_face),
+        )
+    )
+
+
+def _factored_import_signature():
+    from sugar_lift_py_tests.context_manager_contract import (
+        CallParameterV1,
+        ImportSignatureV2,
+        LiteralDefaultV1,
+        NoDefaultV1,
+        PositionalOrKeywordV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort
+
+    return ImportSignatureV2(
+        (
+            CallParameterV1(
+                "expected",
+                PrimitiveSort("Value"),
+                PositionalOrKeywordV1(),
+                True,
+                NoDefaultV1(),
+            ),
+            CallParameterV1(
+                "match",
+                PrimitiveSort("Value"),
+                PositionalOrKeywordV1(),
+                False,
+                LiteralDefaultV1({"kind": "ctor", "name": "None", "args": []}),
+            ),
+        )
+    )
+
+
+def test_factored_summary_installs_factored_ref_not_no_derived_contract():
+    """Positive: FactoredEffectBoundarySummary publishes both faces, never a gap."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source.manager_summary_derivation import (
+        FactoredEffectBoundarySummaryV1,
+    )
+
+    coordinate = SourceFragmentCoordinateV1(
+        "blake3-512:" + ("ab" * 64), 2, 9, 2, 40
+    )
+    faces = _factored_boundary_faces()
+    signature = _factored_import_signature()
+    protocol = SimpleNamespace()
+    summary = FactoredEffectBoundarySummaryV1(
+        "factored-protocol",
+        "enter-cid",
+        "exit-cid",
+        faces,
+        signature,
+    )
+    context = TreeConstructionContextV1.for_source_call_construction()
+    # Same arm as populate_source_derived_resource_refs for factored summaries.
+    assert isinstance(summary, FactoredEffectBoundarySummaryV1)
+    context.source_derived_contract_refs[coordinate] = (
+        FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            summary.protocol_construction_cid,
+            summary.enter_testimony_cid,
+            summary.exit_testimony_cid,
+            summary.boundary_faces,
+            summary.import_signature,
+            protocol,
+        )
+    )
+    installed = context.source_derived_contract_refs[coordinate]
+    assert isinstance(installed, FactoredSourceDerivedContextManagerRefV1)
+    assert not isinstance(installed, ContextManagerResolutionGapV1)
+    assert getattr(installed, "kind", None) != "no-derived-contract"
+    completed = [
+        face for face in installed.boundary_faces.exits if isinstance(face, Completed)
+    ]
+    assert len(completed) == 2
+    operands = {face.value.message_pattern_operand for face in completed}
+    assert operands == {
+        NoMessagePatternV1(),
+        OptionalFormalArgumentProjectionV1(1),
+    }
+
+
+def test_factored_ref_tree_construction_retains_both_faces(tmp_path):
+    """Tree construction keeps both edges; sugar carries boundary_faces."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+    from sugar_source_tree.nodes import With
+
+    consumer = (
+        "def use_boundary():\n"
+        "    with boundary(ValueError, 'needle'):\n"
+        "        raise ValueError('needle')\n"
+    )
+    path = tmp_path / "factored-consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    node = next(item for item in tree.nodes() if isinstance(item, With))
+    expr = node.items[0].context_expr
+    span = expr.line_col_span()
+    coordinate = SourceFragmentCoordinateV1(
+        node.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        FactoredSourceDerivedContextManagerRefV1(
+            coordinate,
+            "factored-protocol",
+            "enter-cid",
+            "exit-cid",
+            _factored_boundary_faces(),
+            _factored_import_signature(),
+            SimpleNamespace(),
+        )
+    )
+
+    sugar = node.sugar()
+
+    assert isinstance(sugar, WithEffectBoundarySugar)
+    assert sugar.boundary_faces is not None
+    completed = [
+        face for face in sugar.boundary_faces.exits if isinstance(face, Completed)
+    ]
+    assert len(completed) == 2
+    operands = {face.value.message_pattern_operand for face in completed}
+    assert operands == {
+        NoMessagePatternV1(),
+        OptionalFormalArgumentProjectionV1(1),
+    }
+    assert sugar.semantics is None
+
+
+def test_factored_raise_routing_uses_none_and_pattern_message_faces():
+    """Routing faces: NoMessagePatternV1 on one edge, pattern obligation on other."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        AuthenticatedRaiseMatcher,
+        EffectBoundaryDisposition,
+        ExpectsModeV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, true_guard
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    faces = _factored_boundary_faces()
+    coordinate = SourceFragmentCoordinateV1(
+        "blake3-512:" + ("cd" * 64), 1, 0, 1, 10
+    )
+    contract_ref = FactoredSourceDerivedContextManagerRefV1(
+        coordinate,
+        "factored-protocol",
+        "enter-cid",
+        "exit-cid",
+        faces,
+        _factored_import_signature(),
+        SimpleNamespace(),
+    )
+    sugar = WithEffectBoundarySugar(
+        manager=SimpleNamespace(),  # unused: we exercise guarded faces + disposition
+        body=(),
+        semantics=None,
+        contract_ref=contract_ref,
+        context_manager_edge=None,
+        boundary_faces=faces,
+        site=SimpleNamespace(filename="t.py", line=1),
+    )
+    guarded = sugar._guarded_semantics()
+    assert len(guarded) == 2
+    by_name = {guard.name: semantics for guard, semantics in guarded}
+    assert isinstance(by_name["match-none-face"].message_pattern_operand, NoMessagePatternV1)
+    assert by_name["match-pattern-face"].message_pattern_operand == (
+        OptionalFormalArgumentProjectionV1(1)
+    )
+
+    # Disposition law: None-pattern matcher has no message obligation; pattern
+    # face carries the projected formal as message_pattern.
+    type_term = ctor("python:exception_type", [str_const("builtins.ValueError")])
+    raise_face = Halted(
+        true_guard(),
+        RaiseEffect(
+            exception_name="ValueError",
+            blame="t.py:2:8",
+            exception_type_coordinate=type_term,
+            exception_type_mro=(type_term,),
+            raised_value=StringValue("needle"),
+        ),
+        None,
+    )
+    body = ExitSet((raise_face,))
+    for guard, semantics in guarded:
+        pattern = None
+        if not isinstance(semantics.message_pattern_operand, NoMessagePatternV1):
+            pattern = StringValue("needle")
+        disposition = EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(
+                expected=SimpleNamespace(
+                    exception_type_identity=lambda: type_term,
+                ),
+                message_pattern=pattern,
+            ),
+            unmet=(
+                ExpectationNotMetEffect("raise", "site")
+                if isinstance(semantics.mode, ExpectsModeV1)
+                else None
+            ),
+        )
+        # Matcher construction is the routing face content: both arms exist.
+        assert disposition.matcher.message_pattern is (
+            None if isinstance(semantics.message_pattern_operand, NoMessagePatternV1)
+            else pattern
+        )
+        assert body.exits and isinstance(body.exits[0], Halted)
+
+
+def test_uniform_none_source_derived_ref_stays_single_sealed_summary():
+    """Discrimination: uniform None remains SourceDerivedContextManagerRefV1."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoMessagePatternV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        FactoredSourceDerivedContextManagerRefV1,
+        SourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+    )
+
+    semantics = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        NoMessagePatternV1(),
+        ExceptionInfoBindingV1(),
+    )
+    coordinate = SourceFragmentCoordinateV1(
+        "blake3-512:" + ("ef" * 64), 1, 0, 1, 10
+    )
+    sealed = SourceDerivedContextManagerRefV1(
+        coordinate,
+        "summary-cid",
+        semantics,
+        _factored_import_signature(),
+        SimpleNamespace(),
+    )
+    assert isinstance(sealed, SourceDerivedContextManagerRefV1)
+    assert not isinstance(sealed, FactoredSourceDerivedContextManagerRefV1)
+    assert isinstance(sealed.semantics.message_pattern_operand, NoMessagePatternV1)
+    # Factored path is a different type — never silent collapse of dual faces.
+    factored = FactoredSourceDerivedContextManagerRefV1(
+        coordinate,
+        "factored-protocol",
+        "enter-cid",
+        "exit-cid",
+        _factored_boundary_faces(),
+        _factored_import_signature(),
+        SimpleNamespace(),
+    )
+    assert type(factored) is not type(sealed)
+
+
 def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
     fixture = (
         Path(__file__).parents[2]

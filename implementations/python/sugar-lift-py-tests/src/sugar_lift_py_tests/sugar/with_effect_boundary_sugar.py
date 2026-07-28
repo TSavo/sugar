@@ -16,6 +16,7 @@ class WithEffectBoundarySugar(Sugar):
     contract_ref: object
     context_manager_edge: object
     observation_slot_id: str | None = None
+    boundary_faces: object | None = None
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
@@ -43,7 +44,7 @@ class WithEffectBoundarySugar(Sugar):
         )
         from sugar_lift_py_tests.effect import ExpectationNotMetEffect
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
         from sugar_lift_py_tests.sugar.exit_set_routing import (
             promote_raise_halts,
             sugar_outcome_to_exitset,
@@ -53,21 +54,22 @@ class WithEffectBoundarySugar(Sugar):
         )
         from sugar_source_tree.panic import SugarNotWritten
 
-        semantics = self.semantics
-        if (
-            not isinstance(semantics, EffectBoundarySemanticsV1)
-            or not isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
-            or not isinstance(
-                semantics.effect_kind, (RaiseEffectKindV1, WarningEffectKindV1)
-            )
-        ):
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="WithEffectBoundarySugar.desugar",
-                observed="unsupported authenticated EffectBoundary mode/effect",
-                requested="EffectBoundaryV1 Expects/Suppresses over Raise or Warning",
-                fix="keep other effect-boundary variants loud until their typed router exists",
-            )
+        semantics_faces = self._semantics_faces()
+        for semantics in semantics_faces:
+            if (
+                not isinstance(semantics, EffectBoundarySemanticsV1)
+                or not isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
+                or not isinstance(
+                    semantics.effect_kind, (RaiseEffectKindV1, WarningEffectKindV1)
+                )
+            ):
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="WithEffectBoundarySugar.desugar",
+                    observed="unsupported authenticated EffectBoundary mode/effect",
+                    requested="EffectBoundaryV1 Expects/Suppresses over Raise or Warning",
+                    fix="keep other effect-boundary variants loud until their typed router exists",
+                )
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         routed = []
@@ -88,67 +90,72 @@ class WithEffectBoundarySugar(Sugar):
                 self.contract_ref.import_signature,
                 manager_value,
             )
-            expected = project_formal_selector_v1(
-                semantics.expected_type_operand,
-                fixed_actuals=fixed,
-                variadic_positional_actuals={},
-                variadic_keyword_actuals={},
-            )
-            pattern = None
-            if not isinstance(semantics.message_pattern_operand, NoMessagePatternV1):
-                pattern = project_formal_selector_v1(
-                    semantics.message_pattern_operand,
+            for face_guard, semantics in self._guarded_semantics():
+                expected = project_formal_selector_v1(
+                    semantics.expected_type_operand,
                     fixed_actuals=fixed,
                     variadic_positional_actuals={},
                     variadic_keyword_actuals={},
                 )
-            if isinstance(semantics.effect_kind, WarningEffectKindV1):
+                pattern = None
+                if not isinstance(
+                    semantics.message_pattern_operand, NoMessagePatternV1
+                ):
+                    pattern = project_formal_selector_v1(
+                        semantics.message_pattern_operand,
+                        fixed_actuals=fixed,
+                        variadic_positional_actuals={},
+                        variadic_keyword_actuals={},
+                    )
+                # Factored faces tighten the manager guard; single-face keeps
+                # the manager exit as-is so true-guard identity is preserved.
+                if face_guard is None:
+                    face_manager = manager_exit
+                else:
+                    from sugar_lift_py_tests.ir import and_ as and_formulas
+
+                    face_manager = replace_exit_guard(
+                        manager_exit,
+                        and_formulas([manager_exit.guard, face_guard]),
+                    )
+                if isinstance(semantics.effect_kind, WarningEffectKindV1):
+                    routed.append(
+                        _route_warning_boundary(
+                            body=tuple(self.body),
+                            ctx=ctx,
+                            manager_exit=face_manager,
+                            expected=expected,
+                            pattern=pattern,
+                            mode=semantics.mode,
+                            site=self.site,
+                        )
+                    )
+                    continue
+
+                body_es = promote_raise_halts(
+                    reduce_block_to_exitset(self.body, ctx)
+                ).guarded(face_manager.guard)
+
+                disposition = EffectBoundaryDisposition(
+                    matcher=AuthenticatedRaiseMatcher(
+                        expected=expected, message_pattern=pattern
+                    ),
+                    observation_slot_id=self.observation_slot_id,
+                    unmet=(
+                        ExpectationNotMetEffect("raise", self.site)
+                        if isinstance(semantics.mode, ExpectsModeV1)
+                        else None
+                    ),
+                )
+                boundary_exit_es = ExitSet.completed(self.contract_ref)
+
                 routed.append(
-                    _route_warning_boundary(
-                        body=tuple(self.body),
-                        ctx=ctx,
-                        manager_exit=manager_exit,
-                        expected=expected,
-                        pattern=pattern,
-                        mode=semantics.mode,
-                        site=self.site,
+                    _route_raise_boundary(
+                        body_es,
+                        boundary_exit_es=boundary_exit_es,
+                        disposition=disposition,
                     )
                 )
-                continue
-
-            body_es = promote_raise_halts(
-                reduce_block_to_exitset(self.body, ctx)
-            ).guarded(manager_exit.guard)
-
-            # One typed contract, both edges. ``unmet`` is what makes this an
-            # assertion boundary rather than a resource ``__exit__``: under
-            # Expects a body that completed is a failed expectation.
-            disposition = EffectBoundaryDisposition(
-                matcher=AuthenticatedRaiseMatcher(
-                    expected=expected, message_pattern=pattern
-                ),
-                observation_slot_id=self.observation_slot_id,
-                unmet=(
-                    ExpectationNotMetEffect("raise", self.site)
-                    if isinstance(semantics.mode, ExpectsModeV1)
-                    else None
-                ),
-            )
-            # The boundary's own exit completes, on the authority of the ref
-            # that resolved it — so the exit face carries that ref rather than
-            # a synthesized truth value. The algebra reads no value from a
-            # completed exit face; the disposition decides both edges. Every
-            # ref family (authenticated and source-derived) is spelled the
-            # same way here, because the exit face is not ref-shaped data.
-            boundary_exit_es = ExitSet.completed(self.contract_ref)
-
-            routed.append(
-                _route_raise_boundary(
-                    body_es,
-                    boundary_exit_es=boundary_exit_es,
-                    disposition=disposition,
-                )
-            )
 
         if not routed:
             raise SugarNotWritten(
@@ -162,6 +169,54 @@ class WithEffectBoundarySugar(Sugar):
         for part in routed[1:]:
             result = result.union(part)
         return result
+
+    def _semantics_faces(self):
+        from sugar_lift_py_tests.context_manager_contract import (
+            EffectBoundarySemanticsV1,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import Completed
+
+        if self.boundary_faces is not None:
+            return tuple(
+                face.value
+                for face in self.boundary_faces.exits
+                if isinstance(face, Completed)
+                and isinstance(face.value, EffectBoundarySemanticsV1)
+            )
+        return (self.semantics,)
+
+    def _guarded_semantics(self):
+        """(face_guard | None, EffectBoundarySemanticsV1) pairs.
+
+        ``None`` face_guard means the single sealed summary path: do not re-and
+        the manager exit. Factored faces carry their own guards.
+        """
+        from sugar_lift_py_tests.context_manager_contract import (
+            EffectBoundarySemanticsV1,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import Completed
+
+        if self.boundary_faces is not None:
+            return tuple(
+                (face.guard, face.value)
+                for face in self.boundary_faces.exits
+                if isinstance(face, Completed)
+                and isinstance(face.value, EffectBoundarySemanticsV1)
+            )
+        return ((None, self.semantics),)
+
+
+def replace_exit_guard(exit_, guard):
+    """Copy a manager exit under a tighter face guard without dropping value."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    if isinstance(exit_, Completed):
+        return replace(exit_, guard=guard)
+    if isinstance(exit_, Halted):
+        return replace(exit_, guard=guard)
+    return exit_
 
 
 def _route_raise_boundary(body_es, *, boundary_exit_es, disposition):

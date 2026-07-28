@@ -1109,6 +1109,25 @@ def populate_source_derived_resource_refs(
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         summary = derive_manager_summary(protocol, behavior=behavior)
+        if isinstance(summary, FactoredEffectBoundarySummaryV1):
+            # Both message-pattern edges stay published; never recombine and
+            # never relabel as generic no-derived-contract.
+            from sugar_lift_py_tests.context_manager_resolution import (
+                FactoredSourceDerivedContextManagerRefV1,
+            )
+
+            context.source_derived_contract_refs[coordinate] = (
+                FactoredSourceDerivedContextManagerRefV1(
+                    coordinate,
+                    summary.protocol_construction_cid,
+                    summary.enter_testimony_cid,
+                    summary.exit_testimony_cid,
+                    summary.boundary_faces,
+                    summary.import_signature,
+                    protocol,
+                )
+            )
+            continue
         if not isinstance(summary, DerivedManagerSummaryV1):
             kind, detail = _gap_kind_and_detail(summary)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)

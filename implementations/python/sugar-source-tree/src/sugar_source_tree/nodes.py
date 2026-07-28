@@ -5293,13 +5293,48 @@ class With(Statement):
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
             ContextManagerResolutionGapV1,
+            FactoredSourceDerivedContextManagerRefV1,
             SourceDerivedContextManagerRefV1,
         )
         from sugar_lift_py_tests.ir import PrimitiveSort
+        from sugar_lift_py_tests.outcome import Completed
         from .panic import UnsupportedContextManagerSemantics
 
         if isinstance(resolution, ContextManagerResolutionGapV1):
             self._raise_resolution_gap(resolution)
+        if isinstance(resolution, FactoredSourceDerivedContextManagerRefV1):
+            faces = getattr(resolution.boundary_faces, "exits", ())
+            completed = tuple(face for face in faces if isinstance(face, Completed))
+            if not completed or any(
+                not (
+                    isinstance(face.value, EffectBoundarySemanticsV1)
+                    and face.value.schema_version == "1"
+                    and isinstance(face.value.mode, (ExpectsModeV1, SuppressesModeV1))
+                    and isinstance(
+                        face.value.effect_kind,
+                        (RaiseEffectKindV1, WarningEffectKindV1),
+                    )
+                )
+                for face in completed
+            ):
+                panic = UnsupportedContextManagerSemantics(
+                    blame=self.fragment,
+                    demand_cid=resolution.protocol_construction_cid,
+                    member_cid=resolution.protocol_construction_cid,
+                    owner="With._construct_sugar",
+                    observed=(
+                        "factored source-derived CM carries unsupported message-pattern "
+                        f"faces at {resolution.protocol_construction_cid}"
+                    ),
+                    requested=(
+                        "ExitSet of typed Expects/Suppresses Raise/Warning "
+                        "EffectBoundarySemanticsV1 faces"
+                    ),
+                    fix="leave unsupported factored faces loud; never recombine or drop them",
+                )
+                self.reporter.report_gap(self, panic)
+                raise panic
+            return resolution
         if not isinstance(
             resolution, (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1)
         ):
@@ -5511,6 +5546,7 @@ class With(Statement):
             from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
             from sugar_lift_py_tests.context_manager_resolution import (
+                FactoredSourceDerivedContextManagerRefV1,
                 SourceDerivedContextManagerRefV1,
             )
 
@@ -5550,6 +5586,52 @@ class With(Statement):
                     exit_face_id=item._exit_face_id(),
                     enter_definition=enter_definition,
                     exit_definition=exit_definition,
+                    site=self.fragment,
+                )
+
+            if isinstance(resolved_ref, FactoredSourceDerivedContextManagerRefV1):
+                from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+                    WithEffectBoundarySugar,
+                )
+
+                if binds_enter_result and as_name is None:
+                    from .panic import UnsupportedWithBindingTarget
+
+                    panic = UnsupportedWithBindingTarget(
+                        blame=item.optional_vars.fragment,
+                        owner="With._construct_sugar",
+                        observed=(
+                            "factored EffectBoundary as-binding to a "
+                            f"{item.optional_vars.kind} store target"
+                        ),
+                        requested=(
+                            "a factored EffectBoundary manager bound to a simple "
+                            "Name, or no target"
+                        ),
+                        fix=(
+                            "authenticate a store projection for this contract, or "
+                            "keep the store target loud -- never drop the binding"
+                        ),
+                    )
+                    self.reporter.report_gap(self, panic)
+                    raise panic
+                observation_slot = None
+                if as_name is not None:
+                    observation_slot = self._effect_boundary_observation_slot(
+                        item, resolved_ref
+                    )
+                manager_sugar = item.context_expr.sugar()
+                manager_sugar = self._authenticate_expected_exception_type(
+                    item.context_expr, manager_sugar, resolved_ref
+                )
+                return WithEffectBoundarySugar(
+                    manager=manager_sugar,
+                    body=tuple(stmt.sugar() for stmt in self.body),
+                    semantics=None,
+                    contract_ref=resolved_ref,
+                    context_manager_edge=None,
+                    boundary_faces=resolved_ref.boundary_faces,
+                    observation_slot_id=observation_slot,
                     site=self.fragment,
                 )
 
@@ -5713,7 +5795,11 @@ class With(Statement):
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
         from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
-        selector = reference.semantics.expected_type_operand
+        semantics = getattr(reference, "semantics", None)
+        if semantics is not None:
+            selector = semantics.expected_type_operand
+        else:
+            selector = getattr(reference, "shared_expected_type_operand", None)
         if not isinstance(selector, FormalArgumentProjectionV1):
             return manager_sugar
         if not isinstance(manager, Call) or not isinstance(
@@ -5865,7 +5951,11 @@ class With(Statement):
             WarningObservationBindingV1,
         )
 
-        binding = resolved_ref.semantics.binding
+        semantics = getattr(resolved_ref, "semantics", None)
+        if semantics is not None:
+            binding = semantics.binding
+        else:
+            binding = getattr(resolved_ref, "shared_binding", None)
         if isinstance(binding, ExceptionInfoBindingV1):
             projection = EXCEPTION_INFO
         elif isinstance(binding, WarningObservationBindingV1):
