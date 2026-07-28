@@ -841,7 +841,7 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
     adjacent ComparisonOpSugar pairs). Residual faces are ordered dual-edge
     composition under short-circuit And — not a monomorphic chain panic.
     """
-    from sugar_lift_py_tests.ir import and_, atomic, make_var, not_, or_
+    from sugar_lift_py_tests.ir import and_, atomic, make_var, not_
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
@@ -854,21 +854,60 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
     assert isinstance(outcome, ExitSet)
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    assert len(halted) == 1  # normalization merges the same Compare effect
+    assert len(halted) == 2
+    assert halted[0].effect.occurrence_id != halted[1].effect.occurrence_id
 
     a, b, c = make_var("a"), make_var("b"), make_var("c")
     first_raises = atomic("python.lt_dispatch_raises", [a, b])
     first_true = atomic("py.lt", [a, b])
     second_raises = atomic("python.lt_dispatch_raises", [b, c])
-    assert halted[0].guard == or_(
-        [
-            first_raises,
-            and_([not_(first_raises), and_([first_true, second_raises])]),
-        ]
-    )
+    assert {face.guard for face in halted} == {
+        first_raises,
+        and_([not_(first_raises), and_([first_true, second_raises])]),
+    }
     assert any(
         face.guard == and_([not_(first_raises), not_(first_true)]) for face in completed
     )
+
+
+def test_chained_compare_leg_sites_follow_operator_occurrences_not_operands() -> None:
+    """Repeated operand spelling cannot collapse two operator occurrences."""
+    node = _synthetic_compare("left < left < left")
+    sugar = node.sugar()
+
+    first, second = sugar.values
+    assert first.site.text.strip() == second.site.text.strip() == "<"
+    assert first.site.source_cid == second.site.source_cid == node.fragment.source_cid
+    assert first.site.line_col_span != second.site.line_col_span
+
+
+def test_chained_compare_rejects_an_operator_coordinate_from_the_wrong_leg() -> None:
+    """A same-spelling operator from leg one cannot authenticate leg two."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    node = _synthetic_compare("left < left < left")
+    operands = (node.left, *node.comparators)
+    tampered = (operands[0], operands[1], operands[1])
+
+    with pytest.raises(SugarNotWritten, match="Compare._comparison_leg_site"):
+        node._comparison_leg_site(1, tampered)
+
+
+def test_decided_false_first_leg_emits_no_second_leg_occurrence() -> None:
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    node = _synthetic_compare("2 < 1 < None")
+    sugar = node.sugar()
+    second_occurrence = str(sugar.values[1].site)
+    outcome = sugar.desugar(None)
+
+    effects = (
+        tuple(exit_.effect for exit_ in outcome.exits if isinstance(exit_, Halted))
+        if isinstance(outcome, ExitSet)
+        else ()
+    )
+    assert all(effect.occurrence_id != second_occurrence for effect in effects)
 
 
 def test_subscript_root_preserves_nested_compare_owned_halt() -> None:
