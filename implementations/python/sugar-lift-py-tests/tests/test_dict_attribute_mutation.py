@@ -47,3 +47,15 @@ def test_dict_attribute_mutations_have_exact_owner_occurrences(tmp_path):
 def test_dict_attribute_mutations_cannot_fabricate_completion(tmp_path):
     for outcome, _, _ in _outcomes(tmp_path):
         assert not isinstance(outcome, Complete)
+
+
+def test_dict_attribute_mutations_reject_wrong_site_substitution(tmp_path):
+    outcomes = _outcomes(tmp_path)
+    store_outcome, _, store_site = outcomes[0]
+    delete_outcome, _, delete_site = outcomes[1]
+
+    assert store_site != delete_site
+    assert store_outcome.effect.occurrence_id == str(store_site)
+    assert store_outcome.effect.occurrence_id != str(delete_site)
+    assert delete_outcome.effect.occurrence_id == str(delete_site)
+    assert delete_outcome.effect.occurrence_id != str(store_site)
