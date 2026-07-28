@@ -90,9 +90,33 @@ class LoopRecurrenceSugar(Sugar):
             elif isinstance(outcome, Incomplete):
                 exits.append(Halted(face.guard, outcome.effect, recurrence))
             else:
-                from sugar_source_tree.binding_state import BindingStateWireGap
-
-                raise BindingStateWireGap(
-                    "loop outward face did not construct return or raise testimony"
+                # The face reduced to something richer than one return value or
+                # one effect: a return whose expression PARTITIONS (`return
+                # d.setdefault(k, v)`), a guarded return, or a return that owes a
+                # parameter contract (`return p[0]`). None of those is a missing
+                # wire -- each is a partition the face contributes under its own
+                # guard, which is what `BindingStateWireGap: loop outward face did
+                # not construct return or raise testimony` was refusing to state.
+                from sugar_lift_py_tests.floor.single_outcome_law import (
+                    pending_demand,
                 )
+                from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+                # A pending demand's home is a block entry, and this face builds
+                # exactly one: it rides beside the return in the same record.
+                pending, plain = pending_demand(outcome, face.guard)
+                for exit_ in outcome_to_exitset(plain).guarded(face.guard).exits:
+                    if isinstance(exit_, Halted):
+                        exits.append(Halted(exit_.guard, exit_.effect, recurrence))
+                    else:
+                        entries = (exit_.value,) if pending is None else (
+                            pending,
+                            exit_.value,
+                        )
+                        exits.append(
+                            Completed(
+                                exit_.guard,
+                                BlockValue(entries, can_fall_through=False),
+                            )
+                        )
         return ExitSet(tuple(exits)).normalize()

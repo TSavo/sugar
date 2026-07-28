@@ -89,22 +89,30 @@ class TrySugar(Sugar):
         return exitset_to_outcome(after)
 
 
-def _effect_matches(effect, matcher, ctx=None) -> bool:
-    """Bare except matches any raise; typed arms use constructed identity."""
+def _effect_match_verdict(effect, matcher, ctx=None):
+    """Bare except matches any raise; typed arms use constructed identity.
+
+    The codomain is the shared matcher's: ``MatchDecided`` when the arm settles
+    at lift, ``MatchRetained`` when the identity test is real and open. The
+    caller must route BOTH faces of a retention -- never treat it as a match
+    and never as a miss.
+    """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
         matches_raise_effect,
     )
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
     if not isinstance(effect, RaiseEffect):
-        return False
+        return MatchDecided(False)
     if matcher is None:
-        return True
+        return MatchDecided(True)
     expected = matcher.desugar(ctx)
     if not isinstance(expected, Complete):
         raise SugarNotWritten(
+            blame=effect.occurrence_id,
             owner="TrySugar._effect_matches",
             observed="except type did not construct a completed type operand",
             requested="an authenticated exception-type value",
@@ -149,24 +157,7 @@ def _route_handlers_over_exits(
     parts: list = []
     for exit_ in body_es.exits:
         if isinstance(exit_, Halted):
-            matched = False
-            for matcher, handler_body, slot_id in handlers:
-                if not _effect_matches(exit_.effect, matcher, ctx):
-                    continue
-                from sugar_lift_py_tests.in_flight_effect import (
-                    bind_in_flight_effect,
-                )
-
-                handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect)
-                handler_es = reduce_block_to_exitset(handler_body, handler_ctx)
-                facts = _binding_facts_for(slot_id, exit_.effect, site)
-                if facts:
-                    handler_es = _prepend_facts(handler_es, facts)
-                parts.append(handler_es.guarded(exit_.guard))
-                matched = True
-                break
-            if not matched:
-                parts.append(ExitSet((exit_,)))
+            parts.extend(_route_one_halt(exit_, handlers, site=site, ctx=ctx))
             continue
 
         if orelse:
@@ -199,6 +190,78 @@ def _route_handlers_over_exits(
     for part in parts[1:]:
         result = result.union(part)
     return result
+
+
+def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
+    """Route ONE halted body exit through the handler list, in source order.
+
+    Walks the arms carrying a residual: the exit as it still stands after every
+    arm considered so far declined it. A settled match takes the whole residual
+    and the walk is over. A settled miss leaves the residual untouched.
+
+    A ``MatchRetained`` arm is the third case and the reason this is a walk
+    rather than a scan. The arm owns a genuine two-way split, so it mints one,
+    routes the residual into the handler under the obligation, and narrows the
+    residual to the complement for the arms that follow. Nothing is admitted
+    and nothing is dropped: whatever residual survives every arm leaves as the
+    halt it always was, still red, under the conjunction of every complement.
+    """
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
+        MatchRetained,
+    )
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, partition
+
+    def handler_exits(handler_body, slot_id):
+        from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        # In-flight: bare re-raise. Observed: ``except ... as e`` / EffectRef
+        # projects the same RaiseEffect this arm just matched — identity, not
+        # a reconstructed E(). Observed must be installed BEFORE the body
+        # reduces; prepending facts after the fact cannot authenticate a read
+        # that already desugared to a pure coordinate.
+        handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect, blame=site)
+        if slot_id is not None:
+            observer = getattr(handler_ctx, "with_observed_effect", None)
+            if observer is not None:
+                handler_ctx = observer(slot_id, exit_.effect)
+        handler_es = reduce_block_to_exitset(handler_body, handler_ctx)
+        facts = _binding_facts_for(slot_id, exit_.effect, site)
+        return _prepend_facts(handler_es, facts) if facts else handler_es
+
+    parts: list = []
+    residual = ExitSet((exit_,))
+    for index, (matcher, handler_body, slot_id) in enumerate(handlers):
+        if not residual.exits:
+            return parts
+        residual_guard = residual.exits[0].guard
+        verdict = _effect_match_verdict(exit_.effect, matcher, ctx)
+        if isinstance(verdict, MatchDecided):
+            if not verdict.value:
+                continue
+            parts.append(handler_exits(handler_body, slot_id).guarded(residual_guard))
+            return parts
+        if not isinstance(verdict, MatchRetained):
+            raise TypeError(
+                "except-arm verdict must be MatchDecided or MatchRetained; "
+                f"got {type(verdict).__name__}"
+            )
+        # This arm owns the split, so it mints the faces rather than leaving the
+        # exclusion legible only in the ``not_`` spelling of the two guards.
+        caught_face, missed_face = partition(("try.except-identity", site, index))
+        parts.append(
+            handler_exits(handler_body, slot_id)
+            .guarded(verdict.obligation, caught_face)
+            .guarded(residual_guard)
+        )
+        residual = residual.guarded(not_(verdict.obligation), missed_face)
+    if residual.exits:
+        parts.append(residual)
+    return parts
 
 
 def _prepend_facts(exits, facts: tuple):

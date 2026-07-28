@@ -4,6 +4,30 @@ from dataclasses import dataclass, replace
 
 from .floor_value import FloorValue
 
+# Types that a class object is never an instance of under ordinary Python.
+# ``isinstance(SomeClass, tuple)`` is False; container and scalar value types
+# are disjoint from the class-object side of the type/value distinction.
+_CLASS_OBJECT_DISJOINT_TYPES = frozenset(
+    {
+        "tuple",
+        "list",
+        "dict",
+        "set",
+        "frozenset",
+        "str",
+        "bytes",
+        "bytearray",
+        "int",
+        "bool",
+        "float",
+        "complex",
+        "range",
+        "NoneType",
+        "memoryview",
+        "slice",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ClassValue(FloorValue):
@@ -27,8 +51,71 @@ class ClassValue(FloorValue):
 
         return ctor("python:type", [str_const(self.name)])
 
+    def truth(self, site):
+        # Python type objects are always truthy. Dual-mode EffectBoundary
+        # factories gate validation with ``if not expected_exception:``; the
+        # class actual must stand as a condition without force-floor:truth:ClassValue.
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(TrueBoolLiteralSugar(site=site))
+
+    def is_identical(self, other, site):
+        # An authenticated class object cannot be Python's None singleton.
+        # This is class-floor testimony, not a spelling test: unresolved values
+        # still use FloorValue's symbolic identity and remain a third value.
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+
+        if type(other) is NoneValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().is_identical(other, site)
+
+    def attribute(self, name, site):
+        """Class objects expose ``__name__`` as their authenticated type name.
+
+        RaisesExc's absent-effect diagnostic formats
+        ``self.expected_exceptions[0].__name__``. Without this arm the attribute
+        producer panics on BuiltinExceptionClassValue and exit summary stays
+        exit-may-halt rather than sealing ExpectsMode.
+        """
+        if name in {"__name__", "__qualname__"}:
+            from sugar_lift_py_tests.floor.string_value import StringValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(StringValue(self.name))
+        return super().attribute(name, site)
+
     def test_python_type(self, value, site):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)
+
+    def python_isinstance(self, type_name: str, type_term, site):
+        """A class object is an instance of ``type`` / ``object``, never of value types.
+
+        ``isinstance(Exception, tuple)`` is False; ``isinstance(Exception, type)``
+        is True. Without this ground answer, RaisesExc's
+        ``if isinstance(expected_exception, tuple):`` face stays undecided and
+        the ``expected_exceptions`` field never floors to a TupleValue.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type_name in {"type", "object"}:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        if type_name in _CLASS_OBJECT_DISJOINT_TYPES:
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().python_isinstance(type_name, type_term, site)
 
     def test_python_subtype(self, supertype, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue

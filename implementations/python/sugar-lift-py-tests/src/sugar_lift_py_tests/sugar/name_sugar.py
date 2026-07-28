@@ -9,15 +9,16 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class NameSugar(Sugar):
-    """A name that survives to the meaning layer is a free FORMAL.
+    """A name that survives to the meaning layer is a free formal or builtin.
 
     substitute runs before sugar (FunctionDef.sugar), so every temporal binding
     -- a local assignment, a conditional phi -- is already rewritten into the
     tree: a bound name has been replaced by its value node and never reaches
-    here. The only Name left standing is a function parameter, which is masked
-    by substitute and therefore free. So a name IS its symbolic universe
-    variable -- the term a parameter projects. There is no context to consult
-    (ctx.temporal is gone): the name resolves to its own Var, always.
+    here. Parameters are masked by substitute and stay free formals. Builtin
+    type and callable names (``tuple``, ``isinstance``, …) also survive as
+    Name nodes: they were never local bindings. When a reduction context
+    carries the builtin temporal floor, those names resolve to their
+    authenticated floor values; otherwise a free name is its symbolic Var.
 
     Meaning-only, node-constructed: no owns/new/role. A name is a leaf.
     """
@@ -39,9 +40,17 @@ class NameSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # A surviving name is a free formal: it IS its symbolic universe variable.
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import make_var
         from sugar_lift_py_tests.outcome import Complete
 
+        # Authenticated temporal bindings (builtins, formals already installed
+        # into the reduction floor) are source-visible testimony, not free
+        # formals. Following them is alias → defining source; minting a Var
+        # that erases an existing binding is fabricated free-name testimony.
+        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        if temporal is not None:
+            bound = temporal.value_if_bound(self.name)
+            if bound is not None:
+                return Complete(bound)
         return Complete(SymbolicValue(make_var(self.name)))

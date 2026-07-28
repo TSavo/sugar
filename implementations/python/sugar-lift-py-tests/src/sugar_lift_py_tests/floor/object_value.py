@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .floor_value import FloorValue
@@ -63,6 +63,35 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.outcome import Outcome
 
 
+def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
+    """Read authenticated helper-body store shape without executing the helper."""
+    from dataclasses import fields, is_dataclass
+
+    from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+        ReceiverFieldStoreSugar,
+    )
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    if isinstance(value, ReceiverFieldStoreSugar):
+        return {value.attr}
+    if isinstance(value, (tuple, list)):
+        return set().union(*(_sugar_receiver_field_names(item, seen) for item in value))
+    if not isinstance(value, (Sugar, SugarBody)) or not is_dataclass(value):
+        return set()
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return set()
+    seen.add(id(value))
+    return set().union(
+        *(
+            _sugar_receiver_field_names(getattr(value, item.name), seen)
+            for item in fields(value)
+            if item.compare
+        )
+    )
+
+
 @dataclass(frozen=True)
 class ObjectValue(FloorValue):
     class_name: str
@@ -70,6 +99,7 @@ class ObjectValue(FloorValue):
     methods: tuple[ObjectMethodValue, ...] = ()
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
+    deferred_helper_fields: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
@@ -117,7 +147,143 @@ class ObjectValue(FloorValue):
                 from sugar_lift_py_tests.outcome import Complete
 
                 return Complete(field.value)
-        return super().attribute(name, site)
+        for method in reversed(self.methods):
+            if method.name != name or method.descriptor_kind != "property":
+                continue
+            from dataclasses import replace
+
+            from sugar_lift_py_tests.effect import RaiseEffect
+            from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+
+            def invoke(callsite):
+                outcome = callsite.producer_outcome()
+                if not isinstance(outcome, ExitSet):
+                    return outcome
+                return ExitSet(
+                    tuple(
+                        (
+                            Halted(
+                                face.guard,
+                                (
+                                    replace(
+                                        face.effect,
+                                        producer_node_owner="Attribute",
+                                    )
+                                    if isinstance(face.effect, RaiseEffect)
+                                    else face.effect
+                                ),
+                                face.state,
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                            if isinstance(face, Halted)
+                            else Completed(
+                                face.guard,
+                                face.value,
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                        )
+                        for face in outcome.exits
+                    )
+                ).normalize()
+
+            return self.call_method_value(
+                name,
+                (),
+                owner="ObjectValue.attribute.property",
+                blame=site,
+            ).and_then(invoke)
+        if name in self.deferred_helper_fields:
+            from sugar_lift_py_tests.floor.getattr_coordinate import (
+                getattr_coordinate,
+            )
+
+            return getattr_coordinate(self, name, owner=str(site))
+        # Missing field with no deferred helper: the receiver type/member set
+        # is only partially constructed. Stay on the Attribute producer law
+        # with an honest owner name — do not fall through to the generic
+        # FloorValue.attribute owner="attribute" panic, and do not invent
+        # AttributeError for a member table that is not source-complete.
+        return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+
+    def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
+        """Return this receiver identity after one authenticated field store."""
+        if any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
+        ):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=f"{self.class_name}.{name}",
+                owner="ObjectValue.with_field_store",
+                observed="source-authenticated property data descriptor",
+                requested="the descriptor's authenticated assignment behavior",
+                fix=(
+                    "construct the property's setter before treating the write "
+                    "as an instance-field store"
+                ),
+            )
+        remaining = tuple(field for field in self.fields if field.name != name)
+        return ObjectValue(
+            self.class_name,
+            (*remaining, ObjectField(name, value)),
+            self.methods,
+            self.class_fields,
+            self.identity,
+            self.deferred_helper_fields,
+        )
+
+    def authenticates_plain_attribute_store(self, name: str) -> bool:
+        """Whether ``self.name = value`` is an ordinary instance-field store."""
+        return not any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
+        )
+
+    def setattr(self, name, value, site):
+        """``self.name = value`` via instance-field store or property refusal.
+
+        Properties are data descriptors: a getter without an authenticated
+        setter raises ``AttributeError`` on the **store** path — never by
+        consulting :meth:`attribute` / the read path.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+
+        if any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
+        ):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="ObjectValue.setattr",
+            )
+        return Complete(self.with_field_store(name, value))
+
+    def with_deferred_helper_fields(self) -> "ObjectValue":
+        names = self.helper_receiver_field_names()
+        return ObjectValue(
+            self.class_name,
+            self.fields,
+            self.methods,
+            self.class_fields,
+            self.identity,
+            names,
+        )
+
+    def helper_receiver_field_names(self) -> tuple[str, ...]:
+        names = set().union(
+            *(
+                _sugar_receiver_field_names(method.body)
+                for method in self.methods
+                if method.name not in {"__init__", "__enter__", "__exit__"}
+            )
+        )
+        return tuple(sorted(names))
 
     def attribute_assign_with(
         self, operation: AttributeMutationOperation, ctx: FactoryBuildContext | None

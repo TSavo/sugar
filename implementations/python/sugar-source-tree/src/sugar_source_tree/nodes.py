@@ -78,7 +78,24 @@ _LEXICALLY_BOUND_NAMES = object()
 _SCOPE_OWNER_CID = object()
 _SUBSTITUTION_TRACE_BUILDER = object()
 _BINDING_ENTRY_FACTORY = object()
+_RECEIVER_FIELD_PROJECTIONS = object()
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class _ReceiverFieldProjection:
+    receiver_coordinate_cid: str
+    selector: str
+    store_occurrence: object
+    value: "Node"
+
+
+def _receiver_coordinate_cid(receiver) -> str | None:
+    if isinstance(receiver, BindingCoordinateRef):
+        return receiver.coordinate.cid
+    if isinstance(receiver, ConstructedReceiverRef):
+        return receiver.binding_coordinate_cid
+    return None
 
 
 @dataclass(frozen=True)
@@ -103,9 +120,10 @@ class ControlConstructionContextV1:
             raise LoopWireError("loop-control occurrence has no enclosing loop")
         return self.loop_targets[-1]
 
-    def nearest_exception_slot(self) -> str:
+    def nearest_exception_slot(self, *, blame: object) -> str:
         if not self.exception_slots:
             raise SugarNotWritten(
+                blame=blame,
                 owner="ControlConstructionContextV1.nearest_exception_slot",
                 observed="bare raise has no authenticated in-flight exception slot",
                 requested="an enclosing except handler effect-slot coordinate",
@@ -129,6 +147,22 @@ class _ConditionalRaiseRoute:
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
+
+
+def _ordered_binding_keys(names):
+    internal_names = (
+        _LEXICALLY_BOUND_NAMES,
+        _SCOPE_OWNER_CID,
+        _SUBSTITUTION_TRACE_BUILDER,
+        _BINDING_ENTRY_FACTORY,
+        _RECEIVER_FIELD_PROJECTIONS,
+    )
+    ordered = sorted(name for name in names if isinstance(name, str))
+    ordered.extend(name for name in internal_names if name in names)
+    if len(ordered) != len(names):
+        unknown = next(name for name in names if name not in ordered)
+        raise TypeError(f"unsupported binding-map key: {type(unknown).__name__}")
+    return ordered
 
 
 @dataclass(frozen=True)
@@ -161,6 +195,8 @@ class SourceUnit:
     # Memo for exception_type_identity: full-module walk was ~12ms/call on
     # asserters and dominated Raise exclusive heat under Body.If.
     _exception_type_identity_cache: dict = field(init=False, default_factory=dict)
+    # Memo for the module's per-occurrence import-binding map (one lexical pass).
+    _import_bound_name_targets: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -182,6 +218,27 @@ class SourceUnit:
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
         object.__setattr__(self, "_exception_type_identity_cache", {})
+        object.__setattr__(self, "_import_bound_name_targets", None)
+
+    def import_bound_name_target(
+        self, span: Tuple[int, int, int, int]
+    ) -> Optional[str]:
+        """The import target coordinate bound to the name USE at ``span``.
+
+        ``None`` when this module has no typed root yet or the name at that
+        occurrence is not uniquely import-bound -- a non-import name keeps its
+        ordinary construction, and stays as loud as it was.
+        """
+        targets = self._import_bound_name_targets
+        if targets is None:
+            module = self.typed_module
+            if module is None:
+                return None
+            from sugar_lift_py_tests.import_binding import import_bound_name_targets
+
+            targets = import_bound_name_targets(module, self.source_cid)
+            object.__setattr__(self, "_import_bound_name_targets", targets)
+        return targets.get(span)
 
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
@@ -227,10 +284,11 @@ class SourceUnit:
             ),
         )
 
-    def _require_typed_module(self, owner: str) -> "Module":
+    def _require_typed_module(self, owner: str, *, blame: object) -> "Module":
         module = self.typed_module
         if module is None:
             raise SourceTreePanic(
+                blame=blame,
                 owner=owner,
                 observed="typed Module is not bound on this SourceUnit",
                 requested=(
@@ -259,6 +317,7 @@ class SourceUnit:
         visit(self.module_symtable)
         if len(matches) != 1:
             raise SourceTreePanic(
+                blame=f"{self.filename}:{lineno}:0",
                 owner="SourceUnit.function_symtable",
                 observed=(
                     f"{len(matches)} function symtables for {name!r} at line {lineno}"
@@ -275,7 +334,10 @@ class SourceUnit:
         ``FunctionDef`` / ``AsyncFunctionDef`` children only) — never a second
         parse of the source text as semantic authority.
         """
-        module = self._require_typed_module("SourceUnit.is_module_level_function")
+        module = self._require_typed_module(
+            "SourceUnit.is_module_level_function",
+            blame=f"{self.filename}:{lineno}:0",
+        )
         for statement in module.body:
             if statement.kind not in ("FunctionDef", "AsyncFunctionDef"):
                 continue
@@ -347,6 +409,58 @@ class SourceUnit:
             return None
         return definition
 
+    def source_function_definition_for_call(
+        self, call: "Call"
+    ) -> "FunctionDef | AsyncFunctionDef | None":
+        """Resolve one ordinary source function at an exact lexical call site.
+
+        The name is only a lookup key. Authority is the unique typed module
+        binding plus CPython's scope classification at this occurrence. A
+        parameter, local, free, nonlocal, ambiguous, or recursive binding is
+        not silently treated as this module definition.
+        """
+        if not isinstance(call.func, Name) or self.typed_module is None:
+            return None
+        span = call.line_col_span()
+        containing = []
+        for candidate in self.function_nodes:
+            owner_span = candidate.line_col_span()
+            if (
+                (owner_span.start_line, owner_span.start_col)
+                <= (span.start_line, span.start_col)
+                <= (owner_span.end_line, owner_span.end_col)
+            ):
+                containing.append(candidate)
+        if containing:
+            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
+            try:
+                symbol = table.lookup(call.func.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_parameter()
+                or symbol.is_local()
+                or symbol.is_free()
+                or symbol.is_nonlocal()
+            ):
+                return None
+
+        bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
+        if len(bindings) != 1 or not isinstance(
+            bindings[0], (FunctionDef, AsyncFunctionDef)
+        ):
+            return None
+        definition = bindings[0]
+        definition_span = definition.line_col_span()
+        if (
+            (definition_span.start_line, definition_span.start_col)
+            <= (span.start_line, span.start_col)
+            <= (definition_span.end_line, definition_span.end_col)
+        ):
+            return None
+        return definition
+
     @staticmethod
     def source_class_has_authenticated_default_attribute_behavior(
         definition: "ClassDef",
@@ -373,7 +487,13 @@ class SourceUnit:
             )
             or any(
                 isinstance(member, FunctionDef)
-                and (member.name in forbidden_methods or member.decorators)
+                and (
+                    member.name in forbidden_methods
+                    or (
+                        member.decorators
+                        and definition._method_descriptor_kind(member) is None
+                    )
+                )
                 for member in definition.body
             )
         )
@@ -387,6 +507,7 @@ class SourceUnit:
         """
         if not isinstance(node, Call):
             raise SourceTreePanic(
+                blame=node.fragment,
                 owner="SourceUnit.construction_generation",
                 observed=type(node).__name__,
                 requested="one exact Call construction occurrence",
@@ -437,7 +558,9 @@ class SourceUnit:
             BUILTIN_EXCEPTION_NAMES,
         )
 
-        self._require_typed_module("SourceUnit.exception_type_identity")
+        self._require_typed_module(
+            "SourceUnit.exception_type_identity", blame=node.fragment
+        )
         span = node.line_col_span()
         cache_key = (
             node.id,
@@ -455,6 +578,276 @@ class SourceUnit:
         )
         cache[cache_key] = result
         return result
+
+    def imported_exception_type_identity(self, node: "Expression"):
+        """Return the closed coordinate of an import-bound dotted type operand.
+
+        The context-manager contract authenticates the operand's role as an
+        exception type.  This method authenticates only its source identity:
+        the exact head occurrence must have one reaching import definition
+        (static import, or a closed optional-provider gate), and every remaining
+        component must be a static Attribute link.  A shadowed, computed, or
+        ambiguous head has no coordinate and stays loud.
+
+        Optional-provider heads recognized here (exception-type identity only):
+
+        - ``name = pytest.importorskip("mod")`` with ``pytest`` import-bound and
+          a string-literal module argument
+        - ``try: import mod`` / ``except ImportError:`` that does not rebind
+          ``mod`` on the handler path
+
+        The coordinate names the import target path.  It does not invent MRO or
+        ClassValue ancestry when defining source is absent from the seat.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        link = node
+        attributes = []
+        while isinstance(link, Attribute):
+            attributes.append(link.attr)
+            link = link.value
+        if not isinstance(link, Name):
+            return None
+        span = link.line_col_span()
+        target = self.import_bound_name_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            target = self.provider_gated_import_target(link)
+        if target is None:
+            return None
+        module = target[len("python:") :] if target.startswith("python:") else target
+        qualified = ".".join([module, *reversed(attributes)])
+        return ctor(
+            "python:exception_type_identity",
+            [str_const("import"), str_const(qualified)],
+        )
+
+    def provider_gated_import_target(self, node: "Name") -> str | None:
+        """Closed optional-provider module target reaching ``node``, or None.
+
+        Lexical only: no install hunt, no execute.  Returns ``python:<mod>``
+        when exactly one provider-gate definition of ``node.id`` reaches the
+        use.  Competing, shadowed, or computed heads stay absent.
+        """
+        span = node.line_col_span()
+        use_line = span.start_line
+        module = self._require_typed_module(
+            "SourceUnit.provider_gated_import_target", blame=node.fragment
+        )
+
+        function_owner = None
+        containing = []
+        for candidate in self.function_nodes:
+            cspan = candidate.line_col_span()
+            start = (cspan.start_line, cspan.start_col)
+            end = (cspan.end_line, cspan.end_col)
+            if start <= (span.start_line, span.start_col) <= end:
+                containing.append(candidate)
+        if containing:
+            function_owner = max(
+                containing, key=lambda value: value.line_col_span().start_line
+            )
+            table = self.function_symtable(
+                function_owner.name, function_owner.line_col_span().start_line
+            )
+            try:
+                symbol = table.lookup(node.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and symbol.is_parameter():
+                return None
+            if symbol is not None and symbol.is_local():
+                local_mod = self._provider_gate_module_in_statements(
+                    function_owner.body, node.id, use_line=use_line
+                )
+                return f"python:{local_mod}" if local_mod is not None else None
+
+        module_mod = self._provider_gate_module_in_statements(
+            module.body,
+            node.id,
+            use_line=use_line,
+        )
+        return f"python:{module_mod}" if module_mod is not None else None
+
+    def _provider_gate_module_in_statements(
+        self, statements, name: str, *, use_line: int
+    ) -> str | None:
+        """Sole closed provider-gate module for ``name`` before ``use_line``."""
+        modules: list[str] = []
+        for statement in statements:
+            stmt_line = statement.line_col_span().start_line
+            if stmt_line > use_line:
+                continue
+            if statement.kind == "Assign":
+                mod = self._importorskip_assign_module(statement, name)
+                if mod is not None:
+                    modules.append(mod)
+                    continue
+                if self._statement_rebinds_name(statement, name):
+                    return None
+                continue
+            if statement.kind in ("AnnAssign", "AugAssign"):
+                if self._statement_rebinds_name(statement, name):
+                    return None
+                continue
+            if statement.kind in ("Import", "ImportFrom"):
+                # A later static import is ordinary import binding, not this door.
+                continue
+            if statement.kind in ("Try", "TryStar"):
+                mod = self._try_import_provider_module(statement, name)
+                if mod is not None:
+                    modules.append(mod)
+                elif self._try_rebinds_name(statement, name):
+                    return None
+                continue
+            if statement.kind in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+                if statement.name == name:
+                    return None
+                continue
+            if self._statement_rebinds_name(statement, name):
+                return None
+        if len(modules) != 1:
+            return None
+        return modules[0]
+
+    def _importorskip_assign_module(self, statement, name: str) -> str | None:
+        """``name = <pytest>.importorskip(\"mod\"[, ...])`` → ``mod``."""
+        if statement.kind != "Assign" or len(statement.targets) != 1:
+            return None
+        target = statement.targets[0]
+        if not isinstance(target, Name) or target.id != name:
+            return None
+        call = statement.value
+        if not isinstance(call, Call) or not call.args:
+            return None
+        func = call.func
+        if not isinstance(func, Attribute) or func.attr != "importorskip":
+            return None
+        head = func.value
+        if not isinstance(head, Name):
+            return None
+        head_span = head.line_col_span()
+        bound = self.import_bound_name_target(
+            (
+                head_span.start_line,
+                head_span.start_col,
+                head_span.end_line,
+                head_span.end_col,
+            )
+        )
+        if bound not in ("python:pytest", "pytest"):
+            return None
+        module_arg = call.args[0]
+        if not isinstance(module_arg, Constant) or not isinstance(
+            module_arg.value, str
+        ):
+            return None
+        if not module_arg.value or "/" in module_arg.value or "\\" in module_arg.value:
+            return None
+        return module_arg.value
+
+    def _try_import_provider_module(self, statement, name: str) -> str | None:
+        """Closed ``try: import name`` / ``except ImportError`` provider gate."""
+        if statement.kind not in ("Try", "TryStar"):
+            return None
+        imported: list[str] = []
+        for body_stmt in statement.body:
+            if body_stmt.kind != "Import":
+                if self._statement_rebinds_name(body_stmt, name):
+                    return None
+                continue
+            for alias in body_stmt.names:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                if local == name:
+                    imported.append(alias.name.split(".", 1)[0])
+        if len(imported) != 1:
+            return None
+        for handler in statement.handlers:
+            if handler.name == name:
+                return None
+            if not self._handler_is_import_error(handler):
+                return None
+            for handler_stmt in handler.body:
+                if self._statement_rebinds_name(handler_stmt, name):
+                    return None
+        for tail in (*statement.orelse, *statement.finalbody):
+            if self._statement_rebinds_name(tail, name):
+                return None
+        return imported[0]
+
+    def _handler_is_import_error(self, handler) -> bool:
+        """Whether the except type is ImportError (or a tuple containing it)."""
+        type_node = handler.type
+        if type_node is None:
+            return False
+
+        def is_import_error_name(node) -> bool:
+            return isinstance(node, Name) and node.id in (
+                "ImportError",
+                "ModuleNotFoundError",
+            )
+
+        if is_import_error_name(type_node):
+            return True
+        if isinstance(type_node, Tuple):
+            return any(is_import_error_name(elt) for elt in type_node.elts)
+        return False
+
+    @staticmethod
+    def _statement_rebinds_name(statement, name: str) -> bool:
+        if statement.kind in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+            return statement.name == name
+        if statement.kind == "Assign":
+            return any(
+                isinstance(node, Name) and node.id == name
+                for target in statement.targets
+                for node in target.walk()
+            )
+        if statement.kind in ("AnnAssign", "AugAssign"):
+            return any(
+                isinstance(node, Name) and node.id == name
+                for node in statement.target.walk()
+            )
+        if statement.kind in ("Import", "ImportFrom"):
+            return any(
+                (alias.asname or alias.name.split(".", 1)[0]) == name
+                for alias in statement.names
+            )
+        if statement.kind in ("For", "AsyncFor"):
+            return any(
+                isinstance(node, Name) and node.id == name
+                for node in statement.target.walk()
+            )
+        if statement.kind in ("With", "AsyncWith"):
+            for item in statement.items:
+                if item.optional_vars is None:
+                    continue
+                if any(
+                    isinstance(node, Name) and node.id == name
+                    for node in item.optional_vars.walk()
+                ):
+                    return True
+            return False
+        if statement.kind == "NamedExpr":
+            return any(
+                isinstance(node, Name) and node.id == name
+                for node in statement.target.walk()
+            )
+        return False
+
+    def _try_rebinds_name(self, statement, name: str) -> bool:
+        if any(self._statement_rebinds_name(body, name) for body in statement.body):
+            return True
+        for handler in statement.handlers:
+            if handler.name == name:
+                return True
+            if any(self._statement_rebinds_name(body, name) for body in handler.body):
+                return True
+        return any(
+            self._statement_rebinds_name(tail, name)
+            for tail in (*statement.orelse, *statement.finalbody)
+        )
 
     def _compute_exception_type_identity(
         self, node: "Name", span, builtin_names, ctor, str_const
@@ -525,17 +918,59 @@ class SourceUnit:
             )
         return None
 
+    def _builtin_exception_ancestry(self, identity):
+        """Python's own ancestry for a ``builtins`` exception identity.
+
+        ``None`` when the identity is not a builtin one — a source class owns
+        its own base graph and is resolved lexically below. The previous
+        behaviour returned the singleton ``(identity,)`` for every non-local
+        class, which is not "ancestry unknown" but the positive claim that the
+        class has no ancestors, and it silently made ``except Exception`` fail
+        to match ``raise ValueError``.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_BASES,
+        )
+
+        args = getattr(identity, "args", ())
+        if len(args) != 2 or getattr(args[0], "value", None) != "builtins":
+            return None
+        root = getattr(args[1], "value", None)
+        if root not in BUILTIN_EXCEPTION_BASES:
+            return None
+        ancestry = []
+        pending = [root]
+        while pending:
+            name = pending.pop(0)
+            coordinate = ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const(name)],
+            )
+            if coordinate in ancestry:
+                continue
+            ancestry.append(coordinate)
+            pending.extend(BUILTIN_EXCEPTION_BASES[name])
+        return tuple(ancestry)
+
     def exception_type_mro(self, node: "Name"):
         """Return the source-authenticated ancestry known for ``node``.
 
-        Builtin/imported identities authenticate the exact class. Source class
-        identities additionally carry every lexically resolved base coordinate.
-        A computed base or cycle leaves the testimony unavailable, never guessed.
+        Builtin identities carry Python's OWN hierarchy, transported from
+        ``BUILTIN_EXCEPTION_BASES`` — the language states that ``ValueError``
+        is an ``Exception``, so the ancestry is cited, never assumed. Source
+        class identities carry every lexically resolved base coordinate. A
+        computed base or cycle leaves the testimony unavailable, never guessed.
         """
         identity = self.exception_type_identity(node)
         if identity is None:
             return None
-        module = self._require_typed_module("SourceUnit.exception_type_mro")
+        builtin_ancestry = self._builtin_exception_ancestry(identity)
+        if builtin_ancestry is not None:
+            return builtin_ancestry
+        module = self._require_typed_module(
+            "SourceUnit.exception_type_mro", blame=node.fragment
+        )
         definitions = [
             statement
             for statement in module.body
@@ -589,6 +1024,7 @@ class SourceUnit:
         mro = self.exception_type_mro(node)
         if identity is None or mro is None:
             raise SugarNotWritten(
+                blame=node.fragment,
                 owner="SourceUnit.exception_class_value",
                 observed="exception class lacks a closed authenticated base graph",
                 requested="source-authenticated ClassValue ancestry",
@@ -609,7 +1045,9 @@ class SourceUnit:
                 cache[identity] = value
                 return value
 
-        module = self._require_typed_module("SourceUnit.exception_class_value")
+        module = self._require_typed_module(
+            "SourceUnit.exception_class_value", blame=node.fragment
+        )
         definitions = [
             statement
             for statement in module.body
@@ -617,6 +1055,7 @@ class SourceUnit:
         ]
         if len(definitions) != 1:
             raise SugarNotWritten(
+                blame=node.fragment,
                 owner="SourceUnit.exception_class_value",
                 observed="authenticated identity has no unique source class",
                 requested="one lexical exception class definition",
@@ -678,6 +1117,7 @@ class Typed(Typeable):
             # built an abstract instance. Raised as the common base directly
             # — deliberately, not a guess at which subclass fits.
             raise SourceTreePanic(
+                blame=tp,
                 owner="nodes.Typed.resolve_type",
                 observed=f"instance of abstract node class {tp.__name__}",
                 requested="a concrete grammar class",
@@ -810,6 +1250,7 @@ class Node(Typed):
                 return value
         if name in _declared_fields(type(self)):
             vocabulary_missing(
+                blame=self.ref,
                 owner="nodes.Node.__getattr__",
                 observed=(
                     f"backend answer for {type(self).__name__} has no slot "
@@ -830,6 +1271,7 @@ class Node(Typed):
             # Our own adapter's anchor-rule vocabulary is incomplete for a
             # kind it has not seen positioned before: a MISSING, not a defect.
             vocabulary_missing(
+                blame=self.ref,
                 owner="nodes.Node.span",
                 observed=(
                     f"{self.kind} with neither a backend position nor any spanned child"
@@ -866,6 +1308,7 @@ class Node(Typed):
         except SourceTreePanic:
             pass
         raise SubstituteNotWritten(
+            blame=self.fragment,
             owner=f"{type(self).__name__}.substitute",
             observed=f"{self.kind} at {where} has no substitution written",
             requested="a deliberate substitution (recurse, mask, bind, or inert)",
@@ -993,6 +1436,7 @@ class Node(Typed):
 
         if not isinstance(left, Node) or not isinstance(right, Node):
             backend_defect(
+                blame=self.fragment,
                 owner="nodes.Node._make_binop",
                 observed=(
                     "a synthesized binary operation received non-Node "
@@ -1032,6 +1476,24 @@ class Node(Typed):
             self.unit, ShadowNode("Call", self.span, slots), self.reporter
         )
 
+    def _make_assign(self, target: "Node", value: "Node") -> "Node":
+        """Construct ``<target> = <value>`` as a shadow borrowing this span.
+
+        The one door for synthesizing a store: callers hand over a real target
+        node and a real value node, and ``Assign`` supplies target totality.
+        Nobody synthesizing a binding needs to learn target shapes.
+        """
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("targets", Children((_handle_of(target),))),
+            ("value", Child(_handle_of(value))),
+        )
+        return materialize(
+            self.unit, ShadowNode("Assign", self.span, slots), self.reporter
+        )
+
     def _make_attribute(self, value: "Node", attr: str) -> "Node":
         """Construct ``<value>.<attr>`` as a shadow borrowing this node's span."""
         from .backend import Child, Leaf, materialize
@@ -1069,6 +1531,7 @@ class Node(Typed):
             lc = self.line_col_span()
         except SourceTreePanic as exc:
             raise SugarNotWritten(
+                blame=exc.blame,
                 owner=f"{type(self).__name__}._effect_slot_id",
                 observed=f"{self.kind} has no stable source span for an effect slot",
                 requested="a deterministic file:line:col extent for the binding site",
@@ -1130,6 +1593,9 @@ class Node(Typed):
             return binding
         wrapped: BindingMap = {}
         for local_index, (name, state) in enumerate(binding.items()):
+            if not isinstance(name, str):
+                wrapped[name] = state
+                continue
             if isinstance(state, BindingEntryV1):
                 wrapped[name] = state
                 continue
@@ -1387,6 +1853,7 @@ class Node(Typed):
         except SourceTreePanic:
             pass  # an unpositioned kind still panics usefully, by file
         panic = SugarNotWritten(
+            blame=self.fragment,
             owner=f"{type(self).__name__}.sugar",
             observed=f"{self.kind} at {where} has no sugar written",
             requested="a constructed sugar object",
@@ -1468,7 +1935,22 @@ class Statement(Node):
 
 @_abstract
 class Expression(Node):
-    pass
+    def dotted_expr_name(self) -> Optional[str]:
+        """The dotted PLACE this expression names, or ``None`` if it names none.
+
+        `x` -> "x", `a.b.c` -> "a.b.c", and everything else (a call, a subscript,
+        a literal, an operator) -> ``None``, because it is not a place a later
+        equality can refine a binding for. Structural only: it reads the tree it
+        is on and consults no table of names.
+
+        Only ``Name`` and ``Attribute`` override; the base answers ``None`` so
+        every expression can be ASKED. `EqualityOpSugar` used to reach the same
+        answer through a `site.compare_left()` method no real node implemented
+        (only a test double did), which is why every real `==` refinement site
+        raised `AttributeError: 'SourceFragment' has no attribute
+        'compare_left'`.
+        """
+        return None
 
 
 @_abstract
@@ -1933,12 +2415,39 @@ class FunctionDef(Statement):
             return None
         from sugar_lift_py_tests.generator_construction import (
             FinallyStepV1,
+            IfStepV1,
+            InertStepV1,
             OpaqueStepV1,
             ReturnStepV1,
             YieldStepV1,
         )
 
         steps = []
+
+        def branch_steps(body):
+            """Steps for one branch, or None if any shape is unnameable.
+
+            None keeps the whole `If` opaque. A partially-nameable branch is
+            not provable: `x = yield v` resumes to a value that reaches no
+            name, so naming the branch holding it would claim an execution we
+            cannot perform. An honest `OpaqueStepV1` is the better answer.
+            """
+            collected = []
+            for nested in body:
+                if isinstance(nested, Expr) and isinstance(nested.value, Yield):
+                    value = nested.value.value
+                    collected.append(
+                        YieldStepV1(None if value is None else value.sugar())
+                    )
+                elif isinstance(nested, Return):
+                    collected.append(
+                        ReturnStepV1(
+                            None if nested.value is None else nested.value.sugar()
+                        )
+                    )
+                else:
+                    return None
+            return tuple(collected)
 
         def append_statement(statement):
             if isinstance(statement, Expr) and isinstance(statement.value, Yield):
@@ -1962,8 +2471,75 @@ class FunctionDef(Statement):
                 steps.append(
                     FinallyStepV1(tuple(item.sugar() for item in statement.finalbody))
                 )
+            elif (
+                isinstance(statement, Expr)
+                and isinstance(statement.value, Constant)
+                and not self._owns_yield((statement,))
+            ):
+                # EVALUATED AND DISCARDED IS NOTHING. A bare `Constant`
+                # expression -- the docstring case -- owes no effect, no
+                # binding and no suspension, so calling it opaque made the
+                # machine refuse at a statement that asks for nothing and name
+                # the WRONG blocker. It is stepped, not performed.
+                #
+                # The admission is structural (`Expr` holding `Constant`) and
+                # the suspension check is `_owns_yield`, the same authenticated
+                # predicate the rest of this producer reads -- never a judgement
+                # that a statement "looks harmless".
+                steps.append(InertStepV1(statement.kind))
+            elif isinstance(statement, If) and self._owns_yield((statement,)):
+                # A BRANCH IS A TWO-FACE PARTITION and this producer owns it.
+                # Admitted only when BOTH branches are wholly nameable: a
+                # branch holding a shape the machine cannot resume keeps the
+                # whole `If` opaque and loud rather than half-named.
+                #
+                # The partition is NOT minted here. Its key needs the machine's
+                # `instance_coordinate`, which `allocate` mints AFTER these
+                # steps exist, so the mint happens at transition time and this
+                # step stays instance-agnostic -- which is what lets one
+                # generator's steps be shared by every instance over it while
+                # each mints its own partition.
+                then_body = branch_steps(statement.body)
+                else_body = branch_steps(statement.orelse)
+                if then_body is None or else_body is None:
+                    # A branch holds a step the vocabulary cannot name, so the
+                    # whole `If` stays opaque -- but it is still an `If` that
+                    # may CARRY a suspension, and that is the discrimination
+                    # #6439 landed. Dropping the flag here would report
+                    # `if c: x = yield 1` as a plain `If`, which is the exact
+                    # row-merge #6439 exists to prevent. #6439 and #6445 were
+                    # each green and merged with NO textual conflict; this
+                    # line is what the clean merge silently lost.
+                    steps.append(
+                        OpaqueStepV1(
+                            statement.kind,
+                            carries_suspension=self._owns_yield((statement,)),
+                        )
+                    )
+                else:
+                    steps.append(
+                        IfStepV1(
+                            statement.test.sugar(),
+                            then_body,
+                            else_body,
+                            statement.fragment.seal().cid,
+                        )
+                    )
             else:
-                steps.append(OpaqueStepV1(statement.kind))
+                # The step vocabulary cannot name this shape. Say WHETHER it
+                # holds a suspension, because the two obligations differ:
+                # `x = 1` owes ordinary statement execution, `x = yield 1`
+                # owes the resumed value's binding. Bucketing them as one
+                # `Assign` row is why the suspension owners read as an
+                # undifferentiated mass. Read from `_owns_yield`, the same
+                # authenticated predicate that decided this body is a
+                # generator -- never from the statement's spelling.
+                steps.append(
+                    OpaqueStepV1(
+                        statement.kind,
+                        carries_suspension=self._owns_yield((statement,)),
+                    )
+                )
 
         for statement in body:
             append_statement(statement)
@@ -1973,10 +2549,21 @@ class FunctionDef(Statement):
 
     @staticmethod
     def _owns_yield(body) -> bool:
+        """Does this body own a suspension boundary of its own?
+
+        `Yield` and `YieldFrom` are the two constructors of that boundary, so
+        ownership tests BOTH. Recognizing only `Yield` made a `yield from`-only
+        function construct an ordinary eager call frame: the call completed as
+        a plain `CallSiteValue` instead of allocating a generator, and the
+        boundary's refusal only surfaced later if the body happened to be
+        forced. One constructor recognized and the other not is what let a
+        suspension escape as an ordinary value.
+        """
+
         def visit(node) -> bool:
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
                 return False
-            if isinstance(node, Yield):
+            if isinstance(node, (Yield, YieldFrom)):
                 return True
             for field in getattr(node, "_child_fields", ()):
                 value = getattr(node, field)
@@ -1989,7 +2576,8 @@ class FunctionDef(Statement):
             return False
 
         return any(
-            isinstance(statement, Yield) or visit(statement) for statement in body
+            isinstance(statement, (Yield, YieldFrom)) or visit(statement)
+            for statement in body
         )
 
     def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
@@ -2093,6 +2681,7 @@ class FunctionDef(Statement):
             from .panic import BackendDefect
 
             raise BackendDefect(
+                blame=parameter.fragment,
                 owner="FunctionDef._formal_coordinate",
                 observed=parameter.param_kind,
                 requested="one canonical Python parameter kind",
@@ -2264,11 +2853,23 @@ class FunctionDef(Statement):
                 ):
                     from pathlib import Path
 
-                    relative = (
-                        Path(self.unit.filename)
-                        .resolve()
-                        .relative_to(Path(workspace_root).resolve())
-                    )
+                    # The construction door already mints the locus
+                    # workspace-relative (`workspace_path_source`). Re-deriving
+                    # it here would be a second answer to a question already
+                    # resolved; an absolute filename means the unit did NOT come
+                    # through that door, and that stays LOUD.
+                    relative = Path(self.unit.filename)
+                    if relative.is_absolute():
+                        raise SugarNotWritten(
+                            blame=self.fragment,
+                            owner="FunctionDef.bridge_source_symbol",
+                            observed=f"absolute source locus `{self.unit.filename}`",
+                            requested="workspace-relative source locus",
+                            fix=(
+                                "route the source through the workspace-relative "
+                                "lift door (`workspace_path_source`)"
+                            ),
+                        )
                     module_parts = list(relative.with_suffix("").parts)
                     if module_parts and module_parts[-1] == "__init__":
                         module_parts.pop()
@@ -2312,6 +2913,25 @@ class ClassDef(Statement):
     decorators: Tuple[Expression, ...]
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "bases", "keywords", "body")
+
+    def _method_descriptor_kind(self, method: "FunctionDef") -> Optional[str]:
+        """Authenticate one language descriptor decorator by lexical binding.
+
+        The decorator spelling is only a lookup key.  A same-named module
+        binding defeats the builtin coordinate, so it can never grant property
+        or class/static method semantics.
+        """
+        if len(method.decorators) != 1:
+            return None
+        decorator = method.decorators[0]
+        if not isinstance(decorator, Name):
+            return None
+        if decorator.id not in {"property", "classmethod", "staticmethod"}:
+            return None
+        bindings = (self.unit.module_direct_bindings or {}).get(decorator.id, ())
+        if bindings:
+            return None
+        return decorator.id
 
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
@@ -2360,13 +2980,6 @@ class ClassDef(Statement):
         # residual ClassDef mass is non-constant body assigns; Constant-only
         # was an over-narrow partition that left honest source-visible fields
         # as unsupported-member gaps.
-        class_assignments = tuple(
-            (item.targets[0].id, item.value, item.fragment)
-            for item in self.body
-            if isinstance(item, Assign)
-            and len(item.targets) == 1
-            and isinstance(item.targets[0], Name)
-        )
         annotated_assignments = tuple(
             item
             for item in self.body
@@ -2375,7 +2988,7 @@ class ClassDef(Statement):
         unsupported = tuple(
             item
             for index, item in enumerate(self.body)
-            if not isinstance(item, (FunctionDef, ClassDef, Pass))
+            if not isinstance(item, (FunctionDef, ClassDef, If, Pass))
             and not (
                 index == 0
                 and isinstance(item, Expr)
@@ -2393,6 +3006,7 @@ class ClassDef(Statement):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
+                blame=unsupported[0].fragment,
                 owner="ClassDef._construct_sugar",
                 observed=f"unsupported class member {unsupported[0].kind}",
                 requested="a total source-visible class member construction arm",
@@ -2404,7 +3018,66 @@ class ClassDef(Statement):
         )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ClassDefinitionSugar,
+            ConstructedClassConditionalFieldsV1,
         )
+
+        def conditional_fields(statements):
+            fields = []
+            for item in statements:
+                if (
+                    isinstance(item, Assign)
+                    and len(item.targets) == 1
+                    and isinstance(item.targets[0], Name)
+                ):
+                    fields.append(
+                        ConstructedClassFieldV1(
+                            item.targets[0].id,
+                            item.fragment.seal().cid,
+                            item.value.sugar(),
+                        )
+                    )
+                    continue
+                if isinstance(item, AnnAssign) and isinstance(item.target, Name):
+                    if item.value is not None:
+                        fields.append(
+                            ConstructedClassFieldV1(
+                                item.target.id,
+                                item.fragment.seal().cid,
+                                item.value.sugar(),
+                            )
+                        )
+                    continue
+                if isinstance(item, ClassDef):
+                    fields.append(
+                        ConstructedClassFieldV1(
+                            item.name,
+                            item.fragment.seal().cid,
+                            item.sugar(),
+                        )
+                    )
+                    continue
+                if isinstance(item, If):
+                    fields.append(
+                        ConstructedClassConditionalFieldsV1(
+                            condition_fragment_cid=item.test.fragment.seal().cid,
+                            condition_sugar=item.test.sugar(),
+                            when_true=conditional_fields(item.body),
+                            when_false=conditional_fields(item.orelse),
+                        )
+                    )
+                    continue
+                if isinstance(item, Pass):
+                    continue
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=item.fragment,
+                    owner="ClassDef._construct_sugar",
+                    observed=f"unsupported conditional class member {item.kind}",
+                    requested="a constructed field assignment or pass",
+                    fix="add the member's ordinary class-control arm or keep it loud",
+                )
+            return tuple(fields)
 
         constructed = tuple(
             ConstructedClassMethodV1(
@@ -2412,35 +3085,21 @@ class ClassDef(Statement):
                 method.fragment.seal().cid,
                 method.sugar(),
                 method.source_visible_call_frame(),
+                self._method_descriptor_kind(method),
             )
             for method in methods
         )
-        fields = (
+        fields = conditional_fields(
             tuple(
-                ConstructedClassFieldV1(
-                    name,
-                    fragment.seal().cid,
-                    value.sugar(),
+                item
+                for index, item in enumerate(self.body)
+                if not isinstance(item, (FunctionDef, Pass))
+                and not (
+                    index == 0
+                    and isinstance(item, Expr)
+                    and isinstance(item.value, Constant)
+                    and isinstance(item.value.value, str)
                 )
-                for name, value, fragment in class_assignments
-            )
-            + tuple(
-                ConstructedClassFieldV1(
-                    item.target.id,
-                    item.fragment.seal().cid,
-                    item.value.sugar(),
-                )
-                for item in annotated_assignments
-                if item.value is not None
-            )
-            + tuple(
-                ConstructedClassFieldV1(
-                    item.name,
-                    item.fragment.seal().cid,
-                    item.sugar(),
-                )
-                for item in self.body
-                if isinstance(item, ClassDef)
             )
         )
         base_sugars = ()
@@ -2484,17 +3143,12 @@ class ClassDef(Statement):
         initializer = next(
             (
                 item
-                for item in self.body
+                for item in reversed(self.body)
                 if isinstance(item, FunctionDef) and item.name == "__init__"
             ),
             None,
         )
-        params = () if initializer is None else initializer.params[1:]
         owner_cid = self.fragment.seal().cid
-        coordinates = tuple(
-            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
-            for index, param in enumerate(params)
-        )
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
             self.unit.source_cid,
@@ -2502,6 +3156,37 @@ class ClassDef(Statement):
             span.start_col,
             span.end_line,
             span.end_col,
+        )
+        # A source class without ``__init__`` that is an exception type inherits
+        # BaseException's constructor law: ``(*args)``.  Ordinary new-style
+        # classes inherit ``object.__init__`` (zero formals).  Installing the
+        # empty frame at ``raise OptionError(msg)`` was minting
+        # SourceCallBindingGap("unconsumed call actual") for every argumented
+        # exception construction during module-wide frame resolution — and that
+        # silence blocked authenticated generator managers whose helpers only
+        # *mention* those raises.
+        if initializer is None and self._inherits_default_exception_constructor():
+            args_coordinate = BindingCoordinateV1.mint(
+                owner_cid, self.fragment, ("inherited-exception-args", 0)
+            )
+            return SourceVisibleCallFrameV1(
+                source_identity_cid=self.unit.source_cid,
+                definition_site=site,
+                definition_fragment_cid=owner_cid,
+                parameters=("args",),
+                formal_coordinates=(args_coordinate,),
+                parameter_kinds=("vararg",),
+                default_sugars=(None,),
+                default_nodes=(None,),
+                default_fragments=(None,),
+                default_fragment_cids=(None,),
+                body=self._source_visible_body({}),
+                owner=self,
+            )
+        params = () if initializer is None else initializer.params[1:]
+        coordinates = tuple(
+            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
+            for index, param in enumerate(params)
         )
         formal_scope = {
             param.name: self._make_constructor_coordinate_ref(param, coordinate)
@@ -2531,6 +3216,47 @@ class ClassDef(Statement):
             owner=self,
         )
 
+    def _inherits_default_exception_constructor(self) -> bool:
+        """Whether this class inherits BaseException's ``(*args)`` constructor.
+
+        Identity is the authenticated base graph, never the class spelling.
+        A non-exception class without ``__init__`` still takes zero arguments
+        (object construction); only exception ancestry opens ``*args``.
+        """
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_NAMES,
+        )
+
+        module = self.unit._require_typed_module(
+            "ClassDef._inherits_default_exception_constructor",
+            blame=self.fragment,
+        )
+        visiting: set[str] = set()
+
+        def base_is_exception(base) -> bool:
+            if not isinstance(base, Name):
+                return False
+            if base.id in BUILTIN_EXCEPTION_NAMES:
+                return True
+            if base.id in visiting:
+                return False
+            # Walk the same lexical ClassDef graph SourceUnit.exception_type_mro
+            # authenticates: one unique same-module definition, no guessed imports.
+            definitions = [
+                item
+                for item in module.body
+                if isinstance(item, ClassDef) and item.name == base.id
+            ]
+            if len(definitions) != 1:
+                return False
+            visiting.add(base.id)
+            try:
+                return any(base_is_exception(item) for item in definitions[0].bases)
+            finally:
+                visiting.remove(base.id)
+
+        return any(base_is_exception(base) for base in self.bases)
+
     def _make_constructor_coordinate_ref(self, param: "Param", coordinate) -> "Node":
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
@@ -2558,7 +3284,7 @@ class ClassDef(Statement):
         initializer = next(
             (
                 item
-                for item in self.body
+                for item in reversed(self.body)
                 if isinstance(item, FunctionDef) and item.name == "__init__"
             ),
             None,
@@ -2728,6 +3454,34 @@ def _substituted_store_target(statement, target, scope):
     return rewrite(target, **changes) if changes else None
 
 
+def _substituted_unpack_store_leaves(statement, target, scope):
+    """Thread load-side receivers/keys for store leaves inside a flat unpack.
+
+    Name (and starred-Name) leaves are binding sites and stay untouched.
+    Attribute/Subscript leaves load their receiver and index, so they take the
+    same ``_substituted_store_target`` door as a standalone store. Nested
+    unpack shapes are not rewritten here — they stay on the name-only or loud
+    paths owned elsewhere.
+    """
+    from .shadow import rewrite
+
+    if not isinstance(target, (Tuple_, List)):
+        return None
+    new_elts = []
+    changed = False
+    for leaf in target.elts:
+        if isinstance(leaf, (Attribute, Subscript)):
+            rewritten = _substituted_store_target(statement, leaf, scope)
+            if rewritten is not None:
+                new_elts.append(rewritten)
+                changed = True
+                continue
+        new_elts.append(leaf)
+    if not changed:
+        return None
+    return rewrite(target, elts=tuple(new_elts))
+
+
 def _valued_store_target_sugar(target, value_sugar, site):
     """The ONE ladder for a valued attribute/subscript store target.
 
@@ -2785,7 +3539,9 @@ def _valued_store_target_sugar(target, value_sugar, site):
         )
 
         return SubscriptStoreEffectSugar(
-            index_text=target.slice_.fragment.text,
+            receiver=target.value.sugar(),
+            index=target.slice_.sugar(),
+            value=value_sugar,
             site=site,
         )
     return None
@@ -2821,16 +3577,41 @@ def _store_target_binding(statement, target, scope):
     }
 
 
+def _receiver_field_projection_binding(statement, target, scope):
+    if not isinstance(target, Attribute):
+        return None
+    receiver_coordinate_cid = _receiver_coordinate_cid(target.value)
+    if receiver_coordinate_cid is None:
+        return None
+    prior = scope.get(_RECEIVER_FIELD_PROJECTIONS)
+    projections = dict(prior) if isinstance(prior, dict) else {}
+    key = (receiver_coordinate_cid, target.attr)
+    projections[key] = _ReceiverFieldProjection(
+        receiver_coordinate_cid=receiver_coordinate_cid,
+        selector=target.attr,
+        store_occurrence=statement.fragment,
+        value=statement.value,
+    )
+    return {_RECEIVER_FIELD_PROJECTIONS: projections}
+
+
 class Assign(Statement):
     targets: Tuple[Expression, ...]
     value: Expression
     _child_fields = ("targets", "value")
 
     def substitute(self, scope):
-        """Substitute the RHS only. The targets are BINDING SITES -- a Name
-        being defined, not referenced -- so they are never substituted (that
-        would rewrite the name being bound). The binding this introduces for the
-        rest of the block is reported by substitution_binding()."""
+        """Substitute the RHS, and load-side store target coordinates.
+
+        Plain Name targets are BINDING SITES -- never substituted (that would
+        rewrite the name being bound). Attribute/Subscript store targets load
+        their receiver (and subscript index) as ordinary expressions: those
+        faces must substitute so a prior ``xs = [0]`` reaches ``xs[0] = v`` as
+        a decided list. The same load law applies to store leaves inside a flat
+        unpack (``x, xs[0] = p, q``): Name leaves stay binding sites; store
+        leaves thread receivers and keys. The binding this statement introduces
+        for the rest of the block is reported by substitution_binding().
+        """
         from .shadow import rewrite
 
         new_value, changed = self._substitute_field(self.value, scope)
@@ -2839,6 +3620,10 @@ class Assign(Statement):
             self.targets[0], (Attribute, Subscript)
         ):
             new_target = _substituted_store_target(self, self.targets[0], scope)
+            if new_target is not None:
+                changes["targets"] = (new_target,)
+        elif len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
+            new_target = _substituted_unpack_store_leaves(self, self.targets[0], scope)
             if new_target is not None:
                 changes["targets"] = (new_target,)
         if not changes:
@@ -2912,20 +3697,20 @@ class Assign(Statement):
 
         Nested unpack patterns stay on the name-only destructure path (or
         loud). This is the mass residual: ``o.x, o.y = p, q`` and mixed
-        ``x, o.a = p, q``.
+        ``x, o.a = p, q`` / ``x, obj[key] = p, q``.
 
         A leaf is admitted ONLY when the constructed store retains the exact
         receiver term AND the exact RHS member it is paired with -- positional
         correspondence is the whole claim of an unpack, so a store that cannot
         carry its own value is not allowed to stand in for one. Attribute
         leaves qualify (``AttributeStoreEffectSugar`` carries receiver, attr
-        and value). A Subscript leaf qualifies only over an authenticated
-        object place (``PlaceAssignSugar`` carries receiver, selector, value);
-        over an opaque receiver the only available store sugar is
-        ``SubscriptStoreEffectSugar``, which carries neither receiver nor
-        value -- ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct
-        identically -- so that shape stays loud rather than silently
-        mis-modelling the pairing.
+        and value). Subscript leaves qualify the same way after #6599:
+        ``SubscriptStoreEffectSugar`` carries receiver, index, and value, so
+        ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct *differently*
+        and the pairing is retained. Object-place subscripts still prefer
+        ``PlaceAssignSugar`` at construction. Undecided receivers stay loud
+        at *desugar* time through the store law — never by refusing the leaf
+        at admission.
         """
         if len(self.targets) != 1:
             return None
@@ -2939,10 +3724,6 @@ class Assign(Statement):
             return None
         for leaf, _value in pairs:
             if not isinstance(leaf, (Name, Attribute, Subscript)):
-                return None
-            if isinstance(leaf, Subscript) and not isinstance(
-                leaf.value, ObjectPlaceStateV1
-            ):
                 return None
         # Only useful when at least one leaf is a store (Attribute/Subscript);
         # pure-Name flat unpack is MultiAssignSugar via _destructured_binding.
@@ -3022,6 +3803,9 @@ class Assign(Statement):
                     return threaded
                 if isinstance(target.value, ObjectPlaceStateV1):
                     return None
+                projected = _receiver_field_projection_binding(self, target, scope)
+                if projected is not None:
+                    return projected
             # Name-only nested/flat display unpack.
             name_only = self._destructured_binding()
             if name_only is not None:
@@ -3289,23 +4073,36 @@ class Assign(Statement):
                             )
                         continue
                     if isinstance(leaf, Subscript):
-                        # `_flat_store_unpack_pairs` admits a Subscript leaf
-                        # only over an authenticated object place, because
-                        # PlaceAssignSugar is the only subscript store that
-                        # retains its receiver AND its paired RHS member.
-                        from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                            PlaceAssignSugar,
-                        )
-
-                        stores.append(
-                            PlaceAssignSugar(
-                                receiver=leaf.value.sugar(),
-                                selector_kind="subscript",
-                                selector=leaf.slice_.sugar(),
-                                value=val.sugar(),
-                                site=leaf.fragment,
+                        # Object places keep PlaceAssignSugar; every other
+                        # source-visible subscript reuses the #6599 store
+                        # sugar (receiver + index + paired RHS member).
+                        if isinstance(leaf.value, ObjectPlaceStateV1):
+                            from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                                PlaceAssignSugar,
                             )
-                        )
+
+                            stores.append(
+                                PlaceAssignSugar(
+                                    receiver=leaf.value.sugar(),
+                                    selector_kind="subscript",
+                                    selector=leaf.slice_.sugar(),
+                                    value=val.sugar(),
+                                    site=leaf.fragment,
+                                )
+                            )
+                        else:
+                            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                                SubscriptStoreEffectSugar,
+                            )
+
+                            stores.append(
+                                SubscriptStoreEffectSugar(
+                                    receiver=leaf.value.sugar(),
+                                    index=leaf.slice_.sugar(),
+                                    value=val.sugar(),
+                                    site=leaf.fragment,
+                                )
+                            )
                         continue
                     return super()._construct_sugar()
                 return UnpackStoreAssignSugar(
@@ -3369,7 +4166,9 @@ class Assign(Statement):
 
                     stores.append(
                         SubscriptStoreEffectSugar(
-                            index_text=target.slice_.fragment.text,
+                            receiver=target.value.sugar(),
+                            index=target.slice_.sugar(),
+                            value=value_sugar,
                             site=target.fragment,
                         )
                     )
@@ -3482,10 +4281,10 @@ class AugAssign(Statement):
             )
         if isinstance(self.target, Subscript):
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                SubscriptStoreEffectSugar,
+                LegacyAugmentedSubscriptStoreEffectSugar,
             )
 
-            return SubscriptStoreEffectSugar(
+            return LegacyAugmentedSubscriptStoreEffectSugar(
                 index_text=self.target.slice_.fragment.text,
                 site=self.fragment,
             )
@@ -3530,7 +4329,10 @@ class AnnAssign(Statement):
         if isinstance(self.target, Name):
             return {self.target.id: self.value}
         if isinstance(self.target, (Attribute, Subscript)):
-            return _store_target_binding(self, self.target, scope)
+            threaded = _store_target_binding(self, self.target, scope)
+            if threaded is not None:
+                return threaded
+            return _receiver_field_projection_binding(self, self.target, scope)
         return None
 
     def _construct_sugar(self):
@@ -3705,6 +4507,7 @@ class For(Statement):
                     # case set `elements = None` above and falls through.)
                     raise SugarNotWritten(
                         owner="For.substitute",
+                        blame=self.target.fragment,
                         observed=(
                             f"concrete for-loop target {self.target.kind} does not "
                             "destructure its elements"
@@ -4209,7 +5012,7 @@ class If(Statement):
         names = set(then_net) | set(else_net)
         phis = []
         availability: BindingMap = {}
-        for name in sorted(names):
+        for name in _ordered_binding_keys(names):
             incoming = _explicit_state(name, scope)
             then_val = then_net.get(name, incoming)
             else_val = else_net.get(name, incoming)
@@ -4302,6 +5105,7 @@ class If(Statement):
             slot = BranchResultSlot(self.branch_result_slot_id)
         except AttributeError:
             backend_defect(
+                blame=self.fragment,
                 owner="If._construct_sugar",
                 observed="If without a stored branch-result slot",
                 requested="consume the slot minted once by If.substitute",
@@ -4346,6 +5150,7 @@ class With(Statement):
 
         if not isinstance(context, TreeConstructionContextV1):
             backend_defect(
+                blame=self.fragment,
                 owner="With._construct_sugar",
                 observed="tree construction context is not TreeConstructionContextV1",
                 requested="the immutable prereq-2 contract-ref table",
@@ -4364,31 +5169,80 @@ class With(Statement):
             return derived
         try:
             return context.contract_refs.require(coordinate)
-        except ContractRefProtocolError as exc:
-            backend_defect(
+        except ContractRefProtocolError:
+            from .panic import WithConstructionGap, WithConstructionGapKind
+
+            panic = WithConstructionGap(
+                blame=self.fragment,
+                gap_kind=WithConstructionGapKind.NO_DERIVED_CONTRACT,
+                coordinate=coordinate,
                 owner="With._construct_sugar",
-                observed=str(exc),
-                requested="one contract-resolution row for every enrolled With demand",
-                fix="repair prereq-2 demand/table generation; never search at construction",
+                observed=(
+                    "no context-manager derivation for source coordinate "
+                    f"{coordinate}"
+                ),
+                requested="one resolved authenticated ContextManagerContractRefV1",
+                fix="publish or derive the exact typed CM contract before construction",
             )
+            self.reporter.report_gap(self, panic)
+            raise panic
 
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
 
+        # `kind` is the structural key and stays alone; `detail` rides the
+        # OBSERVED line so the panic still names the blocking callee(s) that the
+        # fused `kind:detail` key used to smuggle into the key itself.
+        detail = getattr(resolution, "detail", None)
         panic = ContextManagerResolutionConstructionGap(
+            blame=resolution.use_site,
             kind=resolution.kind,
             demand_cid=resolution.demand_cid,
             candidate_member_cids=resolution.candidate_member_cids,
+            coordinate=resolution.use_site,
             owner="With._construct_sugar",
-            observed=f"authenticated preconstruction resolution gap: {resolution.kind}",
+            observed=(
+                f"authenticated preconstruction resolution gap: {resolution.kind}"
+                + (f" [{detail}]" if detail else "")
+            ),
             requested="one resolved authenticated ContextManagerContractRefV1",
             fix="publish or resolve the exact typed CM contract before construction",
         )
         self.reporter.report_gap(self, panic)
         raise panic
 
+    def _provider_manager_call(self, item: WithItem):
+        """The Call that authenticates this manager item, by binding not spelling.
+
+        A direct Call head is already the provider.  A bare Name head reaches
+        its provider only through the seat populate installed at the immutable
+        manager-use coordinate when projecting ordinary assignment testimony.
+        Same spelling elsewhere never authorizes a manager.
+        """
+        if isinstance(item.context_expr, Call):
+            return item.context_expr
+        context = self.unit.construction_context
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if not isinstance(context, TreeConstructionContextV1):
+            return None
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+        )
+        call = context.source_manager_provider_calls.get(coordinate)
+        return call if isinstance(call, Call) else None
+
     def _generator_manager_frame(self, item: WithItem):
-        if not isinstance(item.context_expr, Call):
+        call = self._provider_manager_call(item)
+        if call is None:
             return None
         context = self.unit.construction_context
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -4398,7 +5252,7 @@ class With(Statement):
 
         if not isinstance(context, TreeConstructionContextV1):
             return None
-        span = item.context_expr.line_col_span()
+        span = call.line_col_span()
         coordinate = SourceFragmentCoordinateV1(
             self.unit.source_cid,
             span.start_line,
@@ -4414,7 +5268,12 @@ class With(Statement):
     def _generator_manager_sugar(self, item: WithItem):
         if self._generator_manager_frame(item) is None:
             return None
-        return item.context_expr.sugar()
+        call = self._provider_manager_call(item)
+        if call is None:
+            return None
+        # Always sugar the provider Call (with its installed frame), never the
+        # bare Name spelling at the With head.
+        return call.sugar()
 
     def _require_narrow_cm_ref(self, item: WithItem):
         resolution = self._prebound_manager_resolution(item)
@@ -4425,7 +5284,9 @@ class With(Statement):
             ExpectsModeV1,
             SuppressesModeV1,
             RaiseEffectKindV1,
+            WarningEffectKindV1,
             NeverSuppressesDispositionV1,
+            ReturnTruthinessDispositionV1,
             ProtocolResourceSemanticsV1,
             TotalCompletionV1,
         )
@@ -4443,6 +5304,7 @@ class With(Statement):
             resolution, (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1)
         ):
             backend_defect(
+                blame=self.fragment,
                 owner="With._construct_sugar",
                 observed=f"unexpected resolution value {type(resolution).__name__}",
                 requested="ContextManagerContractRefV1 or ContextManagerResolutionGapV1",
@@ -4457,16 +5319,22 @@ class With(Statement):
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
             and isinstance(semantics.exit.completion, TotalCompletionV1)
-            and isinstance(semantics.exit.disposition, NeverSuppressesDispositionV1)
+            and isinstance(
+                semantics.exit.disposition,
+                (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
+            )
         )
         admitted_boundary = (
             isinstance(semantics, EffectBoundarySemanticsV1)
             and semantics.schema_version == "1"
             and isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
-            and isinstance(semantics.effect_kind, RaiseEffectKindV1)
+            and isinstance(
+                semantics.effect_kind, (RaiseEffectKindV1, WarningEffectKindV1)
+            )
         )
         if not (admitted_resource or admitted_boundary):
             panic = UnsupportedContextManagerSemantics(
+                blame=self.fragment,
                 demand_cid=resolution.demand_cid,
                 member_cid=resolution.contract_cid,
                 owner="With._construct_sugar",
@@ -4474,7 +5342,11 @@ class With(Statement):
                     "authenticated CM member carries unsupported enter/exit semantics "
                     f"at {resolution.contract_cid}"
                 ),
-                requested="total Value/NeverSuppresses resource or typed Expects/Raise boundary",
+                requested=(
+                    "total Value resource with source-derived NeverSuppresses or "
+                    "ReturnTruthiness disposition, or typed "
+                    "Expects/Suppresses Raise/Warning boundary"
+                ),
                 fix="leave unsupported authenticated semantics loud; never upgrade testimony",
             )
             self.reporter.report_gap(self, panic)
@@ -4504,6 +5376,72 @@ class With(Statement):
         inner = rewrite(self, items=tuple(self.items[1:]), body=tuple(self.body))
         return rewrite(self, items=(self.items[0],), body=(inner,))
 
+    def _bind_store_target(self, item) -> "With":
+        """``with M() as <store target>:`` IS ``<target> = enter_result`` first.
+
+        Python's as-clause is an ASSIGNMENT, not a name declaration. A simple
+        ``as <Name>`` is discharged by substitution (stated, no store effect,
+        the stronger discharge) and is left alone. Every OTHER target -- an
+        attribute, a subscript, a tuple, a nested or starred destructure -- is a
+        real store, and ``Assign`` is already total over exactly that target
+        set. So this node does not grow one arm per target shape: it rewrites
+        into the form ``Assign`` already owns and inherits the totality.
+
+        The store rides as the FIRST body statement, which is where Python runs
+        it: after ``__enter__`` completed, inside the block, so a store that
+        halts is a body edge and the contract's ``__exit__`` still runs over it.
+        Nothing about exit routing is special-cased -- the store is simply the
+        first thing the body does.
+
+        Restricted to ProtocolResource semantics on purpose. The EffectBoundary
+        contract refuses an as-binding outright (its projection is not
+        authenticated), and that refusal stays total; injecting a store there
+        would route a binding its contract has not admitted.
+
+        Idempotent: the rewrite only fires on a target this node did not already
+        rewrite, detected structurally by the injected store's own value being
+        this item's enter-result ObservationRef.
+        """
+        from sugar_lift_py_tests.context_manager_contract import (
+            ENTER_RESULT,
+            ProtocolResourceSemanticsV1,
+        )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            ContextManagerContractRefV1,
+            SourceDerivedContextManagerRefV1,
+        )
+        from .shadow import rewrite
+
+        target = item.optional_vars
+        if target is None or target.kind == "Name":
+            return self
+        if self._generator_manager_frame(item) is not None:
+            return self
+        resolution = self._prebound_manager_resolution(item)
+        if not isinstance(
+            resolution,
+            (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1),
+        ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
+            return self
+
+        enter_slot = f"{item._manager_slot_id()}#enter_result"
+        if self._already_bound_store(enter_slot):
+            return self
+        store = self._make_assign(
+            target, item._make_observation_ref(enter_slot, ENTER_RESULT)
+        )
+        return rewrite(self, body=(store, *self.body))
+
+    def _already_bound_store(self, enter_slot: str) -> bool:
+        """True when this With's body already opens with its own enter store."""
+        if not self.body:
+            return False
+        head = self.body[0]
+        if head.kind != "Assign":
+            return False
+        value = head.value
+        return value.kind == "ObservationRef" and value.slot_id == enter_slot
+
     def _construct_sugar(self):
         """Build only from the pre-resolved authenticated CM contract ref.
 
@@ -4514,21 +5452,21 @@ class With(Statement):
         if len(self.items) != 1:
             return self._nest_items()._construct_sugar()
         item = self.items[0]
+        # The as-clause is Python's own ASSIGNMENT, not a name declaration, so
+        # this node does not enumerate target shapes at all:
+        #
+        # - a simple ``as <Name>`` is discharged by SUBSTITUTION -- `substitute`
+        #   rewrote the body's loads to ObservationRef(slot). Stated, no store
+        #   effect, and that is the stronger discharge, so it stays.
+        # - any other target is a real store, and `_bind_store_target` already
+        #   rewrote it into the body as `<target> = ObservationRef(slot)`, where
+        #   `Assign` supplies attribute/subscript/tuple/nested/starred totality.
+        #
+        # Either way the enter-result slot must be BOUND whenever the site names
+        # a target, which is what `binds_enter_result` (not `as_name`) decides.
         as_name = None
-        if item.optional_vars is not None:
-            # ``as <Name>`` only: substitute already rewrote loads to
-            # ObservationRef(slot). Non-Name targets stay loud.
-            if item.optional_vars.kind != "Name":
-                from .panic import UnsupportedWithBindingTarget
-
-                panic = UnsupportedWithBindingTarget(
-                    owner="With._construct_sugar",
-                    observed=f"unsupported with binding target {item.optional_vars.kind}",
-                    requested="no target or one simple Name target",
-                    fix="leave destructuring and attribute targets loud",
-                )
-                self.reporter.report_gap(self, panic)
-                raise panic
+        binds_enter_result = item.optional_vars is not None
+        if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
 
         generator_manager = self._generator_manager_sugar(item)
@@ -4539,7 +5477,7 @@ class With(Statement):
 
             enter_slot = (
                 f"{item._manager_slot_id()}#enter_result"
-                if as_name is not None
+                if binds_enter_result
                 else None
             )
             return GeneratorWithSugar(
@@ -4549,7 +5487,21 @@ class With(Statement):
                 site=self.fragment,
             )
 
-        resolved_ref = self._require_narrow_cm_ref(item)
+        context = self.unit.construction_context
+        if getattr(context, "frame_projection", False):
+            try:
+                resolved_ref = self._require_narrow_cm_ref(item)
+            except Exception:  # noqa: BLE001 — soft dual-mode factory projection
+                # Nested With only on the function-form branch of dual-mode
+                # EffectBoundary factories (pytest.raises). Leave a soft
+                # incomplete so the CM return path can still project a frame.
+                from sugar_lift_py_tests.sugar.soft_unresolved_with_sugar import (
+                    SoftUnresolvedWithSugar,
+                )
+
+                return SoftUnresolvedWithSugar(site=self.fragment)
+        else:
+            resolved_ref = self._require_narrow_cm_ref(item)
         if resolved_ref is not None:
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
@@ -4571,7 +5523,7 @@ class With(Statement):
 
                 manager_slot = item._manager_slot_id()
                 enter_slot = (
-                    f"{manager_slot}#enter_result" if as_name is not None else None
+                    f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
                 return WithSourceResourceSugar(
                     manager=item.context_expr.sugar(),
@@ -4589,14 +5541,38 @@ class With(Statement):
                     WithEffectBoundarySugar,
                 )
 
+                observation_slot = None
                 if as_name is not None:
+                    # The slot exists because the CONTRACT declares a binding,
+                    # never because the source spelled `as`. A manager that
+                    # binds nothing cannot acquire a slot by being written with
+                    # a name next to it.
+                    observation_slot = self._effect_boundary_observation_slot(
+                        item, resolved_ref
+                    )
+                elif binds_enter_result:
+                    # A STORE target on an EffectBoundary. #6391 authenticated an
+                    # observation slot for a NAME; it did not authenticate a
+                    # store, and `_bind_store_target` deliberately declines to
+                    # rewrite this contract. Without this arm the binding would
+                    # silently become `observation_slot = None` -- the site would
+                    # construct while dropping the binding the source wrote.
+                    # Stay loud instead; a dropped binding is the one outcome
+                    # neither contract admits.
                     from .panic import UnsupportedWithBindingTarget
 
                     panic = UnsupportedWithBindingTarget(
+                        blame=item.optional_vars.fragment,
                         owner="With._construct_sugar",
-                        observed="EffectBoundary as-binding projection is not yet authenticated",
-                        requested="an EffectBoundary manager without optional_vars",
-                        fix="keep exception-info/warning observation binding loud until its projection slot is authenticated",
+                        observed=(
+                            "EffectBoundary as-binding to a "
+                            f"{item.optional_vars.kind} store target"
+                        ),
+                        requested="an EffectBoundary manager bound to a simple Name, or no target",
+                        fix=(
+                            "authenticate a store projection for this contract, or "
+                            "keep the store target loud -- never drop the binding"
+                        ),
                     )
                     self.reporter.report_gap(self, panic)
                     raise panic
@@ -4616,11 +5592,13 @@ class With(Statement):
                             resolved_ref, resolved_ref.use_site
                         )
                     ),
+                    observation_slot_id=observation_slot,
                     site=self.fragment,
                 )
 
             if not isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
                 backend_defect(
+                    blame=self.fragment,
                     owner="With._construct_sugar",
                     observed="closed CM resolver returned an unknown semantics variant",
                     requested="ProtocolResourceSemanticsV1 or EffectBoundarySemanticsV1",
@@ -4628,12 +5606,25 @@ class With(Statement):
                 )
 
             manager_slot = item._manager_slot_id()
-            enter_slot = f"{manager_slot}#enter_result" if as_name is not None else None
+            enter_slot = f"{manager_slot}#enter_result" if binds_enter_result else None
+            enter_definition, exit_definition = (
+                self._require_native_resource_definitions(resolved_ref)
+            )
+            from dataclasses import replace
+
+            enter_sugar = replace(
+                item._make_enter_call().sugar(),
+                native_definition_coordinate=enter_definition,
+            )
+            exit_sugar = replace(
+                item._make_parametric_exit_call().sugar(),
+                native_definition_coordinate=exit_definition,
+            )
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
-                enter=item._make_enter_call().sugar(),
-                exit=item._make_parametric_exit_call().sugar(),
+                enter=enter_sugar,
+                exit=exit_sugar,
                 exit_face_id=item._exit_face_id(),
                 body=tuple(stmt.sugar() for stmt in self.body),
                 disposition=resolved_ref.semantics.exit.disposition,
@@ -4642,9 +5633,12 @@ class With(Statement):
                     resolved_ref, resolved_ref.use_site
                 ),
                 enter_slot_id=enter_slot,
+                enter_definition=enter_definition,
+                exit_definition=exit_definition,
                 site=self.fragment,
             )
         panic = RuntimeSelectedContextManager(
+            blame=self.fragment,
             owner="With.sugar",
             observed="With manager has no injected authenticated preconstruction authority",
             requested="one resolved ContextManagerContractRefV1 at the exact use-site",
@@ -4652,6 +5646,39 @@ class With(Statement):
         )
         self.reporter.report_gap(self, panic)
         raise panic
+
+    def _require_native_resource_definitions(self, resolved_ref):
+        """Require both protocol methods through the one authenticated door."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            NativeDefinitionCoordinateGapV1,
+            NativeProtocolSlot,
+        )
+        from .panic import SugarNotWritten
+
+        refs = self.unit.construction_context.contract_refs
+        receiver = resolved_ref.use_site
+        enter = refs.require_native_definition(
+            receiver, NativeProtocolSlot.CONTEXT_ENTER
+        )
+        exit_ = refs.require_native_definition(
+            receiver, NativeProtocolSlot.CONTEXT_EXIT
+        )
+        for resolution in (enter, exit_):
+            if isinstance(resolution, NativeDefinitionCoordinateGapV1):
+                raise SugarNotWritten(
+                    blame=self.fragment,
+                    owner="With._require_native_resource_definitions",
+                    observed=resolution.reason,
+                    requested=(
+                        "authenticated source definition coordinates for both "
+                        "context-enter and context-exit"
+                    ),
+                    fix=(
+                        "retain this native resource as undischarged until the "
+                        "shared definition door resolves the missing slot"
+                    ),
+                )
+        return enter, exit_
 
     def _authenticate_expected_exception_type(self, manager, manager_sugar, reference):
         """Attach the floor-owned identity to the selected real call operand."""
@@ -4698,27 +5725,55 @@ class With(Statement):
             if index == selector.parameter_index:
                 actual, actual_location = value, location
                 break
-        if not isinstance(actual, Name):
+        if not isinstance(actual, (Name, Attribute)):
             return manager_sugar
-        identity = self.unit.exception_type_identity(actual)
+        identity = (
+            self.unit.exception_type_identity(actual)
+            if isinstance(actual, Name)
+            else self.unit.imported_exception_type_identity(actual)
+        )
         if identity is None:
             return manager_sugar
+        # Attribute import paths cannot re-enter AttributeSugar (the module
+        # receiver is SymbolicValue). Project the authenticated exception
+        # class floor from the import identity; Name paths keep their existing
+        # sugar and only wrap when a source ClassDef graph is available.
+        class_value = None
+        if isinstance(actual, Attribute):
+            from sugar_lift_py_tests.floor.exception_class_value import (
+                ExceptionClassValue,
+            )
+
+            qualified = getattr(identity.args[1], "value", None)
+            if isinstance(qualified, str) and qualified:
+                class_value = ExceptionClassValue(qualified)
+        elif isinstance(actual, Name):
+            try:
+                class_value = self.unit.exception_class_value(actual)
+            except SugarNotWritten:
+                class_value = None
+        wrapped = AuthenticatedExceptionTypeSugar(
+            (
+                manager_sugar.args[actual_location[1]]
+                if actual_location[0] == "arg"
+                else next(
+                    sugar
+                    for name, sugar in manager_sugar.keywords
+                    if name == actual_location[1]
+                )
+            ),
+            identity,
+            site=actual.fragment,
+            class_value=class_value,
+        )
         if actual_location[0] == "arg":
             args = list(manager_sugar.args)
-            position = actual_location[1]
-            args[position] = AuthenticatedExceptionTypeSugar(
-                args[position], identity, site=actual.fragment
-            )
+            args[actual_location[1]] = wrapped
             return replace(manager_sugar, args=tuple(args))
         keywords_sugar = list(manager_sugar.keywords)
         for position, (name, sugar) in enumerate(keywords_sugar):
             if name == actual_location[1]:
-                keywords_sugar[position] = (
-                    name,
-                    AuthenticatedExceptionTypeSugar(
-                        sugar, identity, site=actual.fragment
-                    ),
-                )
+                keywords_sugar[position] = (name, wrapped)
                 break
         return replace(manager_sugar, keywords=tuple(keywords_sugar))
 
@@ -4746,9 +5801,18 @@ class With(Statement):
             if len(items) != 1:
                 return self if not changed else rewrite(self, **changed)
             item = items[0]
+            if item.optional_vars is not None and item.optional_vars.kind != "Name":
+                # A store target is normalized into `<target> = enter_result` as
+                # the first body statement BEFORE the body is substituted, so
+                # the store threads its own bindings to the rest of the block
+                # through the ordinary assignment seam. Substituting first and
+                # injecting after would resolve the block's loads against the
+                # OUTER scope and silently shadow the names this site binds.
+                current = self if not changed else rewrite(self, **changed)
+                bound = current._bind_store_target(item)
+                if bound is not current:
+                    return bound.substitute(scope)
             if item.optional_vars is not None and item.optional_vars.kind == "Name":
-                if self._generator_manager_frame(item) is None:
-                    self._require_narrow_cm_ref(item)
                 enter_slot = f"{item._manager_slot_id()}#enter_result"
                 body_scope[item.optional_vars.id] = item._make_observation_ref(
                     enter_slot, ENTER_RESULT
@@ -4767,27 +5831,97 @@ class With(Statement):
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
 
+    def _effect_boundary_binding(self, item, resolved_ref):
+        """(slot_id, projection) the CONTRACT declares for this ``as`` name.
+
+        The projection is read off the authenticated semantics' ``binding``
+        field -- exception-info or warning-observation -- so a manager name
+        never selects it. ``NoBindingV1`` means the contract states this
+        manager hands the body nothing, and a source that binds a name anyway
+        is a real disagreement between contract and use site: it stays loud
+        rather than acquiring a slot by syntax.
+        """
+        from sugar_lift_py_tests.context_manager_contract import (
+            EXCEPTION_INFO,
+            ExceptionInfoBindingV1,
+            WARNING_OBSERVATION,
+            WarningObservationBindingV1,
+        )
+
+        binding = resolved_ref.semantics.binding
+        if isinstance(binding, ExceptionInfoBindingV1):
+            projection = EXCEPTION_INFO
+        elif isinstance(binding, WarningObservationBindingV1):
+            projection = WARNING_OBSERVATION
+        else:
+            from .panic import UnsupportedWithBindingTarget
+
+            panic = UnsupportedWithBindingTarget(
+                blame=self.fragment,
+                owner="With._construct_sugar",
+                observed=(
+                    "source binds an EffectBoundary result the authenticated "
+                    f"contract declares no binding for ({type(binding).__name__})"
+                ),
+                requested="a contract carrying exception-info or warning-observation binding",
+                fix="never grant an observation slot from the `as` spelling alone",
+            )
+            self.reporter.report_gap(self, panic)
+            raise panic
+        return f"{item._manager_slot_id()}#observation", projection
+
+    def _effect_boundary_observation_slot(self, item, resolved_ref):
+        return self._effect_boundary_binding(item, resolved_ref)[0]
+
+    def _with_assignment_binding(self, item, value, scope):
+        """Delegate a with-as binding to Python's ordinary Assign seam."""
+        assignment = self._make_assign(item.optional_vars, value)
+        return assignment.substitution_binding(scope)
+
     def substitution_binding(self, scope):
-        """Export ObservationRef for resolved resource enter-result as-names."""
+        """Export a contract projection through ordinary Assign binding."""
         from sugar_lift_py_tests.context_manager_contract import (
             ENTER_RESULT,
         )
 
-        del scope
         if self.unit.construction_context is not None:
             if len(self.items) != 1:
                 return self._nest_items().substitution_binding(None)
             item = self.items[0]
             if item.optional_vars is None or item.optional_vars.kind != "Name":
                 return None
+            resolved_ref = None
             if self._generator_manager_frame(item) is None:
-                self._require_narrow_cm_ref(item)
-            enter_slot = f"{item._manager_slot_id()}#enter_result"
-            return {
-                item.optional_vars.id: item._make_observation_ref(
-                    enter_slot, ENTER_RESULT
+                context = self.unit.construction_context
+                if getattr(context, "frame_projection", False):
+                    try:
+                        resolved_ref = self._require_narrow_cm_ref(item)
+                    except Exception:  # noqa: BLE001 — soft dual-mode projection
+                        resolved_ref = None
+                else:
+                    resolved_ref = self._require_narrow_cm_ref(item)
+            from sugar_lift_py_tests.context_manager_contract import (
+                EffectBoundarySemanticsV1,
+            )
+
+            if resolved_ref is not None and isinstance(
+                getattr(resolved_ref, "semantics", None), EffectBoundarySemanticsV1
+            ):
+                # An effect boundary hands the body its OBSERVATION slot, not
+                # an enter result. Exporting enter-result here would have made
+                # the body read a projection the contract never declared.
+                slot, projection = self._effect_boundary_binding(item, resolved_ref)
+                return self._with_assignment_binding(
+                    item,
+                    item._make_observation_ref(slot, projection),
+                    scope,
                 )
-            }
+            enter_slot = f"{item._manager_slot_id()}#enter_result"
+            return self._with_assignment_binding(
+                item,
+                item._make_observation_ref(enter_slot, ENTER_RESULT),
+                scope,
+            )
         return None
 
 
@@ -4805,6 +5939,7 @@ class AsyncWith(Statement):
         from .panic import AsyncContextManagerUnsupported
 
         panic = AsyncContextManagerUnsupported(
+            blame=self.fragment,
             owner="AsyncWith._construct_sugar",
             observed="async context manager is outside the narrow synchronous arm",
             requested="one synchronous pre-resolved NeverSuppresses manager",
@@ -4870,7 +6005,9 @@ class Raise(Statement):
                 cause=None,
                 exception_name=None,
                 site=self.fragment,
-                in_flight_slot=self.control_context.nearest_exception_slot(),
+                in_flight_slot=self.control_context.nearest_exception_slot(
+                    blame=self.fragment
+                ),
             )
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
         from dataclasses import replace
@@ -4899,6 +6036,7 @@ class Raise(Statement):
                 leaf_name = node.id
             if leaf_identity is None:
                 raise SugarNotWritten(
+                    blame=node.fragment,
                     owner="Raise._construct_sugar",
                     observed="exception-group leaf lacks authenticated exception identity",
                     requested="a source-authenticated exception type",
@@ -4929,6 +6067,7 @@ class Raise(Statement):
                 or not isinstance(call.args[1], (List, Tuple))
             ):
                 raise SugarNotWritten(
+                    blame=call.fragment,
                     owner="Raise._construct_sugar",
                     observed="unsupported native exception-group construction",
                     requested="ExceptionGroup(message, finite list-or-tuple members)",
@@ -4949,6 +6088,7 @@ class Raise(Statement):
         if group_call(self.exc):
             if self.cause is not None:
                 raise SugarNotWritten(
+                    blame=self.fragment,
                     owner="Raise._construct_sugar",
                     observed="exception-group raise with explicit cause",
                     requested="group cause regroup semantics",
@@ -4958,31 +6098,62 @@ class Raise(Statement):
 
         identity = None
         mro = None
-        type_name = None
+        type_operand = None
         if isinstance(self.exc, Call) and isinstance(self.exc.func, Name):
-            type_name = self.exc.func
+            type_operand = self.exc.func
+        elif isinstance(self.exc, Call) and isinstance(self.exc.func, Attribute):
+            type_operand = self.exc.func
         elif isinstance(self.exc, Name):
-            type_name = self.exc
-        if type_name is not None:
+            type_operand = self.exc
+        elif isinstance(self.exc, Attribute):
+            type_operand = self.exc
+        if type_operand is not None:
             with reduction_span(
                 sugar="Raise.exception_type_identity",
                 role="construction",
                 site=where,
             ):
-                identity = self.unit.exception_type_identity(type_name)
-                mro = self.unit.exception_type_mro(type_name)
+                if isinstance(type_operand, Name):
+                    identity = self.unit.exception_type_identity(type_operand)
+                    if identity is None:
+                        identity = self.unit.imported_exception_type_identity(
+                            type_operand
+                        )
+                        mro = None
+                    else:
+                        mro = self.unit.exception_type_mro(type_operand)
+                else:
+                    identity = self.unit.imported_exception_type_identity(type_operand)
+                    mro = None
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
             exception_sugar = self.exc.sugar()
-        if identity is not None and isinstance(exception_sugar, CallSiteSugar):
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        if identity is not None and isinstance(
+            exception_sugar, (CallSiteSugar, MethodCallSugar)
+        ):
             exception_sugar = replace(
                 exception_sugar,
                 exception_type_coordinate=identity,
                 exception_type_mro=mro,
             )
         elif identity is not None:
+            class_value = None
+            if isinstance(type_operand, Attribute):
+                from sugar_lift_py_tests.floor.exception_class_value import (
+                    ExceptionClassValue,
+                )
+
+                qualified = getattr(identity.args[1], "value", None)
+                if isinstance(qualified, str) and qualified:
+                    class_value = ExceptionClassValue(qualified)
             exception_sugar = AuthenticatedExceptionTypeSugar(
-                exception_sugar, identity, mro, self.exc.fragment
+                exception_sugar,
+                identity,
+                mro,
+                self.exc.fragment,
+                class_value=class_value,
             )
 
         return RaiseSugar(
@@ -4990,6 +6161,11 @@ class Raise(Statement):
             cause=self.cause.sugar() if self.cause is not None else None,
             exception_name=self._exception_name(),
             site=self.fragment,
+            in_flight_slot=(
+                self.control_context.exception_slots[-1]
+                if self.control_context.exception_slots
+                else None
+            ),
         )
 
 
@@ -5295,7 +6471,7 @@ class Try(Statement):
             return dict(nets[0])
         names = set().union(*(net.keys() for net in nets))
         merged: BindingMap = {}
-        for name in sorted(names):
+        for name in _ordered_binding_keys(names):
             states = [net.get(name, _explicit_state(name, scope)) for net in nets]
             if any(state is _MISSING for state in states):
                 continue
@@ -5372,11 +6548,23 @@ class Try(Statement):
                 return super()._construct_sugar()  # empty tuple: no honest matcher
             for type_node in type_nodes:
                 if not isinstance(type_node, Name):
+                    # ``except re.error`` / dotted types are not bare Names.
+                    # Under dual-mode factory frame projection, soft-incomplete
+                    # so class bases (AbstractRaises) can still project; full
+                    # reduction of that arm remains CoverageGap, never green.
+                    context = self.unit.construction_context
+                    if getattr(context, "frame_projection", False):
+                        from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import (
+                            SoftUnresolvedTrySugar,
+                        )
+
+                        return SoftUnresolvedTrySugar(site=self.fragment)
                     return super()._construct_sugar()
                 identity = self.unit.exception_type_identity(type_node)
                 if identity is None:
                     raise SugarNotWritten(
                         owner="Try._construct_sugar",
+                        blame=self.fragment,
                         observed="typed except handler lacks authenticated exception identity",
                         requested="a constructed exception-type coordinate",
                         fix="resolve the handler type lexically or keep the try loud",
@@ -5427,30 +6615,59 @@ class TryStar(Statement):
 
         handlers = []
         for handler in self.handlers:
-            if handler.type_ is None or not isinstance(handler.type_, Name):
+            # `except* (A, B)` is ONE handler over a union of types, not two
+            # handlers. The tuple is expanded into a tuple of matchers that the
+            # router partitions with in a single pass, so the body runs once no
+            # matter how many of the listed types the group carries. Expanding
+            # it into one handler spec per type -- which is honest for ordinary
+            # `except (A, B)`, where at most one exception is in flight -- would
+            # run an except* body twice on a group holding both.
+            if handler.type_ is None:
                 raise SugarNotWritten(
+                    blame=self.fragment,
                     owner="TryStar._construct_sugar",
                     observed="unsupported except* handler type",
                     requested="one authenticated exception type operand",
                     fix="keep unsupported native handler behavior loud",
                 )
-            identity = self.unit.exception_type_identity(handler.type_)
-            if identity is None:
+            type_nodes = (
+                handler.type_.elts
+                if handler.type_.kind == "Tuple"
+                else (handler.type_,)
+            )
+            if not type_nodes or any(
+                not isinstance(type_node, Name) for type_node in type_nodes
+            ):
                 raise SugarNotWritten(
+                    blame=self.fragment,
                     owner="TryStar._construct_sugar",
-                    observed="except* type lacks authenticated exception identity",
-                    requested="a constructed exception-type coordinate",
-                    fix="resolve the handler type lexically or keep it loud",
+                    observed="unsupported except* handler type",
+                    requested="one authenticated exception type operand",
+                    fix="keep unsupported native handler behavior loud",
+                )
+            matchers = []
+            for type_node in type_nodes:
+                identity = self.unit.exception_type_identity(type_node)
+                if identity is None:
+                    raise SugarNotWritten(
+                        owner="TryStar._construct_sugar",
+                        blame=self.fragment,
+                        observed="except* type lacks authenticated exception identity",
+                        requested="a constructed exception-type coordinate",
+                        fix="resolve the handler type lexically or keep it loud",
+                    )
+                matchers.append(
+                    AuthenticatedExceptionTypeSugar(
+                        type_node.sugar(),
+                        identity,
+                        self.unit.exception_type_mro(type_node),
+                        type_node.fragment,
+                        class_value=self.unit.exception_class_value(type_node),
+                    )
                 )
             handlers.append(
                 (
-                    AuthenticatedExceptionTypeSugar(
-                        handler.type_.sugar(),
-                        identity,
-                        self.unit.exception_type_mro(handler.type_),
-                        handler.type_.fragment,
-                        class_value=self.unit.exception_class_value(handler.type_),
-                    ),
+                    tuple(matchers),
                     tuple(stmt.sugar() for stmt in handler.body),
                     handler._effect_slot_id(),
                 )
@@ -6662,7 +7879,17 @@ class Compare(Expression):
             left_s = operands[index].sugar()
             right_s = operands[index + 1].sugar()
             if isinstance(op, Eq):
-                return EqualityOpSugar(left=left_s, right=right_s, site=self.fragment)
+                # The refinement coordinate is the PAIR's left operand, read
+                # here where the tree is in hand. In a chain `a.k == b == c` the
+                # second pair's left is `b`, not `a.k`; a Compare-level fragment
+                # cannot tell them apart, which is why the coordinate is passed
+                # rather than rediscovered from the site.
+                return EqualityOpSugar(
+                    left=left_s,
+                    right=right_s,
+                    site=self.fragment,
+                    left_coordinate=operands[index].dotted_expr_name(),
+                )
             return ComparisonOpSugar(
                 op_kind=op.kind, left=left_s, right=right_s, site=self.fragment
             )
@@ -6719,6 +7946,42 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
+        context = self.unit.construction_context
+        coordinate = None
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if isinstance(context, TreeConstructionContextV1):
+            span = self.line_col_span()
+            coordinate = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            obligation = context.opaque_source_call_obligations.get(coordinate)
+            if obligation is not None:
+                from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+                return CallSiteSugar(
+                    target_name="python:unresolved-source-call",
+                    args=tuple(a.sugar() for a in self.args),
+                    site=self.fragment,
+                    keywords=tuple(
+                        (
+                            kw.arg if kw.arg is not None else "**",
+                            kw.value.sugar(),
+                        )
+                        for kw in self.keywords
+                    ),
+                    contract_resolution_gap=(
+                        f"{obligation.resolution_kind}:{obligation.target_name}"
+                    ),
+                )
+
         # Either spread form selects the reference call coordinate. In
         # particular, a lone ``**d`` must not fall through to the legacy
         # keyword bridge as ``py.kwarg("**", d)``.
@@ -6748,48 +8011,36 @@ class Call(Expression):
                 # call-site branch below.
                 self.func.discharge_by_substitution()
             callee_name = self._spread_callee_name(self.func)
+            # Enroll an authenticated source-visible frame when the call is a
+            # local constructor/function use-site. Typed ``**`` actuals then
+            # project onto formals at desugar (SpreadCallSugar) so the manager
+            # factory return `CM(x, **kwargs)` carries a body — the law that
+            # bare CallSiteSugar already obeys for non-spread calls.
+            source_call_frame = self._spread_source_call_frame()
             return SpreadCallSugar(
                 callee_name=callee_name,
                 callee=(None if isinstance(self.func, Name) else self.func.sugar()),
                 arguments=arguments,
                 site=self.fragment,
+                source_call_frame=source_call_frame,
             )
 
         keyword_sugars = tuple(
             (kw.arg if kw.arg is not None else "**", kw.value.sugar())
             for kw in self.keywords
         )
-        context = self.unit.construction_context
         source_call_frame = None
         source_call_resolution = None
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
-        )
 
         if (
             isinstance(context, TreeConstructionContextV1)
             and context.source_call_frames
         ):
-            span = self.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
+            assert coordinate is not None
             source_call_frame = context.source_call_frames.get(coordinate)
             source_call_resolution = context.source_call_resolutions.get(coordinate)
         elif isinstance(context, TreeConstructionContextV1):
-            span = self.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
+            assert coordinate is not None
             source_call_resolution = context.source_call_resolutions.get(coordinate)
         if source_call_resolution is not None:
             from sugar_lift_py_tests.source_call_resolution import (
@@ -6812,6 +8063,7 @@ class Call(Expression):
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
+                    blame=self.fragment,
                     owner="Call._construct_sugar",
                     observed=type(source_call_resolution).__name__,
                     requested="closed source-call preconstruction result",
@@ -6825,6 +8077,7 @@ class Call(Expression):
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
+                    blame=self.fragment,
                     owner="Call._construct_sugar",
                     observed="source-call ref/frame mismatch",
                     requested="byte-identical prebound source frame CID",
@@ -6859,6 +8112,7 @@ class Call(Expression):
 
                     raise BackendDefect(
                         owner="Call._construct_sugar",
+                        blame=self.fragment,
                         observed=self.func.kind,
                         requested="attribute callee for authenticated method dispatch",
                         fix="bind the method ref to its exact attribute-call occurrence",
@@ -6922,6 +8176,7 @@ class Call(Expression):
 
                         raise BackendDefect(
                             owner="Call._construct_sugar",
+                            blame=self.fragment,
                             observed="enrolled call demand missing from resolution table",
                             requested="one typed resolution row for every enrolled imported call",
                             fix="repair call-contract preconstruction; never fall through to an ordinary call",
@@ -6932,6 +8187,22 @@ class Call(Expression):
                 contract_ref = resolution
 
             source_call_frame = None
+            formal_function_sugar = None
+            formal_coordinate_cids = ()
+            function_definition = self.unit.source_function_definition_for_call(self)
+            if function_definition is not None:
+                formal_function_sugar = function_definition.sugar()
+                formal_coordinates = function_definition.formal_coordinates()
+                formal_coordinate_cids = tuple(
+                    coordinate.coordinate_cid for coordinate in formal_coordinates
+                )
+                pending = formal_function_sugar.desugar(None)
+                from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+                if isinstance(pending, NativeOperationExitCarrierV1):
+                    source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
+                        formal_coordinates, pending
+                    )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
@@ -6964,8 +8235,42 @@ class Call(Expression):
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
                 source_call_frame=source_call_frame,
+                formal_function_sugar=formal_function_sugar,
+                formal_coordinate_cids=formal_coordinate_cids,
             )
         if isinstance(self.func, Attribute):
+            # Lexical import binding is the ONLY door to a closed callee
+            # coordinate. `None` here means the head is a parameter, a local, a
+            # shadowed or ambiguous name -- and it must REFUSE, falling through
+            # to the ordinary method-call construction below. Do not "helpfully"
+            # fall back to the dotted spelling: that is precisely the defect the
+            # With census carries (keyed on `pytest.raises` as a string, 6353
+            # rows of spelling), and it would let a local named `warnings` mint
+            # authenticated warning testimony it has no authority for.
+            closed_symbol = self._import_bound_callee_symbol()
+            if closed_symbol is not None:
+                from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+                # The head is lexically bound to an import: the callee is a
+                # CLOSED coordinate (`numpy.rot90`), so the call-site absorbs
+                # the whole dotted spelling exactly as it does for a Name
+                # callee. No receiver constructs, so no module alias is minted
+                # as a universe Var it was never declared as.
+                from sugar_lift_py_tests.sugar.warning_observation_producer import (
+                    WARNING_OCCURRENCE_SYMBOL,
+                )
+
+                args_sugar = tuple(a.sugar() for a in self.args)
+                if closed_symbol == WARNING_OCCURRENCE_SYMBOL:
+                    args_sugar, keyword_sugars = self._authenticate_warning_category(
+                        args_sugar, keyword_sugars
+                    )
+                return CallSiteSugar(
+                    target_name=closed_symbol,
+                    args=args_sugar,
+                    site=self.fragment,
+                    keywords=keyword_sugars,
+                )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
             return MethodCallSugar(
@@ -7001,6 +8306,151 @@ class Call(Expression):
             keywords=keyword_sugars,
             source_call_frame=source_call_frame,
         )
+
+    def _import_bound_callee_symbol(self) -> Optional[str]:
+        """The closed target coordinate of a dotted callee whose head is imported.
+
+        ``np.rot90`` under ``import numpy as np`` is not a method on a value:
+        the head is a lexical import binding, so the callee names the closed
+        coordinate ``numpy.rot90``. The binding comes from the one lexical
+        import pass (reaching definitions), never from the spelling: a head
+        that is not uniquely import-bound -- a parameter, a local, a shadowed
+        or ambiguous name -- returns ``None`` and constructs as before.
+        """
+        link = self.func
+        attributes: list[str] = []
+        while isinstance(link, Attribute):
+            attributes.append(link.attr)
+            link = link.value
+        if not isinstance(link, Name):
+            return None
+        span = link.line_col_span()
+        target = self.unit.import_bound_name_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            return None
+        # The spelling is absorbed into the call-site coordinate, so every node
+        # of the callee chain answers the roll call as present-inert.
+        link.discharge_by_substitution()
+        chain = self.func
+        while isinstance(chain, Attribute):
+            chain.discharge_by_substitution()
+            chain = chain.value
+        module = target[len("python:") :] if target.startswith("python:") else target
+        return ".".join([module, *reversed(attributes)])
+
+    def _authenticate_warning_category(self, args_sugar, keyword_sugars):
+        """Attach the floor-owned class identity to a ``warnings.warn`` category.
+
+        The category operand of a warning occurrence is an ordinary Python
+        exception class, so the SAME lexical authenticator that owns ``raise``
+        and ``except`` operands owns it -- no warning name table is minted. The
+        operand position comes from CPython's own fixed ``warnings.warn``
+        signature, not from a vendor convention.
+
+        An operand that is not a bare ``Name``, or a ``Name`` with no closed
+        class identity, is left exactly as constructed: the call then stays an
+        ordinary unresolved call site and the consuming boundary reports it as
+        an unresolved warning producer. Absent identity is never inferred.
+        """
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            AuthenticatedExceptionTypeSugar,
+        )
+        from sugar_lift_py_tests.sugar.warning_observation_producer import (
+            WARNING_CATEGORY_PARAMETER_INDEX,
+            WARNING_CATEGORY_PARAMETER_NAME,
+        )
+
+        location = None
+        if len(self.args) > WARNING_CATEGORY_PARAMETER_INDEX:
+            actual = self.args[WARNING_CATEGORY_PARAMETER_INDEX]
+            location = ("arg", WARNING_CATEGORY_PARAMETER_INDEX)
+        else:
+            actual = None
+            for keyword in self.keywords:
+                if keyword.arg == WARNING_CATEGORY_PARAMETER_NAME:
+                    actual, location = keyword.value, ("keyword", keyword.arg)
+                    break
+        if not isinstance(actual, Name):
+            return args_sugar, keyword_sugars
+        identity = self.unit.exception_type_identity(actual)
+        if identity is None:
+            return args_sugar, keyword_sugars
+        mro = self.unit.exception_type_mro(actual)
+        if location[0] == "arg":
+            args = list(args_sugar)
+            args[location[1]] = AuthenticatedExceptionTypeSugar(
+                args[location[1]], identity, mro, site=actual.fragment
+            )
+            return tuple(args), keyword_sugars
+        keywords = list(keyword_sugars)
+        for position, (name, sugar) in enumerate(keywords):
+            if name == location[1]:
+                keywords[position] = (
+                    name,
+                    AuthenticatedExceptionTypeSugar(
+                        sugar, identity, mro, site=actual.fragment
+                    ),
+                )
+                break
+        return args_sugar, tuple(keywords)
+
+    def _spread_source_call_frame(self):
+        """Authenticated source frame for a ``*``/``**`` call, when enrolled.
+
+        Looks up the same ``source_call_frames`` table the non-spread Call path
+        uses, then binds non-spread positionals and named keywords onto the
+        frame. Double-star keywords are *not* node-bound here — their FloorValue
+        is projected at desugar via ``bind_actuals`` once the mapping is a
+        constructed DictValue. Star operands leave the frame unbound so
+        SpreadCallSugar stays bodyless (no typed vararg projection yet).
+        """
+        if any(isinstance(arg, Starred) for arg in self.args):
+            return None
+        context = self.unit.construction_context
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+        source_call_frame = None
+        if (
+            isinstance(context, TreeConstructionContextV1)
+            and context.source_call_frames
+        ):
+            span = self.line_col_span()
+            coordinate = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            source_call_frame = context.source_call_frames.get(coordinate)
+        if source_call_frame is None and isinstance(self.func, Name):
+            definition = self.unit.source_allocation_definition_for_call(self)
+            if (
+                definition is not None
+                and self.unit.source_class_has_authenticated_default_attribute_behavior(
+                    definition
+                )
+            ):
+                source_call_frame = definition.source_visible_constructor_frame()
+        if source_call_frame is None:
+            return None
+        try:
+            return source_call_frame.bind_node_actuals(
+                tuple(arg for arg in self.args if not isinstance(arg, Starred)),
+                tuple(
+                    (keyword.arg, keyword.value)
+                    for keyword in self.keywords
+                    if keyword.arg is not None
+                ),
+            )
+        except SourceCallBindingGap:
+            return None
 
     @staticmethod
     def _spread_callee_name(callee: Expression) -> Optional[str]:
@@ -7046,6 +8496,7 @@ class FormattedValue(Expression):
             conversion = chr(self.conversion)
         else:
             backend_defect(
+                blame=self.fragment,
                 owner="FormattedValue._construct_sugar",
                 observed=f"unsupported f-string conversion slot {self.conversion!r}",
                 requested="-1 or the codepoint for 'a', 'r', or 's'",
@@ -7054,6 +8505,7 @@ class FormattedValue(Expression):
         format_spec = self.format_spec
         if format_spec is not None and not isinstance(format_spec, JoinedStr):
             backend_defect(
+                blame=self.fragment,
                 owner="FormattedValue._construct_sugar",
                 observed=f"format_spec constructed as {type(format_spec).__name__}",
                 requested="None or a nested JoinedStr",
@@ -7526,15 +8978,20 @@ class Attribute(Expression):
     attr: str
     _child_fields = ("value",)
 
+    def dotted_expr_name(self) -> Optional[str]:
+        # `a.b.c` is a place only while every link is itself a place: a call or
+        # subscript in the chain (`f().b`, `d[k].b`) names nothing stable.
+        receiver = self.value.dotted_expr_name()
+        return None if receiver is None else f"{receiver}.{self.attr}"
+
     def _construct_sugar(self):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
         The attr name is a static identifier carried onto the coordinate.
 
-        An OpaqueObjectStateV1 receiver is NOT withheld: `.attr` on an opaque
-        call result is a symbolic read the witness resolves at runtime, not a
-        gap. It reduces to the honest `py.getattr(recv, "attr")` EUF coordinate
-        (SymbolicValue.attribute), carrying whatever the call term guarantees and
-        nothing invented. Withholding it here was the gap, not the construct."""
+        An opaque receiver still constructs this native operation. Its floor
+        decides whether source testimony supplies a value or exceptional exit;
+        when neither is known, the producer refuses instead of inventing a
+        completed ``py.getattr`` projection or guessing ``AttributeError``."""
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
@@ -7546,6 +9003,12 @@ class Attribute(Expression):
         from .shadow import rewrite
 
         receiver, changed = self._substitute_field(self.value, scope)
+        receiver_coordinate_cid = _receiver_coordinate_cid(receiver)
+        projections = scope.get(_RECEIVER_FIELD_PROJECTIONS, {})
+        if receiver_coordinate_cid is not None and isinstance(projections, dict):
+            projection = projections.get((receiver_coordinate_cid, self.attr))
+            if isinstance(projection, _ReceiverFieldProjection):
+                return projection.value
         if (
             isinstance(receiver, IfExp)
             and isinstance(receiver.body, ObjectPlaceStateV1)
@@ -7629,6 +9092,9 @@ class Starred(Expression):
 class Name(Expression):
     id: str
 
+    def dotted_expr_name(self) -> Optional[str]:
+        return self.id
+
     def substitute(self, scope: BindingMap) -> "Node":
         # A name resolves to its bound node, or stands unbound. This is the
         # whole substitution base case — it returns an EXISTING node, so it
@@ -7639,6 +9105,18 @@ class Name(Expression):
         bound = unwrap_binding_state(bound)
         if isinstance(bound, Node):
             return bound
+        span = self.line_col_span()
+        if (
+            self.unit.import_bound_name_target(
+                (span.start_line, span.start_col, span.end_line, span.end_col)
+            )
+            is not None
+        ):
+            # The sole lexical import pass proves that this exact use has one
+            # reaching import definition.  Preserve the source node so its
+            # consumer can project that coordinate; do not replace it with an
+            # unbound temporal read merely because imports are inert facts.
+            return self
         return self._make_binding_read(bound)
 
     def _make_binding_read(self, state: BindingState) -> "Node":
@@ -7807,6 +9285,12 @@ def _construct_binding_projection(state):
             _construct_binding_projection(state.when_false),
         )
     if isinstance(state, LoopProjectedBinding):
+        # A loop routes HERE, not to GuardedProjection -- which is why a loop
+        # never mints ("binding.projection", slot_id). That matters: a loop is
+        # the one shape supplying many executions over one source location by
+        # construction, and that partition's key has no execution component.
+        # See tests/test_binding_partition_execution_conflation.py
+        # (test_tripwire_c_a_loop_body_does_not_mint_this_partition).
         if any(face.guard_formula is None for face in state.completed_faces):
             raise BindingStateWireGap(
                 "loop projected binding has CID-only guards; exact guard formula "
@@ -7818,9 +9302,11 @@ def _construct_binding_projection(state):
                     face.completion_kind,
                     face.guard_formula,
                     _construct_binding_projection(face.state),
+                    face.exit_partition_arity,
                 )
                 for face in state.completed_faces
-            )
+            ),
+            state.target_cid,
         )
     raise TypeError(type(state))
 
@@ -8243,6 +9729,7 @@ def resolve_kind(kind: str, observed_at: str) -> type[Node]:
     cls = KIND_REGISTRY.get(kind)
     if cls is None or cls in _ABSTRACT:
         vocabulary_missing(
+            blame=observed_at,
             owner="nodes.resolve_kind",
             observed=f"backend kind {kind!r} at {observed_at} has no node class",
             requested="a concrete Node subclass for every constructible shape",

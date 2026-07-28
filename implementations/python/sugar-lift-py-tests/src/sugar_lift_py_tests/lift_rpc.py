@@ -120,20 +120,8 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def provisional_contract_refs_from_demands(root: Path):
-    """One typed gap row per enrolled With demand — census / unbinded construct door.
-
-    Production replaces this table via ``bind_contract_refs`` with authenticated
-    resolutions. Until that table is installed (or for instruments that construct
-    without the Rust prebind), every With use-site must still appear so
-    ``With._prebound_manager_resolution`` does not treat missing context as
-    unconditional ``RuntimeSelectedContextManager`` (false red).
-
-    Each demand lands as ``ContextManagerResolutionGapV1`` with the demand's
-    ``gapKind`` (default ``runtime-selected``). Source-derived managers may still
-    win via ``populate_source_derived_resource_refs`` after the context is
-    installed — derived takes precedence over this provisional gap table.
-    """
+def provisional_contract_refs_from_demand_rows(rows):
+    """Project one already-authenticated demand table into construction refs."""
     from types import MappingProxyType
 
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -144,7 +132,7 @@ def provisional_contract_refs_from_demands(root: Path):
     )
 
     resolutions = {}
-    for row in _preconstruction_demand_rows(root):
+    for row in rows:
         if row.get("kind") != "context-manager-demand":
             continue
         site = SourceFragmentCoordinateV1.decode(row["useSite"])
@@ -162,6 +150,23 @@ def provisional_contract_refs_from_demands(root: Path):
     catalog_cid = "blake3-512:" + ("c" * 128)
     table_cid = "blake3-512:" + ("t" * 128)
     return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(resolutions))
+
+
+def provisional_contract_refs_from_demands(root: Path):
+    """One typed gap row per enrolled With demand — census / unbinded construct door.
+
+    Production replaces this table via ``bind_contract_refs`` with authenticated
+    resolutions. Until that table is installed (or for instruments that construct
+    without the Rust prebind), every With use-site must still appear so
+    ``With._prebound_manager_resolution`` does not treat missing context as
+    unconditional ``RuntimeSelectedContextManager`` (false red).
+
+    Each demand lands as ``ContextManagerResolutionGapV1`` with the demand's
+    ``gapKind`` (default ``runtime-selected``). Source-derived managers may still
+    win via ``populate_source_derived_resource_refs`` after the context is
+    installed — derived takes precedence over this provisional gap table.
+    """
+    return provisional_contract_refs_from_demand_rows(_preconstruction_demand_rows(root))
 
 
 def tree_construction_context_for_workspace(
@@ -205,7 +210,7 @@ def open_source_file_for_construction(
     freezes source-derived manager refs at exact use-sites. Callers that already
     hold a frozen context (shared demand table across a census) may pass it.
     """
-    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
 
@@ -218,7 +223,7 @@ def open_source_file_for_construction(
             call_contract_refs=call_contract_refs,
         )
     source_file = SourceFile(
-        path_source(str(path)),
+        workspace_path_source(str(path), root=str(root)),
         reporter=reporter,
         construction_context=construction_context,
     )

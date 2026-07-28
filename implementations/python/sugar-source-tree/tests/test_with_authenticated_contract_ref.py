@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from types import MappingProxyType
+from dataclasses import replace
+import inspect
 
 import pytest
 
@@ -20,11 +22,14 @@ from sugar_lift_py_tests.context_manager_contract import (
     EnterResultContractV1,
     ExitContractV1,
     NeverSuppressesDispositionV1,
+    ReturnTruthinessDispositionV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ContextManagerResolutionGapV1,
+    NativeDefinitionCoordinateGapV1,
     ImportSignatureV2,
+    NativeProtocolSlot,
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -55,7 +60,7 @@ def _coordinate(node) -> SourceFragmentCoordinateV1:
     )
 
 
-def _source_with_resolution(source_identity, resolution):
+def _source_with_resolution(source_identity, resolution, *, native_definitions=None):
     first = SourceFile(source_identity)
     with_node = next(
         node for node in first.nodes() if node.kind in {"With", "AsyncWith"}
@@ -63,15 +68,55 @@ def _source_with_resolution(source_identity, resolution):
     use_site = _coordinate(with_node.items[0].context_expr)
     if callable(resolution):
         resolution = resolution(use_site)
+    if native_definitions is None:
+        native_definitions = _native_protocol_definitions
     table = ResolvedContractRefsV1(
         catalog_cid=_cid("c"),
         table_cid=_cid("t"),
         by_use_site=MappingProxyType({use_site: resolution}),
+        native_definitions=MappingProxyType(
+            {} if native_definitions is None else native_definitions(use_site)
+        ),
     )
     return SourceFile(
         source_identity,
         construction_context=TreeConstructionContextV1(table),
     )
+
+
+class _RecordingRefs:
+    """Construction-table wrapper proving the one producer door is traversed."""
+
+    def __init__(self, table, definitions):
+        self.table = table
+        self.definitions = definitions
+        self.calls = []
+
+    def require(self, use_site):
+        return self.table.require(use_site)
+
+    def require_native_definition(self, receiver, slot):
+        self.calls.append((receiver, slot))
+        return self.definitions[(receiver, slot)]
+
+
+def _source_with_recording_refs(source_identity, resolution, definitions):
+    first = SourceFile(source_identity)
+    with_node = next(
+        node for node in first.nodes() if node.kind in {"With", "AsyncWith"}
+    )
+    use_site = _coordinate(with_node.items[0].context_expr)
+    table = ResolvedContractRefsV1(
+        catalog_cid=_cid("c"),
+        table_cid=_cid("t"),
+        by_use_site=MappingProxyType({use_site: resolution(use_site)}),
+    )
+    recording = _RecordingRefs(table, definitions)
+    source = SourceFile(
+        source_identity,
+        construction_context=TreeConstructionContextV1(recording),
+    )
+    return source, recording, use_site
 
 
 def _resolved(use_site) -> ContextManagerContractRefV1:
@@ -100,6 +145,223 @@ def _resolved(use_site) -> ContextManagerContractRefV1:
         import_signature=ImportSignatureV2(()),
         semantics=semantics,
     )
+
+
+def _truthiness_resolved(use_site) -> ContextManagerContractRefV1:
+    resolved = _resolved(use_site)
+    return ContextManagerContractRefV1(
+        **{
+            **resolved.__dict__,
+            "semantics": ProtocolResourceSemanticsV1(
+                enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
+                exit=ExitContractV1(disposition=ReturnTruthinessDispositionV1()),
+            ),
+        }
+    )
+
+
+def _native_protocol_definitions(use_site):
+    return {
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER): SourceFragmentCoordinateV1(
+            _cid("e"), 10, 4, 11, 20
+        ),
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT): SourceFragmentCoordinateV1(
+            _cid("x"), 20, 4, 22, 20
+        ),
+    }
+
+
+def test_native_resource_requires_both_authenticated_definition_coordinates():
+    source = (
+        "from pandas import option_context\n"
+        "def f():\n"
+        "    with option_context('display.max_rows', 10) as resource:\n"
+        "        return resource\n"
+    )
+    tree = _source_with_resolution(
+        (source, "native-resource.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=_native_protocol_definitions,
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(boundary, WithResourceSugar)
+    enter_definition = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    exit_definition = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    assert boundary.enter_definition == enter_definition
+    assert boundary.exit_definition == exit_definition
+    assert boundary.enter.native_definition_coordinate == enter_definition
+    assert boundary.exit.native_definition_coordinate == exit_definition
+    assert boundary.enter_slot_id is not None
+    assert boundary.enter_slot_id.startswith(boundary.manager_slot_id)
+
+
+def test_open_name_without_native_definition_stays_typed_loud():
+    """A builtin spelling grants no authority when the shared door has a gap."""
+    source = "def f(path):\n    with open(path):\n        pass\n"
+    tree = _source_with_resolution(
+        (source, "native-resource-gap.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=lambda use_site: {},
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        next(node for node in tree.nodes() if node.kind == "With").sugar()
+
+
+def test_open_gap_is_the_builtin_authority_discrimination_arm():
+    """The real C builtin asks the door; it is not admitted by spelling."""
+    source = "def f(path):\n    with open(path) as resource:\n        return resource\n"
+    tree = _source_with_resolution(
+        (source, "builtin-open-gap.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=lambda use_site: {},
+    )
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    receiver = _coordinate(with_node.items[0].context_expr)
+    refs = with_node.unit.construction_context.contract_refs
+    enter_gap = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_ENTER
+    )
+    exit_gap = refs.require_native_definition(receiver, NativeProtocolSlot.CONTEXT_EXIT)
+    assert enter_gap.slot is NativeProtocolSlot.CONTEXT_ENTER
+    assert exit_gap.slot is NativeProtocolSlot.CONTEXT_EXIT
+    assert enter_gap.reason.startswith("authenticated source definition")
+    assert exit_gap.reason.startswith("authenticated source definition")
+
+
+def test_recording_door_source_defined_calls_enter_then_exit_and_desugars():
+    source = (
+        "from pandas import option_context\n"
+        "def f():\n"
+        "    with option_context('display.max_rows', 10) as resource:\n"
+        "        return resource\n"
+    )
+    source_file = SourceFile((source, "recording-source-defined.py", _cid("q")))
+    use_site = _coordinate(
+        next(node for node in source_file.nodes() if node.kind == "With")
+        .items[0]
+        .context_expr
+    )
+    enter = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    exit_ = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    definitions = {
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER): enter,
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT): exit_,
+    }
+    source, recording, _ = _source_with_recording_refs(
+        (source, "recording-source-defined.py", _cid("q")),
+        _truthiness_resolved,
+        definitions,
+    )
+    sugar = next(node for node in source.nodes() if node.kind == "With").sugar()
+    assert recording.calls == [
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER),
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert sugar.enter_definition == enter
+    assert sugar.exit_definition == exit_
+    assert sugar.enter.native_definition_coordinate == enter
+    assert sugar.exit.native_definition_coordinate == exit_
+    assert sugar.desugar() is not None
+
+
+def test_recording_door_builtin_open_calls_both_slots_then_stays_loud():
+    source = "def f(path):\n    with open(path) as resource:\n        return resource\n"
+    source_file = SourceFile((source, "recording-open.py", _cid("q")))
+    use_site = _coordinate(
+        next(node for node in source_file.nodes() if node.kind == "With")
+        .items[0]
+        .context_expr
+    )
+    definitions = {
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER): NativeDefinitionCoordinateGapV1(
+            use_site,
+            NativeProtocolSlot.CONTEXT_ENTER,
+            "authenticated source definition coordinate is not enrolled",
+        ),
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT): NativeDefinitionCoordinateGapV1(
+            use_site,
+            NativeProtocolSlot.CONTEXT_EXIT,
+            "authenticated source definition coordinate is not enrolled",
+        ),
+    }
+    source, recording, _ = _source_with_recording_refs(
+        (source, "recording-open.py", _cid("q")),
+        _truthiness_resolved,
+        definitions,
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        next(node for node in source.nodes() if node.kind == "With").sugar()
+    assert len(recording.calls) == 2
+    assert recording.calls[0][1] is NativeProtocolSlot.CONTEXT_ENTER
+    assert recording.calls[1][1] is NativeProtocolSlot.CONTEXT_EXIT
+
+
+def test_source_defined_coordinate_and_builtin_gap_are_distinct_door_outcomes():
+    """Both authorities use With.sugar; only source testimony constructs."""
+    source = (
+        "from pandas import option_context\n"
+        "def f():\n"
+        "    with option_context('display.max_rows', 10) as resource:\n"
+        "        return resource\n"
+    )
+    tree = _source_with_resolution(
+        (source, "source-defined-resource.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=_native_protocol_definitions,
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    expected_enter = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    expected_exit = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    assert boundary.enter_definition == expected_enter
+    assert boundary.exit_definition == expected_exit
+    assert boundary.enter.native_definition_coordinate == expected_enter
+    assert boundary.exit.native_definition_coordinate == expected_exit
+    assert boundary.desugar() is not None
+
+
+@pytest.mark.parametrize(
+    "missing_slot", [NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT]
+)
+def test_missing_one_native_definition_is_typed_loud(missing_slot):
+    source = (
+        "def f(path):\n    with acquire(path) as resource:\n        return resource\n"
+    )
+
+    def definitions(use_site):
+        values = _native_protocol_definitions(use_site)
+        values.pop((use_site, missing_slot))
+        return values
+
+    tree = _source_with_resolution(
+        (source, "missing-one-native-definition.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=definitions,
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        next(node for node in tree.nodes() if node.kind == "With").sugar()
+
+
+def test_swapped_definition_coordinates_are_rejected_by_authenticated_calls():
+    source = (
+        "def f(path):\n    with acquire(path) as resource:\n        return resource\n"
+    )
+    tree = _source_with_resolution(
+        (source, "swapped-native-definition.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=_native_protocol_definitions,
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    with pytest.raises(ValueError, match="not authenticated"):
+        replace(
+            boundary,
+            enter_definition=boundary.exit_definition,
+            exit_definition=boundary.enter_definition,
+        )
+
+
+def test_resource_desugar_has_no_second_native_definition_lookup():
+    source = inspect.getsource(WithResourceSugar.desugar)
+    assert "require_native_definition" not in source
 
 
 def _function_sugar(source_identity, resolution):
@@ -192,6 +454,32 @@ def test_effect_boundary_projects_real_call_actuals_and_routes_exitset(
         assert isinstance(face.effect, effect_type)
 
 
+def test_effect_boundary_as_name_exports_through_assign(tmp_path, monkeypatch):
+    """The post-With binding uses Assign's one lexical binding algebra."""
+    path = tmp_path / "observed.py"
+    path.write_text(
+        "from pytest import raises\n"
+        "def f():\n"
+        "    with raises(ValueError) as info:\n"
+        "        raise ValueError('cannot convert')\n"
+        "    return info.value\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.nodes import Assign
+
+    seen = []
+    original = Assign.substitution_binding
+
+    def observe(self, scope):
+        if self.value.kind == "ObservationRef":
+            seen.append((self.targets[0].kind, self.value.projection))
+        return original(self, scope)
+
+    monkeypatch.setattr(Assign, "substitution_binding", observe)
+    _function_sugar(path_source(str(path)), _effect_resolved)
+    assert seen == [("Name", "exception_info")]
+
+
 def _effect_boundary_face(tmp_path, source):
     path = tmp_path / "identity_boundary.py"
     path.write_text(source)
@@ -236,7 +524,14 @@ def test_effect_boundary_does_not_match_distinct_same_spelling_type(tmp_path):
     assert isinstance(face.effect, RaiseEffect)
 
 
-def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
+def test_effect_boundary_with_formal_expected_type_stays_symbolic(tmp_path):
+    """A formal expected type is not a ground identity — keep both faces.
+
+    ``with raises(expected):`` when ``expected`` is a parameter cannot collapse
+    to a single authenticated exception-type identity. Desugar must stay a
+    multi-arm ExitSet under the symbolic type predicate, never invent a green
+    sole face and never panic as missing identity sugar.
+    """
     path = tmp_path / "unknown_identity.py"
     path.write_text(
         "from pytest import raises\n"
@@ -245,6 +540,7 @@ def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
         "        raise ValueError('boom')\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
     sugar = _function_sugar(path_source(str(path)), _effect_resolved)
     boundary = next(
@@ -252,8 +548,11 @@ def test_effect_boundary_without_exception_identity_stays_loud(tmp_path):
         for statement in sugar.statements
         if isinstance(statement, WithEffectBoundarySugar)
     )
-    with pytest.raises(SugarNotWritten, match="authenticated exception-type identity"):
-        boundary.desugar()
+    outcome = boundary.desugar()
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) >= 2
+    assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
+    assert any(isinstance(exit_, Halted) for exit_ in outcome.exits)
 
 
 def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
@@ -293,6 +592,47 @@ def test_authenticated_ref_constructs_resource_once_and_binds_enter_result(
     bound_return = resource.body[0]
     assert bound_return.value.slot_id == resource.enter_slot_id
     assert bound_return.value.projection == "enter-result"
+
+
+@pytest.mark.parametrize(
+    ("body", "incoming_kind"),
+    [
+        ("pass", Completed),
+        ('raise ValueError("boom")', Halted),
+    ],
+)
+def test_real_resource_reproducer_closes_every_exitset_face(
+    tmp_path, monkeypatch, body, incoming_kind
+):
+    """An authenticated provider resource closes after completion and halt."""
+    path = tmp_path / f"resource_{incoming_kind.__name__.lower()}.py"
+    path.write_text(
+        "from arbitrary_provider import acquire\n"
+        "def f():\n"
+        "    with acquire():\n"
+        f"        {body}\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+
+    resource = next(
+        statement
+        for statement in _function_sugar(path_source(str(path)), _resolved).statements
+        if isinstance(statement, WithResourceSugar)
+    )
+    # Observed through `and_exit` -- the ONE algebra the resource contract
+    # routes through. Pinning `and_finally` here would pin a mechanism; the law
+    # is that every body face reaches the contract.
+    original = ExitSet.and_exit
+    seen = []
+
+    def observe(incoming, exit_es, *, disposition):
+        seen.append(type(incoming.exits[0]))
+        return original(incoming, exit_es, disposition=disposition)
+
+    monkeypatch.setattr(ExitSet, "and_exit", observe)
+    resource.desugar()
+
+    assert seen == [incoming_kind]
 
 
 def test_unresolved_ref_stays_typed_loud(tmp_path):
@@ -362,7 +702,7 @@ def test_async_with_stays_typed_loud_even_with_sync_ref(tmp_path):
     assert type(caught.value).__name__ == "AsyncContextManagerUnsupported"
 
 
-def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
+def test_missing_manager_derivation_is_typed_construction_gap(tmp_path):
     path = tmp_path / "missing_row.py"
     path.write_text(
         "from dependency import manager\n"
@@ -371,7 +711,10 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         "        pass\n"
     )
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.panic import BackendDefect
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
 
     identity = path_source(str(path))
     table = ResolvedContractRefsV1(
@@ -380,17 +723,62 @@ def test_missing_enrolled_resolution_row_is_backend_defect(tmp_path):
         by_use_site=MappingProxyType({}),
     )
     source = SourceFile(identity, construction_context=TreeConstructionContextV1(table))
-    with pytest.raises(BackendDefect):
+    with pytest.raises(WithConstructionGap) as caught:
         next(source.functions()).sugar()
+    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
 
 
-def test_multiple_items_nest_and_non_name_binding_stays_typed_loud(tmp_path):
+def test_selected_with_defers_resolution_validation_until_construction(tmp_path):
+    """As-name substitution does not adjudicate whether this With is reached."""
+    path = tmp_path / "selected_missing_row.py"
+    path.write_text(
+        "from dependency import manager\n"
+        "def f():\n"
+        "    with manager() as entered:\n"
+        "        return entered\n"
+    )
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.panic import (
+        WithConstructionGap,
+        WithConstructionGapKind,
+    )
+
+    table = ResolvedContractRefsV1(
+        catalog_cid=_cid("c"),
+        table_cid=_cid("t"),
+        by_use_site=MappingProxyType({}),
+    )
+    source = SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1(table),
+    )
+    with_node = next(node for node in source.nodes() if node.kind == "With")
+
+    substituted = with_node.substitute({})
+    assert substituted.body[0].value.projection == "enter-result"
+
+    with pytest.raises(WithConstructionGap) as caught:
+        substituted.sugar()
+    assert caught.value.owner == "With._construct_sugar"
+    assert caught.value.gap_kind is WithConstructionGapKind.NO_DERIVED_CONTRACT
+
+
+def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):
     """Multi-item With is no longer a gap: it nests into single-item Withs.
 
     ``MultipleContextManagerItems`` was the shell that watched this; it is
     deleted, because the illegal shape (a multi-manager With reaching the
     resource router) is now unconstructable — construction rewrites it into
-    Python's own nested spelling first. Non-Name binding targets stay loud.
+    Python's own nested spelling first.
+
+    The non-Name binding half of this test used to assert
+    ``UnsupportedWithBindingTarget``. That refusal is retired for authenticated
+    ProtocolResource sites: the as-clause is Python's own assignment, so
+    ``With._bind_store_target`` rewrites a store target into
+    ``<target> = ObservationRef(enter_slot)`` as the first body statement and
+    inherits ``Assign``'s target totality. The law is now owned in full by
+    ``test_with_store_binding_target.py``; this arm keeps the nesting law and
+    pins that the two rewrites compose.
     """
     from sugar_lift_python_source.source_oracle import path_source
 
@@ -407,8 +795,16 @@ def test_multiple_items_nest_and_non_name_binding_stays_typed_loud(tmp_path):
         _coordinate(item.context_expr): _resolved(_coordinate(item.context_expr))
         for item in with_node.items
     }
+    native_definitions = {}
+    for use_site in rows:
+        native_definitions.update(_native_protocol_definitions(use_site))
     context = TreeConstructionContextV1(
-        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+        ResolvedContractRefsV1(
+            _cid("c"),
+            _cid("t"),
+            MappingProxyType(rows),
+            MappingProxyType(native_definitions),
+        )
     )
     source = SourceFile(path_source(str(multiple)), construction_context=context)
     nested = next(source.functions()).sugar()
@@ -428,13 +824,38 @@ def test_multiple_items_nest_and_non_name_binding_stays_typed_loud(tmp_path):
     assert len(chain) == 2
     assert chain[1] in chain[0].body
 
+    # Both rewrites compose: two managers nest, and the inner one's store
+    # target becomes an ordinary assignment at the head of its body.
     target = tmp_path / "target.py"
     target.write_text(
         "from dependency import manager\n"
         "def f():\n"
-        "    with manager() as (left, right):\n"
+        "    with manager(), manager() as (left, right):\n"
         "        pass\n"
     )
-    with pytest.raises(SugarNotWritten) as caught:
-        _function_sugar(path_source(str(target)), _resolved)
-    assert type(caught.value).__name__ == "UnsupportedWithBindingTarget"
+    probe = SourceFile(path_source(str(target)))
+    node = next(n for n in probe.nodes() if n.kind == "With")
+    rows = {
+        _coordinate(item.context_expr): _resolved(_coordinate(item.context_expr))
+        for item in node.items
+    }
+    native_definitions = {}
+    for use_site in rows:
+        native_definitions.update(_native_protocol_definitions(use_site))
+    composed = SourceFile(
+        path_source(str(target)),
+        construction_context=TreeConstructionContextV1(
+            ResolvedContractRefsV1(
+                _cid("c"),
+                _cid("t"),
+                MappingProxyType(rows),
+                MappingProxyType(native_definitions),
+            )
+        ),
+    )
+    chain = []
+    _walk(next(composed.functions()).sugar())
+    outer, inner = chain[0], chain[1]
+    assert inner in outer.body
+    assert outer.enter_slot_id is None, "the outer manager names no target"
+    assert inner.enter_slot_id == f"{inner.manager_slot_id}#enter_result"

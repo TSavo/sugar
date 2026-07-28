@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from sugar_source_tree.panic import SugarNotWritten
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,7 @@ class ConstructedClassMethodV1:
     definition_fragment_cid: str
     body: object = field(compare=False)
     source_call_frame: object = field(compare=False)
+    descriptor_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class ConstructedClassFieldV1:
 
 
 @dataclass(frozen=True)
-class ClassDefinitionValue(FloorValue):
+class ClassDefinitionValue(GuardStableValue):
     class_name: str
     class_definition_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
@@ -46,12 +47,22 @@ class ClassDefinitionValue(FloorValue):
 
     def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
         from sugar_lift_py_tests.floor import (
+            GuardedReceiverFieldStoreValue,
             ObjectField,
             ObjectMethodValue,
             ObjectValue,
             ReceiverFieldStoreValue,
+            ReceiverStatePartitionValue,
         )
-        from sugar_lift_py_tests.ir import _term_content_cid, ctor, str_const
+        from sugar_lift_py_tests.ir import (
+            _term_content_cid,
+            and_,
+            ctor,
+            not_,
+            str_const,
+        )
+        from sugar_lift_py_tests.outcome import Completed, ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import partition, true_guard
 
         receiver = ObjectValue(
             self.class_name,
@@ -62,12 +73,71 @@ class ClassDefinitionValue(FloorValue):
         )
         if block is None:
             return receiver
+        guarded_stores = tuple(
+            statement
+            for statement in block.statements
+            if isinstance(statement, GuardedReceiverFieldStoreValue)
+        )
+        if guarded_stores:
+            states = [(true_guard(), (), frozenset())]
+            for statement in block.statements:
+                if isinstance(statement, ReceiverFieldStoreValue) and not isinstance(
+                    statement, GuardedReceiverFieldStoreValue
+                ):
+                    states = [
+                        (guard, (*stores, statement), faces)
+                        for guard, stores, faces in states
+                    ]
+                    continue
+                if not isinstance(statement, GuardedReceiverFieldStoreValue):
+                    continue
+                store = statement
+                then_face, else_face = partition(
+                    (
+                        "receiver-field-store",
+                        store.to_term(owner=self.class_definition_cid),
+                    )
+                )
+                next_states = []
+                for guard, stores, faces in states:
+                    next_states.append(
+                        (
+                            and_([guard, store.guard]),
+                            (
+                                *stores,
+                                ReceiverFieldStoreValue(
+                                    store.receiver, store.attr, store.value
+                                ),
+                            ),
+                            faces | {then_face},
+                        )
+                    )
+                    next_states.append(
+                        (
+                            and_([guard, not_(store.guard)]),
+                            stores,
+                            faces | {else_face},
+                        )
+                    )
+                states = next_states
+            exits = tuple(
+                Completed(
+                    guard,
+                    self.construct_receiver_state_from_block(
+                        type(block)(stores), receiver_coordinate_cid
+                    ),
+                    faces,
+                )
+                for guard, stores, faces in states
+            )
+            return ReceiverStatePartitionValue(ExitSet(exits).normalize())
         fields: dict[str, object] = {}
         for statement in block.statements:
             if not isinstance(statement, ReceiverFieldStoreValue):
                 continue
             if statement.receiver.identity != receiver.identity:
                 raise SugarNotWritten(
+                    blame=receiver_coordinate_cid,
                     owner="ClassDefinitionValue.construct_receiver_state",
                     observed="receiver coordinate mismatch",
                     requested="stores projected from this exact constructed receiver",
@@ -121,6 +191,7 @@ class ClassDefinitionValue(FloorValue):
                     for coordinate in method.source_call_frame.formal_coordinates
                 ),
                 method.source_call_frame,
+                method.descriptor_kind,
             )
             for method in (*inherited, *self.methods)
         )
@@ -143,6 +214,7 @@ class ClassDefinitionValue(FloorValue):
             )
             if candidate is None:
                 raise SugarNotWritten(
+                    blame=self.class_definition_cid,
                     owner="ClassDefinitionValue._c3_tail",
                     observed="inconsistent authenticated local base order",
                     requested="one valid C3 linearization",

@@ -33,6 +33,7 @@ class GroupedRaiseSugar(Sugar):
                 outcome.effect, (RaiseEffect, GroupedRaiseEffect)
             ):
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="GroupedRaiseSugar.desugar",
                     observed=type(outcome).__name__,
                     requested="a constructed raise effect for every group child",

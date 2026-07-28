@@ -2,8 +2,8 @@
 
 Each mirrors an existing dispatch: UnaryOp routes to the operand value's floor
 method (`not` composes truth+negate); BoolOp combines the operands' truthiness
-via and_/or_; Attribute asks the receiver for `.name` (a symbolic receiver stays
-the opaque py.getattr coordinate, like py.subscript).
+via and_/or_; Attribute asks the receiver for `.name` and a symbolic receiver
+refuses because source testimony decides neither lookup edge.
 """
 
 import tempfile
@@ -30,9 +30,22 @@ def _invs(src):
 # ---- UnaryOp -----------------------------------------------------------------
 
 
-def test_unary_minus_and_invert_emit_symbolic_ops():
-    assert _post("def A(z):\n    return -z\n").args[1].name == "py.neg"
-    assert _post("def A(z):\n    return ~z\n").args[1].name == "py.invert"
+def test_undecided_unary_ops_are_named_refusals():
+    """``-z`` / ``~z`` / ``+z`` cannot invent a success face without z's type."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    for source, operator in (
+        ("def A(z):\n    return -z\n", "-"),
+        ("def A(z):\n    return ~z\n", "~"),
+        ("def A(z):\n    return +z\n", "+"),
+    ):
+        try:
+            _post(source)
+        except ConstructionPanic as panic:
+            assert panic.info.owner == "unary_operation_exception_floor"
+            assert panic.info.observed == f"SymbolicValue {operator}"
+        else:
+            raise AssertionError(f"undecided unary {operator} invented a completion")
 
 
 def test_not_is_truth_then_negate():
@@ -60,29 +73,42 @@ def test_or_disjoins_operand_truthiness():
     assert invs[0].kind == "or"
 
 
-def test_bare_operands_use_py_truthy():
-    invs = _invs("def A(a, b):\n    assert a and b\n    return a\n")
-    assert invs[0].kind == "and"
-    assert all(op.name == "py.truthy" for op in invs[0].operands)
+def test_bare_operands_refuse_undecided_truth():
+    """``a and b`` cannot invent ``py.truthy`` when operand runtime types are open."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    try:
+        _invs("def A(a, b):\n    assert a and b\n    return a\n")
+    except ConstructionPanic as panic:
+        assert panic.info.owner == "boolean_operation_exception_floor"
+        assert panic.info.observed == "SymbolicValue and"
+    else:
+        raise AssertionError("undecided BoolOp invented py.truthy")
 
 
 # ---- Attribute ---------------------------------------------------------------
 
 
-def test_attribute_is_the_py_getattr_coordinate():
-    post = _post("def A(z):\n    return z.numerator\n")
-    getattr_term = post.args[1]
-    assert getattr_term.name == "py.getattr"
-    assert getattr_term.args[0].name == "z"
-    assert getattr_term.args[1].value == "numerator"
+def _attribute_refusal(source):
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    try:
+        _post(source)
+    except ConstructionPanic as panic:
+        return panic.info
+    raise AssertionError("symbolic attribute invented a completed projection")
 
 
-def test_attribute_chain_nests():
-    # z.a.b -> py.getattr(py.getattr(z, "a"), "b")
-    post = _post("def A(z):\n    return z.a.b\n")
-    outer = post.args[1]
-    assert outer.name == "py.getattr" and outer.args[1].value == "b"
-    assert outer.args[0].name == "py.getattr" and outer.args[0].args[1].value == "a"
+def test_attribute_is_named_undecided():
+    info = _attribute_refusal("def A(z):\n    return z.numerator\n")
+    assert info.owner == "SymbolicValue.attribute"
+    assert info.observed.endswith("SymbolicValue.numerator")
+
+
+def test_attribute_chain_refuses_at_the_first_unowned_lookup():
+    info = _attribute_refusal("def A(z):\n    return z.a.b\n")
+    assert info.owner == "SymbolicValue.attribute"
+    assert info.observed.endswith("SymbolicValue.a")
 
 
 if __name__ == "__main__":
@@ -91,6 +117,6 @@ if __name__ == "__main__":
     test_and_conjoins_operand_truthiness()
     test_or_disjoins_operand_truthiness()
     test_bare_operands_use_py_truthy()
-    test_attribute_is_the_py_getattr_coordinate()
-    test_attribute_chain_nests()
+    test_attribute_is_named_undecided()
+    test_attribute_chain_refuses_at_the_first_unowned_lookup()
     print("ok: UnaryOp, BoolOp, Attribute drained through the node")

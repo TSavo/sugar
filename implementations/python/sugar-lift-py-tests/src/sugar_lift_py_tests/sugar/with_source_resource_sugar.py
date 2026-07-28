@@ -24,6 +24,7 @@ class WithSourceResourceSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -48,13 +49,14 @@ class WithSourceResourceSugar(Sugar):
             manager_facts = ManagerBinding(
                 self.manager_slot_id, manager_face.value
             ).to_facts(site=self.site)
-            enter_es = sugar_outcome_to_exitset(self.protocol.enter_outcome(ctx))
+            enter_es = outcome_to_exitset(self.protocol.enter_resource_outcome(ctx))
             for enter_face in enter_es.exits:
                 guard = _and(manager_face.guard, enter_face.guard)
                 if isinstance(enter_face, Halted):
                     parts.append(ExitSet((Halted(guard, enter_face.effect),)))
                     continue
-                enter_value = _returned_value(enter_face.value)
+                entered = enter_face.value
+                enter_value = _returned_value(entered.enter_value)
                 enter_facts = ()
                 if self.enter_slot_id is not None and enter_value is not None:
                     enter_facts = EnterResultBinding(
@@ -63,15 +65,40 @@ class WithSourceResourceSugar(Sugar):
                 body_es = promote_raise_halts(
                     reduce_block_to_exitset(self.body)
                 ).guarded(guard)
-                exit_es = sugar_outcome_to_exitset(self.protocol.exit_outcome(ctx))
+                exit_es = outcome_to_exitset(
+                    self.protocol.exit_outcome_for(entered, ctx)
+                )
                 for body_face in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face
                     ).to_facts(site=self.site, guard=body_face.guard)
-                    routed = ExitSet((body_face,)).and_exit(
-                        exit_es,
-                        disposition=self.summary.semantics.exit.disposition,
+                    disposition = self.summary.semantics.exit.disposition
+                    from sugar_lift_py_tests.context_manager_contract import (
+                        ReturnTruthinessDispositionV1,
                     )
+
+                    if isinstance(disposition, ReturnTruthinessDispositionV1):
+                        from sugar_lift_py_tests.context_manager_contract import (
+                            NeverSuppressesDispositionV1,
+                        )
+                        from sugar_lift_py_tests.effect import RaiseEffect
+
+                        if isinstance(body_face, Halted) and not isinstance(
+                            body_face.effect, RaiseEffect
+                        ):
+                            routed = ExitSet((body_face,)).and_exit(
+                                exit_es,
+                                disposition=NeverSuppressesDispositionV1(),
+                            )
+                        else:
+                            routed = ExitSet((body_face,)).and_exit_truthiness(
+                                _exit_return_values(exit_es), site=self.site
+                            )
+                    else:
+                        routed = ExitSet((body_face,)).and_exit(
+                            exit_es,
+                            disposition=disposition,
+                        )
                     parts.append(
                         prepend_facts_to_exitset(
                             routed, (*manager_facts, *enter_facts, *face_facts)
@@ -81,6 +108,7 @@ class WithSourceResourceSugar(Sugar):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
+                blame=self.site,
                 owner="WithSourceResourceSugar.desugar",
                 observed="constructed manager protocol produced no face",
                 requested="one completed or halted source-derived manager face",
@@ -100,6 +128,27 @@ def _returned_value(value):
         if isinstance(last, ReturnValue):
             return last.value
     return value
+
+
+def _exit_return_values(exit_es):
+    """Project each completed source method block to its real return value."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+
+    return ExitSet(
+        tuple(
+            (
+                Completed(
+                    face.guard,
+                    _returned_value(face.value),
+                    face.faces,
+                    face.pending_contracts,
+                )
+                if isinstance(face, Completed)
+                else face
+            )
+            for face in exit_es.exits
+        )
+    )
 
 
 def _and(left, right):

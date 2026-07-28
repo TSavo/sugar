@@ -177,15 +177,50 @@ def test_same_spelling_unresolved_handler_identity_stays_loud():
         ).sugar()
 
 
-def test_unresolved_raised_identity_stays_loud_at_the_router():
-    with pytest.raises(SugarNotWritten):
+def test_unresolved_raised_identity_is_retained_not_decided_at_the_router():
+    """Formal ``raise E`` vs typed ``except ValueError`` is MatchRetained.
+
+    ``matches_raise_effect`` retains ``adt.is_python_type(E, ValueError)`` when
+    both operands have value terms but no authenticated exception identity.
+    That is not a construction gap and not a silent match/miss: both faces of
+    the partition must survive. ObservedEffectBinding rides under the match
+    arm guard without inventing a second occurrence.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.effect_router import ObservedEffectBinding
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    out = (
         _fn(
             "def A(E):\n"
             "    try:\n"
             "        raise E\n"
             "    except ValueError:\n"
             "        pass\n"
-        ).sugar().desugar()
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(out, Complete)
+    assert isinstance(out.value, UniverseValue)
+    record = out.value.record
+    # Residual halt under the open type test (miss face).
+    residual = tuple(
+        entry
+        for entry in record.statements
+        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
+    )
+    assert residual, "miss face of retained identity must remain a raise"
+    # Match-arm binding testimony must not invent TypeError / RuntimeEffect.
+    bindings = tuple(
+        entry for entry in record.statements if isinstance(entry, ObservedEffectBinding)
+    )
+    assert all(isinstance(b.effect, RaiseEffect) for b in bindings)
+    text = str(out)
+    assert "adt.is_python_type" in text
+    assert "TypeError" not in text
+    assert "RuntimeEffect" not in text
 
 
 def test_bare_reraise_reemits_the_exact_inflight_raise():
@@ -710,17 +745,51 @@ def test_ordinary_except_does_not_consume_grouped_raise():
     assert isinstance(outcome.effect, GroupedRaiseEffect)
 
 
-def test_warnings_warn_does_not_fabricate_a_warning_effect_without_a_producer():
-    """The live warning schema has no source producer; the call stays unresolved."""
+def test_warnings_warn_with_an_explicit_category_mints_authenticated_testimony():
+    """This test previously pinned the ABSENCE of a source producer.
+
+    It was right when it was written -- nothing in any ``src`` tree constructed
+    a ``WarningObservationValue``, so the consumer shipped in ``dd3d1b5ca``
+    (#6458) had no other half. The producer now exists, so the absence it
+    asserted is no longer the truth about this source, and pinning it would
+    keep the gap green. What replaces it is the same claim in the positive
+    direction: an EXPLICIT source-written category authenticates, and its
+    coordinate is the ordinary ``python:exception_type_identity`` the
+    raise/except projection already mints -- no warning vocabulary is added.
+    """
+    from sugar_lift_py_tests.floor.warning_observation_value import (
+        WarningObservationValue,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    v = _val(
+        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n"
+    )
+    entries = v.record.contribution()
+    observations = [
+        entry for entry in entries if isinstance(entry, WarningObservationValue)
+    ]
+    assert len(observations) == 1
+    assert observations[0].effect.category_identity == ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("UserWarning")],
+    )
+    assert observations[0].guards == ()
+
+
+def test_warnings_warn_without_a_category_still_fabricates_nothing():
+    """``warnings.warn(msg)`` defaults to ``UserWarning`` in CPython, not in the
+    source text. Inferring it here would put an unstated assumption inside an
+    authenticated coordinate, so the call stays an ordinary unresolved site --
+    which the completed-face boundary names, rather than reading as "no
+    warning". This is the half of the old test that is still true."""
     from sugar_lift_py_tests.effect.warning_effect import WarningEffect
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.warning_observation_value import (
         WarningObservationValue,
     )
 
-    v = _val(
-        "import warnings\n" "def A():\n" "    warnings.warn('message', UserWarning)\n"
-    )
+    v = _val("import warnings\n" "def A():\n" "    warnings.warn('message')\n")
     entries = v.record.contribution()
     calls = [entry for entry in entries if isinstance(entry, CallSiteValue)]
     assert len(calls) == 1
@@ -798,6 +867,37 @@ def test_except_as_binds_matching_raise_witness_in_handler():
     ]
     assert origins, "effect_slot_origin must link slot to raise occurrence"
     assert origins[0].args[1].name == "python:raise_effect_occurrence"
+
+
+def test_except_as_bound_name_observes_the_routed_effect_identity():
+    """``as error`` observes the same RaiseEffect the handler routed.
+
+    Nested raise under an active handler installs ``context_effect`` on the
+    inner halt. Returning ``error.__context__`` is only well-defined when
+    EffectRef projected that exact routed effect (ObservedEffectValue), not a
+    pure EffectCoordinate. The lying path (coordinate without preimage) is
+    pinned unit-side; here the truthful source path must complete.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    v = _val(
+        "def A():\n"
+        "    try:\n"
+        "        raise ImportError\n"
+        "    except ImportError:\n"
+        "        try:\n"
+        "            raise ValueError\n"
+        "        except ValueError as error:\n"
+        "            return error.__context__\n"
+    )
+    assert _incompletes(v) == []
+    post = v.post()
+    # __context__ of the routed ValueError is the handled ImportError's
+    # raised value — a constructed exception coordinate, not the slot itself.
+    assert post.args[0].name == "out"
+    assert post.args[1].name != "python:effect_slot"
+    # No residual incomplete from a missing context preimage.
+    assert not any(isinstance(e, Incomplete) for e in v.record.contribution())
 
 
 def test_except_as_does_not_bind_on_uncaught_path():
@@ -967,3 +1067,122 @@ if __name__ == "__main__":
     test_non_name_except_type_stays_loud()
     test_dotted_except_type_matches()
     print("ok: try sugar -- structural effect routing")
+
+
+def test_except_star_type_tuple_partitions_every_listed_type():
+    """`except* (A, B)` nets both A and B; only the unlisted leaf survives."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError(), KeyError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in outcome.effect.children] == ["KeyError"]
+
+
+def test_except_star_type_tuple_runs_its_body_exactly_once():
+    """The lying twin: one handler, one body run, however many types matched.
+
+    An implementation that expands `except* (A, B)` into one handler spec per
+    type -- which is honest for ordinary `except (A, B)` -- enters this body
+    twice on a group carrying both, and the raised RuntimeError appears twice.
+    Counting the leaf is what discriminates; the residual alone does not.
+    """
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        raise RuntimeError()\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    names = [leaf.exception_name for leaf in outcome.effect.children]
+    assert names == ["RuntimeError"], names
+
+
+def test_except_star_type_tuple_binds_one_group_of_all_matched_leaves():
+    """A bare re-raise regroups BOTH matched leaves, in original topology."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError(), TypeError(), KeyError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        raise\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in outcome.effect.children] == [
+        "ValueError",
+        "TypeError",
+        "KeyError",
+    ]
+
+
+def test_except_star_type_tuple_with_no_matching_leaf_stays_whole():
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    outcome = (
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [KeyError()])\n"
+            "    except* (ValueError, TypeError):\n"
+            "        pass\n"
+        )
+        .sugar()
+        .desugar()
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in outcome.effect.children] == ["KeyError"]
+
+
+def test_except_star_empty_type_tuple_stays_loud():
+    """An empty tuple has no honest matcher: refuse by name, never match all."""
+    with pytest.raises(SugarNotWritten) as excinfo:
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError()])\n"
+            "    except* ():\n"
+            "        pass\n"
+        ).sugar()
+    assert "unsupported except* handler type" in str(excinfo.value)
+
+
+def test_except_star_computed_type_in_tuple_stays_loud():
+    with pytest.raises(SugarNotWritten) as excinfo:
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [ValueError()])\n"
+            "    except* (ValueError, tm.Other):\n"
+            "        pass\n"
+        ).sugar()
+    assert "unsupported except* handler type" in str(excinfo.value)

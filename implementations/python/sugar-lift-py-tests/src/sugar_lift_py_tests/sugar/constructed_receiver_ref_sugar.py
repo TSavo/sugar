@@ -24,7 +24,16 @@ class ConstructedReceiverRefSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        return Complete(
-            ObjectValue(self.class_name, (), identity=self.binding_coordinate_cid)
+        if ctx is not None:
+            receiver = ctx.temporal.value_if_bound(self.binding_coordinate_cid)
+            if isinstance(receiver, ObjectValue):
+                return Complete(receiver)
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="ConstructedReceiverRefSugar",
+            blame=str(self.site),
+            observed=self.binding_coordinate_cid,
+            requested="the class-construction receiver binding",
+            fix="bind the constructed receiver before reducing its initializer",
         )

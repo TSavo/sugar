@@ -20,11 +20,34 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
+from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
 from sugar_lift_py_tests.outcome.incomplete import Incomplete
 
 _EFFECT_ABSENT_NAME = "py.effect.none"
 _EFFECT_EXPECTED_OBLIGATION = "py.effect.expected"
+
+
+@dataclass(frozen=True)
+class ObservedEffectBinding(FloorValue):
+    """Producer-owned preimage for projections from one consumed effect slot."""
+
+    slot_id: str
+    effect: RaiseEffect
+
+    def contribution(self):
+        return ()
+
+    def guarded(self, formula):
+        """Arm-scoped binding testimony rides under a guard unchanged.
+
+        The handler route already selected this slot under the arm's polarity.
+        Guarding does not invent a second occurrence and does not convert the
+        binding into an implication — it is the same RaiseEffect object the
+        router deposited for ``except ... as e`` / EffectRef projection.
+        """
+        del formula
+        return self
 
 
 class RuntimeSelectedReachedRouter(RuntimeError):
@@ -50,11 +73,18 @@ class EffectBinding:
         The **witness identity is the slot itself** (effect-slot(S) on returns).
         Type is separate testimony. Origin links the slot to a deterministic
         raise-effect occurrence when available — never identity-from-type-alone.
+
+        Each projection is a TERM, not a predicate. ``=`` relates two terms, so
+        ``effect_slot_kind(S)`` must be built with ``ctor``; building it with
+        ``atomic`` put a Formula in a term position, and a fact that cannot be
+        content addressed is a fact that cannot be compared, normalized, or
+        pinned. It stayed latent only because a decided handler scan never
+        emitted two fact-carrying arms that had to normalize together.
         """
         slot = str_const(self.slot_id)
         facts = [
             InvValue(
-                eq(atomic("effect_slot_kind", [slot]), str_const(self.kind)),
+                eq(ctor("effect_slot_kind", [slot]), str_const(self.kind)),
                 site=site,
             ),
         ]
@@ -62,7 +92,7 @@ class EffectBinding:
             facts.append(
                 InvValue(
                     eq(
-                        atomic("effect_slot_type", [slot]),
+                        ctor("effect_slot_type", [slot]),
                         str_const(self.type_name),
                     ),
                     site=site,
@@ -74,7 +104,7 @@ class EffectBinding:
             facts.append(
                 InvValue(
                     eq(
-                        atomic("effect_slot_origin", [slot]),
+                        ctor("effect_slot_origin", [slot]),
                         ctor(
                             "python:raise_effect_occurrence",
                             [str_const(occurrence)],
@@ -83,6 +113,24 @@ class EffectBinding:
                     site=site,
                 )
             )
+        if isinstance(self.effect, RaiseEffect):
+            context = self.effect.context_effect
+            context_value = getattr(context, "raised_value", None)
+            if isinstance(context, RaiseEffect) and isinstance(
+                context_value, FloorValue
+            ):
+                facts.append(
+                    InvValue(
+                        eq(
+                            ctor("effect_slot_context", [slot]),
+                            context_value.to_term(
+                                owner="EffectBinding.context_preimage"
+                            ),
+                        ),
+                        site=site,
+                    )
+                )
+            facts.append(ObservedEffectBinding(self.slot_id, self.effect))
         return tuple(facts)
 
 

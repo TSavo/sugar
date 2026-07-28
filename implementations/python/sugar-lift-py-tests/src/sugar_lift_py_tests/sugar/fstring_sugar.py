@@ -32,35 +32,52 @@ class FormattedValueSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Incomplete
 
-        value = self.value.desugar(ctx)
-        if isinstance(value, Incomplete):
-            return value
-        if self.format_spec is None:
-            format_spec_term = ctor("None", [])
-        else:
-            format_spec = self.format_spec.reference_term(ctx)
-            if isinstance(format_spec, Incomplete):
-                return format_spec
-            format_spec_term = format_spec.value
         conversion_term = (
             ctor("None", []) if self.conversion is None else str_const(self.conversion)
         )
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "python:fstring_value",
-                    [
-                        value.value.to_term(owner="FormattedValueSugar.value"),
-                        conversion_term,
-                        format_spec_term,
-                    ],
+
+        def build(value, format_spec_term):
+            # Ground strings with no conversion/spec are already their display.
+            # RaisesExc formats ``f"DID NOT RAISE {type.__name__}"``; folding
+            # keeps the diagnostic message a StringValue so fail() can raise
+            # instead of panicking at SymbolicValue + SymbolicValue.
+            if (
+                isinstance(value, StringValue)
+                and self.conversion is None
+                and self.format_spec is None
+            ):
+                return Complete(value)
+            return Complete(
+                SymbolicValue(
+                    ctor(
+                        "python:fstring_value",
+                        [
+                            value.to_term(owner="FormattedValueSugar.value"),
+                            conversion_term,
+                            format_spec_term,
+                        ],
+                    )
                 )
             )
-        )
+
+        # `f"{expr!r:{spec}}"` evaluates expr then spec, and EITHER can halt or
+        # partition (`f"{d[k] := v}"`). Both thread through `and_then` -- the one
+        # door every Outcome variant implements -- so a halt propagates and a
+        # partition keeps every arm. Reading `.value` off the outcome assumed one
+        # unconditional arm and was the `'ExitSet' has no attribute 'value'`
+        # defect here.
+        def with_spec(value):
+            if self.format_spec is None:
+                return build(value, ctor("None", []))
+            return self.format_spec.reference_term(ctx).and_then(
+                lambda spec_term: build(value, spec_term)
+            )
+
+        return self.value.desugar(ctx).and_then(with_spec)
 
 
 @dataclass(frozen=True)
@@ -82,29 +99,47 @@ class JoinedStrSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         if not self.parts:
             return Complete(StringValue(""))
-        acc = self.parts[0].desugar(ctx)
+        # Concatenate left-to-right through `and_then`, the one door every
+        # Outcome variant implements: a part that halts propagates, a part that
+        # PARTITIONS keeps every arm and each arm concatenates under its own
+        # guard. `acc.value.add(right.value, ...)` assumed both sides were one
+        # unconditional value.
+        # One completed arm per part (#6324): concatenation is a k-step fold
+        # through `ExitSet.sequence`, so an unfactored partitioning part
+        # multiplies the accumulator at every remaining part.
+        outcome = factored_operand(self.parts[0].desugar(ctx))
         for part in self.parts[1:]:
-            if isinstance(acc, Incomplete):
-                return acc
-            right = part.desugar(ctx)
-            if isinstance(right, Incomplete):
-                return right
-            acc = acc.value.add(right.value, self.site)
-        return acc
+            outcome = outcome.and_then(
+                lambda left, part=part: factored_operand(part.desugar(ctx)).and_then(
+                    lambda right: left.add(right, self.site)
+                )
+            )
+        return outcome
 
     def reference_term(self, ctx: object = None) -> Outcome:
         """Project this JoinedStr as the reference ``python:fstring`` ctor."""
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
-        terms = []
+        # Same law as `desugar`: every part threads through `and_then`, so a
+        # halting or partitioning part is conserved rather than read as `.value`.
+        outcome = Complete(())
         for part in self.parts:
-            projected = part.desugar(ctx)
-            if isinstance(projected, Incomplete):
-                return projected
-            terms.append(projected.value.to_term(owner="JoinedStrSugar.reference_term"))
-        return Complete(ctor("python:fstring", terms))
+            outcome = outcome.and_then(
+                lambda terms, part=part: factored_operand(part.desugar(ctx)).and_then(
+                    lambda value: Complete(
+                        (
+                            *terms,
+                            value.to_term(owner="JoinedStrSugar.reference_term"),
+                        )
+                    )
+                )
+            )
+        return outcome.and_then(
+            lambda terms: Complete(ctor("python:fstring", list(terms)))
+        )

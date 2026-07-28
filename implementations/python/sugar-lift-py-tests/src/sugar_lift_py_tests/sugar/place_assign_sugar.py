@@ -28,6 +28,24 @@ class PlaceAssignSugar(Sugar):
         from sugar_lift_py_tests.floor.place_assign_value import PlaceAssignValue
 
         def with_receiver(receiver):
+            if (
+                self.selector_kind == "attribute"
+                and hasattr(receiver, "authenticates_plain_attribute_store")
+                and not receiver.authenticates_plain_attribute_store(self.selector)
+            ):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="PlaceAssignSugar",
+                    observed="source-authenticated property data descriptor",
+                    requested="the descriptor's authenticated assignment behavior",
+                    fix=(
+                        "construct the property's setter before treating the write "
+                        "as an instance-field store"
+                    ),
+                )
+
             def with_value(value):
                 if self.selector_kind == "attribute":
                     selector = self.selector

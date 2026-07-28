@@ -19,9 +19,12 @@ class CallSiteSugar(Sugar):
     projects the callEdge -- and a cue is the signal that this call warrants a
     dig (reduce the callee into its universe; its call sites cue further digs).
 
-    The dig itself is NOT done here (`body=None`). Digging is cued, not eager:
-    an assertion cues digs, and digs cue digs, so the recursion is driven by the
-    cueing mechanism (the enumeration), not by inlining the callee at every call.
+    An opaque call keeps ``body=None`` and remains a dig cue.  When construction
+    carries a source-authenticated body, however, Call is an effect producer:
+    it reduces that already-constructed body once and publishes its halted
+    ExitSet faces at this expression.  Completed faces retain the CallSiteValue
+    coordinate, so ordinary return-floor digging is unchanged.  No assertion
+    or other consumer is consulted to decide whether the call may halt.
 
     Meaning-only, node-constructed. Plain positional calls to a named callee;
     method/attribute/computed callees and keyword args stay gaps (the tree node
@@ -37,6 +40,8 @@ class CallSiteSugar(Sugar):
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
+    formal_function_sugar: Any = dataclass_field(default=None, compare=False)
+    formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -53,10 +58,11 @@ class CallSiteSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         if self.contract_resolution_gap is not None:
-            from sugar_source_tree.panic import SugarNotWritten
+            from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
-            raise SugarNotWritten(
+            raise OpaqueSourceCallResolutionGap(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed=self.contract_resolution_gap,
                 requested="authenticated resolved-call contract reference",
                 fix="publish and resolve the imported target contract or keep the call loud",
@@ -114,6 +120,7 @@ class CallSiteSugar(Sugar):
             return self._collect_bridged(positional)
         source_body = None
         source_frame_cid = None
+        native_operation_actuals = None
         if self.source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
             from sugar_source_tree.panic import SugarNotWritten
@@ -121,6 +128,7 @@ class CallSiteSugar(Sugar):
             if not isinstance(self.source_call_frame, SourceVisibleCallFrameV1):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
+                    blame=self.site,
                     observed=type(self.source_call_frame).__name__,
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
@@ -128,12 +136,21 @@ class CallSiteSugar(Sugar):
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
-                positional = self.source_call_frame.bind_actuals(
-                    positional, kw_values, ctx
-                )
+                if self.source_call_frame.pending_native_operation is None:
+                    positional = self.source_call_frame.bind_actuals(
+                        positional, kw_values, ctx
+                    )
+                else:
+                    native_operation_actuals = (
+                        self.source_call_frame.bind_native_operation_actuals(
+                            positional, kw_values, ctx
+                        )
+                    )
+                    positional = native_operation_actuals.actuals
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
+                    blame=self.site,
                     observed=str(exc),
                     requested="actuals matching the authenticated source signature",
                     fix="supply a real actual/default/variadic occurrence or keep loud",
@@ -149,6 +166,24 @@ class CallSiteSugar(Sugar):
             owner = getattr(self.source_call_frame, "owner", None)
             if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
                 source_body = owner.source_visible_constructor_frame().body
+            elif owner is not None and hasattr(owner, "source_visible_call_frame"):
+                # Imported helper calls are node-specialized when the caller's
+                # Sugar is built. Their FloorValue actuals are curried below,
+                # so reduction must use the callee's declaration body whose
+                # BindingCoordinateRefs match this frame's formal coordinates,
+                # not the caller's inlined formal nodes.
+                declaration_frame = owner.source_visible_call_frame()
+                if declaration_frame.frame_cid != self.source_call_frame.frame_cid:
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        owner="CallSiteSugar.desugar",
+                        blame=self.site,
+                        observed="declaration/source frame mismatch",
+                        requested="byte-identical authenticated source frame",
+                        fix="retain the callee declaration frame across node binding",
+                    )
+                source_body = declaration_frame.body
             source_frame_cid = self.source_call_frame.frame_cid
             # bind_actuals returned the complete formal-ordered tuple,
             # including keyword/default actuals. They must not be appended a
@@ -167,31 +202,36 @@ class CallSiteSugar(Sugar):
                         steps=self.source_call_frame.generator_steps,
                     )
                 )
-        return Complete(
-            CallSiteValue(
-                target_name=self.target_name,
-                arg_values=positional + tuple(value for _, value in kw_values),
-                parameters=(
-                    self.source_call_frame.parameters
-                    if self.source_call_frame is not None
-                    else ()
-                ),
-                term=term,
-                body=source_body,
-                keyword_names=tuple(name for name, _ in kw_values),
-                site=self.site,
-                exception_type_coordinate=self.exception_type_coordinate,
-                exception_type_mro=self.exception_type_mro,
-                source_call_frame_cid=source_frame_cid,
-                formal_coordinate_cids=(
-                    tuple(
-                        item.cid for item in self.source_call_frame.formal_coordinates
-                    )
-                    if self.source_call_frame is not None
-                    else ()
-                ),
-            )
+        callsite = CallSiteValue(
+            target_name=self.target_name,
+            arg_values=positional + tuple(value for _, value in kw_values),
+            parameters=(
+                self.source_call_frame.parameters
+                if self.source_call_frame is not None
+                else ()
+            ),
+            term=term,
+            body=source_body,
+            keyword_names=tuple(name for name, _ in kw_values),
+            site=self.site,
+            exception_type_coordinate=self.exception_type_coordinate,
+            exception_type_mro=self.exception_type_mro,
+            source_call_frame_cid=source_frame_cid,
+            formal_coordinate_cids=(
+                tuple(item.cid for item in self.source_call_frame.formal_coordinates)
+                if self.source_call_frame is not None
+                else ()
+            ),
         )
+        if native_operation_actuals is not None:
+            pending = self.source_call_frame.pending_native_operation.discharge(
+                native_operation_actuals.by_formal_coordinate
+            )
+            return callsite.project_producer_outcome(pending)
+        if self.formal_function_sugar is not None:
+            pending = self.formal_function_sugar.desugar(ctx)
+            return callsite.project_producer_outcome(pending)
+        return callsite.producer_outcome(ctx)
 
     def _collect_bridged(self, positional: tuple) -> Outcome:
         from sugar_lift_py_tests.floor.bridged_contract_value import (
@@ -206,6 +246,7 @@ class CallSiteSugar(Sugar):
         if len(reference.formals) != len(positional):
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="signature mismatch",
                 requested="actual arguments matching the authenticated import signature",
                 fix="correct the call signature or keep the call loud",
@@ -214,6 +255,7 @@ class CallSiteSugar(Sugar):
         if term is None:
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="authenticated contract has no exact return equality",
                 requested="exact structural return testimony",
                 fix="strengthen the contract or keep the imported value loud",
@@ -221,6 +263,7 @@ class CallSiteSugar(Sugar):
         if not _free_vars_in_term(term) <= set(reference.formals):
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="authenticated structural return contains an unbound projection",
                 requested="return variables authenticated by the target formal list",
                 fix="reject the stale or lying contract reference",
@@ -234,6 +277,7 @@ class CallSiteSugar(Sugar):
         }:
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="authenticated contract has no exact structural return",
                 requested="structural return term carried by the target contract",
                 fix="strengthen the target contract or keep the imported value loud",

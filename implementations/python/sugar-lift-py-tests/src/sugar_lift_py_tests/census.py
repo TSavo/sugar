@@ -15,9 +15,28 @@ Behind the desugar door, ``ConstructionPanic`` (a ``BaseException``) and
 ordinary exceptions are counted SEPARATELY from semantic R and make the run
 red — see :mod:`sugar_lift_py_tests.desugar_axis`, which owns the membrane for
 this module and for ``scripts/control_effect_recensus.py`` alike.
+
+**Not the authoritative scoreboard.** ``scripts/control_effect_recensus.py``
+is the sole authority for the pinned Python corpus board: it alone pins the
+corpus, records the completed denominator and file identities, and journals
+every terminal row. This module is a developer-loop console census over an
+arbitrary package root — no pin, no denominator record, no durable journal.
+Never quote its numbers as the board.
+
+It does open files through the same production door
+(``open_source_file_for_construction`` against an explicit corpus root). A bare
+``SourceFile.from_path`` here painted every ``with`` as
+``RuntimeSelectedContextManager`` regardless of resolvability — the two
+instruments then disagreed about With for reasons that were entirely the
+instrument's.
 """
 
 from __future__ import annotations
+
+# Not the board. This module measures its own named denominator; the sole
+# authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
+# See tests/test_one_authoritative_scoreboard.py.
+SCOREBOARD_AUTHORITY = False
 
 import argparse
 import sys
@@ -31,11 +50,18 @@ def census(root: Path) -> int:
         collect_construction_panic,
     )
     from sugar_lift_py_tests.desugar_axis import DesugarAxis
+    from sugar_lift_py_tests.lift_rpc import (
+        open_source_file_for_construction,
+        provisional_contract_refs_from_demands,
+    )
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
 
     files = sorted(root.rglob("*.py"))
+    # One demand table for the whole corpus root, exactly like the authoritative
+    # recensus. Deriving it per file (or from ``file.parent``) scans a different
+    # tree and shifts every With resolution — measurement drift, not signal.
+    contract_refs = provisional_contract_refs_from_demands(root)
     families: Counter = Counter()
     desugar = DesugarAxis()
     crashes: Counter = Counter()
@@ -53,7 +79,22 @@ def census(root: Path) -> int:
         ):
             nonlocal total_fns, clean_fns, clean_files
             reporter = CollectingReporter()
-            sf = SourceFile.from_path(str(_f), reporter=reporter)
+            # Production door: never a bare ``SourceFile.from_path``. Without the
+            # construction context every With paints RuntimeSelectedContextManager
+            # whether or not it resolves.
+            try:
+                sf = open_source_file_for_construction(
+                    _f,
+                    root=root,
+                    reporter=reporter,
+                    contract_refs=contract_refs,
+                    populate_derived=True,
+                )
+            except SugarNotWritten as gap:
+                # Derivation can hit a real missing sugar before any function
+                # walk. That is a construction gap, not a crash row.
+                families[type(gap).__name__] += 1
+                return 1
             for fn in sf.functions():
                 total_fns += 1
                 try:

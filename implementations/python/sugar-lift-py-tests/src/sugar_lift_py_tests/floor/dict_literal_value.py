@@ -60,14 +60,13 @@ class DictLiteralValue(FloorValue):
     def subscript_with(self, operation: Any, ctx: object) -> Any:
         from sugar_lift_py_tests.floor.call_site_value import force_floor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         key_floor = force_floor(
             operation.index,
             ctx,
             owner=f"{operation.owner} dict key",
         )
-        key_term = floor_to_term(key_floor, owner=f"{operation.owner} dict key")
+        key_term = key_floor.to_term(owner=f"{operation.owner} dict key")
         for stored_key, stored_value in self.entries:
             if stored_key == key_term:
                 return Complete(_term_to_floor(stored_value))

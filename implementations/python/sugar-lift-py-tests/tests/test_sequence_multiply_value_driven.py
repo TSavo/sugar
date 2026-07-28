@@ -4,25 +4,31 @@ import importlib
 
 import pytest
 
-from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ImportAliasValue,
     ListValue,
+    RaiseValue,
     SymbolicValue,
     TermValue,
     TupleValue,
 )
 from sugar_lift_py_tests.ir import _Ctor, ctor
 from sugar_lift_py_tests.outcome import Complete, Incomplete
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
 
 
 def _site(tmp_path):
-    source = tmp_path / "sequence_repeat.py"
-    source.write_text("def witness():\n    return [1] * 1.5\n", encoding="utf-8")
-    return next(SourceFile(path_source(str(source))).functions()).fragment
+    """Workspace-relative fragment so ground TypeError can cite source."""
+    del tmp_path
+    source = "def witness():\n    return [1] * 1.5\n"
+    tree = SourceFile(
+        (source, "sequence_repeat.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    return next(tree.functions()).fragment
 
 
 def _symbolic_result(sequence, multiplier):
@@ -58,21 +64,23 @@ def test_exact_constructed_bool_is_a_valid_repetition_count(sequence_type) -> No
     assert outcome.value.elements == (element,)
 
 
-def test_list_times_known_ground_float_is_loud_type_error(tmp_path) -> None:
+def test_list_times_known_ground_float_is_authenticated_type_error(tmp_path) -> None:
     outcome = ListValue((TermValue(1),)).multiply(TermValue(1.5), _site(tmp_path))
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
 
 
-def test_tuple_times_known_ground_string_is_loud_type_error(tmp_path) -> None:
+def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -> None:
     outcome = TupleValue((TermValue(1),)).multiply(
         TermValue("x"),  # type: ignore[arg-type] - planted invalid ground payload
         _site(tmp_path),
     )
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))

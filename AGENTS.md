@@ -758,6 +758,27 @@ execution. `bcargo`, `brun`, and `bpytest` are compatibility adapters. A binary
 cache hit may skip compilation, never command or test execution. See
 `docs/build-execution.md` for task, capability, artifact, and recovery details.
 
+**Never pipe a measurement command and then read `$?`.** After a pipeline the
+shell reports the *last stage's* status, so `bpytest ... | tail -20` gives you
+`tail`'s exit code and **a red run reads green**. This is not a quirk of `tail`;
+`| head`, `| grep`, and `| tee` discard the verdict identically. Three test runs
+were banked as passing this way before anyone noticed. Capture the status before
+piping, or set `-o pipefail`:
+
+```bash
+bin/bpytest -q tests/... > /tmp/out.log 2>&1; echo "EXIT=$?"; tail -20 /tmp/out.log
+```
+
+The adapters propagate correctly — `bpytest` returns 2 on a failing run. The
+channel carrying the red is what replaces it, which is the same shape as every
+other false green: the signal is fine, the wire is not.
+
+Two more that cost real time. Python tests need `PYTHONPATH` set explicitly —
+`implementations/python/pytest.ini` sets only `--import-mode=importlib`, so every
+runner supplies the path itself. And an import error at **collection** makes a
+whole file vanish rather than fail: the suite does not go red, it goes
+*smaller*. Check the collected count, not just the colour.
+
 - `make help`: list supported build and test targets.
 - `make build-rust`: build the Rust workspace in release mode.
 - `make test-rust`: run Rust workspace and Rust-driven RPC tests.
@@ -824,3 +845,48 @@ the failing instrument should identify every illegal resident and describe the
 boundary, abstraction, visitor, typed result, deletion, or migration that will
 remove it. Fly by that red compiler/test signal until stable zero makes it
 silent.
+
+### Re-measurement and pins (decision of record)
+
+> Re-measurement may prove an owner already drained. It may not replace
+> unresolved semantic work with a pin.
+
+A pin is allowed only when it protects a **verified law** whose truthful and
+lying faces are already implemented. It must never accept a current failure
+count, preserve an incomplete result, or convert newly visible red into
+baseline debt.
+
+**Baseline receipt classification.** Every node is exactly one category:
+
+1. Previously enrolled, unchanged verdict.
+2. Previously enrolled, improved.
+3. Previously enrolled, **regressed**.
+4. Newly enrolled, passing.
+5. Newly enrolled, failing due to a **product semantic gap**.
+6. Newly enrolled, failing due to an **instrument/environment defect**.
+
+Act as follows:
+
+- **Category 3:** stop and fix forward immediately.
+- **Category 5:** enter the semantic drain ranked by authenticated owner mass.
+- **Category 6:** repair the instrument only far enough to expose the semantic
+  verdict, then return it to classification.
+- **Categories 1, 2, and 4:** no implementation.
+- **Never pin Categories 3, 5, or 6 as accepted red.**
+
+**Per ranked owner:**
+
+1. Reproduce its current occurrence count at the pinned commit.
+2. Determine whether the general law already exists.
+3. If it exists, prove all occurrences now construct/desugar correctly; add a
+   missing discrimination twin only if it can fail when the law is removed.
+4. If it does not exist, implement the general mechanism—not a name/site arm.
+5. Run truthful and lying twins.
+6. Re-measure the same owner.
+7. Accept the cut only if its residual reaches zero or every survivor is
+   reattributed to a different named owner.
+8. Confirm no other zero axis increases.
+
+Do not infer closure from shared ancestry. Re-measure. Historical mass already
+retired by a later law is recorded as `ΔR=0 at current baseline; historical N
+already retired by #PR`, not as another drain.

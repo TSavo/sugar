@@ -27,6 +27,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     PositionalOrKeywordV1,
     ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
+    ReturnTruthinessDispositionV1,
     SuppressesModeV1,
     VariadicKeywordV1,
     VariadicPositionalV1,
@@ -34,7 +35,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Complete, Completed, outcome_to_exitset
 
 from .canonical import cid_of_json
 from .manager_protocol_construction import ConstructedManagerProtocolV1
@@ -90,12 +91,68 @@ def derive_manager_summary(
     and every exit face completes with exact Python ``False`` or ``None``.
     Symbolic truthiness remains loud; it is never interpreted by target name.
     """
-    enter = outcome_to_exitset(protocol.enter_outcome())
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+
+    try:
+        enter = outcome_to_exitset(protocol.enter_outcome())
+    except ConstructionPanic as panic:
+        owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
+        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        return DerivedManagerSummaryGapV1(
+            "enter-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
+    except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
+        owner = getattr(exc, "owner", None) or type(exc).__name__
+        observed = getattr(exc, "observed", None) or str(exc)
+        return DerivedManagerSummaryGapV1(
+            "enter-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
     if not enter.exits or any(not isinstance(face, Completed) for face in enter.exits):
         return DerivedManagerSummaryGapV1(
             "enter-may-halt", protocol.protocol_construction_cid, "__enter__ ExitSet"
         )
-    exit_ = outcome_to_exitset(protocol.exit_outcome())
+    try:
+        exit_ = outcome_to_exitset(protocol.exit_outcome())
+    except ConstructionPanic as panic:
+        owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
+        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior,
+            protocol_construction_cid=protocol.protocol_construction_cid,
+        )
+        if isinstance(soft, DerivedManagerSummaryGapV1):
+            return soft
+        if soft is not None:
+            signature = _signature_for_behavior(behavior, soft)
+            return _sealed_summary(protocol, soft, signature)
+        return DerivedManagerSummaryGapV1(
+            "exit-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
+    except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
+        owner = getattr(exc, "owner", None) or type(exc).__name__
+        observed = getattr(exc, "observed", None) or str(exc)
+        soft = _soft_effect_boundary_from_exception_formals(
+            behavior,
+            protocol_construction_cid=protocol.protocol_construction_cid,
+        )
+        if isinstance(soft, DerivedManagerSummaryGapV1):
+            return soft
+        if soft is not None:
+            signature = _signature_for_behavior(behavior, soft)
+            return _sealed_summary(protocol, soft, signature)
+        return DerivedManagerSummaryGapV1(
+            "exit-may-halt",
+            protocol.protocol_construction_cid,
+            f"{owner}:{observed}",
+        )
     boundary = (
         _derive_effect_boundary(exit_, protocol, behavior)
         if behavior is not None
@@ -108,16 +165,14 @@ def derive_manager_summary(
         return DerivedManagerSummaryGapV1(
             "exit-may-halt", protocol.protocol_construction_cid, "__exit__ ExitSet"
         )
-    for face in exit_.exits:
-        if not _exact_never_suppresses(face.value):
-            return DerivedManagerSummaryGapV1(
-                "opaque-exit-truthiness",
-                protocol.protocol_construction_cid,
-                type(face.value).__name__,
-            )
+    disposition = (
+        NeverSuppressesDispositionV1()
+        if all(_exact_never_suppresses(face.value) for face in exit_.exits)
+        else ReturnTruthinessDispositionV1()
+    )
     semantics = ProtocolResourceSemanticsV1(
         EnterResultContractV1(PrimitiveSort("Value")),
-        ExitContractV1(NeverSuppressesDispositionV1()),
+        ExitContractV1(disposition),
     )
     signature = _signature_for_behavior(behavior, semantics)
     return _sealed_summary(protocol, semantics, signature)
@@ -143,6 +198,139 @@ def _sealed_summary(protocol, semantics, signature):
     )
 
 
+def _construct_message_pattern_operand(
+    projected_match,
+    *,
+    site,
+    construct_message_obligation,
+):
+    """Construct the message obligation on the source-authorized match face."""
+    from sugar_lift_py_tests.floor import NoneValue
+
+    return projected_match.and_then(
+        lambda match_value: (
+            Complete(NoMessagePatternV1())
+            if isinstance(match_value, NoneValue)
+            else match_value.attribute("pattern", site).and_then(
+                construct_message_obligation
+            )
+        )
+    )
+
+
+def _project_receiver_match(receiver, *, site):
+    """Project only source-written receiver faces that carry ``match``."""
+    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    if isinstance(receiver, ObjectValue):
+        if not any(field.name == "match" for field in receiver.fields):
+            return None
+        return receiver.attribute("match", site)
+    if not isinstance(receiver, ReceiverStatePartitionValue):
+        return None
+    projected = []
+    for face in receiver.exits.exits:
+        if not isinstance(face, Completed) or not isinstance(face.value, ObjectValue):
+            continue
+        if not any(field.name == "match" for field in face.value.fields):
+            continue
+        projected.extend(
+            ExitSet((face,))
+            .and_then(lambda value: value.attribute("match", site))
+            .exits
+        )
+    return ExitSet(tuple(projected)) if projected else None
+
+
+def _uniform_message_operand_or_gap(
+    projected_operand,
+    *,
+    protocol_construction_cid,
+    coordinate,
+):
+    """Collapse identical message faces or return one located summary gap."""
+    projected_faces = outcome_to_exitset(projected_operand).exits
+    if projected_faces and all(
+        isinstance(face, Completed) and face.value == projected_faces[0].value
+        for face in projected_faces
+    ):
+        return projected_faces[0].value
+    return DerivedManagerSummaryGapV1(
+        "exit-may-halt",
+        protocol_construction_cid,
+        f"non-uniform-message-pattern-faces:{coordinate.cid}",
+    )
+
+
+def _soft_effect_boundary_from_exception_formals(
+    behavior,
+    *,
+    protocol_construction_cid,
+):
+    """Expects-mode EffectBoundary when exit body is undecided but formals decide.
+
+    Installed-source ``pytest.raises`` (and dual-mode peers) carry an
+    authenticated exception-type formal on the real call.  Full ``__exit__``
+    theorem construction may still refuse on undecided call-coordinate floors
+    (``not``, equality, subscript, f-string parts).  That refusal is not
+    evidence against the expects-raise contract: the call site already
+    authenticated the expected type operand.  Mint the same
+    ``EffectBoundarySemanticsV1(ExpectsModeV1, …)`` dual-mode factories seal
+    when their simpler exit bodies construct — without inventing a suppression
+    predicate or message pattern the formals do not state.
+    """
+    if behavior is None:
+        return None
+    actuals = tuple(getattr(behavior, "formal_actual_values", ()) or ())
+    if not actuals:
+        return None
+    expected_index = None
+    message_index = None
+    for index, value in enumerate(actuals):
+        identity = getattr(value, "exception_type_identity", None)
+        if callable(identity) and identity() is not None and expected_index is None:
+            expected_index = index
+            continue
+        # Optional match= / message formal: string-sort values after the type.
+        if expected_index is not None and message_index is None:
+            decided = getattr(value, "runtime_type_is_decided", None)
+            if callable(decided) and decided():
+                from sugar_lift_py_tests.floor.string_value import StringValue
+
+                if isinstance(value, StringValue):
+                    message_index = index
+    if expected_index is None:
+        return None
+    message_operand = (
+        NoMessagePatternV1()
+        if message_index is None
+        else OptionalFormalArgumentProjectionV1(message_index)
+    )
+    site = behavior.formal_actual_bindings[expected_index].coordinate
+    projected_match = _project_receiver_match(behavior.receiver_state, site=site)
+    if projected_match is not None:
+        projected_operand = _construct_message_pattern_operand(
+            projected_match,
+            site=site,
+            construct_message_obligation=lambda _pattern: Complete(message_operand),
+        )
+        message_operand = _uniform_message_operand_or_gap(
+            projected_operand,
+            protocol_construction_cid=protocol_construction_cid,
+            coordinate=site,
+        )
+        if isinstance(message_operand, DerivedManagerSummaryGapV1):
+            return message_operand
+    return EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(expected_index),
+        message_operand,
+        ExceptionInfoBindingV1(),
+    )
+
+
 def _derive_effect_boundary(exit_set, protocol, behavior):
     from sugar_lift_py_tests.floor import BlockValue, BranchResultAuthentication
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -165,11 +353,12 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
             and isinstance(face.value.statements[-1].value, PredicateValue)
         ):
             predicates.append(face.value.statements[-1].value.formula)
-    if not predicates or any(
-        predicate != predicates[0] for predicate in predicates[1:]
-    ):
+    if predicates and all(predicate == predicates[0] for predicate in predicates[1:]):
+        formula = predicates[0]
+    else:
+        formula = _guarded_literal_suppression_formula(exit_set)
+    if formula is None:
         return None
-    formula = predicates[0]
     actuals = tuple(behavior.formal_actual_values)
     actual_terms = tuple(
         value.to_term(owner=behavior.resolved_object_cid) for value in actuals
@@ -210,6 +399,151 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         ),
         ExceptionInfoBindingV1(),
     )
+
+
+def _guarded_literal_suppression_formula(exit_set):
+    """The suppression predicate of an exit that routes exact ``True``/``False``.
+
+    A community effect boundary is rarely written as one returned predicate.
+    It is written as a route:
+
+        if <effect absent>:   raise ...
+        if <matched>:         return True
+        return False
+
+    That is the same theorem as ``return <matched>`` with the partition moved
+    from the value level to the GUARD level — the same move
+    ``ExitSet.factor_completed`` makes for sequencing. The predicate is
+    therefore the disjunction of the guards of the exact-``True`` faces.
+
+    It is derived only when the completed face is TOTALLY classified:
+
+    - every completed face is a block ending in ``return`` exact ``True`` or
+      exact ``False`` — one unclassified face and the disjunction would speak
+      for an outcome it does not cover, so the whole derivation refuses;
+    - at least one ``True`` face exists — an empty disjunction is
+      ``never suppresses``, which is a different contract and must not be
+      fabricated here.
+
+    Halted faces are the caller's business: it authenticates them separately
+    and refuses any halt that is not a proven absent-effect halt.
+    """
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        BranchResultAuthentication,
+        GuardedReturn,
+    )
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import (
+        _and_guards,
+        _or_guards,
+        false_guard,
+    )
+
+    authenticated = {}
+    for face in exit_set.exits:
+        block = getattr(face, "value", None)
+        if not isinstance(block, BlockValue):
+            continue
+        for statement in block.statements:
+            if isinstance(statement, BranchResultAuthentication):
+                authenticated[statement.slot.slot_id] = statement.observed_guard
+
+    formula = false_guard()
+    saw_true = False
+    for face in exit_set.exits:
+        if not isinstance(face, Completed):
+            continue
+        block = face.value
+        if not isinstance(block, BlockValue) or not block.statements:
+            return None
+        if block.can_fall_through:
+            # An implicit ``None`` result is a third outcome this partition
+            # does not classify. Refuse rather than let the disjunction speak
+            # for it.
+            return None
+        for statement in block.statements:
+            if isinstance(statement, Incomplete):
+                return None
+            if isinstance(statement, GuardedReturn):
+                literal = _exact_bool_literal(statement.value)
+                if literal is None:
+                    return None
+                if literal:
+                    guards = tuple(statement.guards)
+                    guard = guards[0] if len(guards) == 1 else and_(list(guards))
+                    resolved = _resolve_branch_result_guards(
+                        _and_guards(face.guard, guard), authenticated
+                    )
+                    if resolved is None:
+                        return None
+                    saw_true = True
+                    formula = _or_guards(formula, resolved)
+                continue
+            if isinstance(statement, ReturnValue):
+                literal = _exact_bool_literal(statement.value)
+                if literal is None:
+                    return None
+                if literal:
+                    resolved = _resolve_branch_result_guards(face.guard, authenticated)
+                    if resolved is None:
+                        return None
+                    saw_true = True
+                    formula = _or_guards(formula, resolved)
+    return formula if saw_true else None
+
+
+def _resolve_branch_result_guards(formula, authenticated):
+    """Replace each branch-result slot literal by its AUTHENTICATED guard.
+
+    A branch guard is spelled ``py.truthy(python:branch_result(<slot>))`` — an
+    opaque coordinate. The block also carries a ``BranchResultAuthentication``
+    proving that slot equivalent to the real observed comparison. Only that
+    testimony may stand in for the slot; an unauthenticated slot returns
+    ``None`` and the whole boundary stays loud rather than being read from a
+    coordinate nobody proved anything about.
+    """
+    from sugar_lift_py_tests.ir import _Atomic, _Connective, _ConstStr, _Ctor
+
+    if isinstance(formula, _Connective):
+        operands = []
+        for operand in formula.operands:
+            resolved = _resolve_branch_result_guards(operand, authenticated)
+            if resolved is None:
+                return None
+            operands.append(resolved)
+        return type(formula)(formula.kind, tuple(operands))
+    if not isinstance(formula, _Atomic) or formula.name != "py.truthy":
+        return formula
+    if len(formula.args) != 1:
+        return formula
+    term = formula.args[0]
+    if not isinstance(term, _Ctor) or term.name != "python:branch_result":
+        return formula
+    if len(term.args) != 1 or not isinstance(term.args[0], _ConstStr):
+        return None
+    return authenticated.get(term.args[0].value)
+
+
+def _exact_bool_literal(value: object) -> bool | None:
+    """``True``/``False`` iff the value is exactly that literal; else ``None``.
+
+    Never truthiness. A symbolic value, a name, or any non-``bool`` constant
+    is unclassified and keeps the boundary loud.
+    """
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if isinstance(value, TrueBoolLiteralSugar):
+        return True
+    if isinstance(value, FalseBoolLiteralSugar):
+        return False
+    if isinstance(value, TermValue) and type(value.value) is bool:
+        return value.value
+    return None
 
 
 def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):
@@ -385,6 +719,7 @@ def populate_source_derived_resource_refs(
     distribution_index=None,
     artifact_graph_cache: dict | None = None,
     session=None,
+    selected_coordinates: frozenset | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows.
 
@@ -395,13 +730,11 @@ def populate_source_derived_resource_refs(
 
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceDerivedContextManagerRefV1,
-        SourceFragmentCoordinateV1,
     )
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
     from sugar_lift_py_tests.ir import _term_content_cid
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
-    from sugar_source_tree.nodes import Call, With
 
     from .dependency_artifact import (
         ResolvedPythonObjectV1,
@@ -425,27 +758,13 @@ def populate_source_derived_resource_refs(
         source_file.unit.source_cid,
         module_identities={},
     )
-    uses = {}
-    for node in source_file.nodes():
-        if not isinstance(node, With):
-            continue
-        for item in node.items:
-            expr = item.context_expr
-            if not isinstance(expr, Call):
-                continue
-            span = expr.line_col_span()
-            coordinate = SourceFragmentCoordinateV1(
-                expr.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
-            uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
-                coordinate,
-                expr,
-                item._exit_face_id(),
-            )
+    uses = _projected_manager_call_uses(source_file)
+    if selected_coordinates is not None:
+        uses = {
+            key: value
+            for key, value in uses.items()
+            if value[0] in selected_coordinates
+        }
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     for receipt in receipts:
         raw_site = receipt.use["useSite"]
@@ -482,9 +801,158 @@ def populate_source_derived_resource_refs(
             kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue
+        # A source-owned suspension is already the native manager testimony
+        # consumed by With._generator_manager_frame.  Install that exact frame
+        # before attempting object-protocol derivation: forcing a generator
+        # function's intentionally empty ordinary body only manufactures the
+        # misleading residual ``non-manager-result:BlockValue``.  The generator
+        # transition remains independently loud when its steps are opaque.
+        from .manager_construction import (
+            ManagerConstructionGapV1,
+            _install_source_call_frame,
+            resolve_source_visible_frame,
+        )
+
+        frame_result = resolve_source_visible_frame(
+            resolved, graph=graph, session=session
+        )
+        if not isinstance(frame_result, ManagerConstructionGapV1):
+            frame, _ = frame_result
+            if frame.generator_steps is not None:
+                _install_source_call_frame(context, call, frame)
+                # Seat the provider Call at the manager-use coordinate so a
+                # bare-Name With head resolves through its reaching binding
+                # rather than by spelling.  Direct Call heads already key the
+                # frame by their own span; the use-site seat is what carries
+                # assigned multi-manager projection.
+                context.source_manager_provider_calls[coordinate] = call
+                continue
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+        from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+        actual_ctx = ReduceContext(temporal=builtin_name_temporal())
+        # Formals whose role is an exception-type operand (raises / warn / external_error).
+        _EXCEPTION_TYPE_FORMALS = frozenset(
+            {
+                "expected",
+                "expected_exception",
+                "expected_exceptions",
+                "exception",
+                "exc",
+                "exc_type",
+                "err_type",
+                "category",
+            }
+        )
+        frame_parameters = ()
+        if not isinstance(frame_result, ManagerConstructionGapV1):
+            _frame_for_params, _ = frame_result
+            frame_parameters = tuple(getattr(_frame_for_params, "parameters", ()) or ())
+
+        def _actual_outcome(node, *, formal_name: str | None = None):
+            # Substitution has already replaced every reaching lexical binding.
+            # A surviving bare builtin is therefore the language-owned value,
+            # not a free formal. NameSugar deliberately represents every other
+            # survivor symbolically, so project this one native floor here.
+            #
+            # Import Attribute exception-class paths (``pkg.Error``) and
+            # provider-gated importorskip heads (``pa.ArrowInvalid``) seal
+            # identity without Attribute floors inventing member success.
+            from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+                AuthenticatedExceptionTypeValue,
+            )
+            from sugar_lift_py_tests.floor.exception_class_value import (
+                ExceptionClassValue,
+            )
+            from sugar_lift_py_tests.outcome import Complete as _Complete
+            from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+                AuthenticatedExceptionTypeSugar,
+            )
+            from sugar_source_tree.nodes import Attribute, Name
+
+            if isinstance(node, Name):
+                builtin = actual_ctx.temporal.value_if_bound(node.id)
+                if builtin is not None:
+                    return _Complete(builtin)
+            # Exception-type formals: seal import / provider-gated identity.
+            if formal_name in _EXCEPTION_TYPE_FORMALS and isinstance(node, Name):
+                identity = None
+                mro = None
+                class_value = None
+                if isinstance(node, Name):
+                    identity = node.unit.exception_type_identity(node)
+                    if identity is None:
+                        identity = node.unit.imported_exception_type_identity(node)
+                    else:
+                        mro = node.unit.exception_type_mro(node)
+                        try:
+                            class_value = node.unit.exception_class_value(node)
+                        except Exception:
+                            class_value = None
+                if identity is not None:
+                    return AuthenticatedExceptionTypeSugar(
+                        node.sugar(),
+                        identity,
+                        mro,
+                        site=node.fragment,
+                        class_value=class_value,
+                    ).desugar(actual_ctx)
+            if isinstance(node, Attribute):
+                from sugar_source_tree.panic import UnattributableRefusal
+
+                from .external_exception_construction import (
+                    ExternalExceptionConstructionGap,
+                    construct_provider_exception_attribute,
+                )
+
+                try:
+                    testimony = construct_provider_exception_attribute(
+                        node,
+                        root=Path(root),
+                        path=Path(path),
+                        graph_cache=graphs,
+                        session=session,
+                        distribution_index=distribution_index,
+                    )
+                except ExternalExceptionConstructionGap as exc:
+                    raise UnattributableRefusal(
+                        owner="provider_exception_type_construction",
+                        blame=node.fragment,
+                        observed=str(exc),
+                        requested="provider-defined exception class testimony",
+                        fix=(
+                            "publish the named provider artifact source; never "
+                            "replace it with an attribute spelling"
+                        ),
+                    ) from exc
+                if testimony is not None:
+                    class_value = testimony.class_value()
+                    return _Complete(
+                        AuthenticatedExceptionTypeValue(
+                            class_value,
+                            testimony.identity,
+                            testimony.ancestry,
+                            class_value,
+                        )
+                    )
+                identity = node.unit.imported_exception_type_identity(node)
+                if identity is not None:
+                    qualified = getattr(identity.args[1], "value", None)
+                    if isinstance(qualified, str) and qualified:
+                        class_value = ExceptionClassValue(qualified)
+                        return _Complete(
+                            AuthenticatedExceptionTypeValue(
+                                class_value, identity, None, class_value
+                            )
+                        )
+            return node.sugar().desugar(actual_ctx)
+
         actuals = []
-        for node in call.args:
-            outcome = node.sugar().desugar()
+        for index, node in enumerate(call.args):
+            formal_name = (
+                frame_parameters[index] if index < len(frame_parameters) else None
+            )
+            outcome = _actual_outcome(node, formal_name=formal_name)
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
@@ -505,7 +973,7 @@ def populate_source_derived_resource_refs(
                     keyword_actuals = []
                     actuals = []
                     break
-                outcome = keyword.value.sugar().desugar()
+                outcome = _actual_outcome(keyword.value, formal_name=keyword.arg)
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []
@@ -542,36 +1010,21 @@ def populate_source_derived_resource_refs(
         from .manager_protocol_construction import ConstructedManagerProtocolV1
 
         if not isinstance(behavior, ConstructedManagerBehaviorV1):
-            # Stage-keyed residual: opaque-call-target:sorted, force-floor:… —
-            # never collapse assertion-membrane mass into a single opaque label.
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                _construction_gap_kind(behavior),
-            )
+            # Stage-keyed residual — never collapse assertion-membrane mass into
+            # a single opaque label, and never fuse the stage with its data:
+            # `value-call-target` is the key, the callee names are the row.
+            kind, detail = _gap_kind_and_detail(behavior)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
         if not isinstance(protocol, ConstructedManagerProtocolV1):
-            kind = getattr(protocol, "kind", None) or "protocol-construction"
-            detail = getattr(protocol, "detail", None)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                f"{kind}:{detail}" if detail else str(kind),
-            )
+            kind, detail = _gap_kind_and_detail(protocol)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         summary = derive_manager_summary(protocol, behavior=behavior)
         if not isinstance(summary, DerivedManagerSummaryV1):
-            kind = getattr(summary, "kind", None) or "summary-derivation"
-            detail = getattr(summary, "detail", None)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                f"{kind}:{detail}" if detail else str(kind),
-            )
+            kind, detail = _gap_kind_and_detail(summary)
+            _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
         context.source_derived_contract_refs[coordinate] = (
             SourceDerivedContextManagerRefV1(
@@ -584,19 +1037,104 @@ def populate_source_derived_resource_refs(
         )
 
 
-def _construction_gap_kind(gap) -> str:
+def _projected_manager_call_uses(source_file):
+    """Project ordinary reaching assignments into context-manager call uses.
+
+    ``WithItem.substitute`` retains the consumer's immutable use coordinate
+    while the existing block substitution transaction replaces a bare Name
+    with its reaching value.  Reading that projection preserves shadowing and
+    undecided values without creating a second binding mechanism here.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_source_tree.nodes import Call, With
+
+    uses = {}
+
+    def collect(root, *, projected_names: bool) -> None:
+        for node in root.walk():
+            if not isinstance(node, With):
+                continue
+            for item in node.items:
+                expr = item.context_expr
+                if not isinstance(expr, Call):
+                    continue
+                if not projected_names and hasattr(item, "manager_use_site_start_line"):
+                    continue
+                span = expr.line_col_span()
+                start_line, start_col, end_line, end_col = item._manager_use_site_span()
+                if projected_names and (
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                ) == (
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                ):
+                    # The projected frame also contains ordinary direct-call
+                    # managers.  Their existing source node is authoritative;
+                    # only a call borrowed from another locus is an assigned
+                    # manager projection.
+                    continue
+                coordinate = SourceFragmentCoordinateV1(
+                    expr.unit.source_cid,
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                )
+                uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
+                    coordinate,
+                    expr,
+                    item._exit_face_id(),
+                )
+
+    # Preserve the original direct-call route exactly.
+    collect(source_file.root, projected_names=False)
+
+    # Project frames that contain a bare-Name manager — single-item
+    # ``with m:`` and multi-item ``with m, n:`` alike.  The multi-item
+    # shape was the first enrolled reproducer (#6489); a returned resource
+    # assigned once and consumed as a single Name is the same projection,
+    # not a second binding mechanism.  Module-wide substitution is still
+    # avoided: only functions that actually write a bare-Name manager are
+    # projected, so unrelated frames do not demand contracts.
+    for function in source_file.functions():
+        if not any(
+            isinstance(node, With)
+            and any(item.context_expr.kind == "Name" for item in node.items)
+            for node in function.walk()
+        ):
+            continue
+        collect(function.substitute({}), projected_names=True)
+
+    return uses
+
+
+def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
+    """Read a producer's ALREADY-SEPARATE kind and detail, unfused.
+
+    Every producer that reaches here declares ``kind`` as a closed ``Literal``
+    with ``detail`` as its own field.  This function used to be
+    ``_construction_gap_kind``, which returned ``f"{kind}:{detail}"`` and
+    truncated the result to 80 chars -- a key that can be truncated is not an
+    identity, and the fused strings it minted are what put a callee spelling at
+    79% of the pinned-pandas resolution board.  The structure was never
+    missing; the reporting layer was throwing it away and rebuilding a worse
+    one from a string.
+    """
     kind = getattr(gap, "kind", None) or "no-derived-contract"
     detail = getattr(gap, "detail", None)
-    if detail is None or detail == "":
-        return str(kind)
-    # Keep kind:detail compact for census keys (first free-name / first panic).
-    text = str(detail)
-    if len(text) > 80:
-        text = text[:77] + "..."
-    return f"{kind}:{text}"
+    return str(kind), (str(detail) if detail else None)
 
 
-def _install_derivation_gap(context, coordinate, receipt, kind: str) -> None:
+def _install_derivation_gap(
+    context, coordinate, receipt, kind: str, detail: str | None = None
+) -> None:
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
     )
@@ -607,4 +1145,5 @@ def _install_derivation_gap(context, coordinate, receipt, kind: str) -> None:
         receipt.target_symbol,
         kind,
         (),
+        detail,
     )

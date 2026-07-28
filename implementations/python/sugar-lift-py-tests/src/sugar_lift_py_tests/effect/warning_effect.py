@@ -15,6 +15,10 @@ class WarningEffect:
     category_name: str
     message: str | None = None
     blame: str | None = None
+    # Source-authenticated identity of the warning category.  A spelling is
+    # diagnostic only; completed-face assertion routing requires this term and
+    # refuses when the producer did not construct it.
+    category_identity: object | None = None
 
     @property
     def reason(self) -> str:

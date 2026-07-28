@@ -48,6 +48,7 @@ class TryStarSugar(Sugar):
                 continue
             if not isinstance(exit_.effect, GroupedRaiseEffect):
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="TryStarSugar.desugar",
                     observed=type(exit_.effect).__name__,
                     requested="GroupedRaiseEffect for except* routing",
@@ -57,26 +58,55 @@ class TryStarSugar(Sugar):
             residual = original
             handler_effects = []
             completed_states = []
-            for matcher, handler_body, slot_id in self.handlers:
-                expected = matcher.desugar(ctx)
-                if not isinstance(expected, Complete):
-                    raise SugarNotWritten(
-                        owner="TryStarSugar.desugar",
-                        observed="symbolic except* type",
-                        requested="authenticated subtype partition operand",
-                        fix="keep symbolic subtype partition typed loud",
+            for matchers, handler_body, slot_id in self.handlers:
+                # One handler, one body run, however many types it lists. Each
+                # type partitions what the previous type left behind, and the
+                # matched pieces are regrouped into ONE subgroup carrying the
+                # original topology -- so `except* (A, B)` over a group holding
+                # both binds a single group of both leaves rather than entering
+                # the body twice.
+                if not isinstance(matchers, tuple):
+                    matchers = (matchers,)
+                handler_residual = residual
+                matched_parts = []
+                for matcher in matchers:
+                    expected = matcher.desugar(ctx)
+                    if not isinstance(expected, Complete):
+                        raise SugarNotWritten(
+                            blame=self.site,
+                            owner="TryStarSugar.desugar",
+                            observed="symbolic except* type",
+                            requested="authenticated subtype partition operand",
+                            fix="keep symbolic subtype partition typed loud",
+                        )
+                    routed = route_except_star(
+                        handler_residual,
+                        expected.value,
+                        slot_id=slot_id,
+                        site=self.site,
                     )
-                routed = route_except_star(
-                    residual, expected.value, slot_id=slot_id, site=self.site
-                )
-                if routed is None or not routed.matched.children:
+                    if routed is None:
+                        continue
+                    if routed.matched.children:
+                        matched_parts.append(routed.matched)
+                    handler_residual = routed.residual
+                if not matched_parts:
                     continue
-                handler_ctx = bind_in_flight_effect(ctx, slot_id, routed.matched)
+                matched = regroup_except_star(residual, matched_parts)
+                residual = handler_residual
+                handler_ctx = bind_in_flight_effect(
+                    ctx, slot_id, matched, blame=self.site
+                )
+                if slot_id is not None:
+                    observer = getattr(handler_ctx, "with_observed_effect", None)
+                    if observer is not None:
+                        handler_ctx = observer(slot_id, matched)
                 handler_exits = promote_raise_halts(
                     reduce_block_to_exitset(handler_body, handler_ctx)
                 )
                 if len(handler_exits.exits) != 1:
                     raise SugarNotWritten(
+                        blame=self.site,
                         owner="TryStarSugar.desugar",
                         observed="symbolically branching except* handler",
                         requested="one closed handler exit for exact regrouping",
@@ -87,7 +117,6 @@ class TryStarSugar(Sugar):
                         handler_effects.append(handler_exit.effect)
                     elif isinstance(handler_exit, Completed):
                         completed_states.append(handler_exit.value)
-                residual = routed.residual
             outgoing = list(handler_effects)
             if residual.children:
                 outgoing.append(residual)

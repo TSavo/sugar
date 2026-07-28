@@ -36,6 +36,33 @@ class AttributeSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: receiver.attribute(self.name, self.site)
-        )
+        def project(receiver):
+            from sugar_lift_py_tests.floor import CallSiteValue
+
+            formal_coordinate = getattr(receiver, "formal_coordinate", None)
+            if formal_coordinate is not None:
+                from sugar_lift_py_tests.caller_parameter_contract import (
+                    NativeOperationExitCarrierV1,
+                )
+                from sugar_lift_py_tests.floor import StringValue
+
+                return NativeOperationExitCarrierV1.mint(
+                    site=self.site,
+                    operator="attribute_named",
+                    operands=(receiver, StringValue(self.name)),
+                    coordinates=(formal_coordinate, None),
+                )
+
+            if (
+                isinstance(receiver, CallSiteValue)
+                and receiver.body is not None
+                and receiver.source_call_frame_cid is not None
+            ):
+                receiver = receiver.force_floor(
+                    ctx,
+                    owner="authenticated attribute receiver",
+                    project_callsite=False,
+                )
+            return receiver.attribute(self.name, self.site)
+
+        return self.receiver.desugar(ctx).and_then(project)

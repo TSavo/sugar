@@ -19,6 +19,15 @@ class BlockValue(FloorValue):
     fall_through: tuple = ()
     can_fall_through: bool = True
 
+    def guarded(self, formula):
+        """Guard every suite entry through that entry's own Floor law."""
+        from dataclasses import replace
+
+        return replace(
+            self,
+            statements=tuple(entry.guarded(formula) for entry in self.statements),
+        )
+
     def contribution(self):
         # A block inside a record splices: its entries ARE the entries.
         return self.statements
@@ -42,11 +51,19 @@ class BlockValue(FloorValue):
         # still reduce the assert on the non-exception path.
         from sugar_lift_py_tests.floor.raise_value import RaiseValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
         if any(type(entry) is ReturnValue for entry in self.statements):
             return FollowStep.halt(keeps_rest=True)
         if any(type(entry) is RaiseValue for entry in self.statements):
+            return FollowStep.halt(keeps_rest=False)
+        if any(
+            isinstance(entry, Incomplete)
+            and not entry.branch_conditions
+            and not entry.follow().continues
+            for entry in self.statements
+        ):
             return FollowStep.halt(keeps_rest=False)
         return FollowStep.continue_with()
 
@@ -97,7 +114,6 @@ class BlockValue(FloorValue):
             runtime_effect_evidence,
         )
         from sugar_lift_py_tests.floor.return_value import ReturnValue
-        from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.outcome import Incomplete
 
         op_label = getattr(operation, "operator", kind)
@@ -123,10 +139,11 @@ class BlockValue(FloorValue):
                     **runtime_effect_evidence(f"py.block_{kind}", op_label, operation),
                 )
             )
-        return perform_operation(
-            owner=operation.owner,
-            blame=operation.blame,
-            receiver=exit_value,
-            operation=operation,
-            ctx=ctx,
-        )
+        # The central `perform_operation` dispatcher died with the operations
+        # layer (b0aadef50). The rebuilt layer has no centre: an operation
+        # submits ITSELF to a value (`operations/sequence_projection_operation.py
+        # ::submit` — "ask the value what it unpacks to; the value owns the
+        # answer"), which is the same `getattr(receiver, method_name)(op, ctx)`
+        # the dispatcher performed. A value with no arm still panics loudly:
+        # `FloorValue` owns a construction-gap base for every operation method.
+        return operation.submit(exit_value, ctx)

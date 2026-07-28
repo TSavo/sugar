@@ -33,7 +33,7 @@ ENTRYPOINT ["/usr/local/bin/sugar-managed-entrypoint"]
 # are installed exactly; Sugar's Python packages execute from /workspace/sugar.
 FROM core AS python-test
 ARG PYTEST_VERSION=9.1.1
-ENV PYTHONPATH=/workspace/sugar/implementations/python/libsugar-py/src:/workspace/sugar/implementations/python/sugar-build-witness/src:/workspace/sugar/implementations/python/sugar-emit-python-hypothesis/src:/workspace/sugar/implementations/python/sugar-emit-python-pytest/src:/workspace/sugar/implementations/python/sugar-emit-python-unittest/src:/workspace/sugar/implementations/python/sugar-lift-py-pytest-witness/src:/workspace/sugar/implementations/python/sugar-lift-py-tests/src:/workspace/sugar/implementations/python/sugar-lift-python-source/src
+ENV PYTHONPATH=/workspace/sugar/implementations/python/libsugar-py:/workspace/sugar/implementations/python/sugar-build-witness/src:/workspace/sugar/implementations/python/sugar-emit-python-hypothesis/src:/workspace/sugar/implementations/python/sugar-emit-python-pytest/src:/workspace/sugar/implementations/python/sugar-emit-python-unittest/src:/workspace/sugar/implementations/python/sugar-lift-py-pytest-witness/src:/workspace/sugar/implementations/python/sugar-lift-py-tests/src:/workspace/sugar/implementations/python/sugar-lift-python-source/src:/workspace/sugar/implementations/python/sugar-source-tree/src
 RUN python -m pip install --no-cache-dir \
       pytest=="${PYTEST_VERSION}" \
       blake3==1.0.9 cbor2==6.1.3 cffi==2.1.0 hypothesis==6.156.6 \
@@ -52,10 +52,12 @@ RUN apt-get update \
 FROM core AS python-scientific
 ARG NUMPY_VERSION=2.5.1
 ARG PANDAS_VERSION=3.0.3
+ARG PYARROW_VERSION=22.0.0
 RUN python -m pip install --no-cache-dir \
       numpy=="${NUMPY_VERSION}" pandas=="${PANDAS_VERSION}" \
+      pyarrow=="${PYARROW_VERSION}" \
       python-dateutil==2.9.0.post0 six==1.17.0 \
- && python -c 'import numpy, pandas; assert numpy.__version__ == "2.5.1"; assert pandas.__version__ == "3.0.3"'
+ && python -c 'import numpy, pandas, pyarrow; assert numpy.__version__ == "2.5.1"; assert pandas.__version__ == "3.0.3"; assert pyarrow.__version__ == "22.0.0"'
 
 FROM core AS solver-coq
 ARG COQ_DEBIAN_VERSION=8.16.1+dfsg-1+b2
@@ -106,14 +108,16 @@ FROM python-test AS python-lift-closure
 ARG Z3_DEBIAN_VERSION=4.8.12-3.1
 ARG NUMPY_VERSION=2.5.1
 ARG PANDAS_VERSION=3.0.3
+ARG PYARROW_VERSION=22.0.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends z3="${Z3_DEBIAN_VERSION}" \
  && rm -rf /var/lib/apt/lists/* \
  && python -m pip install --no-cache-dir \
       numpy=="${NUMPY_VERSION}" pandas=="${PANDAS_VERSION}" \
+      pyarrow=="${PYARROW_VERSION}" \
       python-dateutil==2.9.0.post0 six==1.17.0 \
       scikit-learn==1.9.0 scipy==1.18.0 joblib==1.5.3 threadpoolctl==3.6.0 narwhals==2.24.0 \
- && python -c 'import numpy, pandas; assert numpy.__version__ == "2.5.1"; assert pandas.__version__ == "3.0.3"' \
+ && python -c 'import numpy, pandas, pyarrow; assert numpy.__version__ == "2.5.1"; assert pandas.__version__ == "3.0.3"; assert pyarrow.__version__ == "22.0.0"' \
  && z3 --version
 
 # The maximal named-task closure is deliberately cumulative. It does not rely

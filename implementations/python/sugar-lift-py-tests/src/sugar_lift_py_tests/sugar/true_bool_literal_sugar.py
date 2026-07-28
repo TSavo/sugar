@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.guard_stable_value import GuardStableValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 @dataclass(frozen=True)
-class TrueBoolLiteralSugar(Sugar, FloorValue):
+class TrueBoolLiteralSugar(Sugar, GuardStableValue):
     """The literal `True`. It holds no value -- the boolean IS the type. It is its own
     floor value and it stands on the bool floor as True: it emits the then-face,
     always, with no fork.
@@ -124,6 +124,10 @@ class TrueBoolLiteralSugar(Sugar, FloorValue):
 
     def callsites(self):
         return ()
+
+    def denotes_value(self) -> bool:
+        """This floor value denotes ``True``."""
+        return True
 
     def to_term(self, *, owner: str):
         del owner

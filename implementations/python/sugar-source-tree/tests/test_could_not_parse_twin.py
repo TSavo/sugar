@@ -16,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-libcst = pytest.importorskip("libcst", reason="LibCST backend not installed")
+from declared_corpus import OPTIONAL_PROVIDER, optional_law_import
+
+libcst = optional_law_import(
+    "libcst", OPTIONAL_PROVIDER, "LibCST backend not installed"
+)
 
 from conftest import oracle_source_file
 from sugar_source_tree.backend import BackendCouldNotParse  # noqa: E402

@@ -25,7 +25,9 @@ runs:
     - name: Ensure sugarbin hash tool (b3sum)
       shell: bash
       run: |
-        if ! command -v b3sum >/dev/null 2>&1; then
-          tools/ci-apt-install.sh b3sum || cargo install b3sum --locked
-        fi
+        # tools/ci-apt-install.sh owns b3sum acquisition and pins the version
+        # from sugar-build.toml. The old fallback here was an unpinned
+        # `cargo install b3sum --locked`, which could put a different hashing
+        # tool version on PATH than the one the build contract names.
+        tools/ci-apt-install.sh b3sum
         b3sum --version | head -1

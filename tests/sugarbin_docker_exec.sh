@@ -91,6 +91,8 @@ build_line="$(head -1 "$tmp/docker.log")"
 line="$(tail -1 "$tmp/docker.log")"
 [[ "$build_line" == *"'$core_ref'"* && "$build_line" == *"bin/sugarbin"* ]] || fail "artifact was not resolved inside managed core: $build_line"
 [[ "$build_line" == *"dst=/root/.cache/sugar/binaries"* ]] || fail "managed builder omitted persistent verified cache"
+[[ "$build_line" == *"dst=/root/.cache/sugar/binary-shelf-v2,readonly"* ]] || fail "ordinary managed resolution shelf is missing or writable"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=0'"* ]] || fail "ordinary managed resolution retained an implicit build fallback"
 [[ "$build_line" == *"CARGO_TARGET_DIR=/managed-target"* ]] || fail "managed builder reused ambient Cargo target"
 [[ "$build_line" == *"SUGAR_BINARY_TARGET_ROOT=/managed-target"* ]] || fail "managed manifest root diverges from Cargo target"
 [[ "$build_line" == *"dst=/managed-target"* ]] || fail "managed target cache was not mounted"
@@ -100,6 +102,11 @@ if grep -F 'bin/sugarbin --platform' "$tmp/ssh.log" | grep -Fvq "'docker' 'run'"
 fi
 [[ "$line" == *"'$python_test_ref'"* ]] || fail "python-unit did not select managed test closure"
 [[ "$line" == *"'python' '-m' 'pytest' '-q'"* ]] || fail "python-unit command did not always execute"
+
+: >"$tmp/docker.log"
+SUGAR_BINARY_ALLOW_BUILD=0 run run --host bx --env SUGAR_BINARY_ALLOW_BUILD --task python-unit -- -q >/dev/null
+build_line="$(head -1 "$tmp/docker.log")"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=0'"* ]] || fail "managed artifact resolver did not inherit fail-fast binary policy: $build_line"
 : >"$tmp/docker.log"
 solver_ref="$(python3 "$repo/tools/sugar-build/contract.py" resolve-environment docker:solver-z3 | python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])')"
 [[ "$solver_ref" == *@sha256:* && "$solver_ref" != "$core_ref" ]] || fail "solver closure did not select its own fixture image"
@@ -111,6 +118,7 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" == *"dst=/workspace/sugar"* ]] || fail "workspace mount missing"
 [[ "$line" == *"src=C:"* ]] || fail "WSL bind source was not translated"
 [[ "$line" == *"dst=/opt/sugar/bin,readonly"* ]] || fail "artifact mount not read-only"
+[[ "$line" == *"dst=/root/.cache/sugar/binary-shelf-v2,readonly"* ]] || fail "managed task cannot consume exact shelf payloads"
 [[ "$line" == *"required-artifacts.json,readonly"* ]] || fail "stamp mount not read-only"
 [[ "$line" != *"--env' 'SUGAR_BIN="* ]] || fail "orchestrator forged SUGAR_BIN before manifest verification"
 [[ "$entrypoint" == *'export SUGAR_BIN=/opt/sugar/bin/sugar'* ]] || fail "entrypoint does not inject verified sugar"
@@ -124,6 +132,28 @@ line="$(tail -1 "$tmp/docker.log")"
 run build --host bx --env docker:core --profile debug --needs sugar >/dev/null
 build_line="$(head -1 "$tmp/docker.log")"
 [[ "$build_line" == *"--profile"* && "$build_line" == *"debug"* ]] || fail "managed artifact profile did not reach the core builder"
+: >"$tmp/docker.log"
+
+SUGAR_BINARY_ALLOW_BUILD=1 SUGAR_BINARY_PUBLISH=1 SUGAR_BINARY_REQUIRE_PUBLISH=1 \
+  run build --host bx --env docker:core \
+    --env SUGAR_BINARY_ALLOW_BUILD --env SUGAR_BINARY_PUBLISH \
+    --env SUGAR_BINARY_REQUIRE_PUBLISH --needs sugar >/dev/null
+build_line="$(head -1 "$tmp/docker.log")"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_ALLOW_BUILD=1'"* ]] || fail "explicit managed publisher lost build authority"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_PUBLISH=1'"* ]] || fail "explicit managed publisher lost publish authority"
+[[ "$build_line" == *"'--env' 'SUGAR_BINARY_REQUIRE_PUBLISH=1'"* ]] || fail "explicit managed publisher did not require a complete shelf cell"
+[[ "$build_line" != *"SUGAR_BINARY_PUBLISH=0 bin/sugarbin"* ]] || fail "managed build script overrode explicit publish authority"
+[[ "$build_line" == *"dst=/root/.cache/sugar/binary-shelf-v2"* && "$build_line" != *"dst=/root/.cache/sugar/binary-shelf-v2,readonly"* ]] || fail "explicit managed publisher did not receive the writable shelf"
+: >"$tmp/docker.log"
+
+status=0
+SUGAR_BINARY_ALLOW_BUILD=1 SUGAR_BINARY_PUBLISH=1 SUGAR_BINARY_REQUIRE_PUBLISH=1 \
+  run run --host bx --env SUGAR_BINARY_ALLOW_BUILD \
+    --env SUGAR_BINARY_PUBLISH --env SUGAR_BINARY_REQUIRE_PUBLISH \
+    --task python-unit -- -q >"$tmp/run-publish.out" 2>"$tmp/run-publish.err" || status=$?
+[[ "$status" == 2 ]] || fail "managed run accepted provisioning authority: status=$status"
+grep -Fq 'provisioning authority requires explicit sugarbin build' "$tmp/run-publish.err" || fail "managed run provisioning refusal was not named"
+[[ ! -s "$tmp/docker.log" ]] || fail "managed run provisioning refusal happened after Docker"
 : >"$tmp/docker.log"
 
 run run --host bx --env docker:core -- sh -c 'echo miss' >/dev/null

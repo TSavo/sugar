@@ -97,6 +97,7 @@ class Span:
     def __post_init__(self) -> None:
         if self.start < 0 or self.end < self.start:
             backend_defect(
+                blame=self,
                 owner="spans.Span",
                 observed=f"degenerate span [{self.start}, {self.end})",
                 requested="0 <= start <= end",
@@ -143,6 +144,7 @@ class LineTable:
         """1-based line + 0-based codepoint column -> absolute offset."""
         if line < 1 or line > len(self._line_starts):
             backend_defect(
+                blame=(line, col),
                 owner="spans.LineTable.offset",
                 observed=f"line {line} outside 1..{len(self._line_starts)}",
                 requested="a position inside the source",
@@ -154,6 +156,7 @@ class LineTable:
         """Absolute codepoint offset -> (1-based line, 0-based codepoint col)."""
         if offset < 0 or offset > len(self.source):
             backend_defect(
+                blame=offset,
                 owner="spans.LineTable.line_col",
                 observed=f"offset {offset} outside 0..{len(self.source)}",
                 requested="an offset inside the source",
@@ -171,6 +174,7 @@ class LineTable:
         cp_col = self._byte_map(line).get(byte_col)
         if cp_col is None:
             backend_defect(
+                blame=(line, byte_col),
                 owner="spans.LineTable.offset_from_byte_col",
                 observed=f"byte col {byte_col} is not a codepoint boundary on line {line}",
                 requested="a byte column landing on a codepoint boundary",

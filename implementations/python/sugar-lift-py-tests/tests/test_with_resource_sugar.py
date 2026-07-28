@@ -1,18 +1,21 @@
-"""Unit twins for resource ``WithResourceSugar`` — parametric exit, no desugar builds.
-
-Production ``open(...)`` stays RuntimeSelected.
-"""
+"""Unit twins for the authenticated builtin resource lifecycle."""
 
 from __future__ import annotations
 
+import ast
 import inspect
+
+import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
     NeverSuppresses,
     NeverSuppressesDispositionV1,
+    ReturnTruthinessDispositionV1,
     RuntimeSelected,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.effect import LoopControlEffect, RaiseEffect
+from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.floor.manager_coordinate import (
@@ -36,6 +39,28 @@ from sugar_lift_py_tests.sugar.resource_coord_sugar import (
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+
+
+def test_authenticated_pandas_303_builtin_open_resource_coordinate():
+    """Real corpus half; native-definition lifecycle twins below are synthetic."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.file_count) == ("3.0.3", 1421)
+    relative = "tests/series/methods/test_to_csv.py"
+    source = (corpus.root / relative).read_text(encoding="utf-8")
+    site = next(
+        node
+        for node in ast.walk(ast.parse(source, filename=relative))
+        if isinstance(node, ast.With)
+        and node.lineno == 57
+        and isinstance(node.items[0].context_expr, ast.Call)
+    )
+    item = site.items[0]
+    assert ast.get_source_segment(source, item.context_expr) == (
+        'open(path, "w", encoding="utf-8")'
+    )
+    assert ast.get_source_segment(source, item.optional_vars) == "outfile"
 
 
 class _FixedSugar(Sugar):
@@ -124,8 +149,19 @@ def _resource(
 
             exit_sugar = _ProbeExit()
 
+    from dataclasses import replace
+    from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+    enter_definition = SourceFragmentCoordinateV1("blake3-512:" + "e" * 128, 1, 0, 1, 1)
+    exit_definition = SourceFragmentCoordinateV1("blake3-512:" + "x" * 128, 2, 0, 2, 1)
+    if isinstance(enter, MethodCallSugar):
+        enter = replace(enter, native_definition_coordinate=enter_definition)
+    if isinstance(exit_sugar, MethodCallSugar):
+        exit_sugar = replace(exit_sugar, native_definition_coordinate=exit_definition)
+
     return WithResourceSugar(
-        manager=manager or _FixedSugar(Complete(_FloorValue("mgr"))),
+        manager=manager
+        or _FixedSugar(Complete(ObjectValue("native-resource", (), identity="mgr"))),
         manager_slot_id=manager_slot_id,
         enter=enter or _FixedSugar(Complete(_FloorValue("entered"))),
         exit=exit_sugar,
@@ -133,6 +169,8 @@ def _resource(
         body=body if body is not None else (_Pass(),),
         disposition=disposition or NeverSuppresses(),
         enter_slot_id=enter_slot_id,
+        enter_definition=enter_definition,
+        exit_definition=exit_definition,
         site=None,
     )
 
@@ -140,7 +178,9 @@ def _resource(
 def test_manager_expression_evaluated_exactly_once():
     seen = []
     sugar = _resource(
-        manager=_FixedSugar(Complete(_FloorValue("mgr")), probe=seen),
+        manager=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="mgr")), probe=seen
+        ),
         body=(_Pass(),),
     )
     sugar.desugar()
@@ -191,6 +231,96 @@ def test_enter_halt_skips_body_and_exit():
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert len(reds) == 1
     assert reds[0].effect == enter_halt
+
+
+def test_completed_body_runs_exit_with_three_explicit_none_coordinates():
+    """Face 2: normal completion authenticates all three None arguments."""
+    out = _resource(body=(_Pass(),), exit=_FixedSugar(Complete(TermValue(0)))).desugar()
+    invs = [entry for entry in out.value.contribution() if isinstance(entry, InvValue)]
+    exit_facts = [
+        inv
+        for inv in invs
+        if getattr(getattr(inv.formula, "args", (None,))[0], "name", None)
+        in {"exit_type", "exit_value", "exit_traceback"}
+    ]
+    assert len(exit_facts) == 3
+    assert {fact.formula.args[0].name for fact in exit_facts} == {
+        "exit_type",
+        "exit_value",
+        "exit_traceback",
+    }
+    assert all(fact.formula.args[1].value == "None" for fact in exit_facts)
+
+
+def test_raised_body_routes_exact_face_coordinates_to_exit():
+    """Face 3: type/value/traceback coordinates share the exact raised face."""
+    face_id = "raised-face-17"
+    effect = RaiseEffect(
+        exception_name="ValueError",
+        occurrence="source.py:17:8",
+    )
+    exit_sugar = _parametric_exit(face_id=face_id)
+    type_coord, value_coord, traceback_coord = (
+        argument.desugar().value for argument in exit_sugar.args
+    )
+    assert type_coord == ExitTypeCoordinate(face_id, None)
+    assert value_coord == ExitValueCoordinate(face_id, None)
+    assert traceback_coord == ExitTracebackCoordinate(face_id, None)
+
+    binding = ExitFaceBinding.from_body_exit(face_id, Halted(true_guard(), effect))
+    assert binding.face_id == face_id
+    facts = binding.to_facts()
+    assert {fact.formula.args[0].args[0].value for fact in facts} == {face_id}
+    assert any(
+        getattr(fact.formula.args[1], "value", None) == "ValueError" for fact in facts
+    )
+    assert any(
+        getattr(fact.formula.args[1], "name", None) == "python:raise_effect_occurrence"
+        and fact.formula.args[1].args[0].value == "source.py:17:8"
+        for fact in facts
+    )
+
+
+def test_falsy_source_exit_preserves_the_exact_original_halt():
+    """Face 4: falsity restores the same effect and pre-effect state objects."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:4:2")
+    state = ObjectValue("native-resource", (), identity="before-raise")
+    incoming = Halted(true_guard(), effect, state)
+    routed = ExitSet((incoming,)).and_exit_truthiness(
+        ExitSet.completed(TermValue(False)), site="exit-site"
+    )
+    assert len(routed.exits) == 1
+    surviving = routed.exits[0]
+    assert isinstance(surviving, Halted)
+    assert surviving.effect is effect
+    assert surviving.state is state
+
+
+def test_truthy_source_exit_suppresses_the_original_raise():
+    """Face 5: source-testified truth consumes the raised edge."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:5:2")
+    routed = ExitSet((Halted(true_guard(), effect),)).and_exit_truthiness(
+        ExitSet.completed(TermValue(True)), site="exit-site"
+    )
+    assert all(not isinstance(face, Halted) for face in routed.exits)
+
+
+def test_undecided_source_exit_keeps_both_faces_factored():
+    """Face 6: UNKNOWN truth is neither false nor true; both arms survive."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:6:2")
+    routed = ExitSet((Halted(true_guard(), effect),)).and_exit_truthiness(
+        ExitSet.completed(SymbolicValue(make_var("exit_result"))), site="exit-site"
+    )
+    assert {type(face) for face in routed.exits} == {Completed, Halted}
+    halted = next(face for face in routed.exits if isinstance(face, Halted))
+    assert halted.effect is effect
+    assert len({partition for face in routed.exits for partition in face.faces}) == 2
 
 
 def test_never_suppresses_restores_body_halt():
@@ -271,6 +401,73 @@ def test_runtime_selected_not_guessed():
     assert len(reds) == 1
 
 
+@pytest.mark.parametrize(
+    ("exit_value", "halt_count"), [(TermValue(1), 0), (TermValue(0), 1)]
+)
+def test_native_exit_return_truthiness_decides_raise_suppression(
+    exit_value, halt_count
+):
+    """Synthetic extension: the native definition's real return decides."""
+    out = _resource(
+        body=(_Raise("ValueError"),),
+        exit=_FixedSugar(Complete(exit_value)),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    raises = [
+        entry
+        for entry in out.value.contribution()
+        if isinstance(entry, Incomplete)
+        and getattr(entry.effect, "exception_name", None) == "ValueError"
+    ]
+    assert len(raises) == halt_count
+
+
+def test_native_undecided_exit_return_keeps_both_suppression_faces():
+    """Load-bearing lying twin: unknown truth may never swallow the halt."""
+    out = _resource(
+        body=(_Raise("ValueError"),),
+        exit=_FixedSugar(Complete(SymbolicValue(make_var("exit_result")))),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    contributions = out.value.contribution()
+    assert any(
+        isinstance(entry, Incomplete)
+        and getattr(entry.effect, "exception_name", None) == "ValueError"
+        for entry in contributions
+    )
+    assert out.value.can_fall_through
+
+
+def test_truthy_native_exit_runs_but_cannot_suppress_loop_transfer():
+    """Truthy exit suppresses exceptions, never break/continue/return control."""
+    cid = "blake3-512:" + "a" * 128
+    transfer = LoopControlEffect("break", cid, cid)
+    exit_runs = []
+    out = _resource(
+        body=(_FixedSugar(Incomplete(transfer)),),
+        exit=_FixedSugar(Complete(TermValue(1)), probe=exit_runs),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    assert exit_runs == [1]
+    assert any(
+        isinstance(entry, Incomplete) and entry.effect == transfer
+        for entry in out.value.contribution()
+    )
+
+
+def test_native_exit_runs_on_early_return_value():
+    from sugar_lift_py_tests.floor import ReturnValue
+
+    exit_runs = []
+    out = _resource(
+        body=(_FixedSugar(Complete(ReturnValue(TermValue(7)))),),
+        exit=_FixedSugar(Complete(TermValue(0)), probe=exit_runs),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    assert exit_runs == [1]
+    assert any(isinstance(entry, ReturnValue) for entry in out.value.contribution())
+
+
 def test_completed_body_survives_never_suppresses():
     sugar = _resource(body=(_Pass(),))
     out = sugar.desugar()
@@ -281,6 +478,113 @@ def test_completed_body_survives_never_suppresses():
         and getattr(getattr(e, "effect", None), "exception_name", None)
     ]
     assert reds == []
+
+
+def test_resource_exit_runs_on_the_completed_and_the_halted_face(monkeypatch):
+    """LAW (E1): `__exit__` runs on EVERY outgoing body edge, not the happy one.
+
+    Pinned through `and_exit`, which is the ONE algebra that carries the
+    contract: it hands each incoming face -- completed or halted -- to the
+    disposition, and the disposition decides only whether that face leaves as a
+    completion or a halt. Observing WHICH method the router calls would pin the
+    mechanism instead of the law, so this asserts the faces that reach the
+    contract and the verdicts that come back.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    original = ExitSet.and_exit
+    incoming_kinds = []
+
+    def observe(incoming, exit_es, *, disposition):
+        incoming_kinds.append(type(incoming.exits[0]))
+        return original(incoming, exit_es, disposition=disposition)
+
+    monkeypatch.setattr(ExitSet, "and_exit", observe)
+
+    completed = _resource(body=(_Pass(),)).desugar()
+    halted = _resource(body=(_Raise("ValueError"),)).desugar()
+
+    assert incoming_kinds == [Completed, Halted]
+    assert completed.value.can_fall_through
+    assert any(
+        isinstance(entry, Incomplete)
+        and getattr(entry.effect, "exception_name", None) == "ValueError"
+        for entry in halted.value.contribution()
+    )
+
+
+def test_lying_resource_exit_cannot_skip_the_halted_face(monkeypatch):
+    """BITE: a completion-only exit implementation changes the result."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    original = ExitSet.and_exit
+
+    def completion_only(incoming, exit_es, *, disposition):
+        if isinstance(incoming.exits[0], Halted):
+            return ExitSet.completed("exit-skipped")
+        return original(incoming, exit_es, disposition=disposition)
+
+    monkeypatch.setattr(ExitSet, "and_exit", completion_only)
+    out = _resource(body=(_Raise("ValueError"),)).desugar()
+
+    with pytest.raises(AssertionError):
+        assert any(
+            isinstance(entry, Incomplete)
+            and getattr(entry.effect, "exception_name", None) == "ValueError"
+            for entry in out.value.contribution()
+        )
+
+
+def test_never_suppresses_needs_no_second_cleanup_algebra():
+    """LAW: `and_exit` under NeverSuppresses IS `and_finally`, face for face.
+
+    #6401 proposed routing NeverSuppresses through `and_finally` so cleanup ran
+    on both edges. It already does: for both spellings of the contract, on a
+    completed AND a halted body face, the two produce identical exits. Routing
+    one disposition through a different algebra would therefore have changed
+    nothing except adding an asker -- a branch on WHAT KIND the disposition is,
+    which is the shape the floor exists to delete.
+
+    This twin is why that branch is not in the tree.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
+    faces = (
+        Completed(true_guard(), _FloorValue("body")),
+        Halted(
+            true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")
+        ),
+    )
+    for disposition in (NeverSuppresses(), NeverSuppressesDispositionV1()):
+        for face in faces:
+            through_exit = ExitSet((face,)).and_exit(exit_es, disposition=disposition)
+            through_finally = ExitSet((face,)).and_finally(lambda: exit_es)
+            assert (
+                through_exit.exits == through_finally.exits
+            ), f"{type(disposition).__name__} / {type(face).__name__} diverged"
+
+
+def test_lying_the_equivalence_is_specific_to_never_suppresses():
+    """BITE: `and_finally` is NOT a general substitute for `and_exit`.
+
+    A suppressing contract consumes the halt; shared cleanup restores it. If
+    the equivalence above held for every disposition, routing everything
+    through `and_finally` would be safe -- it is not, and that is exactly why
+    the rejected branch needed a kind test to stay correct.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
+    halted = Halted(
+        true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")
+    )
+    suppressing = ExitSuppressionContract(frozenset({"ValueError"}))
+
+    through_exit = ExitSet((halted,)).and_exit(exit_es, disposition=suppressing)
+    through_finally = ExitSet((halted,)).and_finally(lambda: exit_es)
+
+    assert through_exit.exits != through_finally.exits
 
 
 def test_exit_face_binding_completed_is_none_triple():
@@ -313,8 +617,12 @@ def test_enter_result_and_manager_binding_facts():
     sugar = _resource(
         body=(_Pass(),),
         enter_slot_id="E",
-        enter=_FixedSugar(Complete(_FloorValue("entered-val"))),
-        manager=_FixedSugar(Complete(_FloorValue("mgr-val"))),
+        enter=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="entered-val"))
+        ),
+        manager=_FixedSugar(
+            Complete(ObjectValue("native-resource", (), identity="mgr-val"))
+        ),
     )
     out = sugar.desugar()
     invs = [e for e in out.value.contribution() if isinstance(e, InvValue)]
@@ -328,6 +636,13 @@ def test_enter_result_and_manager_binding_facts():
     assert "manager_slot_value" in names
     assert "enter_result_value" in names
     assert "exit_type" in names  # completed face testimony
+    enter_fact = next(
+        inv
+        for inv in invs
+        if getattr(inv.formula.args[0], "name", None) == "enter_result_value"
+    )
+    assert enter_fact.formula.args[1].name == "py.object.identity"
+    assert enter_fact.formula.args[1].args[1].value == "entered-val"
 
 
 def test_parametric_exit_args_are_exit_refs():

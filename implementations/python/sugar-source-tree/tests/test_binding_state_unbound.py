@@ -33,6 +33,32 @@ def _substituted(source: str):
     return next(SourceFile(path_source(path)).functions()).substitute({})
 
 
+def _assert_unpack_effect(effect, *, arity: int, names: tuple[str, ...]):
+    """The typed arity obligation itself: the effect names the count it demands
+    and the targets it demands it for, and it binds nothing."""
+    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+
+    assert isinstance(effect, SequenceUnpackRuntimeEffect)
+    reason = effect.reason
+    assert f"exactly {arity} members" in reason, reason
+    assert ", ".join(names) in reason, reason
+    assert not isinstance(getattr(effect, "value", None), ScopeRebinds)
+    return effect
+
+
+def _assert_unpack_arity_obligation(out, *, arity: int, names: tuple[str, ...]):
+    """The typed arity obligation a non-display unpack retains, and NO binding.
+
+    `a, b = <name>` has no lift-time cardinality: the count belongs to Python's
+    `__iter__` at runtime. The lift keeps the demand as one typed effect rather
+    than refusing to have a meaning (#6316) and rather than assuming the count
+    matched (which would be the one forbidden move). CPython binds nothing when
+    `UNPACK_SEQUENCE` raises, so this asserts nothing bound too.
+    """
+    assert isinstance(out, Incomplete), type(out).__name__
+    return _assert_unpack_effect(out.effect, arity=arity, names=names)
+
 def _return(exit_):
     assert isinstance(exit_, Completed)
     assert isinstance(exit_.value, UniverseValue)
@@ -129,8 +155,17 @@ def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> 
     function = _substituted(source)
     reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
     assert any(isinstance(read.state, UnboundBinding) for read in reads)
-    with pytest.raises(SugarNotWritten):
-        _out(source)
+    # #6316 drained this refusal too. Here the unpack sits INSIDE an `if`, so the
+    # arity obligation is one HALTED face of the partition and the complementary
+    # face still completes -- the guard and the obligation coexist, which is the
+    # whole point of retaining the demand instead of refusing the statement.
+    out = _out(source)
+    assert isinstance(out, ExitSet)
+    halted = [exit_ for exit_ in out.exits if isinstance(exit_, Halted)]
+    completed = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
+    assert len(halted) == 1
+    assert len(completed) == 1
+    _assert_unpack_effect(halted[0].effect, arity=2, names=("col", "loc"))
 
 
 def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
@@ -182,8 +217,12 @@ def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None
     reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
     names = {read.name for read in reads if isinstance(read.state, UnboundBinding)}
     assert {"vmin", "vmax"} <= names
-    with pytest.raises(SugarNotWritten):
-        _out(source)
+    # #6316 drained this refusal. The unpack no longer declines to have a
+    # meaning: the RHS is a plain name with no authenticated cardinality, so the
+    # arity demand is RETAINED as a typed effect carrying the exact obligation.
+    # Pinning the replacement is strictly stronger than pinning the refusal --
+    # it names the effect, the arity, and that nothing bound.
+    _assert_unpack_arity_obligation(_out(source), arity=2, names=("vmin", "vmax"))
 
 
 def test_augassign_over_explicitly_unbound_local_builds_guarded_read() -> None:

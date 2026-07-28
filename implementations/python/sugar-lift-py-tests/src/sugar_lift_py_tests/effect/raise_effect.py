@@ -23,6 +23,14 @@ class RaiseEffect:
     # The constructed expression after an explicit ``from``. Host ``None``
     # means the clause was absent; explicit Python ``None`` is a NoneValue.
     cause_value: object | None = None
+    # The handled occurrence active when this raise happened. This is Python's
+    # ``__context__`` testimony and is distinct from an explicit ``from`` cause.
+    context_effect: "RaiseEffect | None" = None
+    # The expression node that published this halted edge to its parent. This
+    # is distinct from ``blame``: a callee's Raise statement supplies the
+    # source locus, while the enclosing Call owns the failure observed by a
+    # parent expression such as ``make_receiver()[0]``.
+    producer_node_owner: str | None = None
 
     @property
     def occurrence_id(self) -> str | None:

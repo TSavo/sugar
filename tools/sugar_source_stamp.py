@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Authenticated sourceStamp for sugar-cli (and kit/binary compatibility).
+"""Authenticated Rust build sourceStamp for a Cargo package.
 
 Emits the same labeled byte stream sugarbin hashes into sourceStamp:
 
   - cargo package local dependency FS (under implementations/rust)
-  - when package is sugar-cli: Python enumeration/protocol sources under
-    implementations/python/{sugar-lift-py-tests,sugar-lift-python-source,
-    sugar-source-tree}/src
 
-Excludes docs, .git, and other repository state. Path coordinates use
-underscore form: blake3-512_<hex>.
+Python, repository docs, .git, build output, and other non-Rust-package state
+are deliberately excluded: this stamp keys the compiled Rust artifact, not the
+whole runtime composition. Path coordinates use underscore form:
+blake3-512_<hex>.
 
 Usage:
   tools/sugar_source_stamp.py --repo-root ROOT --package sugar-cli
@@ -39,14 +38,6 @@ SKIP_DIRS = {
     "__pycache__",
 }
 SKIP_FILES = {".DS_Store"}
-
-# Python packages that own enumeration / kit protocol behavior for mint.
-PYTHON_PROTOCOL_SRC = (
-    "implementations/python/sugar-lift-py-tests/src",
-    "implementations/python/sugar-lift-python-source/src",
-    "implementations/python/sugar-source-tree/src",
-)
-
 
 def emit(label: bytes, value: bytes) -> None:
     out = sys.stdout.buffer
@@ -97,7 +88,6 @@ def write_stream(
     cargo: str,
 ) -> None:
     root = rust_workspace.resolve()
-    repo = repo_root.resolve()
     if not root.is_dir():
         raise SystemExit(f"rust workspace not found: {root}")
 
@@ -188,17 +178,6 @@ def write_stream(
 
     for package_root in local_roots:
         seen |= walk_emit(root, package_root)
-
-    # Protocol sources that change kit/binary compatibility without living in
-    # the Rust package graph (sugar.enumerate lives here).
-    if package == "sugar-cli":
-        for rel in PYTHON_PROTOCOL_SRC:
-            py_root = repo / rel
-            if not py_root.is_dir():
-                continue
-            emit(b"protocol-python-root", rel.encode())
-            walk_emit(repo, py_root, path_label=b"protocol-python-path")
-
 
 def stamp_from_stream() -> str:
     import hashlib

@@ -3,6 +3,7 @@ from __future__ import annotations
 from .array_literal import ArrayLiteral
 from .async_function_callable import AsyncFunctionCallable
 from .block_value import BlockValue
+from .boolop_truth_selection import BoolOpTruthSelection
 from .branch_result_coordinate import (
     BranchResultAuthentication,
     BranchResultCoordinate,
@@ -58,11 +59,14 @@ from .inv_value import InvValue
 from .bytes_value import BytesValue
 from .complex_value import ComplexValue
 from .ellipsis_value import EllipsisValue
+from .entered_manager_state_value import EnteredManagerStateValue
 from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 from .object_value import ObjectValue
 from .receiver_field_store_value import ReceiverFieldStoreValue
+from .guarded_receiver_field_store_value import GuardedReceiverFieldStoreValue
+from .receiver_state_partition_value import ReceiverStatePartitionValue
 from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
@@ -106,6 +110,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ExceptionCauseValue,
     ExceptionalExitValue,
     ExceptionValue,
+    EnteredManagerStateValue,
     ExceptionClassValue,
     LocalExceptionClassValue,
     FunctionCallable,
@@ -131,6 +136,8 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     RaiseValue,
     RaisesWithValue,
     ReceiverFieldStoreValue,
+    GuardedReceiverFieldStoreValue,
+    ReceiverStatePartitionValue,
     ReturnValue,
     ScopeRebind,
     SequenceConstructor,
@@ -200,11 +207,14 @@ __all__ = [
     "BytesValue",
     "ComplexValue",
     "EllipsisValue",
+    "EnteredManagerStateValue",
     "NoneValue",
     "ObjectField",
     "ObjectMethodValue",
     "ObjectValue",
     "ReceiverFieldStoreValue",
+    "GuardedReceiverFieldStoreValue",
+    "ReceiverStatePartitionValue",
     "OpaqueOpCallsite",
     "PredicateValue",
     "RaiseValue",

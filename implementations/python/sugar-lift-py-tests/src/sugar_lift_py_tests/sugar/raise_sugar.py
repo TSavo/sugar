@@ -59,19 +59,31 @@ class RaiseSugar(Sugar):
             if self.in_flight_slot is None:
                 from sugar_source_tree.panic import SugarNotWritten
 
-                raise SugarNotWritten(
-                    owner="RaiseSugar.desugar",
-                    observed="bare raise lacks an authenticated in-flight effect slot",
-                    requested="the enclosing handler's effect-slot coordinate",
-                    fix="keep unowned bare raise loud",
-                )
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="RaiseSugar.desugar",
+                observed="bare raise lacks an authenticated in-flight effect slot",
+                requested="the enclosing handler's effect-slot coordinate",
+                fix="keep unowned bare raise loud",
+            )
             from sugar_lift_py_tests.in_flight_effect import (
                 resolve_in_flight_effect,
             )
 
-            return Incomplete(resolve_in_flight_effect(ctx, self.in_flight_slot))
+            return Incomplete(
+                resolve_in_flight_effect(ctx, self.in_flight_slot, blame=self.site)
+            )
 
         def halt(raised_value, cause_value=None):
+            context_effect = None
+            if self.in_flight_slot is not None:
+                from sugar_lift_py_tests.in_flight_effect import (
+                    resolve_in_flight_effect,
+                )
+
+                context_effect = resolve_in_flight_effect(
+                    ctx, self.in_flight_slot, blame=self.site
+                )
             identity_reader = getattr(raised_value, "exception_type_identity", None)
             mro_reader = getattr(raised_value, "exception_type_mro", None)
             return Incomplete(
@@ -93,6 +105,7 @@ class RaiseSugar(Sugar):
                     ),
                     raised_value=raised_value,
                     cause_value=cause_value,
+                    context_effect=context_effect,
                 )
             )
 

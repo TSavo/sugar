@@ -87,6 +87,45 @@ def test_opaque_list_member_stays_loud():
         _list(1).contains(FunctionCallable("opaque"), "site")
 
 
+def test_nested_list_membership_is_decided_from_constructed_members():
+    """Membership law vertical slice: ``[1] in [[1], [2]]`` is ground equality."""
+    from sugar_lift_py_tests.floor import ListValue, TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    container = ListValue(
+        (
+            ListValue((TermValue(1),)),
+            ListValue((TermValue(2),)),
+        )
+    )
+    needle = ListValue((TermValue(1),))
+    missing = ListValue((TermValue(3),))
+    assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
+    assert isinstance(
+        container.contains(missing, "site").value, FalseBoolLiteralSugar
+    )
+
+
+def test_nested_tuple_membership_is_decided_from_constructed_members():
+    from sugar_lift_py_tests.floor import TermValue, TupleValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    container = TupleValue(
+        (
+            TupleValue((TermValue(1),)),
+            TupleValue((TermValue(2),)),
+        )
+    )
+    needle = TupleValue((TermValue(1),))
+    missing = TupleValue((TermValue(9),))
+    assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
+    assert isinstance(
+        container.contains(missing, "site").value, FalseBoolLiteralSugar
+    )
+
+
 def test_string_substring_membership_is_decided():
     from sugar_lift_py_tests.floor import StringValue
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -112,11 +151,40 @@ def test_symbolic_string_membership_emits_py_in():
     assert result.formula.name == "py.in"
 
 
-def test_ground_non_string_in_string_is_type_error():
+def _workspace_fragment(tmp_path):
+    """One real fragment carrying a workspace-relative locus.
+
+    A ground exit cites source it can re-read, so it needs a fragment stating
+    filename and unit -- prose cannot address anything. `tmp_path` becomes the
+    workspace root so the locus is relative, which is the other half of what a
+    ground exit requires.
+    """
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.tree import SourceFile
+
+    source = tmp_path / "membership.py"
+    source.write_text("def witness():\n    return 1 in 'abc'\n", encoding="utf-8")
+    identity = workspace_path_source(str(source), root=str(tmp_path))
+    return next(SourceFile(identity).functions()).fragment
+
+
+def test_ground_non_string_in_string_is_type_error(tmp_path):
+    """SUBJECT UNCHANGED: `1 in "abc"` is Python's TypeError.
+
+    Only the locus changed. This arm previously passed the literal string
+    "site", which the ground-exit door cannot cite from -- it died with
+    `AttributeError: 'str' object has no attribute 'filename'` before reaching
+    any law. The fixture was invalid, not the law it was testing, so the
+    fragment is threaded and every assertion below is the original one. The
+    refusal that the crash was standing in for gains its OWN pin in
+    test_ground_exit_locus_law.py rather than being dropped here.
+    """
     from sugar_lift_py_tests.floor import RaiseValue, StringValue, TermValue
     from sugar_lift_py_tests.outcome import Complete
 
-    outcome = StringValue("abc").contains(TermValue(1), "site")
+    site = _workspace_fragment(tmp_path)
+
+    outcome = StringValue("abc").contains(TermValue(1), site)
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, RaiseValue)
     assert outcome.value.effect.exception_name == "TypeError"

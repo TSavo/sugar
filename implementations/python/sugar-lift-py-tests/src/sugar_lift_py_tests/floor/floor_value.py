@@ -98,6 +98,28 @@ BASE_CONSTRUCTION_GAP_METHOD_NAMES = tuple(
 )
 
 
+# The term coordinate each binary-operation floor constructs when the pair is
+# undecided. These are the SAME constructor names SymbolicValue already emits;
+# the map exists so one law covers all thirteen operators instead of thirteen
+# copies of it. It is keyed by floor method name -- the dispatch surface's own
+# vocabulary -- never by a lexical spelling read off a source node.
+_BINARY_OPERATOR_COORDINATE = {
+    "add": "+",
+    "subtract": "-",
+    "multiply": "*",
+    "divide": "/",
+    "floor_divide": "//",
+    "modulo": "%",
+    "power": "**",
+    "matrix_multiply": "@",
+    "bitwise_and": "&",
+    "bitwise_or": "|",
+    "bitwise_xor": "^",
+    "left_shift": "<<",
+    "right_shift": ">>",
+}
+
+
 class FloorValue:
     def _floor_gap(
         self,
@@ -198,6 +220,22 @@ class FloorValue:
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
         return FollowStep.continue_with()
+
+    def denotes_a_value(self) -> bool:
+        """Does this floor testify that it DENOTES a value?
+
+        A membership test needs to know the difference between "I am a value
+        whose identity is not decidable yet" and "I am not a member at all".
+        The first is an obligation (emit the typed ``python.*.contains`` atom);
+        the second is a gap. Nothing about the carrier's SHAPE separates them
+        -- ``FunctionCallable`` carries a term exactly like ``SymbolicValue``
+        does, and is a callable, never a member -- so this is testimony the
+        floor states about itself, not something a caller infers.
+
+        Default: no. A floor that denotes a value says so by overriding, which
+        keeps every unwritten floor loud rather than quietly admitted.
+        """
+        return False
 
     def guarded(self, formula):
         # Default: this value cannot ride under a guard. The record entries
@@ -504,6 +542,39 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def undecided_subscript(self, index, site, *, owner: str):
+        """Refuse a lookup whose runtime dispatch is not source-decided.
+
+        This is accounted named-refusal semantics (``SugarNotWritten``), not a
+        construction-panic harness failure: the producer names the missing
+        testimony without inventing KeyError, IndexError, or a completed
+        ``py.subscript`` coordinate.
+        """
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=site,
+            owner=owner,
+            observed=(
+                "undecided receiver runtime type or index semantics: "
+                f"{type(self).__name__}[{type(index).__name__}]"
+            ),
+            requested="a source-authenticated subscript success or exceptional exit",
+            fix=(
+                "carry receiver-type and index testimony to its native floor; "
+                "do not guess KeyError, IndexError, or a generic runtime effect"
+            ),
+        )
+
+    def python_index_protocol(self) -> bool | None:
+        """Whether this value's source-decided type implements ``__index__``.
+
+        ``None`` is the third value: construction has not authenticated the
+        runtime type or its index protocol. Receiver floors may emit TypeError
+        only for ``False``; they must keep ``None`` named-loud.
+        """
+        return None
+
     def attribute(self, name, site):
         # Default: this value does not stand on the attribute floor -- it cannot
         # answer what it yields at `.name`. A symbolic receiver stays the
@@ -524,6 +595,129 @@ class FloorValue:
             gap_locus=GapLocus.CONSTRUCTION,
         )
         construction_panic(info)
+
+    def attribute_named(self, name_value, site):
+        """Carrier adapter for ``receiver.<static name>`` after discharge.
+
+        ``NativeOperationDemandV1`` records ordered Floor values.  Attribute's
+        second operand is the source-written static identifier, represented as
+        a ground StringValue; it is never runtime spelling authority.
+        """
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if not isinstance(name_value, StringValue):
+            raise SugarNotWritten(
+                blame=site,
+                owner="FloorValue.attribute_named",
+                observed=type(name_value).__name__,
+                requested="source-written static attribute identifier",
+                fix="preserve the Attribute node's identifier as StringValue",
+            )
+        return self.attribute(name_value.value, site)
+
+    def unary_truth(self, unit, site):
+        """Carrier adapter for ``bool(operand)`` under UnaryOp ``not`` after discharge.
+
+        ``NativeOperationDemandV1`` records two ordered Floor values.  Unary
+        ``not`` has one operand; the second slot is an inert unit (``NoneValue``)
+        with a null coordinate so discharge does not invent a second actual.
+        The producer then negates only a *completed* truth face — never a halt
+        (``Complete.and_then`` / ``ExitSet.sequence`` already skip halted tails).
+
+        An undecided actual must not emit ``py.truthy`` here: that would invent
+        a total ``bool`` completion after the formal door deferred honestly.
+        """
+        del unit
+        denotes = getattr(self, "denotes_value", None)
+        decided = getattr(self, "runtime_type_is_decided", None)
+        if callable(denotes) and callable(decided) and denotes() and not decided():
+            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if not isinstance(self, CallSiteValue):
+                raise SugarNotWritten(
+                    blame=site,
+                    owner="unary_operation_exception_floor",
+                    observed=f"{type(self).__name__} not",
+                    requested=(
+                        "source-visible native truth testimony selecting completion "
+                        "or an authenticated exceptional exit"
+                    ),
+                    fix=(
+                        "preserve the undecided third value at unary_truth discharge; "
+                        "resolve the actual's runtime type and __bool__/__len__ from "
+                        "source before completing or halting"
+                    ),
+                )
+        return self.truth(site)
+
+    def boolop_truth(self, site):
+        """Truth-test once while retaining the actual operand BoolOp returns.
+
+        This unary carrier adapter is deliberately distinct from ``truth``:
+        ``a and b`` / ``a or b`` select using ``bool(a)`` but return ``a`` on
+        the stopping face.  After formal-coordinate discharge, ``self`` is the
+        authenticated caller actual, so packaging it here prevents the
+        definition-time formal from leaking into the result.
+
+        An actual whose runtime type remains undecided stays a named refusal;
+        neither a generic halt nor a total symbolic truth is invented.
+        """
+        denotes = getattr(self, "denotes_value", None)
+        decided = getattr(self, "runtime_type_is_decided", None)
+        if callable(denotes) and callable(decided) and denotes() and not decided():
+            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if not isinstance(self, CallSiteValue):
+                raise SugarNotWritten(
+                    blame=site,
+                    owner="boolean_operation_exception_floor",
+                    observed=f"{type(self).__name__} BoolOp truth",
+                    requested=(
+                        "source-visible native truth testimony selecting completion "
+                        "or an authenticated exceptional exit"
+                    ),
+                    fix=(
+                        "preserve the undecided third value at boolop_truth discharge; "
+                        "resolve the actual's runtime type and __bool__/__len__ from "
+                        "source before completing or halting"
+                    ),
+                )
+
+        from sugar_lift_py_tests.floor.boolop_truth_selection import (
+            BoolOpTruthSelection,
+        )
+
+        from sugar_lift_py_tests.outcome import Complete
+
+        return self.truth(site).and_then(
+            lambda truth_value: Complete(BoolOpTruthSelection(self, truth_value))
+        )
+
+    def undecided_attribute(self, name, site, *, owner: str):
+        """Refuse lookup when source testimony decides neither outgoing edge.
+
+        This is an accounted named refusal, not a construction failure.  The
+        producer knows the native operation and the missing testimony, but it
+        cannot choose either the completed or AttributeError edge honestly.
+        """
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=site,
+            owner=owner,
+            observed=(
+                "undecided receiver runtime type or member semantics: "
+                f"{type(self).__name__}.{name}"
+            ),
+            requested="a source-authenticated attribute success or exceptional exit",
+            fix=(
+                "carry receiver-type and member testimony to the attribute floor; "
+                "do not guess AttributeError or invent a completed projection"
+            ),
+        )
 
     def contains(self, item, site):
         # Default: this value does not stand on the membership floor -- it cannot
@@ -557,6 +751,28 @@ class FloorValue:
             observed=observed,
             requested="stand on the subscript-store floor",
             fix=f"write more Floor: implement {observed}.setitem",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        construction_panic(info)
+
+    def setattr(self, name, value, site):
+        """``receiver.name = value`` — the store path, never the read path.
+
+        Distinct from :meth:`attribute` / ``__getattr__`` / ``__getattribute__``.
+        A readable name does not license a write. Default: loud floor gap.
+        """
+        del name, value
+        from sugar_lift_py_tests.gap.panic import construction_panic
+        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+
+        observed = type(self).__name__
+        info = ConstructionGap(
+            owner="setattr",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the attribute-store floor",
+            fix=f"write more Floor: implement {observed}.setattr",
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
@@ -650,9 +866,46 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def _undecided_unary_law(self, site, operator: str):
+        """The ONE law for a unary operation with an undecided operand type.
+
+        ``-x``, ``+x``, and ``~x`` select ``__neg__`` / ``__pos__`` / ``__invert__``
+        (or raise TypeError) from the operand's runtime type.  When that type is
+        undecided, inventing a success coordinate (``py.neg``, identity, ``py.invert``)
+        erases the exceptional face, and inventing TypeError invents an exception
+        identity.  Both stay refused until source-visible type testimony decides.
+        """
+        denotes = getattr(self, "denotes_value", None)
+        decided = getattr(self, "runtime_type_is_decided", None)
+        if not callable(denotes) or not callable(decided):
+            return None
+        if not denotes() or decided():
+            return None
+
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=site,
+            owner="unary_operation_exception_floor",
+            observed=f"{type(self).__name__} {operator}",
+            requested=(
+                "source-visible native unary-operator testimony selecting "
+                "completion or an authenticated exceptional exit"
+            ),
+            fix=(
+                "preserve the undecided third value at the UnaryOp producer; "
+                "resolve the operand's runtime type and its unary operator body "
+                "from source, or retain this named refusal without inventing an "
+                "exception identity"
+            ),
+        )
+
     def unary_minus(self, site):
-        # Default: no arithmetic negation floor. TermValue folds; SymbolicValue
-        # emits py.neg; absence is the honest "no".
+        # Default: no arithmetic negation floor. TermValue folds; an undecided
+        # operand type refuses (success versus TypeError is not source-decidable).
+        refused = self._undecided_unary_law(site, "-")
+        if refused is not None:
+            return refused
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -669,7 +922,10 @@ class FloorValue:
         construction_panic(info)
 
     def unary_plus(self, site):
-        # Default: no unary-plus floor. TermValue / SymbolicValue implement.
+        # Default: no unary-plus floor. TermValue folds; undecided types refuse.
+        refused = self._undecided_unary_law(site, "+")
+        if refused is not None:
+            return refused
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -686,8 +942,12 @@ class FloorValue:
         construction_panic(info)
 
     def bitwise_invert(self, site):
-        # Default: no bitwise-not floor. TermValue folds ints; SymbolicValue
-        # emits py.invert; absence is the honest "no".
+        # Default: no bitwise-not floor. TermValue decides concrete operands;
+        # an untyped symbol refuses because success versus TypeError is not
+        # source-decidable.
+        refused = self._undecided_unary_law(site, "~")
+        if refused is not None:
+            return refused
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -807,152 +1067,172 @@ class FloorValue:
             )
         )
 
+    def denotes_value(self) -> bool:
+        """Testimony: does this floor value DENOTE a Python runtime value?
+
+        The default is the honest "no". A floor value is not automatically a
+        value: ``LambdaCallable`` and ``FunctionCallable`` denote callables,
+        ``EffectCoordinate`` denotes a pending effect, exit values denote a
+        halt. Carrying a term is NOT the discriminator -- ``FunctionCallable``
+        carries one and is never an operand. Only the class itself can say,
+        and a class that has not said stays loud.
+        """
+        return False
+
+    def runtime_type_is_decided(self) -> bool:
+        """Testimony: is this value's Python runtime TYPE known at lift time?
+
+        ``StringValue`` knows it is a ``str``; ``ComprehensionValue`` knows it
+        is the sequence its own fold constructor names. ``SymbolicValue`` and
+        ``CallSiteValue`` do not know -- an unexecuted call's result type is
+        undecided, so which ``__op__``/``__rop__`` Python would select is
+        undecided too.
+
+        The default is ``True`` (decided), which keeps a class that has not
+        spoken on the LOUD side of :meth:`_undecided_binary_law`.
+        """
+        return True
+
+    def _undecided_binary_law(self, other, site, operator):
+        """The ONE law for a binary operation with an undecided operand.
+
+        Every binary-operation floor gap measured on pandas came in the same
+        shape wearing eight operator names: a left value with no arm named for
+        THIS right operand, falling through to the pair gap. Most of those
+        pairs are not eight separate arms to write. They are one law: when at
+        least one operand's runtime TYPE is undecided, Python's own operator
+        dispatch for the pair is undecided. That is a third value: the producer
+        cannot claim sole completion and cannot invent an exception identity.
+
+        Publish both native-dispatch faces (mirrors Compare #6564): the
+        completed face retains the operator coordinate, and the halted face
+        retains a source-cited raise whose exception identity remains
+        undecided. Sole completion or sole TypeError invention stay forbidden.
+
+        Two cases stay outside this door:
+
+        * An operand that does not DENOTE a value (a callable, a class, an
+          exit) is not an operand at all. No coordinate is invented for it.
+        * Two operands of DECIDED type are a ground question -- ``list + bool``
+          is Python's ``TypeError``, not an unknown. That pair belongs to the
+          ground field laws, and absence there is still a gap.
+
+        Returns ``None`` when the law does not apply, so the caller falls
+        through to its own pair gap.
+        """
+        if not (self.denotes_value() and other.denotes_value()):
+            return None
+        if self.runtime_type_is_decided() and other.runtime_type_is_decided():
+            return None
+
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import atomic, ctor
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            Halted,
+            complement_guard,
+            partition,
+        )
+
+        left_term = self.to_term(owner=f"binary {operator} left")
+        right_term = other.to_term(owner=f"binary {operator} right")
+        completed_value = SymbolicValue(ctor(operator, [left_term, right_term]))
+        dispatch_raises = atomic(
+            f"python.binop_dispatch_raises[{operator}]",
+            [left_term, right_term],
+        )
+        halted_face, completed_face = partition(
+            ("binary-native-dispatch", str(site), operator)
+        )
+        effect = RaiseEffect(
+            blame=str(site),
+            occurrence=str(site),
+            producer_node_owner="BinOp",
+        )
+        return ExitSet(
+            (
+                Halted(dispatch_raises, effect, faces=frozenset({halted_face})),
+                Completed(
+                    complement_guard(dispatch_raises),
+                    completed_value,
+                    frozenset({completed_face}),
+                ),
+            )
+        ).normalize()
+
+    def _binary_floor_gap(self, other, site, owner, floor):
+        """The ONE None arm for every binary-operation floor.
+
+        A binary operation stands on a floor only for a NAMED PAIR of operand
+        categories, so the gap names both: the left value's own category
+        (``observed``) and the right operand's, in ``requested``/``fix``.
+        Discarding the right operand made every gap of one owner look alike --
+        34 ``add`` panics on the installed pandas tree said only "TermValue
+        does not stand on the addition floor" and named nothing to implement.
+        The pair IS the dispatch unit; a gap that cannot name its pair cannot
+        be worked.
+
+        The category is read from the operand's own type, which is its
+        authenticated construction coordinate -- never from a lexical name.
+        """
+        constructed = self._undecided_binary_law(
+            other, site, _BINARY_OPERATOR_COORDINATE[owner]
+        )
+        if constructed is not None:
+            return constructed
+
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        observed = type(self).__name__
+        operand = type(other).__name__
+        construction_panic_gap(
+            owner=owner,
+            blame=str(site),
+            observed=observed,
+            requested=f"stand on the {floor} floor for a {operand} right operand",
+            fix=f"write more Floor: implement {observed}.{owner} for {operand}",
+        )
+
     def add(self, other, site):
         # Default: this value does not stand on the addition floor -- it cannot answer
         # what it is to add another value. The None arm: a value that CAN implements
         # add and gives back the sum (or concat); absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="add",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the addition floor",
-            fix=f"write more Floor: implement {observed}.add",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "add", "addition")
 
     def subtract(self, other, site):
         # Default: this value does not stand on the subtraction floor -- it cannot
         # answer what it is minus another value. The None arm: a value that CAN
         # implements subtract and gives back a term; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="subtract",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the subtraction floor",
-            fix=f"write more Floor: implement {observed}.subtract",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "subtract", "subtraction")
 
     def multiply(self, other, site):
         # Default: this value does not stand on the multiplication floor -- it cannot
         # answer what it multiplies by another value to. The None arm: a value that CAN
         # implements multiply and gives back a product; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="multiply",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the multiplication floor",
-            fix=f"write more Floor: implement {observed}.multiply",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "multiply", "multiplication")
 
     def power(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        observed = type(self).__name__
-        construction_panic_gap(
-            owner="power",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the power floor",
-            fix=f"write more Floor: implement {observed}.power",
-        )
+        return self._binary_floor_gap(other, site, "power", "power")
 
     def divide(self, other, site):
         # Default: this value does not stand on the division floor -- it cannot answer
         # what it divides by another value to. The None arm: a value that CAN
         # implements divide and gives back a quotient; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="divide",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the division floor",
-            fix=f"write more Floor: implement {observed}.divide",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "divide", "division")
 
     def modulo(self, other, site):
         # Default: this value does not stand on the modulo floor -- it cannot answer
         # what remainder it leaves by another value. The None arm: a value that CAN
         # implements modulo and gives back a remainder; absence here is the honest "no".
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="modulo",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the modulo floor",
-            fix=f"write more Floor: implement {observed}.modulo",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "modulo", "modulo")
 
     def floor_divide(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="floor_divide",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the floor-division floor",
-            fix=f"write more Floor: implement {observed}.floor_divide",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "floor_divide", "floor-division")
 
     def right_shift(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="right_shift",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the right-shift floor",
-            fix=f"write more Floor: implement {observed}.right_shift",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
+        return self._binary_floor_gap(other, site, "right_shift", "right-shift")
 
     def bitwise_and(self, other, site):
         return self._runtime_bitwise_gap(other, site, "bitwise_and", "and")
@@ -967,30 +1247,12 @@ class FloorValue:
         return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
 
     def matrix_multiply(self, other, site):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        observed = type(self).__name__
-        construction_panic_gap(
-            owner="matrix_multiply",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the matrix-multiplication floor",
-            fix=f"write more Floor: implement {observed}.matrix_multiply",
+        return self._binary_floor_gap(
+            other, site, "matrix_multiply", "matrix-multiplication"
         )
 
     def _runtime_bitwise_gap(self, other, site, owner, label):
-        del other
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        observed = type(self).__name__
-        construction_panic_gap(
-            owner=owner,
-            blame=str(site),
-            observed=observed,
-            requested=f"stand on the runtime bitwise {label} floor",
-            fix=f"write more Floor: implement {observed}.{owner}",
-        )
+        return self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
 
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.gap.panic import construction_panic

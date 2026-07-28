@@ -75,9 +75,12 @@ class BoundVar(FloorValue):
             # The source lawfully remains a typed Incomplete at its producer.
             # Collapsing that incomplete effect into a completed term is a missing
             # Floor recognizer: structured ConstructionPanic, never bare RuntimeError.
+            # Same law as FloorValue.to_term: the owner is THIS projection, not
+            # the requester. ``owner`` arrives as the caller's ``str(site)``
+            # fragment repr, so it joins the bound name in blame.
             construction_panic_gap(
-                owner=owner,
-                blame=self.name,
+                owner="BoundVar.to_term",
+                blame=f"{self.name} requested-by={owner}",
                 observed=type(outcome.effect).__name__,
                 requested="completed BoundVar term substitution",
                 fix=(

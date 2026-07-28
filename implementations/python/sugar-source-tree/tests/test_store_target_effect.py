@@ -1,28 +1,21 @@
-"""Store-target assignments (`obj.a = e`, `xs[i] = e`) attach a typed red
-runtime-effect witness at the TREE fragment site (the fragment-type seam,
-#5994-adjacent).
+"""Store-target assignments preserve their target-specific obligations.
 
-A store has TWO outcomes, runtime-selected: it completes (Python continues to
-the next statement) or it halts. So the body reduces to an `ExitSet`, not to one
-linear outcome. Everything asserted below is a fact about the COMPLETED arm --
-the block kept reducing, the returned value is unaffected, the witness names the
-real target -- and the assertions are unchanged; only the navigation to that arm
-is explicit now. The halt arm and the composition laws are asserted in
-sugar-lift-py-tests/tests/test_store_outcome_composition.py."""
+Attribute-store coverage here retains its runtime-effect witness. Subscript
+store coverage pins the stronger rule: absent ``__setitem__`` testimony it
+stays loud and cannot borrow ``__getitem__`` or a generic completed arm."""
 
 import tempfile
 from dataclasses import replace
 
+import pytest
+
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    RaiseEffect,
-    SubscriptStoreRuntimeEffect,
-)
+from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect, RaiseEffect
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_source_tree.fragment import SourceFragment as TreeSourceFragment
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -73,7 +66,9 @@ class _OutcomeSugar(Sugar):
 
 
 def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
-    entries = _entries("def A(o, v):\n    o.a = v\n    return v\n")
+    # Free undecided ``o`` retains dual-face AttributeStoreRuntimeEffect.
+    # Formal receivers mint setattr_named (see formal-caller twins).
+    entries = _entries("def A(v):\n    o.a = v\n    return v\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
@@ -83,7 +78,7 @@ def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
 
 def test_attribute_store_post_out_equals_the_returned_value():
     v = _completed(
-        _fn("def A(o, v):\n    o.a = v\n    return v\n").sugar().desugar()
+        _fn("def A(v):\n    o.a = v\n    return v\n").sugar().desugar()
     ).value
     post = v.post()
     assert post.name == "="
@@ -91,22 +86,27 @@ def test_attribute_store_post_out_equals_the_returned_value():
     assert post.args[1].name == "v"
 
 
-def test_subscript_store_lifts_a_red_effect_and_the_block_continues():
-    entries = _entries("def A(xs, i, v):\n    xs[i] = v\n    return v\n")
-    red = [e for e in entries if isinstance(e, Incomplete)]
-    assert len(red) == 1
-    assert isinstance(red[0].effect, SubscriptStoreRuntimeEffect)
-    assert any(type(e).__name__ == "ReturnValue" for e in entries)
+def _pending_subscript_store():
+    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+    pending = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    return pending
 
 
-def test_subscript_store_post_out_equals_the_returned_value():
-    v = _completed(
-        _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
-    ).value
-    post = v.post()
-    assert post.name == "="
-    assert post.args[0].name == "out"
-    assert post.args[1].name == "v"
+def test_subscript_store_retains_setitem_demand_without_caller():
+    pending = _pending_subscript_store()
+
+    assert pending.demand.operator == "setitem"
+    assert all(pending.demand.operand_coordinate_cids)
+
+
+def test_subscript_store_does_not_borrow_the_read_path():
+    pending = _pending_subscript_store()
+
+    assert pending.demand.operator == "setitem"
+    assert len(pending.operands) == 3
+    assert len(pending.demand.operand_coordinate_cids) == 3
 
 
 def test_attribute_store_witness_site_is_the_tree_fragment():
@@ -114,7 +114,7 @@ def test_attribute_store_witness_site_is_the_tree_fragment():
     right target -- the witness address is the TREE's own fragment
     currency, not a reconstructed/factory one, and the operand cites the
     attribute actually stored."""
-    entries = _entries("def A(o, v):\n    o.a = v\n    return v\n")
+    entries = _entries("def A(v):\n    o.a = v\n    return v\n")
     (red,) = [e for e in entries if isinstance(e, Incomplete)]
     witness = red.effect.witness
     assert isinstance(witness.site, TreeSourceFragment)
@@ -127,16 +127,15 @@ def test_attribute_store_witness_site_is_the_tree_fragment():
     assert "store_target" not in operand
 
 
-def test_subscript_store_witness_names_the_index():
-    entries = _entries("def A(xs, i, v):\n    xs[i] = v\n    return v\n")
-    (red,) = [e for e in entries if isinstance(e, Incomplete)]
-    witness = red.effect.witness
-    assert isinstance(witness.site, TreeSourceFragment)
-    assert "store_target[i]" in repr(witness.runtime_operand.term)
+def test_subscript_store_demand_names_all_three_formal_coordinates():
+    pending = _pending_subscript_store()
+
+    assert len(pending.demand.operand_coordinate_cids) == 3
+    assert len(set(pending.demand.operand_coordinate_cids)) == 3
 
 
 def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
-    entries = _entries("def A(o, v, w):\n    o.a = v\n    o.b = w\n    return v\n")
+    entries = _entries("def A(v, w):\n    o.a = v\n    o.b = w\n    return v\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 2
     operands = {repr(e.effect.witness.runtime_operand.term) for e in red}
@@ -147,7 +146,7 @@ def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
 
 def test_symbolic_attribute_store_owns_real_receiver_and_value_children():
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    symbolic_receiver.payload = constructed_value\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")
@@ -158,8 +157,9 @@ def test_symbolic_attribute_store_owns_real_receiver_and_value_children():
 
 
 def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
+    # Free undecided receiver keeps AttributeStoreRuntimeEffect dual faces.
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    symbolic_receiver.payload = constructed_value\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")
@@ -175,7 +175,7 @@ def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
 
 def test_chained_attribute_store_reuses_one_constructed_rhs():
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    renamed = symbolic_receiver.payload = constructed_value\n"
         "    return renamed\n"
     )
@@ -195,7 +195,7 @@ def test_chained_attribute_store_reuses_one_constructed_rhs():
 
 def test_rhs_constructs_before_halted_receiver_and_store_does_not_continue():
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    symbolic_receiver.payload = constructed_value\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")

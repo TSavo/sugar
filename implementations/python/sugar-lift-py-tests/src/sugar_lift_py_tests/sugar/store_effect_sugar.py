@@ -9,21 +9,28 @@ from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
 @dataclass(frozen=True)
 class AttributeStoreEffectSugar(Sugar):
-    """`<receiver>.<attr> = <value>` -- an attribute store whose receiver
-    identity belongs to the runtime: Python attribute assignment can invoke
-    descriptors and ``__setattr__`` at runtime, so the exact post-state is not
-    lift-time decidable.
+    """`receiver.attr = value` — evaluate once, then project the store face.
 
-    Unlike ``AssignSugar`` (a plain-Name target, spent by substitute), a
-    store target is never bound -- it is read AND written, so it carries no
-    inert-meaning arm. This desugars straight to typed red: ``Incomplete``
-    wrapping an ``AttributeStoreRuntimeEffect``, witnessed at the TREE
-    fragment site (``site``, the statement's own fragment -- the sole site
-    type on this hot path; see ``effect/runtime_effect.py``'s
-    ``RuntimeEffectSite`` protocol). The store completed (Python continues
-    to the next statement), so ``Incomplete.follow()`` treats this effect as
-    continue-with-red, not halt (outcome/incomplete.py::
-    _effect_continues_control_flow) -- the block keeps reducing past it.
+    Python order: RHS first, then the receiver, each exactly once.  Dispatch is
+    ``__setattr__`` / descriptor ``__set__`` via Floor ``setattr`` — a different
+    method and obligation from the read path ``attribute`` /
+    ``__getattr__`` / ``__getattribute__``.
+
+    Projection arms:
+
+    1. **Formal receiver** → ``NativeOperationExitCarrierV1`` demand
+       ``setattr_named`` with operands
+       ``(receiver, StringValue(name), value)`` and coordinates
+       ``(receiver.formal_coordinate, None, value_coordinate)``.
+       The n-ary projector (#6614) unwraps the name and calls
+       ``receiver.setattr(name.value, value, site)``.  Helper alone stays
+       undischarged; an ordinary source caller supplies actuals.
+    2. **Decided runtime type** → ``receiver.setattr(attr, value, site)``
+       projecting ``Completed`` or ``RaiseValue`` exceptional faces through
+       the store path (never the read path).
+    3. **Undecided non-formal** → ``AttributeStoreRuntimeEffect`` dual faces
+       under complementary store-outcome guards (composition instrument for
+       free undecided receivers — never a consumer ``SugarNotWritten``).
     """
 
     receiver: Sugar
@@ -58,6 +65,29 @@ class AttributeStoreEffectSugar(Sugar):
         )
 
     def _store(self, receiver, value) -> Outcome:
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        formal_coordinate = getattr(receiver, "formal_coordinate", None)
+        if formal_coordinate is not None:
+            # Undischarged demand awaiting caller actuals — not a refusal.
+            return self.mint_setattr_named_carrier(
+                site=self.site,
+                receiver=receiver,
+                attr=self.attr,
+                value=value,
+            )
+
+        # Decided receivers project through Floor setattr (store path ≠ read).
+        if receiver.runtime_type_is_decided():
+            projected = receiver.setattr(self.attr, value, self.site)
+            if isinstance(projected, Complete) and isinstance(
+                projected.value, RaiseValue
+            ):
+                return Incomplete(projected.value.effect)
+            return projected
+
+        # Undecided non-formal: dual-face AttributeStoreRuntimeEffect.
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
             runtime_effect_evidence_from_terms,
@@ -82,35 +112,123 @@ class AttributeStoreEffectSugar(Sugar):
             )
         )
 
+    @staticmethod
+    def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
+        """Producer-side contract for n-ary ``setattr_named`` discharge.
+
+        Operand order matches the projector table (#6614):
+        ``receiver.setattr(name.value, value, site)`` after unwrap.
+        Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
+        order are load-bearing (#6613 ``__post_init__``).
+        """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.floor import StringValue
+
+        formal_coordinate = getattr(receiver, "formal_coordinate", None)
+        if formal_coordinate is None:
+            raise ValueError(
+                "setattr_named carrier requires a receiver formal_coordinate"
+            )
+        value_coordinate = getattr(value, "formal_coordinate", None)
+        return NativeOperationExitCarrierV1.mint(
+            site=site,
+            operator="setattr_named",
+            operands=(receiver, StringValue(attr), value),
+            coordinates=(formal_coordinate, None, value_coordinate),
+        )
+
 
 @dataclass(frozen=True)
 class SubscriptStoreEffectSugar(Sugar):
-    """`<receiver>[<index>] = <value>` -- a subscript store whose dispatch
-    (``__setitem__``) belongs to the runtime.
+    """`receiver[index] = value`, evaluated and dispatched as ``__setitem__``.
 
-    Same shape as ``AttributeStoreEffectSugar``: a store target is read and
-    written, never bound, so it desugars straight to typed red --
-    ``Incomplete`` wrapping a ``SubscriptStoreRuntimeEffect``, witnessed at
-    the TREE fragment site. The store completed, so the block continues past
-    it (outcome/incomplete.py::_effect_continues_control_flow).
+    Ground receivers project their native completed or exceptional store face.
+    A runtime-selected receiver stays loud until the n-ary native-operation
+    carrier can preserve receiver, key, value, and the original occurrence.
     """
+
+    receiver: Sugar
+    index: Sugar
+    value: Sugar
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        # The source-visible completed/exceptional and loud-refusal laws are
+        # discrimination tests in test_subscript_store_desugar.py. The former
+        # typed-runtime-effect witness asserted the superseded generic effect.
+        return ()
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        # Python evaluates the RHS before the target receiver and key.
+        return self.value.desugar(ctx).and_then(
+            lambda value: self.receiver.desugar(ctx).and_then(
+                lambda receiver: self.index.desugar(ctx).and_then(
+                    lambda index: self._store(receiver, index, value)
+                )
+            )
+        )
+
+    def desugar_store(self, ctx: object, value) -> Outcome:
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: self.index.desugar(ctx).and_then(
+                lambda index: self._store(receiver, index, value)
+            )
+        )
+
+    def _store(self, receiver, index, value) -> Outcome:
+        coordinates = tuple(
+            getattr(operand, "formal_coordinate", None)
+            for operand in (receiver, index, value)
+        )
+        if any(coordinate is not None for coordinate in coordinates):
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=self.site,
+                operator="setitem",
+                operands=(receiver, index, value),
+                coordinates=coordinates,
+            )
+        if not receiver.runtime_type_is_decided():
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="SubscriptStoreEffectSugar._store",
+                blame=self.site,
+                observed="undischarged subscript store over runtime-selected receiver",
+                requested=(
+                    "NativeOperationExitCarrierV1 n-ary setitem demand over "
+                    "receiver, key, and value formal coordinates"
+                ),
+                fix="attach the three-operand carrier seam owned by 9883",
+            )
+        projected = receiver.setitem(index, value, self.site)
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
+            return Incomplete(projected.value.effect)
+        return projected
+
+
+@dataclass(frozen=True)
+class LegacyAugmentedSubscriptStoreEffectSugar(Sugar):
+    """Preserve AugAssign without pretending its raw RHS is the stored value."""
 
     index_text: str
     site: object = dataclass_field(compare=False)
 
     @classmethod
     def witnesses(cls):
-        return typed_red_effect_witness(
-            name="subscript_store_runtime_effect",
-            owner_sugar="SubscriptStoreEffectSugar",
-            source="def A(xs, i, v):\n    xs[i] = v\n    return v\n",
-            effect_class="SubscriptStoreRuntimeEffect",
-            reason_needle="subscript store",
-            blame_needle="index=i",
-            wrong_reason_needle="subscript store target `[j]`",
-        )
+        return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
+        del ctx
         from sugar_lift_py_tests.effect import (
             SubscriptStoreRuntimeEffect,
             runtime_effect_evidence,
@@ -120,15 +238,8 @@ class SubscriptStoreEffectSugar(Sugar):
         operand = make_var(f"store_target[{self.index_text}]")
         return Incomplete(
             SubscriptStoreRuntimeEffect(
-                "subscript assignment runtime boundary: subscript store "
-                f"target `[{self.index_text}]` -- receiver dispatch belongs "
-                "to Python's runtime __setitem__; "
-                f"index={self.index_text} site={self.site}",
+                "augmented subscript assignment runtime boundary: subscript store "
+                f"target `[{self.index_text}]`; index={self.index_text} site={self.site}",
                 **runtime_effect_evidence("py.setitem", operand, self.site),
             )
         )
-
-    def desugar_store(self, ctx: object, value) -> Outcome:
-        """Compatibility with chained store sequencing; subscript is separately owned."""
-        del value
-        return self.desugar(ctx)

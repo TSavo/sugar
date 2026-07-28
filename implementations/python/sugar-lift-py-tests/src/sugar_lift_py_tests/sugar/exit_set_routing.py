@@ -12,11 +12,27 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 
 def is_hard_raise(entry) -> bool:
-    """True when entry is a raise Incomplete that halts control flow."""
+    """True when entry is a raise that must become a Halted ExitSet face.
+
+    Two producer shapes carry the same exceptional exit:
+
+    - ``Incomplete(RaiseEffect)`` from ``RaiseSugar`` / routed handlers
+    - ``RaiseValue`` from expression floors (BinOp / Subscript / Compare / …)
+
+    Expression producers publish ``Complete(RaiseValue)``; statement reduction
+    then deposits that ``RaiseValue`` as a block entry.  Without promoting it
+    here, assertion boundaries see a completed body and mint
+    ``ExpectationNotMetEffect`` — so every non-``raise`` producer under
+    ``pytest.raises`` stays at zero authenticated exceptional exits even when
+    the floor already constructed the exact effect.
+    """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.outcome import Incomplete
 
+    if isinstance(entry, RaiseValue):
+        return isinstance(entry.effect, (RaiseEffect, GroupedRaiseEffect))
     if not isinstance(entry, Incomplete):
         return False
     if not isinstance(entry.effect, (RaiseEffect, GroupedRaiseEffect)):
@@ -64,20 +80,35 @@ def promote_raise_halts(exits):
             continue
 
         remaining: list = []
+        prefix: list = []
         saw_halt = False
         for entry in state.entries:
             if is_hard_raise(entry):
                 saw_halt = True
-                guard = guard_from_conditions(exit_.guard, entry.branch_conditions)
-                promoted.append(Halted(guard, entry.effect, state))
+                branch_conditions = getattr(entry, "branch_conditions", ()) or ()
+                guard = guard_from_conditions(exit_.guard, branch_conditions)
+                # A Halted face carries the state that existed before its
+                # effect.  Keeping the raise entry in that state lets a later
+                # enclosing reducer promote the already-consumed edge again.
+                promoted.append(
+                    Halted(
+                        guard,
+                        entry.effect,
+                        replace(state, entries=tuple(prefix)),
+                    )
+                )
             else:
                 remaining.append(entry)
+                prefix.append(entry)
 
         if not saw_halt:
             promoted.append(exit_)
             continue
 
-        if remaining or state.can_fall_through:
+        # Entries before a terminal raise are the halted arm's state, not
+        # evidence of a second execution that completed.  Only the reducer's
+        # explicit fall-through testimony authorizes a complementary arm.
+        if state.can_fall_through:
             promoted.append(
                 Completed(
                     exit_.guard,

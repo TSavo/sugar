@@ -45,6 +45,22 @@ class RetainedObligation:
     failed: object
 
 
+@dataclass(frozen=True)
+class ConsumedObservation:
+    """The boundary consumed this halt AND authenticated its observation slot.
+
+    ``None`` already means "consumed"; this says the same thing and carries the
+    testimony that authenticates the ``as`` slot. The facts are built from the
+    ROUTED occurrence -- the exact effect this boundary matched -- so the slot
+    is authenticated by the thing that actually happened and never by an
+    ``E()`` the router invented. It is a separate shape rather than a flag
+    because a consumed-without-binding face must remain unable to carry
+    testimony at all.
+    """
+
+    facts: tuple
+
+
 def exit_disposition_effect(disposition: object, incoming: object):
     """The verdict for one body exit: an ``Effect``, ``None``, or a retention.
 
@@ -100,23 +116,49 @@ def _boundary_halted_edge(disposition, incoming):
     # settled and the retained face. Demand it before either.
     if incoming.state is None:
         raise SugarNotWritten(
+            blame=incoming.effect.occurrence_id,
             owner="EffectBoundaryDisposition",
             observed="matching raise face omitted its pre-effect state",
             requested="ExitSet Halted face carrying the real pre-halt state",
             fix="repair the block reducer; never fabricate a continuation state",
         )
     if isinstance(verdict, MatchDecided):
-        return None
+        return _consumed(disposition, incoming)
     if isinstance(verdict, MatchRetained):
-        # The identity matched; only the message predicate is open. Under it
-        # the boundary consumes, under its complement the ORIGINAL halt stands.
+        # Some conjunct of the boundary's predicate is open -- the identity
+        # test, the message test, or both conjoined. Under the obligation the
+        # boundary consumes, under its complement the ORIGINAL halt stands.
+        # Which conjunct is open is not this edge's business: the verdict is
+        # one predicate and it is routed as one.
         return RetainedObligation(
-            obligation=verdict.obligation, held=None, failed=incoming.effect
+            obligation=verdict.obligation,
+            held=_consumed(disposition, incoming),
+            failed=incoming.effect,
         )
     raise TypeError(
         "message verdict must be MatchDecided or MatchRetained; "
         f"got {type(verdict).__name__}"
     )
+
+
+def _consumed(disposition, incoming):
+    """Consume, carrying observation testimony only when a slot was declared.
+
+    No slot -> plain ``None``. A declared slot is authenticated from
+    ``incoming.effect``, the occurrence the matcher just decided on.
+    """
+    from sugar_lift_py_tests.effect_router import EffectBinding
+
+    slot_id = getattr(disposition, "observation_slot_id", None)
+    if slot_id is None:
+        return None
+    binding = EffectBinding(
+        slot_id=slot_id,
+        kind="raise",
+        type_name=getattr(incoming.effect, "exception_name", None),
+        effect=incoming.effect,
+    )
+    return ConsumedObservation(binding.to_facts(site=getattr(incoming, "site", None)))
 
 
 def _authenticate(disposition: object) -> None:

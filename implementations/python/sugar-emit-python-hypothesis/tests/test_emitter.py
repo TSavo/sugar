@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from declared_corpus import require_declared_corpus
+
 from sugar_emit_python_hypothesis.emitter import EmitPlan, emit
 
 
@@ -84,7 +86,22 @@ def test_unsupported_predicate_recorded_as_gap_not_emitted() -> None:
 
 
 def test_emitted_supported_predicates_run_under_pytest(tmp_path: Path) -> None:
-    pytest.importorskip("hypothesis")
+    # hypothesis is a HARD dependency of this package
+    # (pyproject: dependencies = ["blake3>=1.0.0", "hypothesis>=6.0.0"]).
+    # The package exists to emit Hypothesis tests; skipping its emission law
+    # when Hypothesis is absent reported green on every machine lacking a
+    # REQUIRED dependency.
+    try:
+        import hypothesis  # noqa: F401
+    except ImportError:
+        require_declared_corpus(
+            "hypothesis is not importable",
+            "the environment running this package's suite",
+            'sugar-emit-python-hypothesis pyproject.toml [project] dependencies '
+            '= ["blake3>=1.0.0", "hypothesis>=6.0.0"] -- a HARD dependency, '
+            "not an extra",
+            "pip install -e 'implementations/python/sugar-emit-python-hypothesis'",
+        )
     predicates = [
         _op("concept:eq", _var("a"), _var("b")),
         _op("concept:ne", _var("a"), _var("b")),

@@ -1,5 +1,15 @@
 # Minority Report gallery
 
+> **NON-AUTHORITATIVE BOARD.** The numbers below were measured before the
+> Python corpus board had a pinned denominator. The file *count* (1421) happens
+> to match the current pin, but a count is not an identity: nothing here records
+> which pandas bytes were walked, so these figures cannot be differenced against
+> a current measurement to yield a delta. The sole authority is
+> `implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py`,
+> pinned to `docs/ledgers/pins/pandas-3.0.3.pin.json`
+> (aggregate `bbb70a76…`, content-only `a1155ae2…`, path-bound `04b67544…`).
+> Quote those. Kept here as testimony of what was observed and when.
+
 > Campaign index for the dual-axis lift-coverage wall.
 > Part of [#4016](https://github.com/TSavo/sugar/issues/4016) · Part of [#4013](https://github.com/TSavo/sugar/issues/4013).
 >

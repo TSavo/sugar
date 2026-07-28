@@ -7,10 +7,55 @@ lives on the audit-row boundary, not here.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict
 from typing import Never, NoReturn
+
+# ``owner`` is the panic board's DISPATCH KEY: every row is worked as
+# (owner × value category), so an owner that is not a name makes the row
+# undispatchable. Two shapes are not names and are rejected at construction:
+#
+# ``<SourceFragment 'x.py' [12, 34) node=Call>``
+#     an object projection. ``SourceFragment`` defines no ``__str__``, so
+#     ``str(fragment)`` silently yields its ``__repr__``; a call site that
+#     passed ``owner=str(self.site)`` minted a row whose owner named an
+#     address, not a law.
+# ``pandas/core/frame.py:1234:8``
+#     a source coordinate. That is ``blame``'s currency, not ``owner``'s.
+#     Threading it through ``owner`` gives every occurrence of one law a
+#     distinct owner, which scatters a single gap across the whole board.
+#
+# A name may contain spaces (``collection ListValue``) and dots
+# (``StringValue.contains``) — those are real owners on the board, so the
+# tooth names the two malformed shapes rather than whitelisting a spelling.
+_OBJECT_PROJECTION = re.compile(r"^<.*>$", re.S)
+_SOURCE_COORDINATE = re.compile(r":\d+:\d+$")
+
+
+def _reject_non_name_owner(owner: object) -> None:
+    """The owner tooth: a gap that cannot name its owner cannot be worked."""
+    if not isinstance(owner, str) or not owner:
+        raise TypeError(
+            "ConstructionGap.owner must be a non-empty name: "
+            f"owner=ConstructionGap shape={type(owner).__name__} "
+            "replacement=name the law that has no arm"
+        )
+    if _OBJECT_PROJECTION.match(owner):
+        raise TypeError(
+            "ConstructionGap.owner must be a name, not an object projection: "
+            f"owner=ConstructionGap observed={owner!r} "
+            "replacement=pass the owning law's own name (type(self).__name__ "
+            "or the method name); carry the fragment in blame"
+        )
+    if _SOURCE_COORDINATE.search(owner):
+        raise TypeError(
+            "ConstructionGap.owner must be a name, not a source coordinate: "
+            f"owner=ConstructionGap observed={owner!r} "
+            "replacement=pass the owning law's own name; a file:line:col "
+            "coordinate is blame's currency, never owner's"
+        )
 
 
 class GapKind(str, Enum):
@@ -60,6 +105,7 @@ class ConstructionGap:
                 f"shape={type(self.gap_locus).__name__} "
                 "replacement=GapLocus.CONSTRUCTION"
             )
+        _reject_non_name_owner(self.owner)
 
     @property
     def message(self) -> str:

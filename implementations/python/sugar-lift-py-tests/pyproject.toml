@@ -34,9 +34,31 @@ test = [
     "black==26.5.1",
     "pyright==1.1.411",
     "itsdangerous==2.2.0",
-    "numpy",
-    "pandas",
+    # The measured corpus is PINNED. numpy and pandas are not ordinary test
+    # dependencies -- they ARE the corpus every board, ledger, and residual
+    # count ranges over, so an unpinned spec makes the denominator drift
+    # silently. Three versions were in play on one box before this pin: the
+    # ledgers key to 3.0.3, one venv carried 2.2.3, and a fresh
+    # `pip install -e '.[test]'` on 2026-07-27 resolved 3.0.5 -- installing the
+    # repo exactly as specified got you a different corpus than everyone else
+    # was measuring. The three tools beside them were already pinned exactly;
+    # the two that constitute the measurement were the two that could move.
+    "numpy==2.5.1",
+    "pandas==3.0.3",
+    # External exception construction authenticates provider definitions from
+    # recorded wheel source.  pandas' ArrowInvalid/ArrowException sites cannot
+    # be constructed from pandas bytes alone; this exact provider is part of
+    # the measured closure, not imported or executed by the source resolver.
+    "pyarrow==22.0.0",
 ]
+
+[tool.sugar.measured-corpus]
+# Content manifest over SourceTree(pandas_root).paths(): each sorted relative
+# path is paired with the BLAKE3-512 CID of its file bytes, then the canonical
+# manifest is content-addressed by demand_table_identity.corpus_manifest_cid.
+# Identical paths with one changed byte MUST mismatch. This is the 1,421-file
+# pandas 3.0.3 denominator in the immutable managed closure.
+pandas-manifest-cid = "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 
 [project.scripts]
 sugar-lift-python = "sugar_lift_py_tests.lift_rpc:main"

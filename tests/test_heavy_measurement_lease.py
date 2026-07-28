@@ -31,6 +31,13 @@ from pathlib import Path
 
 import pytest
 
+from unprivileged_identity import (
+    reachable_by_unprivileged,
+    run_unprivileged,
+    unprivileged_preexec,
+    writable_by_unprivileged,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "tools" / "heavy_measurement_lease.py"
 GATE = ROOT / "tools" / "heavy_measurement_lease_gate.py"
@@ -280,6 +287,90 @@ def test_outside_a_container_one_filesystem_really_is_one_machine(monkeypatch, t
     lease = module.HeavyMeasurementLease("t", str(lease_path), 1)
     monkeypatch.setattr(module.os.path, "exists", lambda p: False)
     lease._require_machine_wide()  # must not raise
+
+
+# -- the default path, and the refusal that must replace a bare traceback ---
+#
+# A hardcoded /home/runner default is correct inside a runner container and
+# wrong everywhere else, and it failed OPAQUELY: every interactive caller died
+# in os.makedirs with a bare PermissionError. The workaround that traceback
+# invites is --lease /var/tmp/..., which is per-container here and has already
+# produced two heavy jobs overlapping with a 0.0007s wait. So the default must
+# resolve from both sides of the bind mount, and an unusable directory must
+# REFUSE BY NAME while stating the correct path.
+
+
+def test_default_lease_path_resolves_under_the_callers_home_not_a_hardcoded_runner():
+    """`~/.cache/sugar/binaries` is one host directory under two names: HOME is
+    /home/runner inside a runner, the owning user's home on the host. The
+    default has to be right from both sides, so it may not hardcode either."""
+    module = _lease_module()
+    assert module.DEFAULT_LEASE_PATH == os.path.expanduser(
+        "~/.cache/sugar/binaries/.sugar-heavy-measurement.lease"
+    )
+    assert not module.DEFAULT_LEASE_PATH.startswith("/home/runner/"), (
+        "a hardcoded /home/runner default is unusable off-runner"
+    )
+
+
+def test_unwritable_lease_directory_refuses_by_name_and_states_the_right_path(tmp_path):
+    """The bare PermissionError is the defect. The refusal must name the
+    host-shared path AND rule out /var/tmp, because that is the workaround the
+    traceback teaches and it is the one that breaks the invariant."""
+    module = _lease_module()
+    # Root bypasses the mode check this law is about, so under bpytest (which
+    # runs as root) this used to skip -- and a skip is not a pass. It now runs
+    # under a dropped identity instead, so the law is executed everywhere.
+    reachable_by_unprivileged(tmp_path)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    lease = module.HeavyMeasurementLease("t", str(locked / "sub" / "x.lease"), 1)
+
+    with pytest.raises(module.LeaseDirectoryUnusable) as caught:
+        run_unprivileged(
+            lease._require_usable_directory,
+            expected=module.LeaseDirectoryUnusable,
+        )
+
+    message = str(caught.value)
+    assert ".cache/sugar/binaries" in message, "the refusal must state the right path"
+    assert "/var/tmp" in message, "the refusal must rule out the tempting workaround"
+    locked.chmod(0o700)
+
+
+def test_an_unusable_lease_directory_never_runs_the_command(tmp_path, record):
+    """The whole point: no lease, no measurement. A run that could not take the
+    lease must support no claim, exactly like a timeout."""
+    # Same reason as above: the wrapper subprocess drops to an unprivileged
+    # identity so the kernel enforces the mode bits, instead of the test
+    # skipping under the root identity bpytest runs as.
+    reachable_by_unprivileged(tmp_path)
+    writable_by_unprivileged(record.parent)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    ran = tmp_path / "ran.txt"
+
+    proc = subprocess.run(
+        [
+            sys.executable, str(WRAPPER),
+            "--class", "t",
+            "--lease", str(locked / "sub" / "x.lease"),
+            "--record", str(record),
+            "--timeout", "1",
+            "--", sys.executable, "-c", f"open({str(ran)!r}, 'w').write('x')",
+        ],
+        capture_output=True, text=True,
+        preexec_fn=unprivileged_preexec(),
+    )
+
+    assert proc.returncode == 75, proc.stderr
+    assert not ran.exists(), "the command must NOT run without a lease"
+    payload = json.loads(record.read_text())
+    assert payload["measurementStatus"] == "cancelled-before-measurement"
+    assert payload["supportsZeroClaim"] is False
+    locked.chmod(0o700)
 
 
 # -- the status vocabulary: silence is never a clean floor ------------------

@@ -9827,6 +9827,16 @@ enum Effect {
     /// array/range domains are genuine source boundaries owned by LiteralSugar. A
     /// nonempty finite literal domain completes before this effect can fire.
     LiteralDomain { reason: String },
+    /// FORALL-BODY-TERMINAL: a bounded `for` / `.for_each` universal whose DOMAIN is a
+    /// fine finite construction, but whose BODY assertions all closed with reasons that
+    /// already measured `Disposition::TerminalEffect` (a runtime destructure, a runtime
+    /// slice source, ...). The loop cannot state more than its body can, so the loop's
+    /// outcome IS the body's fact. `reason` is the body's own terminal string carried
+    /// VERBATIM -- never synthesized here -- so `refusal_disposition` classifies this
+    /// effect exactly as it classified the body's and the reason CID is conserved.
+    /// A body carrying any `Unclassified` reason never reaches this variant: that is
+    /// lifter work and stays a loud construction panic.
+    ForAllBodyTerminal { reason: String },
     /// STRUCT-UPDATE-REST: a struct literal using `..rest` does not write every field value
     /// at the literal site. Field projection facts are only derived from fully pinned
     /// `struct:*` ctor arguments; the rest source must be modeled explicitly before it can
@@ -10174,6 +10184,8 @@ impl Effect {
                  construction from the literal; refused by name: `{boundary}`"
             ),
             Effect::LiteralDomain { reason } => reason.clone(),
+            // Verbatim: the propagated string is the body's own already-terminal reason.
+            Effect::ForAllBodyTerminal { reason } => reason.clone(),
             Effect::StructUpdateRest { boundary } => format!(
                 "struct literal with `..rest` is not fully pinned from the literal: `{boundary}` \
                  (bin-2: rest fields are not constructed by this literal); owner=rust.struct_term; \

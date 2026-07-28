@@ -16,6 +16,33 @@ class SetValue(FloorValue):
 
     elements: tuple
 
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed set (``set().add``, ``s.union``) stay the
+        # py.getattr coordinate -- one law, shared with StringValue and the
+        # other constructed containers. Never invent a method body or a field.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="SetValue.attribute")
+
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``set``."""
+        return True
+
+    def python_index_protocol(self) -> bool:
+        return False
+
+    def subscript(self, index, site):
+        """Sets are never subscriptable: exact ground TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="SetValue.subscript",
+        )
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
@@ -49,6 +76,15 @@ class SetValue(FloorValue):
         return Complete(TermValue(len(self.elements)))
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         decisions = tuple(
             _closed_member_equal(item, element) for element in self.elements
         )
@@ -109,10 +145,12 @@ class SetValue(FloorValue):
 
 def _closed_member_equal(left, right):
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -129,10 +167,60 @@ def _closed_member_equal(left, right):
     bool_types = (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
     if type(left) in bool_types and type(right) in bool_types:
         return type(left) is type(right)
+    # Nested sequence membership: ``[1] in [[1], [2]]`` is ground list equality
+    # on each element — not a construction gap and not a dual-edge invent.
+    if type(left) is ListValue and type(right) is ListValue:
+        return _closed_sequence_equal(left.elements, right.elements)
+    if type(left) is TupleValue and type(right) is TupleValue:
+        return _closed_sequence_equal(left.elements, right.elements)
+    if type(left) is ListValue or type(right) is ListValue:
+        # list == non-list is False at Python (except exotic peers handled above).
+        return False
+    if type(left) is TupleValue or type(right) is TupleValue:
+        return False
     supported = (TermValue, StringValue, BytesValue, NoneValue, *bool_types)
     if type(left) in supported and type(right) in supported:
         return False
+    # A residual pair measured on the installed pandas tree lands here:
+    # `{List,Tuple,Set}Value.contains x CallSiteValue`. A call's result IS a
+    # value of undecided identity, so the honest answer is ``None`` (emit the
+    # typed python.*.contains obligation), not NotImplemented (a gap). What it
+    # is NOT is "any value carrying a term": FunctionCallable carries one and is
+    # a callable, never a member -- two tests pin that refusal deliberately. So
+    # the discriminator is ``FloorValue.denotes_a_value``, testimony each floor
+    # states about ITSELF and which defaults to no, never a property a caller
+    # reads off the carrier's shape.
+    if _denotes_a_value(left, supported) and _denotes_a_value(right, supported):
+        return None
     return NotImplemented
+
+
+def _closed_sequence_equal(left_elements, right_elements):
+    """Elementwise closed equality for nested list/tuple membership needles."""
+    if len(left_elements) != len(right_elements):
+        return False
+    decisions = tuple(
+        _closed_member_equal(left, right)
+        for left, right in zip(left_elements, right_elements)
+    )
+    if any(decision is None for decision in decisions):
+        return None
+    if any(decision is NotImplemented for decision in decisions):
+        return NotImplemented
+    return all(decisions)
+
+
+def _denotes_a_value(value, supported: tuple) -> bool:
+    """Whether one side of a membership test denotes a value at all.
+
+    The decidable literal carriers denote values by construction -- they were
+    already answered above, and only appear here as the OTHER side of an
+    undecided pair. Everything else has to say so itself.
+    """
+    if type(value) in supported:
+        return True
+    testimony = getattr(type(value), "denotes_a_value", None)
+    return bool(testimony(value)) if testimony is not None else False
 
 
 def _finite_union(left, right):

@@ -1,6 +1,6 @@
 """GuardedValue distributes attribute and membership over both faces.
 
-Full-dump (pandas untruncated): attribute panics 229 with GuardedValue 197;
+Full-dump (pandas untruncated): attribute refusals 229 with GuardedValue 197;
 contains residual after sequence floors still names GuardedValue. These twins
 pin the distribution law so the default FloorValue.attribute/contains panics
 cannot reappear on a guarded receiver.
@@ -17,15 +17,19 @@ def _guard():
     return atomic("choose", [])
 
 
-def test_guarded_attribute_distributes_to_symbolic_faces():
+def test_guarded_attribute_keeps_symbolic_face_refusal_loud():
+    from sugar_source_tree.panic import SugarNotWritten
+
     true_face = SymbolicValue(make_var("t"))
     false_face = SymbolicValue(make_var("f"))
     guarded = GuardedValue(_guard(), true_face, false_face)
-    outcome = guarded.attribute("x", "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GuardedValue)
-    assert outcome.value.when_true.term.name == "py.getattr"
-    assert outcome.value.when_false.term.name == "py.getattr"
+    try:
+        guarded.attribute("x", "site")
+    except SugarNotWritten as refusal:
+        assert refusal.owner == "SymbolicValue.attribute"
+        assert refusal.observed.endswith("SymbolicValue.x")
+    else:
+        raise AssertionError("guarded symbolic attribute invented completion")
 
 
 def test_guarded_list_membership_opposite_faces_emit_predicate():

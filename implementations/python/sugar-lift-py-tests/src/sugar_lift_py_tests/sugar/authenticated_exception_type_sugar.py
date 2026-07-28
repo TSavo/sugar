@@ -25,16 +25,73 @@ class AuthenticatedExceptionTypeSugar(Sugar):
         )
 
     def desugar(self, ctx=None):
+        """Project the sealed exception-type identity without member floors.
+
+        Import-bound dotted operands already carry a closed
+        ``python:exception_type_identity(import, …)`` coordinate from the
+        lexical import pass.  That coordinate *is* the source-visible floor.
+
+        Provider-gated heads (``importorskip`` / optional try-import) seal the
+        identity term itself as the carrier — Attribute chains on module heads
+        must not invent ``SymbolicValue.attribute`` success or AttributeError.
+        MRO is only whatever was supplied at construction; this door never
+        fabricates it.
+        """
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
             AuthenticatedExceptionTypeValue,
         )
-
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.outcome import Complete
 
-        return self.value.desugar(ctx).and_then(
-            lambda value: Complete(
+        # When construction already projected the exception-class floor (import
+        # Attribute paths, source ClassDef graphs), do not re-enter Attribute
+        # or other receivers that only exist to name the same identity.
+        if self.class_value is not None:
+            return Complete(
                 AuthenticatedExceptionTypeValue(
-                    value, self.identity, self.mro, self.class_value
+                    self.class_value,
+                    self.identity,
+                    self.mro,
+                    self.class_value,
                 )
             )
+
+        import_floor = _import_bound_exception_floor(self.identity)
+        if import_floor is not None:
+            return Complete(
+                AuthenticatedExceptionTypeValue(
+                    import_floor, self.identity, self.mro, import_floor
+                )
+            )
+
+        # Provider-gated / non-import sealed identity: do not re-desugar Attribute
+        # chains on opaque module receivers.
+        return Complete(
+            AuthenticatedExceptionTypeValue(
+                SymbolicValue(self.identity),
+                self.identity,
+                self.mro,
+                self.class_value,
+            )
         )
+
+
+def _import_bound_exception_floor(identity):
+    """The ExceptionClassValue named by an import identity, or None.
+
+    Only the ``import`` kind of ``python:exception_type_identity`` is closed
+    without further floor projection: its second argument is the qualified
+    export coordinate already joined from the authenticated import target and
+    the static Attribute chain.  Builtins and source-class identities keep
+    their existing leaf floors.
+    """
+    from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+
+    args = getattr(identity, "args", None)
+    if args is None or len(args) != 2:
+        return None
+    kind = getattr(args[0], "value", None)
+    qualified = getattr(args[1], "value", None)
+    if kind != "import" or not isinstance(qualified, str) or not qualified:
+        return None
+    return ExceptionClassValue(qualified)

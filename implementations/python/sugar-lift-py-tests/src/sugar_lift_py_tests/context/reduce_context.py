@@ -33,6 +33,7 @@ class ReduceContext:
     # after opaque body dig started reducing vendor-bridged bodies.
     external_bridge_sink: Any = None
     in_flight_effects: tuple[tuple[str, object], ...] = ()
+    observed_effects: tuple[tuple[str, object], ...] = ()
 
     @classmethod
     def root(
@@ -67,6 +68,7 @@ class ReduceContext:
             dig_sink=source.dig_sink,
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
             in_flight_effects=getattr(source, "in_flight_effects", ()),
+            observed_effects=getattr(source, "observed_effects", ()),
         )
 
     def record_operation(
@@ -104,6 +106,7 @@ class ReduceContext:
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
             in_flight_effects=self.in_flight_effects,
+            observed_effects=self.observed_effects,
         )
 
     def with_in_flight_effect(self, slot_id: str, effect: object) -> "ReduceContext":
@@ -122,10 +125,24 @@ class ReduceContext:
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
             in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),
+            observed_effects=self.observed_effects,
         )
 
     def in_flight_effect_for(self, slot_id: str):
         for candidate_slot, effect in reversed(self.in_flight_effects):
+            if candidate_slot == slot_id:
+                return effect
+        return None
+
+    def with_observed_effect(self, slot_id: str, effect: object) -> "ReduceContext":
+        from dataclasses import replace
+
+        return replace(
+            self, observed_effects=(*self.observed_effects, (slot_id, effect))
+        )
+
+    def observed_effect_for(self, slot_id: str):
+        for candidate_slot, effect in reversed(self.observed_effects):
             if candidate_slot == slot_id:
                 return effect
         return None

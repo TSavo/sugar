@@ -10,8 +10,8 @@ Fields (all load-bearing, all hashed into `environmentIdentityHash`):
 
   pythonImplementation / pythonVersion / pythonAbi   the interpreter
   platform                                            the machine + libc/OS
-  sourceStamp                                         the Rust+Python build
-                                                      inputs, from the same
+  sourceStamp                                         the Rust build inputs,
+                                                      from the same
                                                       preimage `bin/sugarbin`
                                                       hashes (tools/sugar_source_stamp.py)
   testExtraInputHash                                  hash of the [test] table
@@ -20,8 +20,8 @@ Fields (all load-bearing, all hashed into `environmentIdentityHash`):
                                                       -- the SOLE dependency
                                                       authority (#6275)
   packageBuildInputHash                               hash of every packaged
-                                                      source file of the
-                                                      packages installed
+                                                      Python source file of
+                                                      the packages installed
 
 Usage:
     python tools/python_test_environment_identity.py \

@@ -32,6 +32,41 @@ def test_both_are_membrane_panic_but_distinct_from_each_other():
     assert not issubclass(BackendDefect, VocabularyMissing)
 
 
+def test_every_source_tree_refusal_renders_its_required_blame_coordinate():
+    blame = "tests/fixtures/refusal.py:17:4"
+    refusal = SugarNotWritten(
+        blame=blame,
+        owner="Attribute.sugar",
+        observed="member lookup stayed undecided",
+        requested="an authenticated completed or exceptional edge",
+        fix="carry member testimony to the attribute floor",
+    )
+
+    assert refusal.blame == blame
+    assert f"  blame:     {blame}" in str(refusal)
+
+
+def test_refusal_without_blame_coordinate_cannot_be_constructed():
+    with pytest.raises(TypeError, match="blame"):
+        SugarNotWritten(
+            owner="Attribute.sugar",
+            observed="member lookup stayed undecided",
+            requested="an authenticated completed or exceptional edge",
+            fix="carry member testimony to the attribute floor",
+        )
+
+
+def test_none_cannot_masquerade_as_a_blame_coordinate():
+    with pytest.raises(TypeError, match="blame"):
+        SugarNotWritten(
+            blame=None,
+            owner="Attribute.sugar",
+            observed="member lookup stayed undecided",
+            requested="an authenticated completed or exceptional edge",
+            fix="carry member testimony to the attribute floor",
+        )
+
+
 def test_unknown_backend_kind_is_a_missing_not_a_provider_defect():
     """resolve_kind: a shape the backend legitimately produced, but our
     vocabulary has no node class for it — the MISSING case."""
@@ -41,7 +76,7 @@ def test_unknown_backend_kind_is_a_missing_not_a_provider_defect():
 
 def test_unknown_operator_kind_is_a_missing_not_a_provider_defect():
     with pytest.raises(VocabularyMissing):
-        operator_for("NoSuchOperator")
+        operator_for("NoSuchOperator", blame="test_panic_taxonomy.py:operator")
 
 
 def test_degenerate_span_is_a_provider_defect_not_a_missing():
@@ -90,6 +125,7 @@ def test_runtime_selected_context_manager_is_named_sugar_gap():
     assert issubclass(RuntimeSelectedContextManager, SourceTreePanic)
     assert RuntimeSelectedContextManager is not SugarNotWritten
     panic = RuntimeSelectedContextManager(
+        blame="test_panic_taxonomy.py:runtime-selected",
         owner="With.sugar",
         observed="unauthenticated context manager — exit suppression runtime-selected",
         requested="typed exit contract",

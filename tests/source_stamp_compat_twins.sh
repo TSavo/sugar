@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Twins for sourceStamp-only kit/binary compatibility (#4577 redo).
+# Twins for Rust build sourceStamp and kit/binary agreement (#4577 redo).
 set -euo pipefail
 repo="${1:?usage: source_stamp_compat_twins.sh REPO_ROOT}"
 cd "$repo"
@@ -23,22 +23,28 @@ docs_stamp="$(stamp)"
 rm -f "$tmp_doc"
 [[ "$base" == "$docs_stamp" ]] || { echo "docs-only change altered sourceStamp" >&2; exit 1; }
 
-# Twin: protocol Python change must alter stamp.
+# Twin: Python sources are runtime inputs, not Rust build inputs. The shelf
+# identity must survive Python-only merges so one Rust artifact is reusable.
 py_touch="$(mktemp "$repo/implementations/python/sugar-lift-py-tests/src/.stamp-twin.XXXXXX")"
 echo "# twin" >"$py_touch"
 py_stamp="$(stamp)"
 rm -f "$py_touch"
-[[ "$base" != "$py_stamp" ]] || { echo "python protocol change did not alter sourceStamp" >&2; exit 1; }
+[[ "$base" == "$py_stamp" ]] || { echo "python-only change altered Rust sourceStamp" >&2; exit 1; }
 
 # Twin: after remove, stamp returns.
 restored="$(stamp)"
 [[ "$base" == "$restored" ]] || { echo "stamp did not restore after python twin cleanup" >&2; exit 1; }
 
-# Twin: relevant Rust source change alters stamp.
-rs_touch="$(mktemp "$repo/implementations/rust/sugar-cli/src/.stamp-twin.XXXXXX.rs")"
-echo "// twin" >"$rs_touch"
+# Opposite twin: changing one byte in an existing Rust source changes stamp.
+rs_target="$repo/implementations/rust/sugar-cli/src/main.rs"
+rs_backup="$(mktemp /tmp/source-stamp-rust-byte.XXXXXX.rs)"
+cp -p "$rs_target" "$rs_backup"
+trap 'cp -p "$rs_backup" "$rs_target"; rm -f "$rs_backup"' EXIT
+printf '\n// sourceStamp byte twin\n' >>"$rs_target"
 rs_stamp="$(stamp)"
-rm -f "$rs_touch"
+cp -p "$rs_backup" "$rs_target"
+rm -f "$rs_backup"
+trap - EXIT
 [[ "$base" != "$rs_stamp" ]] || { echo "rust source change did not alter sourceStamp" >&2; exit 1; }
 
 # Compatibility gate: mismatch is loud.
@@ -65,4 +71,4 @@ for provenance in implementations/python/*/src/*/source_provenance.py; do
     || { echo "$provenance does not compute the sugar-cli sourceStamp (#6224)" >&2; exit 1; }
 done
 
-echo "PASS: sourceStamp twins (docs stable, rust/python protocol matter, gate uses SUGAR_BUILD_STAMP, every python kit testifies sourceStamp)"
+echo "PASS: sourceStamp twins (docs/Python stable, Rust bytes matter, gate uses SUGAR_BUILD_STAMP, every python kit testifies sourceStamp)"

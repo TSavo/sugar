@@ -38,34 +38,64 @@ class WithResourceSugar(Sugar):
     contract_ref: object | None = None
     context_manager_edge: object | None = None
     enter_slot_id: str | None = None
+    enter_definition: object | None = None
+    exit_definition: object | None = None
     site: object = dataclass_field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self.enter_definition is None or self.exit_definition is None:
+            raise ValueError(
+                "WithResourceSugar requires authenticated enter and exit definition coordinates"
+            )
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        for call, definition, slot in (
+            (self.enter, self.enter_definition, "context-enter"),
+            (self.exit, self.exit_definition, "context-exit"),
+        ):
+            if isinstance(call, MethodCallSugar) and (
+                call.native_definition_coordinate != definition
+            ):
+                raise ValueError(
+                    f"{slot} call is not authenticated by its definition coordinate"
+                )
 
     @classmethod
     def witnesses(cls):
+        prefix = (
+            "class Resource:\n"
+            "    def __init__(self):\n"
+            "        self.closed = False\n"
+            "    def __enter__(self):\n"
+            "        return self\n"
+            "    def __exit__(self, effect_type, effect, traceback):\n"
+            "        self.closed = True\n"
+            "        return False\n\n"
+            "def A(halts):\n"
+            "    resource = Resource()\n"
+            "    try:\n"
+            "        with resource:\n"
+            "            if halts:\n"
+            "                raise ValueError\n"
+            "    except ValueError:\n"
+            "        pass\n"
+            "    return resource.closed\n\n"
+        )
         return _call_pair(
-            name="with_resource_structure",
+            name="with_resource_closes_completed_and_halted",
             owner_sugar="WithResourceSugar",
-            truthful=(
-                "def A(z):\n"
-                "    with contextlib.suppress(KeyError):\n"
-                "        raise KeyError\n"
-                "    return z\n\n"
-                "def test_a():\n"
-                "    assert A(5) == 5\n"
-            ),
-            lying=(
-                "def A(z):\n"
-                "    with contextlib.suppress(KeyError):\n"
-                "        raise KeyError\n"
-                "    return z\n\n"
-                "def test_a():\n"
-                "    assert A(5) == 6\n"
-            ),
+            truthful=prefix + "def test_a():\n"
+            "    assert A(False)\n"
+            "    assert A(True)\n",
+            lying=prefix + "def test_a():\n"
+            "    assert A(False)\n"
+            "    assert not A(True)\n",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
+        from sugar_lift_py_tests.floor import EnteredManagerStateValue
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -103,15 +133,32 @@ class WithResourceSugar(Sugar):
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
                 if isinstance(enter_exit, Halted):
-                    parts.append(ExitSet((Halted(face_guard, enter_exit.effect),)))
+                    parts.append(
+                        ExitSet(
+                            (
+                                Halted(
+                                    face_guard,
+                                    enter_exit.effect,
+                                    enter_exit.state,
+                                    enter_exit.faces,
+                                    enter_exit.pending_contracts,
+                                ),
+                            )
+                        )
+                    )
                     continue
+
+                entered = EnteredManagerStateValue(
+                    enter_value=enter_exit.value,
+                    receiver_state=mgr_exit.value,
+                )
 
                 enter_facts = ()
                 if self.enter_slot_id is not None and hasattr(
                     enter_exit.value, "to_term"
                 ):
                     enter_facts = EnterResultBinding(
-                        self.enter_slot_id, enter_exit.value
+                        self.enter_slot_id, entered.enter_value
                     ).to_facts(site=self.site)
 
                 body_es = promote_raise_halts(
@@ -126,7 +173,27 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
-                    after = face.and_exit(exit_es, disposition=self.disposition)
+                    from sugar_lift_py_tests.context_manager_contract import (
+                        NeverSuppressesDispositionV1,
+                        ReturnTruthinessDispositionV1,
+                    )
+                    from sugar_lift_py_tests.effect import RaiseEffect
+
+                    if (
+                        isinstance(self.disposition, ReturnTruthinessDispositionV1)
+                        and isinstance(body_exit, Halted)
+                        and isinstance(body_exit.effect, RaiseEffect)
+                    ):
+                        after = face.and_exit_truthiness(exit_es, site=self.site)
+                    else:
+                        disposition = (
+                            NeverSuppressesDispositionV1()
+                            if isinstance(
+                                self.disposition, ReturnTruthinessDispositionV1
+                            )
+                            else self.disposition
+                        )
+                        after = face.and_exit(exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )

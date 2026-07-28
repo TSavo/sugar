@@ -1253,16 +1253,20 @@ class TermTableBuilder:
                 inbound[child_id] = inbound.get(child_id, 0) + 1
                 pending.append(child)
 
-        shared_canonical: dict[int, str] = {}
+        # Shared nodes retain (canonical preimage, CID) so a second edge reuses
+        # both the expanded string and the already-minted content address.
+        shared_canonical: dict[int, tuple[str, str]] = {}
         cid_by_id: dict[int, str] = {}
         values: list[str] = []
+        cid_stack: list[str] = []
         work: list[tuple[dict[str, Any], bool]] = [(root, False)]
         while work:
             term, finishing = work.pop()
             identity = id(term)
-            cached_value = shared_canonical.get(identity)
-            if not finishing and cached_value is not None:
-                values.append(cached_value)
+            cached = shared_canonical.get(identity)
+            if not finishing and cached is not None:
+                values.append(cached[0])
+                cid_stack.append(cached[1])
                 continue
             kind = term.get("kind")
             if kind in {"ctor", "lambda"} and not finishing:
@@ -1277,8 +1281,10 @@ class TermTableBuilder:
                 args = term.get("args", []) or []
                 arity = len(args)
                 children = values[-arity:] if arity else []
+                child_cids = cid_stack[-arity:] if arity else []
                 if arity:
                     del values[-arity:]
+                    del cid_stack[-arity:]
                 canonical = (
                     '{"args":['
                     + ",".join(children)
@@ -1286,19 +1292,19 @@ class TermTableBuilder:
                     + encode_jcs(vstr(term["name"]))
                     + "}"
                 )
+                # Child CIDs were minted when each child finished — never
+                # re-walk the expanded child preimage for a term-ref edge.
                 node_payload: dict[str, Any] = {
                     "kind": "ctor",
                     "name": term["name"],
                     "args": [
-                        {
-                            "kind": "term-ref",
-                            "cid": blake3_512_of(_rpc_canonical_bytes(child)),
-                        }
-                        for child in children
+                        {"kind": "term-ref", "cid": child_cid}
+                        for child_cid in child_cids
                     ],
                 }
             elif term.get("kind") == "lambda":
                 body = values.pop()
+                body_cid = cid_stack.pop()
                 canonical = (
                     '{"body":'
                     + body
@@ -1312,21 +1318,21 @@ class TermTableBuilder:
                     "kind": "lambda",
                     "paramName": term["paramName"],
                     "paramSort": term["paramSort"],
-                    "body": {
-                        "kind": "term-ref",
-                        "cid": blake3_512_of(_rpc_canonical_bytes(body)),
-                    },
+                    "body": {"kind": "term-ref", "cid": body_cid},
                 }
             else:
                 # Leaves are shallow JSON objects — encode_jcs over the value
                 # tree is O(leaf size), not O(spine depth).
                 canonical = encode_jcs(_json_like_to_value(term))
+                # Payload is the already-canonical JCS string decoded once for
+                # the wire row; the CID preimage is that same string's bytes.
+                # Do not re-encode through Value after this point.
                 node_payload = json.loads(canonical)
 
             cid = blake3_512_of(_rpc_canonical_bytes(canonical))
             cid_by_id[identity] = cid
             if inbound.get(identity, 0) > 1:
-                shared_canonical[identity] = canonical
+                shared_canonical[identity] = (canonical, cid)
             if cid not in self.nodes:
                 self.nodes[cid] = node_payload
                 node_count = len(self.nodes)
@@ -1340,8 +1346,9 @@ class TermTableBuilder:
                         },
                     )
             values.append(canonical)
+            cid_stack.append(cid)
 
-        if len(values) != 1:
+        if len(values) != 1 or len(cid_stack) != 1:
             raise AssertionError(
                 f"iterative RPC term encoder left {len(values)} canonical values"
             )
@@ -1516,13 +1523,19 @@ class TermTableBuilder:
 
 
 def _rpc_canonical_bytes(canonical: str) -> bytes:
-    """Hash the same Unicode scalar sequence that the RPC boundary transmits."""
-    if not any(0xD800 <= ord(char) <= 0xDFFF for char in canonical):
+    """Hash the same Unicode scalar sequence that the RPC boundary transmits.
+
+    Fast path: UTF-8 encode in C. Lone surrogates raise ``UnicodeEncodeError``;
+    only then walk scalars and replace with U+FFFD (serde_json-safe). Byte-
+    identical to the previous always-scan implementation for every input.
+    """
+    try:
         return canonical.encode("utf-8")
-    safe = "".join(
-        "\ufffd" if 0xD800 <= ord(char) <= 0xDFFF else char for char in canonical
-    )
-    return safe.encode("utf-8")
+    except UnicodeEncodeError:
+        safe = "".join(
+            "\ufffd" if 0xD800 <= ord(char) <= 0xDFFF else char for char in canonical
+        )
+        return safe.encode("utf-8")
 
 
 def formula_to_value(f: Formula) -> Value:

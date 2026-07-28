@@ -77,8 +77,9 @@ def test_measurement_surfaces_planted_construction_panic(tmp_path, monkeypatch) 
     )
     module = _module()
 
-    def planted(_path, *, reporter):
+    def planted(_path, **_kwargs):
         raise BackendDefect(
+            blame=path,
             owner="planted.raise",
             observed="construction panic",
             requested="loud census result",
@@ -95,6 +96,7 @@ def test_measurement_surfaces_planted_construction_panic(tmp_path, monkeypatch) 
             "type": "BackendDefect",
             "message": str(
                 BackendDefect(
+                    blame=path,
                     owner="planted.raise",
                     observed="construction panic",
                     requested="loud census result",
@@ -119,6 +121,7 @@ def test_gap_coordinate_failure_is_not_caught() -> None:
 
         def line_col_span(self):
             raise BackendDefect(
+                blame="test_raise_from_measurement.py:BrokenGapNode",
                 owner="planted gap coordinate",
                 observed="broken span",
                 requested="a valid normalized coordinate",

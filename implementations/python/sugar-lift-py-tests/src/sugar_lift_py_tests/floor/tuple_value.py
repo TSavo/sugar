@@ -16,6 +16,22 @@ class TupleValue(FloorValue):
 
     elements: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``tuple``."""
+        return True
+
+    def python_index_protocol(self) -> bool:
+        return False
+
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed tuple (``().count``, ``t.index``) stay the
+        # py.getattr coordinate -- one law, shared with StringValue and the
+        # other constructed containers. Never invent a method body or a field.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="TupleValue.attribute")
+
     def to_term(self, *, owner: str):
         # Project each element; vendor digs return tuples (sign/unsign pairs,
         # return_timestamp) that must enter FOL for assert equality.
@@ -42,6 +58,34 @@ class TupleValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        """A constructed tuple is exactly an instance of ``tuple`` / ``object``."""
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type_name in {"tuple", "object"}:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        if type_name in {
+            "list",
+            "dict",
+            "set",
+            "frozenset",
+            "str",
+            "bytes",
+            "int",
+            "bool",
+            "float",
+            "type",
+            "NoneType",
+        }:
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().python_isinstance(type_name, type_term, site)
+
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 
@@ -62,7 +106,29 @@ class TupleValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def project_sequence_with(self, operation, ctx):
+        """Unpack against authenticated reduced members already in hand.
+
+        ``TupleValue.elements`` is the finite member testimony from construction;
+        SequenceProjectionOperation binds names only when arity matches.
+        """
+        return operation.project_tuple(self, ctx)
+
+    @property
+    def items(self) -> tuple:
+        """Member sequence for SequenceProjectionOperation.project_tuple."""
+        return self.elements
+
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         # Membership over a constructed tuple: same closed-equality law as
         # ListValue / SetValue — fold, emit typed obligation, or stay loud.
         from sugar_lift_py_tests.floor.set_value import (
@@ -116,6 +182,10 @@ class TupleValue(FloorValue):
 
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="TupleValue.add")
         return super().add(other, site)
 
     def test_python_type(self, value, site):
@@ -243,55 +313,20 @@ class TupleValue(FloorValue):
         )
 
     def multiply(self, other, site):
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
+        # Python tuple repetition, through the one sequence-repetition law.
+        from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-        if type(other) is TermValue and type(other.value) in (int, bool):
-            from sugar_lift_py_tests.outcome import Complete
-
-            repeated = len(self.elements) * max(other.value, 0)
-            static_unfold_limit = 128
-
-            if repeated > static_unfold_limit:
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="TupleValue.multiply",
-                    blame=str(site),
-                    observed=f"tuple repetition cardinality={repeated}",
-                    requested=f"finite repetition at or below {static_unfold_limit}",
-                    fix="keep exact sequence repetition within the finite unfold budget",
-                )
-            return Complete(TupleValue(self.elements * other.value))
-        from sugar_lift_py_tests.floor.sequence_repetition import (
-            is_known_invalid_repetition_count,
-            known_invalid_repetition_type_error,
-        )
-
-        if is_known_invalid_repetition_count(other):
-            return known_invalid_repetition_type_error(self, other, site)
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "python:sequence_repeat",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
+        return repeat_sequence(
+            self, other, site, elements=self.elements, rebuild=TupleValue
         )
 
     def subscript(self, index, site):
-        # Concrete tuple + in-range TermValue int folds to the element; out of
-        # range is IndexError. Non-concrete index stays the py.subscript coordinate.
+        # Concrete tuple + integer index is fully decided. A known non-integer
+        # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
-        if type(index) is TermValue and type(index.value) is int:
+        if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -307,4 +342,27 @@ class TupleValue(FloorValue):
                 length=n,
                 site=site,
             )
-        return self.py_subscript_coordinate(index, site)
+        if index.python_index_protocol() is False:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="TupleValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="TupleValue.subscript")
+
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleValue.setitem"
+        )
+
+    def setattr(self, name, value, site):
+        """Tuples have no ``__dict__``; attribute store is AttributeError."""
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="TupleValue.setattr"
+        )

@@ -70,6 +70,23 @@ class SequenceProjectionOperation:
         del ctx
         return self._authenticated_members(value, value.items, "array")
 
+    def project_comprehension(self, value: Any, ctx: Any) -> Any:
+        """A comprehension answers from its own finite testimony, or not at all.
+
+        ``ComprehensionValue.finite_elements`` is the authenticated projection of
+        every member of an exact finite iterable, and ``None`` means no such
+        testimony exists. ``None`` is NOT an empty sequence and is not a count:
+        it routes to the runtime arm, where the cardinality stays owed. Reading
+        it as zero members would turn "we do not know" into a decidable arity
+        mismatch, which is the same lie in the opposite direction.
+        """
+        del ctx
+        if value.finite_elements is None:
+            return self._runtime_cardinality(value)
+        return self._authenticated_members(
+            value, value.finite_elements, "comprehension"
+        )
+
     # -- runtime cardinality: the count is not decidable -------------------
 
     def project_symbolic(self, value: Any, ctx: Any) -> Any:

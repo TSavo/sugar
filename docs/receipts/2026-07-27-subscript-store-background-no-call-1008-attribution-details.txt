@@ -1,0 +1,1017 @@
+authenticated execution environment: python=cpython-3.12.13 numpy=2.5.1 pandas=3.0.3 corpusManifestCid=blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530 fileCount=1421
+{"active_depth": 1, "elapsed_ms": 0.45, "error": "SUGAR NOT WRITTEN [Lambda.sugar]\n  blame:     /usr/local/lib/python3.12/site-packages/pandas/tests/frame/indexing/test_indexing.py:1003:20\n  observed:  Lambda at /usr/local/lib/python3.12/site-packages/pandas/tests/frame/indexing/test_indexing.py:1003:20 has no sugar written\n  requested: a constructed sugar object\n  fix:       override sugar() on Lambda and construct its sugar deliberately; never a fallback, never None", "error_type": "SugarNotWritten", "event": "error", "fingerprint": "Lambda.sugar|construction|/usr/local/lib/python3.12/site-packages/pandas/tests/frame/indexing/test_indexing.py:1003:20", "role": "construction", "schema": "sugar.engine.log.v1", "sequence": 1866, "site": "/usr/local/lib/python3.12/site-packages/pandas/tests/frame/indexing/test_indexing.py:1003:20", "sugar": "Lambda.sugar", "thread_id": 132447041100672}
+family=Subscript enrolled=392 authenticatedExceptionalExit=0 undischarged=2 namedRefusal=390 constructionPanic=0
+family=BinOp enrolled=367 authenticatedExceptionalExit=0 undischarged=340 namedRefusal=27 constructionPanic=0
+family=Compare enrolled=181 authenticatedExceptionalExit=0 undischarged=161 namedRefusal=20 constructionPanic=0
+family=Attribute enrolled=53 authenticatedExceptionalExit=1 undischarged=0 namedRefusal=52 constructionPanic=0
+family=UnaryOp enrolled=13 authenticatedExceptionalExit=0 undischarged=0 namedRefusal=13 constructionPanic=0
+family=BoolOp enrolled=2 authenticatedExceptionalExit=0 undischarged=0 namedRefusal=2 constructionPanic=0
+namedRefusal body=tests/api/test_api.py:491:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/arithmetic/common.py:144:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:146:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:148:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:150:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:152:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:154:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:156:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:158:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:35:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:37:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:55:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:57:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:59:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/common.py:61:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_bool.py:17:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1078:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1080:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1242:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1244:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1248:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1250:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1295:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:131:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:133:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1340:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:135:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:137:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1399:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1515:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1676:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1678:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1680:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1682:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1722:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1736:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1756:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1759:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1765:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1770:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:1785:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_datetime64.py:1947:BinOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/arithmetic/test_datetime64.py:1953:BinOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/arithmetic/test_datetime64.py:2006:BinOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arithmetic/test_datetime64.py:2012:BinOp coordinate=SymbolicValue.subscript
+undischarged body=tests/arithmetic/test_datetime64.py:2031:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:2033:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:2102:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_datetime64.py:2110:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/arithmetic/test_datetime64.py:2188:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:2191:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:2202:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:2280:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_datetime64.py:316:Compare coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arithmetic/test_datetime64.py:327:Compare coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arithmetic/test_datetime64.py:341:Compare coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arithmetic/test_datetime64.py:351:Compare coordinate=SymbolicValue.subscript
+undischarged body=tests/arithmetic/test_datetime64.py:786:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:788:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:790:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:792:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:814:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:893:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:896:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:921:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:924:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:945:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_datetime64.py:976:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:146:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:215:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:219:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:318:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:325:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:750:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_numeric.py:756:BinOp coordinate=SymbolicValue.subscript
+undischarged body=tests/arithmetic/test_numeric.py:758:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:897:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:900:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:976:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_numeric.py:979:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:170:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:323:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:325:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:327:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:329:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:344:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:347:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:362:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_object.py:365:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1050:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1087:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1119:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1162:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1166:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1198:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1229:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1233:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1252:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1256:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1278:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1302:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1317:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1361:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1363:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1367:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1369:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1371:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1373:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1380:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1386:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1611:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1614:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:1617:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:327:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:330:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:337:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:342:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:345:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:351:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:404:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:645:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:684:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:761:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:763:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:765:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:767:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:779:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:781:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:784:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:787:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:815:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:818:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:852:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_period.py:855:BinOp coordinate=SymbolicValue.subscript
+undischarged body=tests/arithmetic/test_period.py:862:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_period.py:864:BinOp coordinate=SymbolicValue.subscript
+undischarged body=tests/arithmetic/test_period.py:895:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:898:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:925:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_period.py:928:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:127:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:137:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:146:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:162:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:164:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:166:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:168:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:209:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_string.py:213:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1073:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1104:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1150:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1154:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1470:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1473:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1476:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1479:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1505:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1545:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:161:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1631:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1633:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_timedelta64.py:1635:BinOp coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arithmetic/test_timedelta64.py:1637:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/arithmetic/test_timedelta64.py:163:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1657:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:165:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1667:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:167:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1703:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1705:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1717:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1719:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1749:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1857:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1859:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1959:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1978:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:1982:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2014:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2031:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2055:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2057:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_timedelta64.py:2071:BinOp coordinate=SymbolicValue.subscript
+undischarged body=tests/arithmetic/test_timedelta64.py:2073:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2080:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2121:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2135:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2203:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2223:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2316:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:2319:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:334:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:336:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:340:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:344:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:407:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:410:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:413:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:416:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:418:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:420:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:425:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:427:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_timedelta64.py:505:BinOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arithmetic/test_timedelta64.py:507:BinOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arithmetic/test_timedelta64.py:512:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/arithmetic/test_timedelta64.py:733:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:735:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:741:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:743:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:745:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:747:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arithmetic/test_timedelta64.py:750:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arithmetic/test_timedelta64.py:828:BinOp coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arithmetic/test_timedelta64.py:830:BinOp coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arithmetic/test_timedelta64.py:832:BinOp coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arithmetic/test_timedelta64.py:834:BinOp coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arithmetic/test_timedelta64.py:867:BinOp coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arithmetic/test_timedelta64.py:869:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/arrays/boolean/test_arithmetic.py:56:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arrays/boolean/test_arithmetic.py:63:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/arrays/boolean/test_arithmetic.py:66:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_indexing.py:328:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_indexing.py:331:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:102:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:104:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:106:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:108:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:114:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:116:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:187:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:189:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:191:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:193:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:283:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:292:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:294:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:296:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:298:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:301:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:303:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:306:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:308:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:335:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:343:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:81:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:86:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/categorical/test_operators.py:93:Compare reason=native-operation exception identity unproven
+undischarged body=tests/arrays/floating/test_arithmetic.py:244:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/floating/test_arithmetic.py:246:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/floating/test_arithmetic.py:248:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/integer/test_arithmetic.py:351:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/integer/test_arithmetic.py:353:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/integer/test_arithmetic.py:355:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arrays/sparse/test_accessor.py:104:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/arrays/sparse/test_accessor.py:97:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/arrays/sparse/test_arithmetics.py:468:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/arrays/sparse/test_indexing.py:130:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arrays/sparse/test_indexing.py:133:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arrays/sparse/test_indexing.py:80:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arrays/sparse/test_indexing.py:84:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arrays/test_datetimelike.py:109:Compare coordinate=SymbolicValue.subscript
+namedRefusal body=tests/arrays/test_datetimelike.py:113:Compare coordinate=SymbolicValue.subscript
+undischarged body=tests/arrays/test_period.py:112:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/test_period.py:123:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/arrays/test_period.py:126:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/base/test_constructors.py:82:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/base/test_constructors.py:90:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/base/test_conversion.py:293:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/base/test_misc.py:186:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/base/test_misc.py:189:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/config/test_config.py:484:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/dtypes/test_dtypes.py:1206:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/extension/base/dim2.py:116:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/extension/base/dim2.py:119:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/extension/base/getitem.py:131:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/extension/base/getitem.py:133:Subscript coordinate=SymbolicValue.subscript
+undischarged body=tests/extension/base/getitem.py:147:Subscript reason=native-operation exception identity unproven
+namedRefusal body=tests/extension/base/getitem.py:149:Subscript coordinate=unary_operation_exception_floor
+namedRefusal body=tests/extension/base/getitem.py:192:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/extension/base/getitem.py:196:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/extension/base/getitem.py:259:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/extension/base/getitem.py:276:Subscript coordinate=SymbolicValue.subscript
+undischarged body=tests/extension/base/ops.py:182:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/extension/base/ops.py:258:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/extension/base/ops.py:260:UnaryOp coordinate=unary_operation_exception_floor
+undischarged body=tests/extension/test_arrow.py:1353:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/extension/test_arrow.py:1360:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/extension/test_arrow.py:2466:Attribute coordinate=CallSiteValue.attribute
+undischarged body=tests/extension/test_arrow.py:3508:Compare reason=native-operation exception identity unproven
+undischarged body=tests/extension/test_arrow.py:3593:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/extension/test_arrow.py:3595:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/frame/indexing/test_getitem.py:108:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_getitem.py:145:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_getitem.py:158:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_getitem.py:311:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_getitem.py:313:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_getitem.py:361:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_getitem.py:36:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_getitem.py:451:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_getitem.py:470:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_getitem.py:89:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_indexing.py:1003:Subscript coordinate=Lambda.sugar
+namedRefusal body=tests/frame/indexing/test_indexing.py:1199:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_indexing.py:129:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_indexing.py:135:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_indexing.py:1471:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:1473:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:1789:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:1810:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:277:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:52:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/indexing/test_indexing.py:569:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:768:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/indexing/test_indexing.py:973:Subscript coordinate=SymbolicValue.attribute
+undischarged body=tests/frame/indexing/test_where.py:138:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/indexing/test_where.py:205:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/indexing/test_where.py:401:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/indexing/test_where.py:71:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/methods/test_matmul.py:96:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/frame/methods/test_matmul.py:98:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/frame/test_api.py:68:Compare coordinate=SymbolicValue.attribute
+undischarged body=tests/frame/test_arithmetic.py:110:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1221:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1227:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1654:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1658:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1668:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/frame/test_arithmetic.py:1671:Compare coordinate=SymbolicValue.attribute
+undischarged body=tests/frame/test_arithmetic.py:1679:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1682:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1692:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1704:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:1707:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:191:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:193:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:195:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:197:Compare reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:2058:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_arithmetic.py:2060:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/frame/test_arithmetic.py:415:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/test_arithmetic.py:431:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/frame/test_constructors.py:2248:Subscript coordinate=SymbolicValue.attribute
+undischarged body=tests/frame/test_logical_ops.py:106:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_logical_ops.py:115:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_logical_ops.py:211:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/frame/test_nonunique_indexes.py:204:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/frame/test_subclass.py:148:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/frame/test_unary.py:133:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/frame/test_unary.py:135:UnaryOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/frame/test_unary.py:56:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/frame/test_unary.py:58:UnaryOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/generic/test_generic.py:152:BoolOp coordinate=boolean_operation_exception_floor
+namedRefusal body=tests/generic/test_generic.py:154:BoolOp coordinate=boolean_operation_exception_floor
+namedRefusal body=tests/generic/test_generic.py:156:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/groupby/test_groupby.py:267:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/groupby/test_grouping.py:42:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/groupby/test_grouping.py:47:Subscript coordinate=SymbolicValue.subscript
+undischarged body=tests/indexes/categorical/test_equals.py:35:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/categorical/test_equals.py:39:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/indexes/categorical/test_equals.py:41:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/categorical/test_equals.py:43:Compare coordinate=SymbolicValue.attribute
+undischarged body=tests/indexes/categorical/test_indexing.py:415:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/categorical/test_indexing.py:418:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/datetimes/test_date_range.py:348:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/datetimes/test_date_range.py:351:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/indexes/datetimes/test_indexing.py:103:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:195:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:205:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:219:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:233:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:251:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:290:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:305:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:318:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:327:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:329:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:394:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:397:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:402:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:405:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:451:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_partial_slicing.py:455:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/datetimes/test_scalar_compat.py:333:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/datetimes/test_scalar_compat.py:37:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/datetimes/test_scalar_compat.py:41:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexes/datetimes/test_scalar_compat.py:426:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/interval/test_indexing.py:54:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/interval/test_indexing.py:57:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/interval/test_indexing.py:60:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/interval/test_interval.py:592:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/interval/test_interval.py:594:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/interval/test_interval.py:596:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/interval/test_interval.py:600:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_analytics.py:167:BinOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/multi/test_analytics.py:169:BinOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/multi/test_analytics.py:171:BinOp coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/multi/test_analytics.py:174:BinOp coordinate=SymbolicValue.subscript
+undischarged body=tests/indexes/multi/test_compat.py:11:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_compat.py:14:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_compat.py:18:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_compat.py:22:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_compat.py:25:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_compat.py:28:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:43:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:55:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:65:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:72:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:74:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:76:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:79:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/multi/test_equivalence.py:81:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/indexes/multi/test_integrity.py:186:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_integrity.py:188:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_integrity.py:195:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_integrity.py:197:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_partial_indexing.py:132:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_partial_indexing.py:141:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/multi/test_sorting.py:127:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexes/multi/test_sorting.py:132:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexes/multi/test_sorting.py:147:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_sorting.py:151:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/multi/test_take.py:17:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/methods/test_is_full.py:21:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/test_freq_attr.py:17:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/test_indexing.py:116:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:143:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:194:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:226:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:236:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:338:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/test_indexing.py:341:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:736:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_indexing.py:738:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:144:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:146:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:148:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:150:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:67:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:79:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/period/test_partial_slicing.py:97:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/ranges/test_range.py:251:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/ranges/test_range.py:787:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_any_index.py:162:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_base.py:1247:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/test_base.py:1668:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_base.py:500:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_base.py:62:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_engines.py:50:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/test_engines.py:76:Compare coordinate=SymbolicValue.attribute
+undischarged body=tests/indexes/test_indexing.py:162:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/indexes/test_indexing.py:180:Compare coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/test_indexing.py:319:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_indexing.py:71:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/indexes/test_old_base.py:190:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:199:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:203:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:206:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:210:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:213:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:540:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:552:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:562:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:569:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:571:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:573:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:576:Compare reason=native-operation exception identity unproven
+undischarged body=tests/indexes/test_old_base.py:578:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/indexes/test_old_base.py:773:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_old_base.py:778:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_old_base.py:780:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_old_base.py:784:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_old_base.py:786:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/test_old_base.py:861:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/indexes/test_old_base.py:865:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/indexes/timedeltas/test_indexing.py:319:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexes/timedeltas/test_indexing.py:321:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexes/timedeltas/test_indexing.py:323:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexes/timedeltas/test_indexing.py:325:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexes/timedeltas/test_timedelta.py:44:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/timedeltas/test_timedelta.py:46:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexes/timedeltas/test_timedelta.py:48:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/interval/test_interval.py:103:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/interval/test_interval.py:120:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/interval/test_interval.py:124:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/interval/test_interval.py:53:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval.py:60:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval.py:71:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval.py:74:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:102:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:122:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:129:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:153:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:160:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:172:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:178:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/interval/test_interval_new.py:214:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/interval/test_interval_new.py:42:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:45:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:50:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:53:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/interval/test_interval_new.py:99:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/multiindex/test_getitem.py:54:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_getitem.py:57:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:1004:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:196:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:208:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:218:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:220:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:222:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:348:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:457:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:483:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:487:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:549:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:557:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:768:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:775:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:790:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:794:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:80:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:827:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:937:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_loc.py:944:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_multiindex.py:208:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/multiindex/test_multiindex.py:29:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_multiindex.py:33:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_partial.py:117:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_partial.py:167:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/multiindex/test_partial.py:33:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/multiindex/test_partial.py:35:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/multiindex/test_setitem.py:276:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/multiindex/test_slice.py:142:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_slice.py:148:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_slice.py:160:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_slice.py:444:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/multiindex/test_slice.py:524:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_at.py:128:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_at.py:130:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_at.py:132:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_at.py:154:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_at.py:165:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_at.py:168:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_at.py:179:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_at.py:188:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_at.py:204:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_at.py:206:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_at.py:219:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:111:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:307:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:312:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:317:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:349:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:372:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:395:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:404:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:407:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:478:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_categorical.py:72:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_datetime.py:26:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:106:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:109:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:118:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:123:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:126:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:204:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:249:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:304:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:327:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:347:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:349:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_floats.py:371:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:385:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:403:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:429:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:479:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:504:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:507:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:63:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:95:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_floats.py:97:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_iloc.py:1308:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:1316:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:1337:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:163:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:165:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:167:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:169:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:173:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:175:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:180:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:182:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:188:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:190:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:251:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:254:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:274:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:283:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:383:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:639:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:648:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:768:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:773:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:845:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_iloc.py:875:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:1011:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_indexing.py:112:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_indexing.py:244:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:249:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:263:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:271:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:278:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:284:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:295:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:346:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_indexing.py:513:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_indexing.py:516:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:524:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_indexing.py:527:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_indexing.py:716:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:1025:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:1028:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:1031:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:1184:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:1188:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:1735:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:1738:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:1741:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:1746:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:1968:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2564:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2593:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2609:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2762:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2765:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:2768:Subscript coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2777:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2786:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2828:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2933:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2940:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2963:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:2966:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:3152:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:3182:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:327:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:3299:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:332:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:444:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:448:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_loc.py:456:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:475:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:486:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:493:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:497:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:501:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:509:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:526:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:529:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:541:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_loc.py:545:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:387:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:394:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:405:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:416:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:420:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:428:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:436:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:444:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:452:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:460:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:478:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:481:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:489:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:497:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:500:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:504:Subscript coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:508:Subscript coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:512:Subscript coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:516:Subscript coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:520:Subscript coordinate=CallSiteValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:628:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:630:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_partial.py:632:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:671:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:673:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_partial.py:675:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_partial.py:688:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/indexing/test_scalar.py:135:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_scalar.py:138:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_scalar.py:200:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_scalar.py:202:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_scalar.py:218:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/indexing/test_scalar.py:220:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/interchange/test_impl.py:270:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/interchange/test_spec_conformance.py:93:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/internals/test_api.py:81:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/io/formats/style/test_style.py:1449:Subscript coordinate=SymbolicValue.attribute
+undischarged body=tests/io/pytables/test_file_handling.py:453:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/io/pytables/test_file_handling.py:459:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/io/pytables/test_file_handling.py:484:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/io/pytables/test_store.py:448:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/io/test_stata.py:693:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/libs/test_lib.py:149:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/libs/test_lib.py:151:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/libs/test_lib.py:160:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/libs/test_lib.py:162:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/resample/test_resample_api.py:165:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/resample/test_resampler_grouper.py:671:Subscript coordinate=SymbolicValue.subscript
+undischarged body=tests/scalar/interval/test_arithmetic.py:107:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:110:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:151:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:154:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:182:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:31:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:34:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:49:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:52:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:70:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:74:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:89:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_arithmetic.py:92:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/interval/test_contains.py:73:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:136:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:138:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:165:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:167:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:212:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:214:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:259:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:261:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:284:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:299:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:30:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:321:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:344:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:34:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:36:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:370:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:384:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:387:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:396:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:400:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:434:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:436:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:438:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:440:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:452:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:454:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:456:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:458:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:57:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:59:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:61:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:70:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/period/test_arithmetic.py:82:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/test_na_scalar.py:178:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/test_na_scalar.py:196:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/test_na_scalar.py:214:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/scalar/test_na_scalar.py:48:UnaryOp coordinate=unary_operation_exception_floor
+undischarged body=tests/scalar/test_nat.py:637:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/test_nat.py:639:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/test_nat.py:641:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/test_nat.py:643:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1165:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1167:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1169:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1171:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1201:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1205:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1221:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1223:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1225:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1227:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1229:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1232:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1234:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1236:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1247:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1249:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:124:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:1251:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:128:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:218:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:220:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:222:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:224:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:232:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:246:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:249:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:252:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:294:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:459:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:461:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:572:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/scalar/timedelta/test_arithmetic.py:576:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:594:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:599:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:647:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:726:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:741:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:743:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:746:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:771:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:783:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:849:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:852:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:875:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:878:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:881:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:885:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_arithmetic.py:992:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/scalar/timedelta/test_constructors.py:774:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/scalar/timedelta/test_timedelta.py:116:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:150:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:156:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:165:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:207:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:213:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:240:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:242:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:244:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:246:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:290:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:294:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:298:UnaryOp coordinate=unary_operation_exception_floor
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:373:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:375:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:377:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:399:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:401:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/scalar/timedelta/test_timedelta.py:403:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/scalar/timedelta/test_timedelta.py:629:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timedelta/test_timedelta.py:632:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:103:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:162:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:164:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:224:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:226:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:229:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:233:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:257:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:282:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:47:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:50:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:53:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:65:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:68:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:71:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_arithmetic.py:80:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:102:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:167:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:169:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:171:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:173:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:184:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:186:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:188:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:190:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:195:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:197:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:199:Compare reason=native-operation exception identity unproven
+undischarged body=tests/scalar/timestamp/test_comparisons.py:201:Compare reason=native-operation exception identity unproven
+namedRefusal body=tests/scalar/timestamp/test_constructors.py:1094:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/scalar/timestamp/test_timestamp.py:108:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_cat_accessor.py:229:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_cat_accessor.py:65:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_cat_accessor.py:78:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/series/accessors/test_cat_accessor.py:82:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/series/accessors/test_cat_accessor.py:84:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/series/accessors/test_cat_accessor.py:86:Attribute coordinate=CallSiteValue.attribute
+namedRefusal body=tests/series/accessors/test_dt_accessor.py:697:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_list_accessor.py:101:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_list_accessor.py:116:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_list_accessor.py:133:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_list_accessor.py:135:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_list_accessor.py:137:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/accessors/test_struct_accessor.py:151:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_datetime.py:144:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:158:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:176:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_datetime.py:260:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:269:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:301:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:432:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:43:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:480:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_datetime.py:484:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_getitem.py:101:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:104:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:112:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:115:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:124:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:215:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:221:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:286:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_getitem.py:296:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:330:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:333:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:368:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:393:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:406:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:414:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:416:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_getitem.py:451:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:454:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:479:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:507:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:510:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_getitem.py:571:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:583:Subscript coordinate=SymbolicValue.subscript
+undischarged body=tests/series/indexing/test_getitem.py:595:Subscript reason=native-operation exception identity unproven
+namedRefusal body=tests/series/indexing/test_getitem.py:612:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:646:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:649:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:657:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:663:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:665:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:670:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:705:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:714:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:78:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:84:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_getitem.py:91:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:165:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:173:Subscript coordinate=CallSiteValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:206:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:214:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:224:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:36:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:370:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_indexing.py:394:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_indexing.py:39:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/indexing/test_indexing.py:411:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_indexing.py:420:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_indexing.py:427:Subscript coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/indexing/test_indexing.py:44:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/series/test_api.py:175:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/series/test_api.py:195:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/series/test_arithmetic.py:1021:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:1023:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:256:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:539:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:544:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:665:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:667:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:669:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:671:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:678:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:682:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:691:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:693:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:695:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:697:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:785:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:787:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:790:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:792:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:795:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:797:Compare reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:849:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_arithmetic.py:852:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:101:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:103:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:105:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:117:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:119:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:135:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:138:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:156:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:184:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:194:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:204:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:232:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:249:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:262:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:435:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/series/test_logical_ops.py:454:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/series/test_logical_ops.py:96:BinOp coordinate=SymbolicValue.attribute
+undischarged body=tests/series/test_logical_ops.py:98:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/strings/test_api.py:115:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/strings/test_api.py:88:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/strings/test_strings.py:792:Attribute coordinate=SymbolicValue.attribute
+namedRefusal body=tests/strings/test_strings.py:802:Attribute coordinate=SymbolicValue.attribute
+undischarged body=tests/test_col.py:365:Compare reason=native-operation exception identity unproven
+authenticatedExceptionalExit body=tests/test_errors.py:108:Attribute exceptionTypeCoordinate=_Ctor(name='python:exception_type_identity', args=(_ConstStr(value='import', sort=PrimitiveSort(name='String')), _ConstStr(value='pandas.errors.AbstractMethodError', sort=PrimitiveSort(name='String')))) raiseOccurrence=/usr/local/lib/python3.12/site-packages/pandas/tests/test_errors.py:95:8
+namedRefusal body=tests/test_flags.py:45:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/test_multilevel.py:158:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/test_register_accessor.py:104:Attribute coordinate=CallSiteValue.attribute
+undischarged body=tests/tseries/offsets/test_business_hour.py:240:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_common.py:230:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_dst.py:112:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_dst.py:119:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_dst.py:265:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_dst.py:275:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_offsets.py:1223:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_offsets.py:680:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_ticks.py:298:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_ticks.py:300:BinOp reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_ticks.py:363:Compare reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_ticks.py:365:Compare reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_ticks.py:367:Compare reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_ticks.py:369:Compare reason=native-operation exception identity unproven
+undischarged body=tests/tseries/offsets/test_week.py:137:BinOp reason=native-operation exception identity unproven
+namedRefusal body=tests/window/test_api.py:43:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/window/test_api.py:47:Subscript coordinate=SymbolicValue.subscript
+namedRefusal body=tests/window/test_api.py:56:Attribute coordinate=SymbolicValue.attribute
+BATTLEAXE_EXIT_STATUS=0
