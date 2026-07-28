@@ -99,23 +99,42 @@ print("PINS_OK")
 PY
 }
 
-# SERIALIZE. Twelve agents bootstrapping at once drove a shared workstation to
-# load 200 and raced two pip installs onto one site-packages. mkdir is atomic;
-# the loser waits instead of corrupting the winner's install.
-lock_dir="$venv_dir.lock"
+# SERIALIZE MACHINE-WIDE, not per venv.
+#
+# A per-venv lock does not help: every agent worktree has its OWN venv_dir, so
+# N worktrees bootstrap concurrently and every one of them holds a different
+# lock legally. That is how a shared workstation reached load 200, and then 467
+# once the fleet grew. The contended resource is the MACHINE (CPU, disk, and
+# the pip download path), not one directory.
+#
+# So the lock is global by default. BOOTSTRAP_LOCK_DIR overrides it for an
+# isolated host (CI, a container) where parallel bootstraps are actually fine.
+lock_dir="${BOOTSTRAP_LOCK_DIR:-${TMPDIR:-/tmp}/sugar-bootstrap-venv-py312.lock}"
 lock_waited=0
 lock_timeout="${BOOTSTRAP_LOCK_TIMEOUT:-1800}"
 while ! mkdir "$lock_dir" 2>/dev/null; do
+  # A holder killed by SIGKILL cannot run its EXIT trap, so it leaves the lock
+  # behind. Reclaim it only when the recorded pid is genuinely gone — never on
+  # age alone, which would race a slow but healthy install.
+  if [[ -f "$lock_dir/pid" ]]; then
+    holder="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+      echo "bootstrap-venv-py312: reclaiming lock from dead pid $holder" >&2
+      rm -rf "$lock_dir"
+      continue
+    fi
+  fi
   if (( lock_waited == 0 )); then
     echo "bootstrap-venv-py312: another bootstrap holds $lock_dir; waiting" >&2
   fi
   if (( lock_waited >= lock_timeout )); then
-    die "timed out after ${lock_timeout}s waiting for $lock_dir (if no bootstrap is running: rmdir $lock_dir)"
+    die "timed out after ${lock_timeout}s waiting for $lock_dir (if no bootstrap is running: rm -rf $lock_dir)"
   fi
   sleep 5
   lock_waited=$(( lock_waited + 5 ))
 done
-trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+echo "$$" > "$lock_dir/pid"
+trap 'rm -rf "$lock_dir" 2>/dev/null || true' EXIT
 
 # Already authenticated? Then there is nothing to do. Recreating the venv and
 # reinstalling numpy+pandas on every invocation is what made this heavy.

@@ -4,6 +4,10 @@ dist/
 *.dSYM/
 .worktrees/
 **/.venv/
+# `**/.venv/` does not match suffixed venvs, which is how 972 generated files
+# and a platform-specific interpreter symlink reached main via #6531.
+# The bootstrap script is the reproducible artifact; the venv never is.
+**/.venv-*/
 **/__pycache__/
 **/.scala-build/
 **/.bsp/
