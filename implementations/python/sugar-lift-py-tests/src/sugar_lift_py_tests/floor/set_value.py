@@ -25,6 +25,24 @@ class SetValue(FloorValue):
 
         return getattr_coordinate(self, name, owner="SetValue.attribute")
 
+    def setattr(self, name, value, site):
+        """Sets have no instance ``__dict__``; store is AttributeError."""
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="SetValue.setattr"
+        )
+
+    def delattr(self, name, site):
+        """Sets have no instance ``__dict__``; delete is AttributeError."""
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="SetValue.delattr"
+        )
+
     def denotes_value(self) -> bool:
         """This floor value denotes a ``set``."""
         return True
