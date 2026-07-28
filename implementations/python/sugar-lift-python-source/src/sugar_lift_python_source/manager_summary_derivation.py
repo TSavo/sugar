@@ -857,6 +857,27 @@ def _exact_never_suppresses(value: object) -> bool:
     )
 
 
+def _exception_class_testimony_or_absence(unit, node):
+    """Project one exception ClassValue, or None when authority is unavailable.
+
+    ``SourceUnit.exception_class_value`` raises ``SugarNotWritten`` when the
+    identity has no closed authenticated class graph (opaque bases, no unique
+    ClassDef, etc.). That is truthful absence for the optional class_value
+    arm of exception-type formals — identity still seals without it.
+
+    Only ``SugarNotWritten`` maps to absence. ``ConstructionPanic``, invariant
+    errors, and unexpected runtime defects propagate: a broad ``except
+    Exception`` would convert implementation failure into class_value=None and
+    certify a lie.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        return unit.exception_class_value(node)
+    except SugarNotWritten:
+        return None
+
+
 def populate_source_derived_resource_refs(
     source_file,
     *,
@@ -1047,10 +1068,12 @@ def populate_source_derived_resource_refs(
                         identity = node.unit.imported_exception_type_identity(node)
                     else:
                         mro = node.unit.exception_type_mro(node)
-                        try:
-                            class_value = node.unit.exception_class_value(node)
-                        except Exception:
-                            class_value = None
+                        # Truthful absence vs loud defect: only SugarNotWritten
+                        # is authority unavailable (class_value=None). Bugs and
+                        # ConstructionPanic must not collapse to silent None.
+                        class_value = _exception_class_testimony_or_absence(
+                            node.unit, node
+                        )
                 if identity is not None:
                     return AuthenticatedExceptionTypeSugar(
                         node.sugar(),
