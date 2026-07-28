@@ -4,7 +4,15 @@ from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_py_tests.floor import ListValue, SymbolicValue, TermValue, TupleValue
+from sugar_lift_py_tests.floor import (
+    BytesValue,
+    ListValue,
+    SliceValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+    TupleValue,
+)
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
@@ -72,6 +80,81 @@ def test_readable_immutable_receiver_raises_on_store(tmp_path):
     assert "TypeError" in repr(outcome.effect.exception_type_coordinate)
     assert "ValueError" not in repr(outcome.effect.exception_type_coordinate)
     assert outcome.effect.producer_node_owner == "TupleValue.setitem"
+
+
+@pytest.mark.parametrize(
+    ("receiver", "owner"),
+    (
+        (StringValue("abc"), "StringValue.setitem"),
+        (BytesValue(b"abc"), "BytesValue.setitem"),
+    ),
+)
+def test_immutable_slice_store_has_exact_typeerror_occurrence(
+    tmp_path, receiver, owner
+):
+    site = _site(tmp_path)
+    outcome = _store(
+        receiver,
+        SliceValue(TermValue(1), TermValue(2), None),
+        ListValue((TermValue(9),)),
+        [],
+        site,
+    ).desugar()
+
+    assert type(outcome).__name__ == "Incomplete"
+    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.effect.producer_node_owner == owner
+    assert outcome.effect.occurrence_id == str(site)
+
+
+@pytest.mark.parametrize(
+    ("receiver", "fabricated"),
+    (
+        (StringValue("abc"), StringValue("a9c")),
+        (BytesValue(b"abc"), BytesValue(b"a9c")),
+    ),
+)
+def test_immutable_slice_store_cannot_fabricate_mutated_receiver(
+    tmp_path, receiver, fabricated
+):
+    site = _site(tmp_path)
+    outcome = _store(
+        receiver,
+        SliceValue(TermValue(1), TermValue(2), None),
+        ListValue((TermValue(9),)),
+        [],
+        site,
+    ).desugar()
+
+    assert outcome != Complete(fabricated)
+    assert outcome.effect.producer_node_owner != "TupleValue.setitem"
+
+
+@pytest.mark.parametrize(
+    "receiver", (StringValue("abc"), BytesValue(b"abc"))
+)
+def test_immutable_slice_store_halt_preserves_exact_prior_state(tmp_path, receiver):
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    prior = _ObservedSugar(
+        "prior", BlockValue((TermValue(99),), can_fall_through=True), []
+    )
+    store = _store(
+        receiver,
+        SliceValue(TermValue(1), TermValue(2), None),
+        ListValue((TermValue(9),)),
+        [],
+        _site(tmp_path),
+    )
+
+    outcome = reduce_block_to_exitset((prior, store), None)
+    halted = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    assert len(halted) == 1
+    assert halted[0].state.entries == (TermValue(99),)
 
 
 def test_undecided_store_never_claims_a_completed_face(tmp_path):

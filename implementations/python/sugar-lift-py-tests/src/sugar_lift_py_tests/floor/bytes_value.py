@@ -62,6 +62,15 @@ class BytesValue(FloorValue):
 
         return Complete(tuple(TermValue(byte) for byte in self.value))
 
+    def setitem(self, index, value, site):
+        """Bytes are immutable: every subscript store is exact TypeError."""
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="BytesValue.setitem"
+        )
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
