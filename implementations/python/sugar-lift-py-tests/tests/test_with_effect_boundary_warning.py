@@ -334,6 +334,14 @@ def test_no_warning_both_edges_discriminate_absence_from_arrival():
     assert isinstance(exception_arrived.exits[0].effect, ExpectationNotMetEffect)
 
 
+def test_no_warning_empty_exit_set_cannot_pass_vacuously():
+    """No faces means the body never resolved, not that no warning occurred."""
+    with pytest.raises(SugarNotWritten) as raised:
+        _no_warning_from_exitset(ExitSet(())).desugar()
+    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
+    assert raised.value.observed == "body has no authenticated exit edge"
+
+
 def test_no_warning_guarded_occurrence_is_undecided_on_exception_edge():
     """Guarded law is edge-independent: refuse on the halt face too."""
     guarded = WarningObservationValue(
