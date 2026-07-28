@@ -691,6 +691,24 @@ class TermValue(FloorValue):
             owner="TermValue.subscript",
         )
 
+    def setitem(self, index, value, site):
+        """Numeric values reject subscript store with exact TypeError."""
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TermValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        """Numeric values reject subscript delete with exact TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TermValue.delitem"
+        )
+
     def to_term(self, *, owner: str):
         del owner
         if type(self.value) is float:
