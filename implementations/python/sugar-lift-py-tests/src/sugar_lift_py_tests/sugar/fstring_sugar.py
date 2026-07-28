@@ -32,6 +32,7 @@ class FormattedValueSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -40,6 +41,16 @@ class FormattedValueSugar(Sugar):
         )
 
         def build(value, format_spec_term):
+            # Ground strings with no conversion/spec are already their display.
+            # RaisesExc formats ``f"DID NOT RAISE {type.__name__}"``; folding
+            # keeps the diagnostic message a StringValue so fail() can raise
+            # instead of panicking at SymbolicValue + SymbolicValue.
+            if (
+                isinstance(value, StringValue)
+                and self.conversion is None
+                and self.format_spec is None
+            ):
+                return Complete(value)
             return Complete(
                 SymbolicValue(
                     ctor(

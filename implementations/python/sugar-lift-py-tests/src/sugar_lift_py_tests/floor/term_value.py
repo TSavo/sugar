@@ -19,6 +19,29 @@ class TermValue(FloorValue):
     def python_index_protocol(self) -> bool:
         return isinstance(self.value, int)
 
+    def equals(self, other, site):
+        """Ground numeric equality folds so ``len(xs) == 1`` can ground Ifs.
+
+        RaisesExc selects the singular absent-effect diagnostic with
+        ``if len(self.expected_exceptions) == 1``. Emitting ``=(1, 1)`` as a
+        third value forces both branches and panics the multi-name join arm.
+        """
+        if type(other) is TermValue and type(self.value) is type(other.value):
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value == other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        return super().equals(other, site)
+
     def python_isinstance(self, type_name: str, type_term, site):
         del type_term
         from sugar_lift_py_tests.outcome import Complete

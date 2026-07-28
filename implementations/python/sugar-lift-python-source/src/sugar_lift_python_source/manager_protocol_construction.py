@@ -126,6 +126,63 @@ class ConstructedManagerProtocolV1:
         ).reduce_source_outcome(ctx)
 
 
+def _completed_object_receivers(receiver) -> tuple[ObjectValue, ...]:
+    """Flatten nested constructor partitions to completed ObjectValue faces.
+
+    Dual-mode factories that ground ``isinstance`` / validation branches can
+    nest a receiver partition inside an outer Completed face (validation Halted
+    sibling + inner completed ObjectValue).  Protocol methods need the ObjectValue
+    leaves; nested partitions are not themselves callable receivers.
+
+    Field-store sequencing can also emit intermediate ObjectValue faces that
+    hold only a prefix of constructor stores.  Keep only faces that are not
+    field-wise strictly refined by another completed face of the same class —
+    the same refinement law manager construction uses for multi-arm factories.
+    """
+    if isinstance(receiver, ObjectValue):
+        return (receiver,)
+    if not isinstance(receiver, ReceiverStatePartitionValue):
+        return ()
+    found: list[ObjectValue] = []
+    for face in receiver.exits.exits:
+        if not isinstance(face, Completed):
+            continue
+        found.extend(_completed_object_receivers(face.value))
+    return _maximal_field_receivers(tuple(found))
+
+
+def _maximal_field_receivers(
+    receivers: tuple[ObjectValue, ...],
+) -> tuple[ObjectValue, ...]:
+    """Drop intermediate constructor stores refined by a fuller peer face."""
+    if len(receivers) <= 1:
+        return receivers
+
+    def fields_of(obj: ObjectValue) -> dict[str, object]:
+        return {field.name: field.value for field in obj.fields}
+
+    def refines(a: ObjectValue, b: ObjectValue) -> bool:
+        if a.class_name != b.class_name:
+            return False
+        fa, fb = fields_of(a), fields_of(b)
+        if not set(fb).issubset(set(fa)):
+            return False
+        for name, value in fb.items():
+            if fa[name] != value:
+                return False
+        return len(fa) > len(fb)
+
+    kept = []
+    for candidate in receivers:
+        if any(
+            other is not candidate and refines(other, candidate)
+            for other in receivers
+        ):
+            continue
+        kept.append(candidate)
+    return tuple(kept)
+
+
 def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
     """Protocol methods run only after manager construction completed.
 
@@ -133,16 +190,30 @@ def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
     receiver partition, but they never enter ``__enter__`` or ``__exit__``.
     Filtering to native Completed object faces preserves each face's guard,
     partition testimony, and pending contracts without reconstructing them.
+    Nested partitions (from dual-mode factory validation) are flattened to
+    their ObjectValue leaves under the same Completed-only rule.
     """
     from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-    return ExitSet(
-        tuple(
-            face
-            for face in receiver_state.exits.exits
-            if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
-        )
-    )
+    leaves = _completed_object_receivers(receiver_state)
+    if not leaves:
+        return ExitSet(())
+    # Rebuild Completed faces over the flattened ObjectValue leaves so sequence
+    # still walks ordinary receivers. Outer partition guards are recovered
+    # when the leaf sits directly under a Completed face; nested leaves keep
+    # true_guard (the outer face already admitted them).
+    faces = []
+    for face in receiver_state.exits.exits:
+        if not isinstance(face, Completed):
+            continue
+        if isinstance(face.value, ObjectValue):
+            faces.append(face)
+            continue
+        if isinstance(face.value, ReceiverStatePartitionValue):
+            for leaf in _completed_object_receivers(face.value):
+                faces.append(Completed(face.guard, leaf))
+    return ExitSet(tuple(faces))
 
 
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
@@ -348,15 +419,7 @@ def construct_manager_protocol(
     and the typed exit-face operands to those bodies.
     """
     receiver = behavior.receiver_state
-    receivers = (
-        (receiver,)
-        if isinstance(receiver, ObjectValue)
-        else tuple(
-            face.value
-            for face in receiver.exits.exits
-            if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
-        )
-    )
+    receivers = _completed_object_receivers(receiver)
     if not receivers:
         return ManagerProtocolConstructionGapV1(
             "method-construction",

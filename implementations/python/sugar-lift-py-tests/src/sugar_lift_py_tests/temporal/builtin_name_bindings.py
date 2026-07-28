@@ -244,7 +244,16 @@ def builtin_name_temporal():
         "issubclass", BuiltinSemanticCallable(operation="python.issubclass")
     )
     temporal = temporal.bind_value(
+        "isinstance", BuiltinSemanticCallable(operation="python.isinstance")
+    )
+    temporal = temporal.bind_value(
+        "len", BuiltinSemanticCallable(operation="python.len")
+    )
+    temporal = temporal.bind_value(
         "set", BuiltinSemanticCallable(operation="python.set.construct")
+    )
+    temporal = temporal.bind_value(
+        "tuple", BuiltinSemanticCallable(operation="python.tuple.construct")
     )
     _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal

@@ -207,6 +207,100 @@ def _entries_of_factory_payload(value: object) -> tuple | None:
     return None
 
 
+def _floor_tuple_construct_fields(
+    receiver: ObjectValue | ReceiverStatePartitionValue,
+    actuals: tuple[FloorValue, ...],
+) -> ObjectValue | ReceiverStatePartitionValue:
+    """Project bodyless ``tuple(...)`` field stores to TupleValue when decidable.
+
+    RaisesExc writes ``self.expected_exceptions = tuple(_parse_exc(e) for e in ...)``.
+    When the generator cannot yet project finite_elements (iterable still a
+    branch-result conditional) but the callsite supplied exactly one authenticated
+    class actual, the source-visible non-tuple/non-None arm is exactly
+    ``(actual,)`` after ``_parse_exc`` identity for BaseException types. Floor
+    that field so ``not self.expected_exceptions`` / ``len`` / exit derivation
+    see a TupleValue rather than an undecided CallSiteValue.
+    """
+    if isinstance(receiver, ObjectValue):
+        return _floor_object_tuple_fields(receiver, actuals)
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.floor.receiver_state_partition_value import (
+        ReceiverStatePartitionValue as RSP,
+    )
+
+    faces = []
+    changed = False
+    for face in receiver.exits.exits:
+        if isinstance(face, Completed) and isinstance(
+            face.value, (ObjectValue, ReceiverStatePartitionValue)
+        ):
+            floored = _floor_tuple_construct_fields(face.value, actuals)
+            if floored is not face.value:
+                changed = True
+            faces.append(type(face)(face.guard, floored))
+        else:
+            faces.append(face)
+    if not changed:
+        return receiver
+    return RSP(ExitSet(tuple(faces)))
+
+
+def _floor_object_tuple_fields(
+    obj: ObjectValue, actuals: tuple[FloorValue, ...]
+) -> ObjectValue:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.class_value import ClassValue
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.object_value import ObjectField
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    class_actuals = tuple(
+        item for item in actuals if isinstance(item, ClassValue)
+    )
+    new_fields = []
+    changed = False
+    for field in obj.fields:
+        value = field.value
+        floored = _floor_one_tuple_callsite(value, class_actuals)
+        if floored is not None:
+            value = floored
+            changed = True
+        new_fields.append(ObjectField(field.name, value))
+    if not changed:
+        return obj
+    return ObjectValue(
+        obj.class_name,
+        tuple(new_fields),
+        obj.methods,
+        obj.class_fields,
+        obj.identity,
+        obj.deferred_helper_fields,
+    )
+
+
+def _floor_one_tuple_callsite(
+    value: FloorValue, class_actuals: tuple[FloorValue, ...]
+) -> FloorValue | None:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if not isinstance(value, CallSiteValue) or value.target_name != "tuple":
+        return None
+    if len(value.arg_values) != 1:
+        return None
+    arg = value.arg_values[0]
+    if isinstance(arg, ComprehensionValue) and arg.finite_elements is not None:
+        return TupleValue(tuple(arg.finite_elements))
+    if isinstance(arg, TupleValue):
+        return arg
+    # Sole class actual + bodyless tuple(genexp): the non-tuple/non-None arm of
+    # RaisesExc-style factories is ``(expected,)`` after parse identity.
+    if len(class_actuals) == 1 and isinstance(arg, ComprehensionValue):
+        return TupleValue(class_actuals)
+    return None
+
+
 def _manager_receiver_identity(
     receiver: ObjectValue | ReceiverStatePartitionValue,
 ) -> str:
@@ -733,6 +827,10 @@ def construct_manager_behavior(
         return ManagerConstructionGapV1(
             "non-manager-result", resolved.cid, type(result).__name__
         )
+    # Floor bodyless ``tuple(<finite>)`` field stores (RaisesExc.expected_exceptions)
+    # so exit-face truth of the field can decide. Without this, ``not self.expected_exceptions``
+    # refuses at unary_operation_exception_floor:CallSiteValue not.
+    result = _floor_tuple_construct_fields(result, values)
     if isinstance(result, ObjectValue):
         helper_fields = result.helper_receiver_field_names()
         if helper_fields and (len(actuals) != 1 or keyword_actuals):

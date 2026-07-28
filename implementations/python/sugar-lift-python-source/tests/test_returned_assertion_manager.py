@@ -159,7 +159,8 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
         return
 
     # Stage-keyed residual after dual-mode return follow-through. The returned
-    # manager constructed; summary derivation has not sealed EffectBoundary yet.
+    # manager constructed through isinstance/tuple/len field flooring; summary
+    # derivation still stops at the matches() UnaryOp gate on CallSiteValue.
     assert isinstance(reference, ContextManagerResolutionGapV1), reference
     assert reference.kind in {
         "exit-may-halt",
@@ -167,20 +168,20 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
         "force-floor",
         "incomplete-call-actuals",
         "no-derived-contract",
+        "method-construction",
     }, reference
     assert "external_error_raised" not in (reference.detail or "")
-    # Prior dead-end at dual-mode factory construction is drained.
+    # Prior dead-ends drained by returned-manager construction machinery.
     assert "binary_operation_exception_floor:SymbolicValue + CallSiteValue" not in (
         reference.detail or ""
     )
     assert "SymbolicValue + CallSiteValue" not in (reference.detail or "")
-    # Current residual names the exit-face floor on unfloored field state.
+    assert "comparison_operation_exception_floor" not in (reference.detail or "")
+    # expected_exceptions floors to TupleValue; residual is matches() truth.
     assert reference.kind == "exit-may-halt"
-    detail = reference.detail or ""
-    assert (
-        "comparison_operation_exception_floor" in detail
-        or "unary_operation_exception_floor" in detail
-    ), detail
+    assert "unary_operation_exception_floor:CallSiteValue not" in (
+        reference.detail or ""
+    )
 
 
 def test_external_error_raised_population_is_the_authenticated_47_with_sites() -> None:
