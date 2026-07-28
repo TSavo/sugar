@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import importlib.metadata
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.fixture_resource_obligation import (
     FixtureSuppliedResourceObligationV1,
 )
@@ -145,19 +147,6 @@ def _tree(root: Path, consumer: str, *, dist):
         path=path,
         distribution_index={"arbitrary": dist},
     )
-    # Inject task-2's publication boundary. These coordinates are deliberately
-    # fixture-owned; rebasing the real producer later swaps only this setup.
-    for receiver in context.source_derived_contract_refs:
-        context.contract_refs.native_definitions[
-            (receiver, NativeProtocolSlot.CONTEXT_ENTER)
-        ] = SourceFragmentCoordinateV1(
-            "blake3-512:" + "e" * 128, 1, 0, 1, 1
-        )
-        context.contract_refs.native_definitions[
-            (receiver, NativeProtocolSlot.CONTEXT_EXIT)
-        ] = SourceFragmentCoordinateV1(
-            "blake3-512:" + "x" * 128, 2, 0, 2, 1
-        )
     return tree, context, path
 
 
@@ -320,6 +309,98 @@ def test_authenticated_pandas_303_get_handle_is_real_resource_reproducer():
     )
     assert "def __exit__(\n        self," in manager_source
     assert "    ) -> None:\n        self.close()" in manager_source
+
+
+def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
+    """The producer's two real coordinates are the sole lifecycle authority."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    corpus = authenticated_pandas_corpus()
+    root = corpus.root.parent
+    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = open_source_file_for_construction(
+        path, root=root, construction_context=context, populate_derived=False
+    )
+    populate_source_derived_resource_refs(tree, root=root, path=path)
+    with_node = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 25
+    )
+    receiver = next(
+        coordinate
+        for coordinate in context.source_manager_provider_calls
+        if coordinate.start_line == 25
+    )
+    refs = context.contract_refs
+    enter_definition = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_ENTER
+    )
+    exit_definition = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_EXIT
+    )
+    assert isinstance(enter_definition, SourceFragmentCoordinateV1)
+    assert isinstance(exit_definition, SourceFragmentCoordinateV1)
+    assert enter_definition != exit_definition
+
+    class RecordingDefinitionDoor:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def require_native_definition(self, use_site, slot):
+            self.calls.append((use_site, slot))
+            return self.delegate.require_native_definition(use_site, slot)
+
+    recording = RecordingDefinitionDoor(refs)
+    object.__setattr__(context, "contract_refs", recording)
+    resource = with_node.sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert recording.calls == [
+        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
+        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert resource.enter.native_definition_coordinate == enter_definition
+    assert resource.exit.native_definition_coordinate == exit_definition
+
+    completed = replace(
+        resource,
+        body=(_FixedSugar(Complete(BlockValue((), can_fall_through=True))),),
+    ).desugar()
+    returned = replace(
+        resource,
+        body=(
+            _FixedSugar(
+                Complete(
+                    BlockValue(
+                        (ReturnValue(TermValue(7)),), can_fall_through=False
+                    )
+                )
+            ),
+        ),
+    ).desugar()
+    effect = RaiseEffect(exception_name="ValueError", occurrence="consumer.py:26:8")
+    halted = replace(
+        resource,
+        body=(_FixedSugar(Incomplete(effect)),),
+    ).desugar()
+
+    assert any(isinstance(face, Completed) for face in completed.exits)
+    assert any(
+        isinstance(entry, ReturnValue)
+        for face in returned.exits
+        if isinstance(face, Completed)
+        for entry in face.value.contribution()
+    )
+    assert any(
+        isinstance(face, Halted) and face.effect is effect for face in halted.exits
+    )
 
 
 def test_source_true_exit_publishes_truthiness_and_consumes_raise(tmp_path: Path):
