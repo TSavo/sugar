@@ -236,10 +236,11 @@ class GeneratorExitHaltFaceV1:
 class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
     """Generator-backed protocol plus enter-halt / yield / exit-halt faces.
 
-    **Is-a** :class:`GeneratorBackedManagerProtocolV1` (closed protocol surface):
-    publication and consumers admit the lifecycle wrapper through the base
-    protocol type without an isinstance asker over wrapper spelling. Face
-    fields are producer testimony; enter/exit performance inherit from the base.
+    **Is-a** :class:`GeneratorBackedManagerProtocolV1` — the closed protocol
+    surface published on ``SourceDerivedGeneratorResourceRefV1``. Consumers
+    read enter/exit definitions and lifecycle performance through that base
+    type; they never branch on Lifecycle-vs-Manager wrapper spelling. Face
+    fields are producer testimony; enter/exit performance inherit from base.
     """
 
     enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = ()

@@ -246,7 +246,9 @@ def _publications(context: TreeConstructionContextV1) -> list[_Publication]:
             continue
         if not isinstance(exit_, SourceFragmentCoordinateV1):
             continue
-        protocol = ref.protocol
+        # ONE typed surface on the published ref — never enumerate Lifecycle
+        # vs Manager wrapper spelling; generator_protocol is the closed door.
+        protocol = ref.generator_protocol
         if not isinstance(protocol, GeneratorBackedManagerProtocolV1):
             continue
         frame = protocol.generator_frame
@@ -257,10 +259,10 @@ def _publications(context: TreeConstructionContextV1) -> list[_Publication]:
                 exit=exit_,
                 ref=ref,
                 frame_cid=frame.frame_cid,
-                protocol_construction_cid=protocol.protocol_construction_cid,
+                protocol_construction_cid=ref.protocol_construction_cid,
                 has_generator_steps=frame.generator_steps is not None,
-                enter_definition=protocol.enter_definition,
-                exit_definition=protocol.exit_definition,
+                enter_definition=ref.enter_definition,
+                exit_definition=ref.exit_definition,
             )
         )
     return out

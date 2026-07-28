@@ -189,42 +189,29 @@ def test_pre_yield_never_yield_is_authenticated_entry_refusal():
 
 
 def test_pre_yield_assign_then_yield_enters_with_resource():
-    """LAW (grok-1 item-1): ordinary pre-yield Assign is performed, then yield enters.
+    """LAW (item-1): ordinary pre-yield Assign is performed, then yield enters.
 
     Live shapes from the renamed consumption suite are exactly this row:
 
         prior = None
         yield (key, value, prior)
 
-    Today ``OpaqueStepV1("Assign")`` gaps at enter. When the pre-yield
-    transition producer lands, ``enter_resource_outcome`` completes with the
-    yield value and an exact machine state that can exit once.
+    AssignStepV1 executes on the live machine; enter completes with the yield
+    value and an exact machine state that can exit once.
     """
+    from sugar_lift_py_tests.generator_construction import AssignStepV1
+
     protocol = _protocol(
         frame=_frame(
             steps=(
-                OpaqueStepV1("Assign", carries_suspension=False),
+                AssignStepV1("prior", TermValue(None), "frag:prior"),
                 YieldStepV1(TermValue(42)),
                 ReturnStepV1(None),
             ),
             frame_cid=cid_of_json({"frame": "pre-yield-assign"}),
         )
     )
-    try:
-        outcome = protocol.enter_resource_outcome()
-    except SugarNotWritten as gap:
-        pytest.fail(
-            "MISSING PRODUCER (pre-yield Assign transition → grok-1 item-1):\n"
-            f"  owner: GeneratorBackedManagerProtocolV1.enter_resource_outcome\n"
-            f"  observed: {gap.observed!r}\n"
-            f"  requested: {gap.requested!r}\n"
-            "  expected: step ordinary Assign (binding, no suspension), then "
-            "Complete(EnteredGeneratorManagerStateV1) on the following YieldStepV1\n"
-            "  shapes blocked: config-setter / warnings-filter / temp-state live "
-            "generators in test_generator_manager_renamed_lifecycle.py\n"
-            "  fix: construct Assign (and peer pre-yield statement) transitions "
-            "in GeneratorConstructionV1; do not leave them OpaqueStep gaps"
-        )
+    outcome = protocol.enter_resource_outcome()
     assert isinstance(outcome, Complete), type(outcome)
     entered = outcome.value
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
@@ -283,30 +270,20 @@ def test_pre_yield_suspension_assign_twin_does_not_impersonate_ordinary_assign()
 
 
 def test_pre_yield_assign_and_inert_prefix_compose_then_yield():
-    """Composed pre-yield: inert + Assign + yield — Assign is the blocker today."""
+    """Composed pre-yield: inert + Assign + yield."""
+    from sugar_lift_py_tests.generator_construction import AssignStepV1
+
     protocol = _protocol(
         frame=_frame(
             steps=(
                 InertStepV1("Expr"),
-                OpaqueStepV1("Assign", carries_suspension=False),
+                AssignStepV1("prior", TermValue(None), "frag:prior2"),
                 YieldStepV1(TermValue(7)),
                 ReturnStepV1(None),
             ),
             frame_cid=cid_of_json({"frame": "inert-then-assign-then-yield"}),
         )
     )
-    try:
-        outcome = protocol.enter_resource_outcome()
-    except SugarNotWritten as gap:
-        # Inert must not be reported as the blocker once Assign is the residual.
-        assert gap.observed == "Assign" or "Assign" in str(gap.observed), (
-            f"expected Assign as first real blocker after inert prefix; "
-            f"observed={gap.observed!r}"
-        )
-        pytest.fail(
-            "MISSING PRODUCER (pre-yield Assign after inert → grok-1 item-1):\n"
-            f"  observed: {gap.observed!r}\n"
-            "  expected: step past InertStepV1, perform Assign, yield TermValue(7)"
-        )
+    outcome = protocol.enter_resource_outcome()
     assert isinstance(outcome, Complete)
     assert outcome.value.enter_value == TermValue(7)
