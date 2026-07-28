@@ -154,6 +154,10 @@ class TupleValue(FloorValue):
 
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="TupleValue.add")
         return super().add(other, site)
 
     def test_python_type(self, value, site):

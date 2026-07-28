@@ -361,12 +361,16 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        if type(other) is TermValue and type(other.value) is int:
+        if type(other) is TermValue and isinstance(other.value, int):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(StringValue(self.value * other.value))
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.multiply")
         return super().multiply(other, site)
 
     def divide(self, other, site):
@@ -375,6 +379,10 @@ class StringValue(GuardStableValue):
 
         if type(other) is CallSiteValue:
             return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.divide")
         return super().divide(other, site)
 
     def modulo(self, other, site):

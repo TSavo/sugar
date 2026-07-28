@@ -69,28 +69,16 @@ def is_known_invalid_repetition_count(value) -> bool:
 
 
 def known_invalid_repetition_type_error(sequence, count, site):
-    """Construct Python's typed exceptional boundary for ``sequence * count``."""
-    from sugar_lift_py_tests.effect import (
-        TypeErrorRuntimeEffect,
-        runtime_effect_evidence,
-    )
-    from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Incomplete
+    """Authenticated TypeError for a source-decided non-``__index__`` count.
 
-    operation = ctor(
-        "call:python.sequence_repeat",
-        [
-            sequence.to_term(owner=str(site)),
-            _known_ground_term(count, owner=str(site)),
-        ],
-    )
-    return Incomplete(
-        TypeErrorRuntimeEffect(
-            "sequence repetition count is a known ground value without "
-            f"__index__; count={type(count).__name__} site={site}",
-            **runtime_effect_evidence("python:sequence_repeat", operation, site),
-        )
-    )
+    ``[1] * 1.5`` / ``[1] * "a"`` / ``[1] * None`` are lift-time decided:
+    Python never selects ``__mul__`` successfully.  That is RaiseValue, not a
+    RuntimeEffect (the count is not runtime-dependent).
+    """
+    del sequence, count
+    from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+    return ground_type_error(site=site, owner="sequence_repetition")
 
 
 def _known_ground_term(value, *, owner: str):

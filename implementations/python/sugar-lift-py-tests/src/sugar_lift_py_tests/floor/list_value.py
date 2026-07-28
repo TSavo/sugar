@@ -194,6 +194,21 @@ class ListValue(FloorValue):
             self, other, site, elements=self.elements, rebuild=ListValue
         )
 
+    def subtract(self, other, site):
+        """Lists never subtract: decided peers are TypeError."""
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="ListValue.subtract")
+        return super().subtract(other, site)
+
+    def floor_divide(self, other, site):
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="ListValue.floor_divide")
+        return super().floor_divide(other, site)
+
     def matrix_multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 

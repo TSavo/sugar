@@ -242,6 +242,103 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     assert outcome.value.effect.exception_name == "TypeError"
 
 
+def test_source_decided_int_plus_str_emits_type_error() -> None:
+    """Reverse of string-add sites: ``1 + "foo"`` is decided TypeError.
+
+    Enrolled shapes like ``"foo_" + ser`` refuse on undecided right; the
+    dual ``TermValue + StringValue`` publishes RaiseValue.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor import RaiseValue, StringValue, TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import BinOp
+    from sugar_source_tree.tree import SourceFile
+
+    twin = 'def f():\n    return 1 + "foo"\n'
+    tree = SourceFile(
+        (twin, "int-plus-str-twin.py", blake3_512_of(twin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(n for n in tree.nodes() if isinstance(n, BinOp))
+
+    @dataclass(frozen=True)
+    class _ValueSugar(Sugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+    operation = type(node.sugar())(
+        "Add",
+        _ValueSugar(TermValue(1)),
+        _ValueSugar(StringValue("foo")),
+        node.fragment,
+    )
+    outcome = operation.desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_source_decided_int_mod_list_emits_type_error() -> None:
+    """Twin of enrolled ``td % []`` / ``2 % tdarr`` with decided ground types.
+
+    ``TermValue % ListValue`` is Python TypeError when both sides are decided.
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import BinOp
+    from sugar_source_tree.tree import SourceFile
+
+    twin = "def f():\n    return 2 % []\n"
+    tree = SourceFile(
+        (twin, "int-mod-list-twin.py", blake3_512_of(twin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(n for n in tree.nodes() if isinstance(n, BinOp))
+
+    @dataclass(frozen=True)
+    class _ValueSugar(Sugar):
+        value: object
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            return Complete(self.value)
+
+    operation = type(node.sugar())(
+        "Mod",
+        _ValueSugar(TermValue(2)),
+        _ValueSugar(ListValue(())),
+        node.fragment,
+    )
+    outcome = operation.desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
 def test_source_decided_list_plus_int_emits_type_error() -> None:
     """``list + int`` is source-decided TypeError — the ground field law.
 
