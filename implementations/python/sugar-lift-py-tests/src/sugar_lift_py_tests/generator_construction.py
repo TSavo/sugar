@@ -19,6 +19,18 @@ def _require_constructed_term(value: object, *, owner: str) -> None:
 
 
 @dataclass(frozen=True)
+class _GeneratorReduceCtx:
+    """Minimal reduction context for pre-yield guard / step Sugar.
+
+    Only ``temporal`` is required: BindingCoordinateRefSugar.desugar reads
+    ``ctx.temporal.value_if_bound(coordinate.cid)``.  No name map, no
+    coordinate scan, no second door.
+    """
+
+    temporal: object
+
+
+@dataclass(frozen=True)
 class YieldStepV1:
     value: ConstructedTermSugar | None
 
@@ -725,6 +737,66 @@ class GeneratorConstructionV1:
         )
         return _replace(self, steps=steps)
 
+    def _guard_evaluation_context(self):
+        """Temporal context carrying this machine's authenticated sealed bindings.
+
+        Pre-yield guards desugar BindingCoordinateRefSugar at exact formal
+        coordinates.  The producer installs only sealed BindingEntryV1 values
+        (coordinate.cid → FloorValue) and post-assign names already reduced on
+        this machine.  Absent/tampered/unsealed testimony is not installed —
+        BindingCoordinateRefSugar.desugar remains the sole refusal boundary
+        (no name lookup, coordinate scanning, or unspecialized-formal fallback
+        there).
+        """
+        from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
+        from sugar_source_tree.binding_state import BindingEntryV1
+
+        temporal = TemporalContext()
+        for item in self.binding_state:
+            if isinstance(item, BindingEntryV1):
+                # Seal is mandatory at allocate; skip anything that lost it.
+                if item.constructed_value_testimony is None:
+                    continue
+                floor = self._floor_from_sealed_binding_entry(item)
+                if floor is None:
+                    continue
+                temporal = temporal.bind_value(item.coordinate.cid, floor)
+                continue
+            if isinstance(item, GeneratorAssignBindingV1):
+                # Assign already reduced to Floor on this machine; expose by name
+                # for later pre-yield steps that read the bound name.
+                if item.value is not None:
+                    temporal = temporal.bind_value(item.name, item.value)
+        return _GeneratorReduceCtx(temporal)
+
+    @staticmethod
+    def _floor_from_sealed_binding_entry(entry) -> object | None:
+        """Recover the FloorValue of one sealed formal binding.
+
+        The live Node state is the constructed actual.  It desugars without the
+        formal temporal (actuals are not BindingCoordinateRefs of *this*
+        frame).  When recovery fails, the formal stays absent and the guard
+        consumer refuses loudly.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.sugar_base import Sugar
+        from sugar_source_tree.nodes import Node
+
+        state = entry.state
+        if not isinstance(state, Node):
+            return None
+        try:
+            sugar = state.sugar()
+        except Exception:
+            return None
+        if not isinstance(sugar, Sugar):
+            return None
+        # No formal temporal here: the actual must stand as constructed content.
+        outcome = sugar.desugar()
+        if not isinstance(outcome, Complete):
+            return None
+        return outcome.value
+
     def _guard_truth(self, guard: object):
         """The guard's TRUTH as a floor value, or None if it cannot stand.
 
@@ -734,13 +806,25 @@ class GeneratorConstructionV1:
         weaker copy of that law: `NoneValue.truth` is False, a container's is
         its non-emptiness, and a symbolic value's is a predicate. Routing
         through `truth` keeps one owner for the question.
+
+        Guard Sugar is reduced under :meth:`_guard_evaluation_context` so
+        BindingCoordinateRefSugar resolves sealed formal actuals at the exact
+        coordinate CID (and only there).
         """
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
+        from sugar_source_tree.panic import SugarNotWritten
 
         value = guard
         if isinstance(guard, Sugar):
-            outcome = guard.desugar()
+            ctx = self._guard_evaluation_context()
+            try:
+                outcome = guard.desugar(ctx)
+            except SugarNotWritten:
+                # Unspecialized / wrong-coordinate formal: not a ground truth.
+                # Surface as undecided (None) so the branch stays a loud gap or
+                # partition path rather than inventing a default.
+                return None
             if not isinstance(outcome, Complete):
                 return None
             value = outcome.value
@@ -789,10 +873,15 @@ class GeneratorConstructionV1:
             return None
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
+        from sugar_source_tree.panic import SugarNotWritten
 
         if not isinstance(value, Sugar):
             return value
-        outcome = value.desugar()
+        ctx = self._guard_evaluation_context()
+        try:
+            outcome = value.desugar(ctx)
+        except SugarNotWritten as exc:
+            return self._gap(requested, str(exc.observed) if hasattr(exc, "observed") else type(exc).__name__)
         if isinstance(outcome, Complete):
             return outcome.value
         return self._gap(requested, type(outcome).__name__)
