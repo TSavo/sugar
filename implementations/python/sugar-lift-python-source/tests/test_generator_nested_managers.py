@@ -35,7 +35,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.generator_construction import (
     NestedEnteredBindingV1,
     NestedManagerExitStepV1,
@@ -46,6 +46,7 @@ from sugar_lift_py_tests.generator_construction import (
     ReturnStepV1,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
     EnteredGeneratorManagerStateV1,
@@ -278,7 +279,10 @@ def test_planted_nested_manager_step_lifecycle_performance() -> None:
     """Planted NestedManagerStep (no nodes emission) enters/exits nested once."""
     inner_frame = SimpleNamespace(
         frame_cid=cid_of_json({"frame": "inner-nested"}),
-        generator_steps=(YieldStepV1(TermValue("inner")), ReturnStepV1(None)),
+        generator_steps=(
+            YieldStepV1(StringLiteralSugar("inner", site="nested:inner-yield")),
+            ReturnStepV1(None),
+        ),
         runtime_entries=(),
     )
     enter = SourceFragmentCoordinateV1("blake3-512:" + "a" * 128, 1, 0, 2, 0)
@@ -293,7 +297,9 @@ def test_planted_nested_manager_step_lifecycle_performance() -> None:
     outer_steps = (
         NestedManagerStepV1(
             nested_protocol=inner_protocol,
-            body_steps=(YieldStepV1(TermValue("outer")),),
+            body_steps=(
+                YieldStepV1(StringLiteralSugar("outer", site="nested:outer-yield")),
+            ),
             fragment_cid="blake3-512:" + "d" * 128,
             occurrence_cid="blake3-512:" + "e" * 128,
         ),
@@ -316,7 +322,7 @@ def test_planted_nested_manager_step_lifecycle_performance() -> None:
     outcome = outer_protocol.enter_resource_outcome()
     assert isinstance(outcome, Complete)
     entered = outcome.value
-    assert entered.enter_value == TermValue("outer")
+    assert entered.enter_value == StringValue("outer")
     assert any(isinstance(b, NestedEnteredBindingV1) for b in entered.machine.binding_state)
     # Exit outer: NestedManagerExitStep exits nested then terminates.
     exit_outcome = outer_protocol.exit_outcome_for(entered)

@@ -22,7 +22,7 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import BlockValue, ReturnValue, StringValue, TermValue
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     InertStepV1,
@@ -31,6 +31,9 @@ from sugar_lift_py_tests.generator_construction import (
     YieldStepV1,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
+from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
     EnteredGeneratorManagerStateV1,
@@ -48,7 +51,10 @@ def _coords():
 
 def _frame(*, steps=None, frame_cid=None, bindings=()):
     if steps is None:
-        steps = (YieldStepV1(TermValue(17)), ReturnStepV1(None))
+        steps = (
+            YieldStepV1(IntLiteralSugar(17, site="yield:17")),
+            ReturnStepV1(None),
+        )
     cid = frame_cid or cid_of_json({"frame": "generator-lifecycle-test"})
     return SimpleNamespace(
         frame_cid=cid,
@@ -155,7 +161,7 @@ def test_pre_yield_inert_step_then_yield_still_enters():
             steps=(
                 InertStepV1("Expr"),
                 InertStepV1("Pass"),
-                YieldStepV1(TermValue(99)),
+                YieldStepV1(IntLiteralSugar(99, site="yield:99")),
                 ReturnStepV1(None),
             ),
             frame_cid=cid_of_json({"frame": "pre-yield-inert"}),
@@ -204,8 +210,10 @@ def test_pre_yield_assign_then_yield_enters_with_resource():
     protocol = _protocol(
         frame=_frame(
             steps=(
-                AssignStepV1("prior", TermValue(None), "frag:prior"),
-                YieldStepV1(TermValue(42)),
+                AssignStepV1(
+                    "prior", NoneLiteralSugar(site="assign:prior"), "frag:prior"
+                ),
+                YieldStepV1(IntLiteralSugar(42, site="yield:42")),
                 ReturnStepV1(None),
             ),
             frame_cid=cid_of_json({"frame": "pre-yield-assign"}),
@@ -237,7 +245,11 @@ def test_pre_yield_suspension_assign_twin_does_not_impersonate_ordinary_assign()
             steps=(
                 OpaqueStepV1("Assign", carries_suspension=True),
                 # Trailing yield only if suspension Assign is wrongly skipped.
-                YieldStepV1(TermValue("should-not-steal")),
+                YieldStepV1(
+                    StringLiteralSugar(
+                        "should-not-steal", site="yield:should-not-steal"
+                    )
+                ),
                 ReturnStepV1(None),
             ),
             frame_cid=cid_of_json({"frame": "pre-yield-suspension-assign"}),
@@ -263,7 +275,7 @@ def test_pre_yield_suspension_assign_twin_does_not_impersonate_ordinary_assign()
     entered = outcome.value
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
     # Trailing "should-not-steal" would mean the suspension Assign was skipped.
-    assert entered.enter_value != TermValue("should-not-steal"), (
+    assert entered.enter_value != StringValue("should-not-steal"), (
         "suspension-carrying Assign was stepped past as if inert; resume-value "
         "binding was dropped"
     )
@@ -277,8 +289,10 @@ def test_pre_yield_assign_and_inert_prefix_compose_then_yield():
         frame=_frame(
             steps=(
                 InertStepV1("Expr"),
-                AssignStepV1("prior", TermValue(None), "frag:prior2"),
-                YieldStepV1(TermValue(7)),
+                AssignStepV1(
+                    "prior", NoneLiteralSugar(site="assign:prior2"), "frag:prior2"
+                ),
+                YieldStepV1(IntLiteralSugar(7, site="yield:7")),
                 ReturnStepV1(None),
             ),
             frame_cid=cid_of_json({"frame": "inert-then-assign-then-yield"}),
