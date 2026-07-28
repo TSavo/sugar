@@ -217,6 +217,8 @@ class WithConstructionGapKind(str, Enum):
     ENTER_MISSING = "enter-missing"
     EXIT_MISSING = "exit-missing"
     METHOD_CONSTRUCTION = "method-construction"
+    GENERATOR_MISSING = "generator-missing"
+    GENERATOR_PROTOCOL = "generator-protocol"
     ENTER_MAY_HALT = "enter-may-halt"
     EXIT_MAY_HALT = "exit-may-halt"
     OPAQUE_EXIT_TRUTHINESS = "opaque-exit-truthiness"

@@ -911,17 +911,21 @@ def populate_source_derived_resource_refs(
                 # frame by their own span; the use-site seat is what carries
                 # assigned multi-manager projection.
                 context.source_manager_provider_calls[coordinate] = call
-                # Publication: construct the generator function's authenticated
-                # decorator/helper; its sole returned class owns enter/exit.
-                # Identity is the suspension (generator_steps) plus constructed
-                # decorator testimony — never a manager or class spelling scan.
-                _publish_generator_context_manager_native_definitions(
+                # Closed generator-backed resource contract: generator frame +
+                # native enter/exit definitions → one typed source-derived ref.
+                # Coordinates alone cannot construct the ref; non-generator
+                # frames refuse. No ObjectValue fabrication.
+                _publish_generator_backed_resource_contract(
                     context,
                     coordinate,
+                    frame=frame,
                     generator_target=generator_target,
+                    exit_face_id=exit_face_id,
+                    receipt=receipt,
                     session=session,
                     graph=graph,
                     distribution_index=distribution_index,
+                    resolved_cid=resolved.cid,
                 )
                 continue
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
@@ -1234,31 +1238,44 @@ def _publish_class_protocol_native_definitions(context, receiver, behavior) -> N
     )
 
 
-def _publish_generator_context_manager_native_definitions(
+def _publish_generator_backed_resource_contract(
     context,
     receiver,
     *,
+    frame,
     generator_target,
+    exit_face_id,
+    receipt,
     session,
     graph=None,
     distribution_index=None,
+    resolved_cid: str,
 ) -> None:
-    """Publish enter/exit from the decorator helper's constructed return class.
+    """Publish native enter/exit + one closed generator-backed resource ref.
 
-    Producer path only:
-    1. Resolve each decorator on the generator FunctionDef through its
-       authenticated import/module binding (typed node testimony).
-    2. Construct that decorator function through ``resolve_source_visible_frame``.
-    3. Project the sole nested helper the decorator returns, then the sole
-       class that helper constructs on return.
-    4. Publish that class's constructed ``__enter__`` / ``__exit__`` definition
-       sites.
-
-    Ambiguous helpers/classes refuse (no first-candidate). No process-global
-    cache: coordinates are re-derived from authenticated source construction
-    (session frame memos remain content-keyed by definition).
+    Requires authenticated generator lifecycle (frame.generator_steps) and
+    decorator-constructed enter/exit definition coordinates. Installs
+    ``SourceDerivedGeneratorResourceRefV1`` carrying generator protocol
+    testimony — never a fabricated ObjectValue receiver.
     """
-    from sugar_lift_py_tests.context_manager_resolution import NativeProtocolSlot
+    from sugar_lift_py_tests.context_manager_contract import (
+        EnterResultContractV1,
+        ExitContractV1,
+        ImportSignatureV2,
+        ProtocolResourceSemanticsV1,
+        ReturnTruthinessDispositionV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        NativeProtocolSlot,
+        SourceDerivedGeneratorResourceRefV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort
+
+    from .manager_protocol_construction import (
+        GeneratorBackedManagerProtocolV1,
+        ManagerProtocolConstructionGapV1,
+        construct_generator_backed_protocol,
+    )
 
     coords = _protocol_coords_from_generator_decorators(
         generator_target,
@@ -1267,6 +1284,13 @@ def _publish_generator_context_manager_native_definitions(
         distribution_index=distribution_index,
     )
     if coords is None:
+        _install_derivation_gap(
+            context,
+            receiver,
+            receipt,
+            "generator-protocol",
+            "native enter/exit definition coordinates unavailable",
+        )
         return
     enter, exit_ = coords
     _publish_native_definition(
@@ -1274,6 +1298,52 @@ def _publish_generator_context_manager_native_definitions(
     )
     _publish_native_definition(
         context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
+    )
+    protocol = construct_generator_backed_protocol(
+        frame=frame,
+        enter_definition=enter,
+        exit_definition=exit_,
+        exit_face_id=exit_face_id,
+        construction_cid=resolved_cid,
+    )
+    if isinstance(protocol, ManagerProtocolConstructionGapV1):
+        kind, detail = _gap_kind_and_detail(protocol)
+        _install_derivation_gap(context, receiver, receipt, kind, detail)
+        return
+    if not isinstance(protocol, GeneratorBackedManagerProtocolV1):
+        _install_derivation_gap(
+            context,
+            receiver,
+            receipt,
+            "generator-protocol",
+            type(protocol).__name__,
+        )
+        return
+    # Generator exit truthiness is the GCM throw/resume result — not a forged
+    # NeverSuppresses theorem from an ObjectValue receiver.
+    semantics = ProtocolResourceSemanticsV1(
+        EnterResultContractV1(PrimitiveSort("Value")),
+        ExitContractV1(ReturnTruthinessDispositionV1()),
+    )
+    signature = ImportSignatureV2(())
+    summary_preimage = {
+        "kind": "source-derived-generator-resource-summary",
+        "schemaVersion": "1",
+        "protocolConstructionCid": protocol.protocol_construction_cid,
+        "generatorFrameCid": protocol.generator_frame_cid,
+        "enterDefinition": enter.wire(),
+        "exitDefinition": exit_.wire(),
+        "semantics": json.loads(encode_jcs(semantics_to_value(semantics))),
+        "importSignature": json.loads(encode_jcs(_signature_to_value(signature))),
+    }
+    context.source_derived_contract_refs[receiver] = (
+        SourceDerivedGeneratorResourceRefV1(
+            receiver,
+            cid_of_json(summary_preimage),
+            semantics,
+            signature,
+            protocol,
+        )
     )
 
 
