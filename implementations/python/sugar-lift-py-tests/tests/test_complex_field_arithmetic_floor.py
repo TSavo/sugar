@@ -126,6 +126,14 @@ def test_two_floats_still_fold_on_the_number_floor() -> None:
     assert outcome.value.value == 4.0
 
 
+class _FragmentSite:
+    filename = "complex-non-field-twin.py"
+    line = 1
+    col = 0
+    source = "1j + peer"
+    unit = type("_Unit", (), {"source": "1j + peer\n"})()
+
+
 @pytest.mark.parametrize(
     "off_field",
     (
@@ -136,16 +144,14 @@ def test_two_floats_still_fold_on_the_number_floor() -> None:
         StringValue("1"),
     ),
 )
-def test_a_non_member_operand_keeps_the_complex_floor_loud(off_field) -> None:
-    """`panic = gap`: the field law admits members, and refuses to invent for
-    anything else -- including values Python itself would reject."""
-    with pytest.raises(ConstructionPanic) as raised:
-        ComplexValue(0.0, 1.0).add(off_field, SITE)
+def test_a_non_member_operand_is_authenticated_type_error(off_field) -> None:
+    """Decided non-field peers are TypeError RaiseValue, never a complex coordinate."""
+    from sugar_lift_py_tests.floor import RaiseValue
 
-    info = raised.value.info
-    assert info.owner == "add"
-    assert info.observed == "ComplexValue"
-    assert type(off_field).__name__ in info.fix
+    outcome = ComplexValue(0.0, 1.0).add(off_field, _FragmentSite())
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
 
 
 def test_an_integer_too_large_for_the_float_field_stays_loud() -> None:

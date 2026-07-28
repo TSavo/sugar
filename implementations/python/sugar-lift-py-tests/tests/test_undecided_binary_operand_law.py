@@ -235,19 +235,41 @@ def test_the_whole_function_refuses_undecided_native_dispatch(
 # -- discriminating arm: the law refuses, loudly, everywhere else -------------
 
 
+class _FragmentSite:
+    """Workspace-relative locus so ground TypeError can mint RaiseValue."""
+
+    filename = "ground-binop-twin.py"
+    line = 1
+    col = 0
+    source = "left + right"
+    unit = type("_Unit", (), {"source": "left + right\n"})()
+
+
+def _assert_ground_type_error(outcome) -> None:
+    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
 @pytest.mark.parametrize(
     ("left", "right", "method"),
     (
         # Two DECIDED types are a ground question, not an unknown:
-        # `list + bool` is Python's TypeError. Constructing a coordinate here
-        # would launder a ground exit into a value.
+        # `list + predicate` is Python's TypeError — authenticated RaiseValue.
         (ListValue((TermValue(1),)), _predicate(), "add"),
+        # Predicate does not own addition; still loud construction (not TypeError).
         (_predicate(), TermValue(1), "add"),
         (_predicate(), StringValue("x"), "add"),
         (_comprehension(), SetValue((TermValue(1),)), "subtract"),
     ),
 )
-def test_two_decided_operands_stay_loud(left, right, method) -> None:
+def test_two_decided_operands_do_not_invent_coordinates(left, right, method) -> None:
+    if type(left) is ListValue and method == "add":
+        _assert_ground_type_error(getattr(left, method)(right, _FragmentSite()))
+        return
     with pytest.raises(ConstructionPanic) as raised:
         getattr(left, method)(right, SITE)
 
@@ -339,16 +361,19 @@ def test_a_non_denoting_operand_stays_loud() -> None:
         (StringValue("x"), ComplexValue(0.0, 1.0)),
     ),
 )
-def test_a_ground_type_error_never_becomes_a_coordinate(left, right) -> None:
-    """``1j + "x"`` is Python's ``TypeError``.
+def test_a_ground_type_error_is_an_authenticated_raise(left, right) -> None:
+    """``1j + "x"`` is Python's ``TypeError`` as RaiseValue, never a coordinate.
 
     Both operands have decided runtime types, so the operation is not unknown
-    -- it is known to raise. A coordinate here would invent an operation that
-    never happens, which is the one way this law could launder a ground exit
-    into a value. It stays LOUD in both operand orders.
+    -- it is known to raise. A coordinate would invent an operation that never
+    happens; a RuntimeEffect would invent runtime dependence that is not there.
     """
-    with pytest.raises(ConstructionPanic):
-        left.add(right, SITE)
+    if type(left) is ComplexValue:
+        _assert_ground_type_error(left.add(right, _FragmentSite()))
+        return
+    # String + complex: StringValue.add routes undecided/symbolic peers; a
+    # decided ComplexValue right is TypeError on the string addition floor.
+    _assert_ground_type_error(left.add(right, _FragmentSite()))
 
 
 def test_the_field_law_is_consulted_before_the_base_law() -> None:
@@ -393,10 +418,12 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
 
 
 def test_the_law_never_converts_a_panic_into_a_refusal() -> None:
-    """The loud arm is still a ConstructionPanic -- never an Incomplete, never
-    a refusal value that a caller could mistake for an answer."""
+    """A non-denoting right still panics; a decided list+peer is RaiseValue."""
     with pytest.raises(ConstructionPanic):
-        ListValue((TermValue(1),)).add(_predicate(), SITE)
+        BytesValue(b"x").add(_predicate(), SITE)
+    _assert_ground_type_error(
+        ListValue((TermValue(1),)).add(_predicate(), _FragmentSite())
+    )
 
 
 # -- the testimony is the value's own, never a lexical name ------------------

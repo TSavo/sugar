@@ -79,11 +79,31 @@ class TermValue(FloorValue):
             return Complete(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
+    def _unorderable_ground_peer(self, other) -> bool:
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        return type(other) in (
+            StringValue,
+            NoneValue,
+            ListValue,
+            TupleValue,
+            SetValue,
+        )
+
+    def _ground_ordering_type_error(self, site, *, owner: str):
+        from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+        return ground_type_error(site=site, owner=owner)
+
     def less_than(self, other, site):
         # A number stands on the ordering floor: two numbers are ordered or not, and
         # it gives back the True or False literal -- the boolean IS the type.
-        # Ground cross-type is TypeError (Python defines no ordering) -- a named
-        # runtime effect, not an unconstrained py.lt emit. Symbolic falls to emit.
+        # Ground cross-type is authenticated TypeError (Python defines no
+        # ordering). Symbolic falls to emit.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import Complete
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -98,26 +118,9 @@ class TermValue(FloorValue):
                 if self.value < other.value
                 else FalseBoolLiteralSugar(site=site)
             )
-        from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.floor.set_value import SetValue
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
-
-        if type(other) in (StringValue, NoneValue, ListValue, TupleValue, SetValue):
-            from sugar_lift_py_tests.effect import (
-                TypeErrorRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            return Incomplete(
-                TypeErrorRuntimeEffect(
-                    f"unorderable types runtime boundary: "
-                    f"TermValue and {type(other).__name__}; site={site}",
-                    **runtime_effect_evidence("py.less_than", other, site),
-                )
+        if self._unorderable_ground_peer(other):
+            return self._ground_ordering_type_error(
+                site, owner="TermValue.less_than"
             )
         return super().less_than(other, site)
 
@@ -136,6 +139,10 @@ class TermValue(FloorValue):
                 if self.value <= other.value
                 else FalseBoolLiteralSugar(site=site)
             )
+        if self._unorderable_ground_peer(other):
+            return self._ground_ordering_type_error(
+                site, owner="TermValue.less_equal"
+            )
         return super().less_equal(other, site)
 
     def greater_than(self, other, site):
@@ -153,6 +160,10 @@ class TermValue(FloorValue):
                 if self.value > other.value
                 else FalseBoolLiteralSugar(site=site)
             )
+        if self._unorderable_ground_peer(other):
+            return self._ground_ordering_type_error(
+                site, owner="TermValue.greater_than"
+            )
         return super().greater_than(other, site)
 
     def greater_equal(self, other, site):
@@ -169,6 +180,10 @@ class TermValue(FloorValue):
                 TrueBoolLiteralSugar(site=site)
                 if self.value >= other.value
                 else FalseBoolLiteralSugar(site=site)
+            )
+        if self._unorderable_ground_peer(other):
+            return self._ground_ordering_type_error(
+                site, owner="TermValue.greater_equal"
             )
         return super().greater_equal(other, site)
 
@@ -406,7 +421,75 @@ class TermValue(FloorValue):
             )
         return super().floor_divide(other, site)
 
+    def _bitwise_int_pair(self, other):
+        """Python bitwise ops accept int/bool; float is decided TypeError."""
+        return type(other) is TermValue and all(
+            isinstance(value, int) for value in (self.value, other.value)
+        )
+
+    def _bitwise_float_type_error(self, other, site, *, owner: str):
+        if type(other) is TermValue and (
+            type(self.value) is float or type(other.value) is float
+        ):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner=owner)
+        return None
+
+    def bitwise_and(self, other, site):
+        float_error = self._bitwise_float_type_error(
+            other, site, owner="TermValue.bitwise_and"
+        )
+        if float_error is not None:
+            return float_error
+        if self._bitwise_int_pair(other):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value & other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "&", "bv32.and")
+
+    def bitwise_xor(self, other, site):
+        float_error = self._bitwise_float_type_error(
+            other, site, owner="TermValue.bitwise_xor"
+        )
+        if float_error is not None:
+            return float_error
+        if self._bitwise_int_pair(other):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value ^ other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "^", "bv32.xor")
+
+    def bitwise_or(self, other, site):
+        float_error = self._bitwise_float_type_error(
+            other, site, owner="TermValue.bitwise_or"
+        )
+        if float_error is not None:
+            return float_error
+        if self._bitwise_int_pair(other):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value | other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "|", "bv32.or")
+
+    def left_shift(self, other, site):
+        float_error = self._bitwise_float_type_error(
+            other, site, owner="TermValue.left_shift"
+        )
+        if float_error is not None:
+            return float_error
+        if self._bitwise_int_pair(other):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(self.value << other.value))
+        return self._symbolic_or_bv32_bitwise(other, site, "<<", "bv32.shl")
+
     def right_shift(self, other, site):
+        float_error = self._bitwise_float_type_error(
+            other, site, owner="TermValue.right_shift"
+        )
+        if float_error is not None:
+            return float_error
         if (
             type(other) is TermValue
             and type(self.value) is int
@@ -416,42 +499,6 @@ class TermValue(FloorValue):
 
             return Complete(TermValue(self.value >> other.value))
         return self._symbolic_or_bv32_bitwise(other, site, ">>", "bv32.lshr")
-
-    def bitwise_and(self, other, site):
-        if type(other) is TermValue and all(
-            type(value) is int for value in (self.value, other.value)
-        ):
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(TermValue(self.value & other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "&", "bv32.and")
-
-    def bitwise_xor(self, other, site):
-        if type(other) is TermValue and all(
-            type(value) is int for value in (self.value, other.value)
-        ):
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(TermValue(self.value ^ other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "^", "bv32.xor")
-
-    def bitwise_or(self, other, site):
-        if type(other) is TermValue and all(
-            type(value) is int for value in (self.value, other.value)
-        ):
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(TermValue(self.value | other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "|", "bv32.or")
-
-    def left_shift(self, other, site):
-        if type(other) is TermValue and all(
-            type(value) is int for value in (self.value, other.value)
-        ):
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(TermValue(self.value << other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "<<", "bv32.shl")
 
     def _symbolic_or_bv32_bitwise(self, other, site, operator, bv32_operator):
         from sugar_lift_py_tests.floor.bv32_value import Bv32Value
@@ -512,22 +559,9 @@ class TermValue(FloorValue):
                 blame=str(site),
             )
         if type(other) is TermValue:
-            from sugar_lift_py_tests.effect import (
-                TypeErrorRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
-            left_ty = type(self.value).__name__
-            right_ty = type(other.value).__name__
-            return Incomplete(
-                TypeErrorRuntimeEffect(
-                    f"unsupported operand type(s) for @: "
-                    f"'{left_ty}' and '{right_ty}'; "
-                    f"owner=TermValue.matrix_multiply site={site}",
-                    **runtime_effect_evidence("py.matmul", other, site),
-                )
-            )
+            return ground_type_error(site=site, owner="TermValue.matrix_multiply")
         return super().matrix_multiply(other, site)
 
     def unary_minus(self, site):
