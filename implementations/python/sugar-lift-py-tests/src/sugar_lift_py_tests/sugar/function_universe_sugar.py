@@ -165,9 +165,19 @@ def _prefixed(state: _ReducedBlock, inner: object) -> object:
     Python never rolls back what already happened, so the halt arm carries both,
     in order. A nested state with no ``entries`` (a non-block payload) is left
     alone -- there is nothing to splice onto.
+
+    Identity law (R1): when the prefix contributes nothing (no entries, no
+    transforms), the nested record already IS the complete temporal state.
+    Return it by object identity — do not re-seat an ``==``-equal
+    ``_ReducedBlock``. Re-seating broke unmatched WithEffectBoundarySugar
+    residuals (``face.state is halted.state``) while try/except ``and_exit`` and
+    NeverSuppresses correctly retained ``is``.
     """
     entries = getattr(inner, "entries", None)
     if entries is None:
+        return inner
+    if not state.entries and not state.transforms and isinstance(inner, _ReducedBlock):
+        # Empty prefix: retain the nested pre-halt record as the same cell.
         return inner
     for transform in reversed(state.transforms):
         entries = transform(entries)
