@@ -39,8 +39,8 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
     BindingCoordinateRefSugar,
 )
-from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
@@ -83,7 +83,8 @@ def _guard_ref(function, param, coordinate) -> BindingCoordinateRefSugar:
 
 
 def _machine_with_guard(entry: BindingEntryV1, guard, *, then_steps=None, else_steps=()):
-    then_steps = then_steps or (YieldStepV1(TrueBoolLiteralSugar(site="then")),)
+    # #6738: step values must be ConstructedTermSugar (not ir.num stubs).
+    then_steps = then_steps or (YieldStepV1(IntLiteralSugar(1, site="then")),)
     steps = (
         IfStepV1(guard, then_steps, else_steps, "frag:guard"),
         ReturnStepV1(),
@@ -126,7 +127,7 @@ def test_bound_false_formal_splices_else_branch() -> None:
     machine = _machine_with_guard(
         entry,
         guard,
-        then_steps=(YieldStepV1(TrueBoolLiteralSugar(site="then")),),
+        then_steps=(YieldStepV1(IntLiteralSugar(1, site="then")),),
         else_steps=(),
     )
 
@@ -211,7 +212,7 @@ def test_absent_testimony_is_not_installed_into_guard_temporal() -> None:
         steps=(
             IfStepV1(
                 guard,
-                (YieldStepV1(TrueBoolLiteralSugar(site="t")),),
+                (YieldStepV1(IntLiteralSugar(1, site="t")),),
                 (),
                 "frag",
             ),
@@ -260,17 +261,17 @@ def test_tampered_coordinate_cid_does_not_hit_sealed_entry() -> None:
 
 
 def test_undecidable_guard_faces_retain_the_same_sealed_binding_state() -> None:
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import atomic
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
     _fn, _param, entry = _bool_formal_entry(truth=True)
-    guard = PredicateValue(atomic("symbolic_guard", ()), "s")
+    # Free NameSugar is ConstructedTermSugar and undecided under empty temporal
+    # (same door as #6738-migrated if_step twins).
+    guard = NameSugar("symbolic_guard", site="s")
     machine = _machine_with_guard(
         entry,
         guard,
-        then_steps=(YieldStepV1(TrueBoolLiteralSugar(site="t")),),
-        else_steps=(YieldStepV1(FalseBoolLiteralSugar(site="e")),),
+        then_steps=(YieldStepV1(IntLiteralSugar(1, site="t")),),
+        else_steps=(YieldStepV1(IntLiteralSugar(0, site="e")),),
     )
 
     outcome = machine.resume()
