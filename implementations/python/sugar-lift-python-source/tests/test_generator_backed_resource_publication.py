@@ -58,9 +58,12 @@ def test_option_context_publishes_one_generator_backed_resource_ref():
     assert isinstance(ref.semantics, ProtocolResourceSemanticsV1)
     assert isinstance(ref.semantics.exit.disposition, ReturnTruthinessDispositionV1)
     protocol = ref.protocol
-    assert isinstance(protocol, GeneratorBackedManagerProtocolV1)
+    # Lifecycle wrapper carries the same generator-backed fields plus optional
+    # pre-yield enter-halt / yield faces (see GeneratorBackedLifecycleProtocolV1).
+    assert getattr(protocol, "generator_frame", None) is not None
     assert protocol.generator_frame.generator_steps is not None
     assert protocol.enter_definition != protocol.exit_definition
+    assert getattr(protocol, "protocol_construction_cid", None)
     # Native enter/exit definitions enrolled beside the ref.
     enter = context.contract_refs.require_native_definition(
         receiver, NativeProtocolSlot.CONTEXT_ENTER
