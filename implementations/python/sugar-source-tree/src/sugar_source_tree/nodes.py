@@ -180,6 +180,116 @@ class _ConditionalRaiseRoute:
 _NESTED_COMPREHENSION_TEMPLATE = object()
 
 
+class TargetPatternConstructionGapV1(TypeError):
+    """A target-pattern coordinate does not belong to its eager source owner."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        consumer_occurrence: object,
+        target_occurrence: object,
+        target_pattern: object | None = None,
+        expected_coordinates: object | None = None,
+        actual_coordinates: object | None = None,
+    ) -> None:
+        super().__init__(reason, consumer_occurrence, target_occurrence)
+        self.reason = reason
+        self.consumer_occurrence = consumer_occurrence
+        self.target_occurrence = target_occurrence
+        self.target_pattern = target_pattern
+        self.expected_coordinates = expected_coordinates
+        self.actual_coordinates = actual_coordinates
+
+
+@dataclass(frozen=True)
+class TargetPatternV1:
+    """One eager, occurrence-owned destructuring projection."""
+
+    source_unit: "SourceUnit"
+    consumer_occurrence: "Node"
+    target_occurrence: "Node"
+    leaves: tuple["Name", ...]
+    coordinates: tuple[object, ...]
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(leaf.id for leaf in self.leaves)
+
+    @property
+    def target(self):
+        return self.target_occurrence
+
+    @property
+    def target_coordinates(self) -> tuple[object, ...]:
+        return self.coordinates
+
+    @property
+    def target_names(self) -> tuple[str, ...]:
+        return self.names
+
+    @property
+    def scope_owner_cid(self) -> str:
+        return self.coordinates[0].scope_owner_cid
+
+    def bindings_for(self, element: "Node") -> "Optional[dict]":
+        """Project one concrete display through this exact target tree."""
+
+        def project(target, value):
+            if isinstance(target, Name):
+                return {target.id: value}
+            if not isinstance(target, (Tuple_, List)) or not isinstance(
+                value, (Tuple_, List)
+            ):
+                return None
+            starred = [
+                index for index, child in enumerate(target.elts)
+                if isinstance(child, Starred)
+            ]
+            if len(starred) > 1:
+                return None
+            if not starred:
+                if len(target.elts) != len(value.elts):
+                    return None
+                pairs = zip(target.elts, value.elts, strict=True)
+            else:
+                star = starred[0]
+                tail = len(target.elts) - star - 1
+                if len(value.elts) < len(target.elts) - 1:
+                    return None
+                from .backend import Children, materialize
+                from .shadow import ShadowNode, _handle_of
+
+                captured = value.elts[star : len(value.elts) - tail]
+                star_value = materialize(
+                    value.unit,
+                    ShadowNode(
+                        "List",
+                        value.span,
+                        (("elts", Children(tuple(_handle_of(v) for v in captured))),),
+                    ),
+                    value.reporter,
+                )
+                pairs = (
+                    *zip(target.elts[:star], value.elts[:star], strict=True),
+                    (target.elts[star].value, star_value),
+                    *zip(
+                        target.elts[star + 1 :],
+                        value.elts[len(value.elts) - tail :],
+                        strict=True,
+                    ),
+                )
+            result = {}
+            for child_target, child_value in pairs:
+                child = project(child_target, child_value)
+                if child is None:
+                    return None
+                result.update(child)
+            return result
+
+        return project(self.target_occurrence, element)
+
+
 def _ordered_binding_keys(names):
     internal_names = (
         _LEXICALLY_BOUND_NAMES,
@@ -220,6 +330,15 @@ class SourceUnit:
     typed_module: object = field(init=False, default=None)
     # Field-data memo for materialize (see construction_cache.py).
     construction_cache: object = field(init=False, default=None)
+    _target_patterns_by_consumer: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _target_patterns_by_target: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    target_pattern_construction_count: int = field(
+        init=False, default=0, repr=False, compare=False
+    )
     exception_class_values: object = field(init=False, default=None)
     module_direct_bindings: object = field(init=False, default=None)
     function_nodes: Tuple[object, ...] = field(init=False, default=())
@@ -365,17 +484,186 @@ class SourceUnit:
             "module_direct_bindings",
             {name: tuple(items) for name, items in bindings.items()},
         )
+        constructed_nodes = tuple(module.walk())
         object.__setattr__(
             self,
             "function_nodes",
             tuple(
                 node
-                for node in module.walk()
+                for node in constructed_nodes
                 if isinstance(node, (FunctionDef, AsyncFunctionDef))
             ),
         )
+        patterns = {}
+        patterns_by_target = {}
+        constructed_count = 0
+        for consumer in constructed_nodes:
+            targets = ()
+            if isinstance(consumer, Assign):
+                targets = tuple(
+                    (target, ("targets", target_index))
+                    for target_index, target in enumerate(consumer.targets)
+                    if isinstance(target, (Tuple_, List))
+                )
+            elif isinstance(consumer, For):
+                targets = ((consumer.target, ("target",)),)
+            elif isinstance(consumer, (ListComp, SetComp, DictComp)):
+                targets = tuple(
+                    (generator.target, ("generators", index, "target"))
+                    for index, generator in enumerate(consumer.generators)
+                )
+            if not targets:
+                continue
+            owned = tuple(
+                self._construct_target_pattern(consumer, target, prefix)
+                for target, prefix in targets
+            )
+            patterns[consumer.ref] = owned
+            patterns_by_target.update(
+                (pattern.target_occurrence.ref, pattern) for pattern in owned
+            )
+            constructed_count += len(owned)
+        object.__setattr__(self, "_target_patterns_by_consumer", patterns)
+        object.__setattr__(self, "_target_patterns_by_target", patterns_by_target)
+        object.__setattr__(self, "target_pattern_construction_count", constructed_count)
         # Identity keys include spans against the bound module; drop stale rows.
         object.__setattr__(self, "_exception_type_identity_cache", {})
+
+    def _construct_target_pattern(self, consumer, target, prefix) -> TargetPatternV1:
+        from .binding_state import mint_binding_coordinate_v1
+
+        ordered = []
+
+        def visit(node, path):
+            if isinstance(node, Name):
+                ordered.append((node, path))
+                return
+            if isinstance(node, Starred):
+                visit(node.value, (*path, "star"))
+                return
+            if isinstance(node, (Tuple_, List)):
+                for index, child in enumerate(node.elts):
+                    visit(child, (*path, index))
+                return
+            raise TargetPatternConstructionGapV1(
+                "unsupported-target-leaf",
+                consumer_occurrence=consumer,
+                target_occurrence=target,
+            )
+
+        visit(target, prefix)
+        if not ordered:
+            raise TargetPatternConstructionGapV1(
+                "empty-target-pattern",
+                consumer_occurrence=consumer,
+                target_occurrence=target,
+            )
+        owner_cid = (
+            consumer.owned_loop_target.target_cid
+            if isinstance(consumer, For) and consumer.owned_loop_target is not None
+            else consumer.fragment.seal().cid
+        )
+        leaves = tuple(leaf for leaf, _ in ordered)
+        coordinates = tuple(
+            mint_binding_coordinate_v1(
+                scope_owner_cid=owner_cid,
+                binding_site=leaf.fragment,
+                projection_path=path,
+            )
+            for leaf, path in ordered
+        )
+        return TargetPatternV1(self, consumer, target, leaves, coordinates)
+
+    def target_patterns_for(self, consumer: "Node") -> tuple[TargetPatternV1, ...]:
+        patterns = self._target_patterns_by_consumer
+        if patterns is None:
+            return ()
+        return patterns.get(consumer.ref, ())
+
+    def retain_target_patterns(self, source_consumer, rewritten_consumer) -> None:
+        """Seat one rewrite with its exact source consumer's immutable products."""
+        owned = self.target_patterns_for(source_consumer)
+        if not owned or type(rewritten_consumer) is not type(source_consumer):
+            raise TargetPatternConstructionGapV1(
+                "foreign-target-consumer-rewrite",
+                consumer_occurrence=rewritten_consumer,
+                target_occurrence=source_consumer,
+            )
+        patterns = self._target_patterns_by_consumer
+        patterns[rewritten_consumer.ref] = owned
+
+    def require_target_pattern(self, consumer, target) -> TargetPatternV1:
+        for pattern in self.target_patterns_for(consumer):
+            if pattern.target_occurrence.ref is target.ref:
+                return pattern
+        raise TargetPatternConstructionGapV1(
+            "foreign-target-occurrence",
+            consumer_occurrence=consumer,
+            target_occurrence=target,
+        )
+
+    def require_target_pattern_for_target(self, target) -> TargetPatternV1:
+        patterns = self._target_patterns_by_target
+        pattern = None if patterns is None else patterns.get(target.ref)
+        if pattern is None:
+            raise TargetPatternConstructionGapV1(
+                "foreign-target-occurrence",
+                consumer_occurrence=target,
+                target_occurrence=target,
+            )
+        return pattern
+
+    def require_target_pattern_coordinates(self, pattern, coordinates) -> None:
+        if type(pattern) is not TargetPatternV1 or pattern.source_unit is not self:
+            raise TargetPatternConstructionGapV1(
+                "foreign-target-pattern",
+                consumer_occurrence=pattern.consumer_occurrence,
+                target_occurrence=pattern.target_occurrence,
+                target_pattern=pattern,
+            )
+        if type(coordinates) is not tuple or len(coordinates) != len(
+            pattern.coordinates
+        ):
+            raise TargetPatternConstructionGapV1(
+                "target-coordinate-arity-mismatch",
+                consumer_occurrence=pattern.consumer_occurrence,
+                target_occurrence=pattern.target_occurrence,
+                target_pattern=pattern,
+                expected_coordinates=pattern.coordinates,
+                actual_coordinates=coordinates,
+            )
+        from .binding_provenance import BindingCoordinateV1
+
+        for observed, expected in zip(
+            coordinates, pattern.coordinates, strict=True
+        ):
+            if observed is not expected and any(
+                observed is owned for owned in pattern.coordinates
+            ):
+                reason = "target-coordinate-order-mismatch"
+            elif (
+                type(observed) is not BindingCoordinateV1
+                or BindingCoordinateV1.decode(observed.wire()) != observed
+                or observed.binding_site != expected.binding_site
+            ):
+                reason = "foreign-target-coordinate"
+            elif observed.scope_owner_cid != expected.scope_owner_cid:
+                reason = "foreign-target-scope"
+            elif (
+                observed.projection_path != expected.projection_path
+                or observed is not expected
+            ):
+                reason = "target-coordinate-order-mismatch"
+            else:
+                continue
+            raise TargetPatternConstructionGapV1(
+                reason,
+                consumer_occurrence=pattern.consumer_occurrence,
+                target_occurrence=pattern.target_occurrence,
+                target_pattern=pattern,
+                expected_coordinates=pattern.coordinates,
+                actual_coordinates=coordinates,
+            )
 
     def loop_target_coordinate_for_loop(self, owner: "Node"):
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -1343,6 +1631,11 @@ class Node(Typed):
             object.__setattr__(self.unit, "construction_cache", cache)
         return cache
 
+    @property
+    def target_patterns(self) -> tuple[TargetPatternV1, ...]:
+        """The eager occurrence-owned target products for this consumer."""
+        return self.unit.target_patterns_for(self)
+
     def __getattr__(self, name: str):
         # Field data is memoized on the unit once per site; this shell exposes it.
         if name.startswith("_"):
@@ -2189,7 +2482,7 @@ class Comprehension(Node):
         from .shadow import rewrite
 
         new_iter, di = self._substitute_field(self.iter, scope)
-        bound = self._bound_names_in(self.target)
+        bound = set(self.unit.require_target_pattern_for_target(self.target).names)
         ifs_scope = (
             {k: v for k, v in scope.items() if k not in bound} if bound else scope
         )
@@ -3953,27 +4246,8 @@ class Assign(Statement):
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)):
             return None
-        return self._destructure_display(target, self.value)
-
-    def _destructure_display(self, target, value):
-        if isinstance(target, Name):
-            return {target.id: value}
-        if not isinstance(target, (Tuple_, List)) or not isinstance(
-            value, (Tuple_, List)
-        ):
-            return None
-
-        pairs = self._display_unpack_pairs(target, value)
-        if pairs is None:
-            return None
-
-        bindings = {}
-        for child_target, child_value in pairs:
-            child = self._destructure_display(child_target, child_value)
-            if child is None:
-                return None
-            bindings.update(child)
-        return bindings
+        pattern = self.unit.require_target_pattern(self, target)
+        return pattern.bindings_for(self.value)
 
     def _display_unpack_pairs(self, target, value):
         """Zip one Tuple/List target against a matching display RHS.
@@ -4992,7 +5266,8 @@ class For(Statement):
                 elements = None  # past the unroll budget: the fold/universal stands
             if elements is not None:
                 with reduction_span(sugar="For.unroll", role="temporal", site=where):
-                    bindings = [self._target_bindings(e) for e in elements]
+                    target_pattern = self.unit.require_target_pattern(self, self.target)
+                    bindings = [target_pattern.bindings_for(e) for e in elements]
                     if all(b is not None for b in bindings):
                         if self._body_has_owned_loop_control():
                             controlled = self._unroll_concrete_controlled(
@@ -5006,7 +5281,7 @@ class For(Statement):
                             # below.
                             elements = None
                     if elements is not None and all(b is not None for b in bindings):
-                        target_names = self._bound_names_in(self.target)
+                        target_names = set(target_pattern.names)
                         unrolled: list = []
                         carried = dict(
                             scope
@@ -5069,7 +5344,9 @@ class For(Statement):
             # it from the outer scope. A symbolic loop is not a dead unroll --
             # it is the universal / fold over the hole.
             with reduction_span(sugar="For.symbolic", role="temporal", site=where):
-                bound = self._bound_names_in(self.target) | For._stmts_bound_names(
+                bound = set(
+                    self.unit.require_target_pattern(self, self.target).names
+                ) | For._stmts_bound_names(
                     self.body
                 )
                 bs = (
@@ -5084,7 +5361,11 @@ class For(Statement):
                     new, d = self._substitute_body(getattr(self, f), bs)
                     if d:
                         changed[f] = new
-                return self if not changed else rewrite(self, **changed)
+                if not changed:
+                    return self
+                rewritten = rewrite(self, **changed)
+                self.unit.retain_target_patterns(self, rewritten)
+                return rewritten
 
     @staticmethod
     def _stmts_bound_names(statements) -> set:
@@ -5207,7 +5488,9 @@ class For(Statement):
                 return None
             statements, iteration, action = reduced
             unrolled.extend(statements)
-            target_names = self._bound_names_in(self.target)
+            target_names = set(
+                self.unit.require_target_pattern(self, self.target).names
+            )
             carried = {
                 key: value
                 for key, value in iteration.items()
@@ -5304,28 +5587,6 @@ class For(Statement):
     # grows a term chain quadratically. Small on purpose; proofs want small
     # unrolls.
     _UNROLL_FUEL = 128
-
-    def _target_bindings_for(self, target: "Node", element: "Node") -> "Optional[dict]":
-        """`_target_bindings` for an explicit target (shared with comprehensions)."""
-        if target.kind == "Name":
-            return {target.id: element}
-        names = []
-        for t in target.elts:
-            if t.kind != "Name":
-                return None
-            names.append(t.id)
-        if element.kind not in ("Tuple", "List") or len(element.elts) != len(names):
-            return None
-        return dict(zip(names, element.elts))
-
-    def _target_bindings(self, element: "Node") -> "Optional[dict]":
-        """What this loop's target binds when the element is `element`, or None
-        when the shapes do not destructure. A Name target binds it whole; a
-        tuple/list target of plain Names destructures a tuple/list DISPLAY
-        element of the same arity (`for a, b in [(1, 2)]` binds a=1, b=2). A
-        nested or starred target, or an element that is not a matching display,
-        is not destructured here -- the loop falls to the symbolic branch."""
-        return For._target_bindings_for(self, self.target, element)
 
     def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not
@@ -8139,7 +8400,9 @@ class ListComp(Expression):
         target = gen.target
         results = []
         for element in elements:
-            bindings = For._target_bindings_for(self, target, element)
+            bindings = self.unit.require_target_pattern(
+                self, target
+            ).bindings_for(element)
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -8384,7 +8647,9 @@ class SetComp(Expression):
         results = []
         seen = set()
         for element in elements:
-            bindings = For._target_bindings_for(self, gen.target, element)
+            bindings = self.unit.require_target_pattern(
+                self, gen.target
+            ).bindings_for(element)
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
@@ -8475,7 +8740,9 @@ class DictComp(Expression):
         pairs = []
         key_indexes = {}
         for element in elements:
-            bindings = For._target_bindings_for(self, gen.target, element)
+            bindings = self.unit.require_target_pattern(
+                self, gen.target
+            ).bindings_for(element)
             if bindings is None:
                 return None
             inner = {**scope, **bindings}

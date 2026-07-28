@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -13,18 +14,17 @@ from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 from sugar_lift_py_tests.temporal import bind_temporal
-from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.binding_state import mint_binding_coordinate_v1
-from sugar_source_tree.live_loop_construction import LiveForTargetPatternV1
-from sugar_source_tree.nodes import For, FunctionDef
+from sugar_source_tree.nodes import For, FunctionDef, TargetPatternConstructionGapV1, TargetPatternV1
 from sugar_source_tree.tree import SourceFile
 
 
 def _function(source: str) -> FunctionDef:
-    tree = SourceFile(
-        (source, "tests/live_for_destructuring_target.py", blake3_512_of(source.encode()))
-    )
-    return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    with TemporaryDirectory(dir=Path.cwd()) as directory:
+        path = Path(directory).relative_to(Path.cwd()) / "live_for_destructuring_target.py"
+        path.write_text(source)
+        tree = SourceFile.from_path(path)
+        return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
 
 def _loop_and_runtime(source: str):
@@ -67,7 +67,7 @@ _PAIR_LOOP = (
 def test_live_pair_target_retains_producer_coordinates_in_source_order() -> None:
     loop, runtime = _loop_and_runtime(_PAIR_LOOP)
 
-    assert isinstance(runtime.target_pattern, LiveForTargetPatternV1)
+    assert isinstance(runtime.target_pattern, TargetPatternV1)
     assert (
         runtime.target_pattern.target.fragment.seal().cid
         == loop.target.fragment.seal().cid
@@ -130,8 +130,13 @@ def test_live_pair_target_rejects_reordered_coordinates() -> None:
     _loop, runtime = _loop_and_runtime(_PAIR_LOOP)
     pattern = runtime.target_pattern
 
-    with pytest.raises(TypeError, match="source target order"):
-        replace(pattern, target_coordinates=tuple(reversed(pattern.target_coordinates)))
+    lied = tuple(reversed(pattern.target_coordinates))
+    with pytest.raises(TargetPatternConstructionGapV1) as rejected:
+        pattern.source_unit.require_target_pattern_coordinates(pattern, lied)
+    assert rejected.value.reason == "target-coordinate-order-mismatch"
+    assert rejected.value.target_pattern is pattern
+    assert rejected.value.expected_coordinates is pattern.coordinates
+    assert rejected.value.actual_coordinates is lied
 
 
 def test_live_pair_target_rejects_missing_or_extra_coordinates() -> None:
@@ -143,10 +148,19 @@ def test_live_pair_target_rejects_missing_or_extra_coordinates() -> None:
         projection_path=("target", 2),
     )
 
-    with pytest.raises(TypeError, match="one coordinate per target leaf"):
-        replace(pattern, target_coordinates=pattern.target_coordinates[:-1])
-    with pytest.raises(TypeError, match="one coordinate per target leaf"):
-        replace(pattern, target_coordinates=(*pattern.target_coordinates, extra))
+    missing = pattern.target_coordinates[:-1]
+    with pytest.raises(TargetPatternConstructionGapV1) as missing_rejected:
+        pattern.source_unit.require_target_pattern_coordinates(pattern, missing)
+    assert missing_rejected.value.reason == "target-coordinate-arity-mismatch"
+    assert missing_rejected.value.expected_coordinates is pattern.coordinates
+    assert missing_rejected.value.actual_coordinates is missing
+
+    added = (*pattern.target_coordinates, extra)
+    with pytest.raises(TargetPatternConstructionGapV1) as extra_rejected:
+        pattern.source_unit.require_target_pattern_coordinates(pattern, added)
+    assert extra_rejected.value.reason == "target-coordinate-arity-mismatch"
+    assert extra_rejected.value.expected_coordinates is pattern.coordinates
+    assert extra_rejected.value.actual_coordinates is added
 
 
 def test_live_pair_target_rejects_foreign_target_and_scope_testimony() -> None:
@@ -166,13 +180,18 @@ def test_live_pair_target_rejects_foreign_target_and_scope_testimony() -> None:
         projection_path=("target", 0),
     )
 
-    with pytest.raises(TypeError, match="source target coordinate"):
-        replace(
-            pattern,
-            target_coordinates=(foreign_site, pattern.target_coordinates[1]),
-        )
-    with pytest.raises(TypeError, match="loop target scope"):
-        replace(
-            pattern,
-            target_coordinates=(foreign_scope, pattern.target_coordinates[1]),
-        )
+    foreign_site_lie = (foreign_site, pattern.target_coordinates[1])
+    with pytest.raises(TargetPatternConstructionGapV1) as site_rejected:
+        pattern.source_unit.require_target_pattern_coordinates(pattern, foreign_site_lie)
+    assert site_rejected.value.reason == "foreign-target-coordinate"
+    assert site_rejected.value.target_pattern is pattern
+    assert site_rejected.value.expected_coordinates is pattern.coordinates
+    assert site_rejected.value.actual_coordinates is foreign_site_lie
+
+    foreign_scope_lie = (foreign_scope, pattern.target_coordinates[1])
+    with pytest.raises(TargetPatternConstructionGapV1) as scope_rejected:
+        pattern.source_unit.require_target_pattern_coordinates(pattern, foreign_scope_lie)
+    assert scope_rejected.value.reason == "foreign-target-scope"
+    assert scope_rejected.value.target_pattern is pattern
+    assert scope_rejected.value.expected_coordinates is pattern.coordinates
+    assert scope_rejected.value.actual_coordinates is foreign_scope_lie

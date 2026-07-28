@@ -47,63 +47,7 @@ class LiveOutwardHaltedFaceV1:
     state: tuple[BindingEntryV1, ...]
 
 
-@dataclass(frozen=True)
-class LiveForTargetPatternV1:
-    """One producer-authenticated assignment target for live iteration."""
-
-    target: object
-    target_coordinates: tuple[object, ...]
-    scope_owner_cid: str
-
-    def __post_init__(self) -> None:
-        from .binding_provenance import BindingCoordinateV1
-        from .nodes import List, Name, Tuple_
-
-        def leaves(node, path=()):
-            if isinstance(node, Name):
-                return ((node, ("target", *path)),)
-            if isinstance(node, (Tuple_, List)):
-                found = []
-                for index, child in enumerate(node.elts):
-                    found.extend(leaves(child, (*path, index)))
-                return tuple(found)
-            raise TypeError(
-                "live for target requires source-authenticated Name/Tuple/List leaves"
-            )
-
-        target_leaves = leaves(self.target)
-        if len(target_leaves) != len(self.target_coordinates):
-            raise TypeError("live for target requires one coordinate per target leaf")
-        for (leaf, path), coordinate in zip(
-            target_leaves, self.target_coordinates, strict=True
-        ):
-            if not isinstance(coordinate, BindingCoordinateV1):
-                raise TypeError("live for target requires BindingCoordinateV1 testimony")
-            # Decode from its own wire before accepting it.  This rejects stale
-            # CIDs rather than trusting a dataclass-shaped coordinate.
-            if BindingCoordinateV1.decode(coordinate.wire()) != coordinate:
-                raise TypeError("live for target coordinate failed re-authentication")
-            if coordinate.scope_owner_cid != self.scope_owner_cid:
-                raise TypeError("live for target coordinate has foreign loop target scope")
-            if coordinate.projection_path != path:
-                raise TypeError("live for target coordinates do not retain source target order")
-            if coordinate.binding_site != leaf.fragment.seal().to_dict():
-                raise TypeError(
-                    "live for target coordinate cites a foreign source target coordinate"
-                )
-
-    @property
-    def target_names(self) -> tuple[str, ...]:
-        from .nodes import List, Name, Tuple_
-
-        def names(node):
-            if isinstance(node, Name):
-                return (node.id,)
-            if isinstance(node, (Tuple_, List)):
-                return tuple(name for child in node.elts for name in names(child))
-            raise TypeError("live for target contains an unsupported target leaf")
-
-        return names(self.target)
+from .nodes import TargetPatternV1 as LiveForTargetPatternV1
 
 
 @dataclass(frozen=True)
@@ -743,33 +687,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
     if isinstance(loop, For):
-        from .binding_state import mint_binding_coordinate_v1
-        from .nodes import List, Name, Tuple_
-
-        def target_coordinates(target, path=()):
-            if isinstance(target, Name):
-                return (
-                    mint_binding_coordinate_v1(
-                        scope_owner_cid=target_cid,
-                        binding_site=target.fragment,
-                        projection_path=("target", *path),
-                    ),
-                )
-            if isinstance(target, (Tuple_, List)):
-                return tuple(
-                    coordinate
-                    for index, child in enumerate(target.elts)
-                    for coordinate in target_coordinates(child, (*path, index))
-                )
-            raise BindingStateWireGap(
-                "live iterator recurrence requires an authenticated assignment target"
-            )
-
-        pattern = LiveForTargetPatternV1(
-            target=loop.target,
-            target_coordinates=target_coordinates(loop.target),
-            scope_owner_cid=target_cid,
-        )
+        pattern = loop.unit.require_target_pattern(loop, loop.target)
         construction = replace(
             construction,
             iterable_sugar=loop.iter.sugar(),
