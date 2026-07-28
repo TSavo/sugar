@@ -7,7 +7,13 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class NamedExpressionValue(FloorValue):
-    """The inseparable value and temporal-bind faces of ``(name := value)``."""
+    """The inseparable value and temporal-bind faces of ``(name := value)``.
+
+    Comparison is Floor-owned through the **presented** face: this value only
+    contributes its temporal bind via ``_carry``. Left-hand ops dispatch to
+    ``presented_value.<op>(other)``; right-hand routing is operator-owned typed
+    double-dispatch (``less_than_from_left``, …). No ``predicate_from_left(str)``.
+    """
 
     name: str
     assigned_value: FloorValue
@@ -25,6 +31,12 @@ class NamedExpressionValue(FloorValue):
         return carried
 
     def extend_scope(self, ctx):
+        # Root mint is Floor-owned when the reducer has no ambient context yet
+        # (function desugar(None) / SourceFile production tooth).
+        if ctx is None:
+            from sugar_lift_py_tests.context import ReduceContext
+
+            ctx = ReduceContext.root(owner="NamedExpressionValue")
         scoped = replace(
             ctx, temporal=ctx.temporal.bind_value(self.name, self.assigned_value)
         )
@@ -66,34 +78,51 @@ class NamedExpressionValue(FloorValue):
     def negate(self):
         return self.presented_value.negate().and_then(self._carry)
 
+    # --- left-hand: presented floor owns the comparison ---
+
     def is_identical(self, other, site):
-        peer = (
-            other.presented_value if isinstance(other, NamedExpressionValue) else other
-        )
-        return self.presented_value.is_identical(peer, site).and_then(self._carry)
+        return self.presented_value.is_identical(other, site).and_then(self._carry)
 
     def equals(self, other, site):
-        peer = (
-            other.presented_value if isinstance(other, NamedExpressionValue) else other
-        )
-        return self.presented_value.equals(peer, site).and_then(self._carry)
+        return self.presented_value.equals(other, site).and_then(self._carry)
 
     def less_than(self, other, site):
-        peer = (
-            other.presented_value if isinstance(other, NamedExpressionValue) else other
-        )
-        return self.presented_value.less_than(peer, site).and_then(self._carry)
+        return self.presented_value.less_than(other, site).and_then(self._carry)
 
-    def predicate_from_left(self, operation: str, left, site):
-        if operation != "less_than":
-            return self._floor_gap(
-                owner="NamedExpressionValue",
-                blame=str(site),
-                observed=operation,
-                requested="predicate from left operand",
-                fix="write the named-expression predicate projection",
-            )
+    def less_equal(self, other, site):
+        return self.presented_value.less_equal(other, site).and_then(self._carry)
+
+    def greater_than(self, other, site):
+        return self.presented_value.greater_than(other, site).and_then(self._carry)
+
+    def greater_equal(self, other, site):
+        return self.presented_value.greater_equal(other, site).and_then(self._carry)
+
+    # --- right-hand: operator-owned typed double-dispatch (no string door) ---
+
+    def less_than_from_left(self, left, site):
+        """``left < (n := e)`` — presented is the RHS; carry the walrus bind."""
         return left.less_than(self.presented_value, site).and_then(self._carry)
+
+    def less_equal_from_left(self, left, site):
+        """``left <= (n := e)`` — typed RHS door; not string-admitted."""
+        return left.less_equal(self.presented_value, site).and_then(self._carry)
+
+    def greater_than_from_left(self, left, site):
+        """``left > (n := e)`` — typed RHS door; not string-admitted."""
+        return left.greater_than(self.presented_value, site).and_then(self._carry)
+
+    def greater_equal_from_left(self, left, site):
+        """``left >= (n := e)`` — typed RHS door; not string-admitted."""
+        return left.greater_equal(self.presented_value, site).and_then(self._carry)
+
+    def equals_from_left(self, left, site):
+        """``left == (n := e)`` — typed RHS door; not string-admitted."""
+        return left.equals(self.presented_value, site).and_then(self._carry)
+
+    def is_identical_from_left(self, left, site):
+        """``left is (n := e)`` — typed RHS door; not string-admitted."""
+        return left.is_identical(self.presented_value, site).and_then(self._carry)
 
     def subscript(self, index, site):
         return self.presented_value.subscript(index, site).and_then(self._carry)
