@@ -32,8 +32,15 @@ class Complete:
         # A completed ordinary value keeps going. A constructed raise is also
         # complete testimony, but Python does not evaluate any enclosing
         # expression step after it; preserve the control-flow value unchanged.
-        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, RaiseValue
 
         if isinstance(self.value, RaiseValue):
             return self
-        return step(self.value)
+        value = self.value
+        if isinstance(value, CallSiteValue) and value.body is not None:
+            projected = value._dig_floor_or_none(
+                None, owner="Complete.and_then authenticated source return"
+            )
+            if projected is not None and not isinstance(projected, BlockValue):
+                value = projected
+        return step(value)

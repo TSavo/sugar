@@ -409,25 +409,10 @@ class CallSiteValue(FloorValue):
         )
 
     def less_than(self, other, site):
-        return self._ordering_through_source_return(other, site, "less_than")
-
-    def less_equal(self, other, site):
-        return self._ordering_through_source_return(other, site, "less_equal")
-
-    def greater_than(self, other, site):
-        return self._ordering_through_source_return(other, site, "greater_than")
-
-    def greater_equal(self, other, site):
-        return self._ordering_through_source_return(other, site, "greater_equal")
-
-    def _ordering_through_source_return(self, other, site, method_name: str):
-        """Dispatch ordering on an authenticated returned Floor when available."""
-        dug = self._dig_floor_or_none(
-            None, owner=f"CallSiteValue.{method_name} source return"
-        )
+        dug = self._dig_floor_or_none(None, owner="CallSiteValue.less_than")
         if dug is not None and dug is not self:
-            return getattr(dug, method_name)(other, site)
-        return getattr(super(), method_name)(other, site)
+            return dug.less_than(other, site)
+        return super().less_than(other, site)
 
     def subscript(self, index, site):
         return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
@@ -1476,26 +1461,35 @@ def _project_authenticated_source_return(value: FloorValue) -> FloorValue:
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
+    returns = (
+        tuple(
+            statement
+            for statement in value.statements
+            if isinstance(statement, (ReturnValue, GuardedReturn))
+        )
+        if isinstance(value, BlockValue)
+        else ()
+    )
     if (
         isinstance(value, BlockValue)
         and (
             not value.fall_through
             or all(guard == false_guard() for guard in value.fall_through)
         )
-        and len(value.statements) == 1
-        and isinstance(value.statements[0], ReturnValue)
-        and isinstance(value.statements[0].value, FloorValue)
+        and len(returns) == 1
+        and isinstance(returns[0], ReturnValue)
+        and isinstance(returns[0].value, FloorValue)
     ):
-        return value.statements[0].value
-    if isinstance(value, BlockValue):
-        for statement in value.statements:
-            if (
-                isinstance(statement, GuardedReturn)
-                and statement.guards
-                and all(guard == true_guard() for guard in statement.guards)
-                and isinstance(statement.value, FloorValue)
-            ):
-                return statement.value
+        return returns[0].value
+    if (
+        isinstance(value, BlockValue)
+        and len(returns) == 1
+        and isinstance(returns[0], GuardedReturn)
+        and returns[0].guards
+        and all(guard == true_guard() for guard in returns[0].guards)
+        and isinstance(returns[0].value, FloorValue)
+    ):
+        return returns[0].value
     return value
 
 
