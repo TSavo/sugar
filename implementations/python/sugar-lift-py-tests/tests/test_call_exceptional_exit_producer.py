@@ -67,6 +67,7 @@ def test_authenticated_call_publishes_its_source_body_halt() -> None:
     assert isinstance(halted, Halted)
     assert isinstance(halted.effect, RaiseEffect)
     assert halted.effect.exception_name == "ValueError"
+    assert halted.effect.producer_node_owner == "Call"
 
 
 def test_completed_source_call_keeps_the_ordinary_call_coordinate() -> None:
