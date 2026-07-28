@@ -47,6 +47,18 @@ class WithResourceSugar(Sugar):
             raise ValueError(
                 "WithResourceSugar requires authenticated enter and exit definition coordinates"
             )
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        for call, definition, slot in (
+            (self.enter, self.enter_definition, "context-enter"),
+            (self.exit, self.exit_definition, "context-exit"),
+        ):
+            if isinstance(call, MethodCallSugar) and (
+                call.native_definition_coordinate != definition
+            ):
+                raise ValueError(
+                    f"{slot} call is not authenticated by its definition coordinate"
+                )
 
     @classmethod
     def witnesses(cls):
@@ -83,6 +95,7 @@ class WithResourceSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
+        from sugar_lift_py_tests.floor import EnteredManagerStateValue
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -120,15 +133,32 @@ class WithResourceSugar(Sugar):
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
                 if isinstance(enter_exit, Halted):
-                    parts.append(ExitSet((Halted(face_guard, enter_exit.effect),)))
+                    parts.append(
+                        ExitSet(
+                            (
+                                Halted(
+                                    face_guard,
+                                    enter_exit.effect,
+                                    enter_exit.state,
+                                    enter_exit.faces,
+                                    enter_exit.pending_contracts,
+                                ),
+                            )
+                        )
+                    )
                     continue
+
+                entered = EnteredManagerStateValue(
+                    enter_value=enter_exit.value,
+                    receiver_state=mgr_exit.value,
+                )
 
                 enter_facts = ()
                 if self.enter_slot_id is not None and hasattr(
                     enter_exit.value, "to_term"
                 ):
                     enter_facts = EnterResultBinding(
-                        self.enter_slot_id, enter_exit.value
+                        self.enter_slot_id, entered.enter_value
                     ).to_facts(site=self.site)
 
                 body_es = promote_raise_halts(
