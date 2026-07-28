@@ -11,9 +11,14 @@ import pytest
 from pandas import Series, Timedelta
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue
 from sugar_lift_py_tests.ir import ctor
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.nodes import Call as SourceCall
+from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -22,6 +27,7 @@ MANIFEST_CID = (
 HELPER_PATH = "tests/arithmetic/common.py"
 CALLER_PATH = "tests/arithmetic/test_timedelta64.py"
 KEYWORD_CALLER_PATH = "tests/arithmetic/test_datetime64.py"
+NESTED_DEFAULT_CALLER_PATH = "tests/util/test_deprecate_nonkeyword_arguments.py"
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,53 @@ def _keyword_call(*, caller_source: str | None = None) -> ast.Call:
     return call
 
 
+def _nested_default_pair(*, source: str | None = None):
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.file_count, corpus.manifest_cid) == (
+        "3.0.3",
+        1421,
+        MANIFEST_CID,
+    )
+    source = (
+        (corpus.root / NESTED_DEFAULT_CALLER_PATH).read_text(encoding="utf-8")
+        if source is None
+        else source
+    )
+    tree = ast.parse(source)
+    helper = _function(tree, "f")
+    assert helper.lineno == 18
+    assert tuple(argument.arg for argument in helper.args.args) == (
+        "a",
+        "b",
+        "c",
+        "d",
+    )
+    assert tuple(ast.unparse(default) for default in helper.args.defaults) == (
+        "0",
+        "0",
+        "0",
+    )
+    returned = next(node for node in helper.body if isinstance(node, ast.Return))
+    assert returned.lineno == 19
+    assert ast.unparse(returned.value) == "a + b + c + d"
+
+    calls = tuple(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "f"
+        and node.lineno in {28, 33, 38}
+    )
+    assert tuple(call.lineno for call in calls) == (28, 33, 38)
+    assert tuple(ast.unparse(call) for call in calls) == (
+        "f(19)",
+        "f(19, d=6)",
+        "f(1, 5)",
+    )
+    return source, calls
+
+
 def test_helper_alone_has_only_formals_so_exception_identity_is_undischarged() -> None:
     """The helper occurrence authenticates an operation, never caller actuals."""
     pair = _pair()
@@ -189,6 +242,51 @@ def test_lying_keyword_caller_coordinate_is_rejected() -> None:
 
     with pytest.raises(AssertionError):
         _keyword_call(caller_source=lying)
+
+
+def test_real_nested_default_binop_helper_and_callers_are_content_pinned() -> None:
+    _, calls = _nested_default_pair()
+
+    assert calls[0].args[0].value == 19
+    assert calls[1].keywords[0].arg == "d"
+    assert tuple(argument.value for argument in calls[2].args) == (1, 5)
+
+
+def test_lying_nested_default_caller_coordinate_is_rejected() -> None:
+    corpus = authenticated_pandas_corpus()
+    source = (corpus.root / NESTED_DEFAULT_CALLER_PATH).read_text(encoding="utf-8")
+    lying = source.replace("f(19, d=6)", "f(19, c=6)", 1)
+
+    with pytest.raises(AssertionError):
+        _nested_default_pair(source=lying)
+
+
+def test_real_nested_default_binop_callers_reach_completed_outcomes() -> None:
+    """RED until nested carrier continuations receive the original actual map."""
+    source, _ = _nested_default_pair()
+    tree = SourceFile(
+        (
+            source,
+            NESTED_DEFAULT_CALLER_PATH,
+            blake3_512_of(source.encode()),
+        ),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    calls = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, SourceCall) and node.lineno in {28, 33, 38}
+    )
+
+    outcomes = tuple(call.sugar().desugar(None) for call in calls)
+
+    assert len(outcomes) == 3
+    assert all(
+        isinstance(outcome, ExitSet)
+        and len(outcome.exits) == 1
+        and isinstance(outcome.exits[0], Completed)
+        for outcome in outcomes
+    )
 
 
 def test_runtime_truth_names_the_candidate_exception_without_licensing_floor() -> None:
