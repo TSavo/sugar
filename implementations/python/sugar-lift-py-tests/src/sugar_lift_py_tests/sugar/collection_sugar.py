@@ -95,6 +95,11 @@ def _reduce_into(element_sugars, ctx, build):
             )
         )
     built = outcome.and_then(lambda values: Complete(build(values)))
+    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    if isinstance(built, Complete) and isinstance(built.value, RaiseValue):
+        built = Incomplete(built.value.effect)
     return rewrap_pending(pending, built, owner=owner, blame=owner)
 
 

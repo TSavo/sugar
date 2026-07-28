@@ -225,7 +225,13 @@ class ComprehensionSugar(ConstructedTermSugar):
             except Exception:
                 return None
             if not isinstance(outcome, Complete):
-                return None
+                return outcome
+            from sugar_lift_py_tests.floor import RaiseValue
+
+            if isinstance(outcome.value, RaiseValue):
+                from sugar_lift_py_tests.outcome import Incomplete
+
+                return Incomplete(outcome.value.effect)
             projected.append(outcome.value)
         # Term carries iterable + projected-element coordinate; finite_elements
         # is the exact member testimony consumers (tuple construct) demand.
