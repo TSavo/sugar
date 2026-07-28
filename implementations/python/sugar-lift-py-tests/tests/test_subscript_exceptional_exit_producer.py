@@ -237,6 +237,14 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
         for body in report.bodies
         if body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
     )
+    # Residual dual-edge index producers closed as authenticated exits:
+    # data[ub + 1] follows the BinOp dispatch partition; ser[df > 5] follows
+    # the Compare dispatch partition. SubscriptSugar sequences those ExitSets
+    # so Halted faces survive when the completed face cannot decide the lookup.
+    required_auth_exit_sites = {
+        "tests/extension/base/getitem.py:147:Subscript": "BinOp",
+        "tests/series/indexing/test_getitem.py:595:Subscript": "Compare",
+    }
     required_non_vendor_sites = {
         "tests/indexes/multi/test_sorting.py:147:Subscript",
         "tests/indexing/multiindex/test_multiindex.py:29:Subscript",
@@ -254,6 +262,14 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
             flush=True,
         )
 
+    auth_by_id = {
+        body.body_id: body.detail
+        for body in report.bodies
+        if body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
+    }
+    for body_id, owner in required_auth_exit_sites.items():
+        assert auth_by_id.get(body_id) == owner, (body_id, auth_by_id.get(body_id))
+
     assert row.enrolled == FAMILY_DENOMINATORS[ProducerFamily.SUBSCRIPT]
     assert {probe.body_id for probe in probes} >= required_non_vendor_sites
     assert (
@@ -264,6 +280,8 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
     )
     assert report.discrepancies == ()
     assert not reattributed_gaps, reattributed_gaps
+    assert row.construction_panics == 0
+    assert row.authenticated_exceptional_exits >= 2
 
 
 def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> None:

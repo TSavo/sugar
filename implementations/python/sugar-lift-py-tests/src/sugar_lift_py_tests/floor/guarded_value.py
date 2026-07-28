@@ -97,6 +97,50 @@ class GuardedValue(FloorValue):
         false_outcome = getattr(self.when_false, method)(*args)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
+        # Dual-edge partitions from undecided native dispatch (BinOp/Compare):
+        # weaken each arm's faces under the branch guard and union.  Joining two
+        # partitions into one GuardedValue arm is not honest; the exit algebra
+        # already carries both completion and halt faces.
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            Halted,
+            outcome_to_exitset,
+        )
+
+        if isinstance(true_outcome, ExitSet) or isinstance(false_outcome, ExitSet):
+            from sugar_lift_py_tests.ir import and_ as and_formulas
+
+            def _under(es: ExitSet, guard) -> tuple:
+                faces = []
+                for face in es.exits:
+                    g = and_formulas([guard, face.guard])
+                    if isinstance(face, Halted):
+                        faces.append(
+                            Halted(
+                                g,
+                                face.effect,
+                                face.state,
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                        )
+                    else:
+                        faces.append(
+                            Completed(
+                                g,
+                                face.value,
+                                face.faces,
+                                face.pending_contracts,
+                            )
+                        )
+                return tuple(faces)
+
+            true_es = outcome_to_exitset(true_outcome)
+            false_es = outcome_to_exitset(false_outcome)
+            return ExitSet(
+                _under(true_es, self.guard) + _under(false_es, not_(self.guard))
+            ).normalize()
         # An arm may answer with a value that still owes a parameter contract
         # (`(a if c else p)[i]` for a formal `p`). The demand is owed only on that
         # arm's face; hoist it, join the carried values, then re-attach it.
