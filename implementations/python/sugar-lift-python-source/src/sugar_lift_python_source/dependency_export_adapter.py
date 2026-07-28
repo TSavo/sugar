@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
+from pathlib import PurePosixPath
+import re
 from typing import Any, Literal
 
 from .canonical import blake3_512_of
@@ -112,6 +114,17 @@ def _resolve_export_uncached(
         return _gap("reexport-cycle", binding_cid, graph, module_name, exported_name)
     module = graph.modules.get(module_name)
     if module is None:
+        included = _cython_included_class(graph, module_name, exported_name)
+        if included is not None:
+            source, definition = included
+            return ResolvedPythonObjectV1(
+                distribution_artifact_cid=graph.distribution_artifact_cid,
+                import_binding_cid=binding_cid,
+                module_name=module_name,
+                source_cid=source.source_cid,
+                reexport_warrants=warrants,
+                definition=definition,
+            )
         return _gap(
             "artifact-module-absent", binding_cid, graph, module_name, exported_name
         )
@@ -139,6 +152,26 @@ def _resolve_export_uncached(
             return _gap("opaque-source", binding_cid, graph, module_name, exported_name)
         target = graph.modules.get(target_module)
         if target is None:
+            included = _cython_included_class(graph, target_module, alias.name)
+            if included is not None:
+                source, definition = included
+                warrant = ReexportWarrantV1(
+                    from_module=module_name,
+                    from_source_cid=module.source_cid,
+                    to_module=target_module,
+                    to_source_cid=source.source_cid,
+                    exported_name=exported_name,
+                    imported_name=alias.name,
+                    definition=_import_coordinate(module, node, exported_name),
+                )
+                return ResolvedPythonObjectV1(
+                    distribution_artifact_cid=graph.distribution_artifact_cid,
+                    import_binding_cid=binding_cid,
+                    module_name=target_module,
+                    source_cid=source.source_cid,
+                    reexport_warrants=(*warrants, warrant),
+                    definition=definition,
+                )
             return _gap(
                 "artifact-module-absent",
                 binding_cid,
@@ -211,6 +244,111 @@ def _resolve_export_uncached(
         module_name,
         exported_name,
     )
+
+
+_CYTHON_INCLUDE = re.compile(r'^include\s+["\']([^"\']+\.pxi)["\']\s*$')
+_PYTHON_CLASS = re.compile(r"^class\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*:\s*(?:#.*)?$")
+
+
+def _cython_included_class(graph, module_name: str, exported_name: str):
+    """Resolve a Python class from a recorded Cython include edge.
+
+    Native-extension wheels may expose a module from ``module.pyx`` while the
+    Python exception classes it exports live in a recorded ``include``d
+    ``.pxi`` file.  The include statement and class bytes are both required;
+    a sibling file or matching class spelling alone is never testimony.
+    """
+    module_seat = PurePosixPath(*module_name.split(".")).with_suffix(".pyx")
+    files = {item.source_seat: item for item in graph.files}
+    module_file = files.get(module_seat.as_posix())
+    if module_file is None:
+        return None
+    try:
+        module_source = module_file.content.decode("utf-8")
+    except UnicodeError:
+        return None
+    includes = []
+    for line in module_source.splitlines():
+        match = _CYTHON_INCLUDE.fullmatch(line)
+        if match is None:
+            continue
+        relative = PurePosixPath(match.group(1))
+        if relative.is_absolute() or ".." in relative.parts:
+            return None
+        includes.append(module_seat.parent / relative)
+
+    matches = []
+    for include_seat in includes:
+        included_file = files.get(include_seat.as_posix())
+        if included_file is None:
+            return None
+        try:
+            source = included_file.content.decode("utf-8")
+        except UnicodeError:
+            return None
+        definition = _python_class_definition(
+            source, included_file.content_cid, exported_name
+        )
+        if definition is not None:
+            matches.append((included_file, source, definition))
+    if len(matches) != 1:
+        return None
+    included_file, source, definition = matches[0]
+    return (
+        AuthenticatedModuleSourceV1(
+            module_name=module_name,
+            source_seat=included_file.source_seat,
+            source_cid=included_file.content_cid,
+            source=source,
+        ),
+        definition,
+    )
+
+
+def _python_class_definition(
+    source: str, source_cid: str, exported_name: str
+) -> DefinitionCoordinateV1 | None:
+    lines = source.splitlines()
+    found = []
+    for index, line in enumerate(lines):
+        match = _PYTHON_CLASS.fullmatch(line)
+        if match is None or match.group(1) != exported_name:
+            continue
+        end = index + 1
+        while end < len(lines):
+            candidate = lines[end]
+            if (
+                candidate
+                and not candidate[0].isspace()
+                and not candidate.startswith("#")
+            ):
+                break
+            end += 1
+        while end > index + 1 and not lines[end - 1].strip():
+            end -= 1
+        if end == index + 1:
+            return None
+        segment = "\n".join(lines[index:end])
+        try:
+            parsed = ast.parse(segment)
+        except SyntaxError:
+            return None
+        if len(parsed.body) != 1 or not isinstance(parsed.body[0], ast.ClassDef):
+            return None
+        node = parsed.body[0]
+        found.append(
+            DefinitionCoordinateV1(
+                name=node.name,
+                kind="class",
+                source_cid=source_cid,
+                start_line=index + 1,
+                start_col=node.col_offset,
+                end_line=index + node.end_lineno,
+                end_col=node.end_col_offset,
+                fragment_cid=blake3_512_of(segment.encode("utf-8")),
+            )
+        )
+    return found[0] if len(found) == 1 else None
 
 
 def _callable_instance_call_method(

@@ -237,20 +237,27 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
     from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
+    def authenticated(effect: object) -> bool:
+        return (
+            isinstance(effect, RaiseEffect)
+            and isinstance(effect.exception_name, str)
+            and bool(effect.exception_name)
+        )
+
     if isinstance(outcome, Incomplete):
-        return (outcome.effect,) if isinstance(outcome.effect, RaiseEffect) else ()
+        return (outcome.effect,) if authenticated(outcome.effect) else ()
     if isinstance(outcome, Complete):
         value = outcome.value
         return (
             (value.effect,)
-            if isinstance(value, RaiseValue) and isinstance(value.effect, RaiseEffect)
+            if isinstance(value, RaiseValue) and authenticated(value.effect)
             else ()
         )
     if isinstance(outcome, ExitSet):
         return tuple(
             face.effect
             for face in outcome.exits
-            if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+            if isinstance(face, Halted) and authenticated(face.effect)
         )
     return ()
 

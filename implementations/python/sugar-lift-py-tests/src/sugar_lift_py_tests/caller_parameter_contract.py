@@ -30,6 +30,7 @@ class NativeOperationResolutionV1:
     __slots__ = (
         "_kind",
         "value",
+        "exception_name",
         "exception_type_coordinate",
         "raise_occurrence_coordinate",
         "reason",
@@ -40,6 +41,7 @@ class NativeOperationResolutionV1:
         *,
         kind,
         value=None,
+        exception_name=None,
         exception_type_coordinate=None,
         raise_occurrence_coordinate=None,
         reason=None,
@@ -49,22 +51,26 @@ class NativeOperationResolutionV1:
         if kind == "completed" and value is None:
             raise ValueError("completed native operation requires a value")
         if kind == "exceptional" and (
-            exception_type_coordinate is None or raise_occurrence_coordinate is None
+            not exception_name
+            or exception_type_coordinate is None
+            or raise_occurrence_coordinate is None
         ):
             raise ValueError(
-                "exceptional native operation requires authenticated type and occurrence"
+                "exceptional native operation requires authenticated name, type, and occurrence"
             )
         if kind == "undischarged" and not reason:
             raise ValueError("undischarged native operation requires a reason")
         if kind != "exceptional" and (
             exception_type_coordinate is not None
             or raise_occurrence_coordinate is not None
+            or exception_name is not None
         ):
             raise ValueError(
                 "non-exceptional resolution cannot carry exception testimony"
             )
         self._kind = kind
         self.value = value
+        self.exception_name = exception_name
         self.exception_type_coordinate = exception_type_coordinate
         self.raise_occurrence_coordinate = raise_occurrence_coordinate
         self.reason = reason
@@ -75,8 +81,14 @@ class NativeOperationResolutionV1:
 
     @classmethod
     def exceptional(cls, *, exception_type_coordinate, operation_occurrence):
+        exception_name = _exception_name_from_identity(exception_type_coordinate)
+        if exception_name is None:
+            raise ValueError(
+                "exceptional native operation type coordinate has no named identity"
+            )
         return cls(
             kind="exceptional",
+            exception_name=exception_name,
             exception_type_coordinate=exception_type_coordinate,
             raise_occurrence_coordinate=operation_occurrence,
         )
@@ -99,6 +111,7 @@ class NativeOperationResolutionV1:
             self._kind == "exceptional"
             and self.exception_type_coordinate is not None
             and self.raise_occurrence_coordinate is not None
+            and self.exception_name is not None
         )
 
     @property
@@ -127,6 +140,7 @@ class NativeOperationResolutionV1:
             assert occurrence is not None
             return ExitSet.halted(
                 RaiseEffect(
+                    exception_name=self.exception_name,
                     exception_type_coordinate=self.exception_type_coordinate,
                     occurrence=str(occurrence.wire()),
                     blame=str(occurrence.wire()),
@@ -146,6 +160,18 @@ def authenticated_exceptional_resolution_count(resolutions) -> int:
     return sum(
         resolution.is_authenticated_exceptional_exit for resolution in resolutions
     )
+
+
+def _exception_name_from_identity(identity) -> str | None:
+    args = getattr(identity, "args", None)
+    if args is None or len(args) != 2:
+        return None
+    qualified = getattr(args[1], "value", None)
+    if not isinstance(qualified, str) or not qualified:
+        return None
+    name = qualified.rsplit(".", 1)[-1]
+    return name if name.isidentifier() else None
+
 
 def _json(value) -> Any:
     return json.loads(encode_jcs(value))
@@ -463,9 +489,7 @@ def merge_pending(*groups) -> tuple:
             by_candidate[entry.candidate_cid] = (
                 entry
                 if prior is None
-                else replace(
-                    prior, demands=merge_demands(prior.demands, entry.demands)
-                )
+                else replace(prior, demands=merge_demands(prior.demands, entry.demands))
             )
     return tuple(by_candidate[cid] for cid in sorted(by_candidate))
 
@@ -617,9 +641,7 @@ class ContractConditionalConstructionV1:
         Nested guards compose by repeated application, innermost first, which
         is the same accumulation `Incomplete.guarded` records positionally.
         """
-        return replace(
-            self.demanded_under(formula), value=self.value.guarded(formula)
-        )
+        return replace(self.demanded_under(formula), value=self.value.guarded(formula))
 
     def contribution(self):
         """One row per demand: the SET collapses back to singletons HERE.

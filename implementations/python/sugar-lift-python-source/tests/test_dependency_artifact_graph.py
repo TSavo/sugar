@@ -88,6 +88,48 @@ def _install_stub_defined_distribution(root: Path) -> importlib.metadata.Distrib
     return importlib.metadata.Distribution.at(metadata)
 
 
+def _install_cython_include_distribution(
+    root: Path,
+) -> importlib.metadata.Distribution:
+    package = root / "cython_provider"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from cython_provider.lib import ProviderError\n",
+        encoding="utf-8",
+    )
+    (package / "lib.pyx").write_text(
+        'include "errors.pxi"\n',
+        encoding="utf-8",
+    )
+    (package / "errors.pxi").write_text(
+        "class ProviderBase(Exception):\n"
+        "    pass\n\n"
+        "class ProviderError(ValueError, ProviderBase):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    metadata = root / "cython_provider_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: cython-provider-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    (metadata / "top_level.txt").write_text("cython_provider\n", encoding="utf-8")
+    recorded = (
+        "cython_provider/__init__.py",
+        "cython_provider/lib.pyx",
+        "cython_provider/errors.pxi",
+        "cython_provider_dist-1.0.dist-info/METADATA",
+        "cython_provider_dist-1.0.dist-info/top_level.txt",
+        "cython_provider_dist-1.0.dist-info/RECORD",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for path in recorded:
+            writer.writerow((path, "", ""))
+    return importlib.metadata.Distribution.at(metadata)
+
+
 def _install_returned_module_gate(root: Path) -> importlib.metadata.Distribution:
     package = root / "gate_pkg"
     package.mkdir()
@@ -143,6 +185,43 @@ def test_stub_defined_provider_exception_resolves_to_its_definition(tmp_path: Pa
     assert testimony.resolved is result
     assert testimony.source_attribute == "ProviderError"
     assert testimony.ancestry
+
+
+def test_cython_included_provider_exception_resolves_to_defining_source(
+    tmp_path: Path,
+):
+    """Truthful: a recorded .pyx include reaches its recorded class preimage."""
+    graph = DependencyArtifactGraph.authenticate(
+        _install_cython_include_distribution(tmp_path)
+    )
+    demand = _demand(
+        tmp_path,
+        "import cython_provider\ncython_provider.ProviderError()\n",
+    )
+
+    result = resolve_import_binding(demand, graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1), result
+    assert result.module_name == "cython_provider.lib"
+    assert result.definition.name == "ProviderError"
+    assert result.definition.kind == "class"
+    source_file = next(
+        item for item in graph.files if item.content_cid == result.source_cid
+    )
+    assert source_file.source_seat == "cython_provider/errors.pxi"
+    testimony = AuthenticatedProviderExceptionTypeV1.from_resolved(
+        graph=graph,
+        source_attribute="ProviderError",
+        resolved=result,
+    )
+    assert testimony.resolved is result
+    assert [term.args[1].value for term in testimony.ancestry] == [
+        "cython_provider.lib.ProviderError",
+        "ValueError",
+        "Exception",
+        "BaseException",
+        "ProviderBase",
+    ]
 
 
 def test_stub_provider_cannot_testify_for_a_different_exception(tmp_path: Path):
