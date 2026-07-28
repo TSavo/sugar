@@ -681,19 +681,33 @@ def populate_source_derived_resource_refs(
         from sugar_lift_py_tests.temporal import builtin_name_temporal
 
         actual_ctx = ReduceContext(temporal=builtin_name_temporal())
+        # Formals whose role is an exception-type operand (raises / warn / external_error).
+        _EXCEPTION_TYPE_FORMALS = frozenset(
+            {
+                "expected",
+                "expected_exception",
+                "expected_exceptions",
+                "exception",
+                "exc",
+                "exc_type",
+                "err_type",
+                "category",
+            }
+        )
+        frame_parameters = ()
+        if not isinstance(frame_result, ManagerConstructionGapV1):
+            _frame_for_params, _ = frame_result
+            frame_parameters = tuple(getattr(_frame_for_params, "parameters", ()) or ())
 
-        def _actual_outcome(node):
+        def _actual_outcome(node, *, formal_name: str | None = None):
             # Substitution has already replaced every reaching lexical binding.
             # A surviving bare builtin is therefore the language-owned value,
             # not a free formal. NameSugar deliberately represents every other
             # survivor symbolically, so project this one native floor here.
             #
-            # Import Attribute exception-class paths (``pkg.Error``) are a
-            # second closed projection: the Attribute floor cannot resolve a
-            # SymbolicValue module receiver, but ``imported_exception_type_identity``
-            # already authenticates the dotted type. Project that identity as
-            # the call actual so EffectBoundary managers construct instead of
-            # dying at incomplete-call-actuals.
+            # Import Attribute exception-class paths (``pkg.Error``) and
+            # provider-gated importorskip heads (``pa.ArrowInvalid``) seal
+            # identity without Attribute floors inventing member success.
             from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
                 AuthenticatedExceptionTypeValue,
             )
@@ -701,12 +715,42 @@ def populate_source_derived_resource_refs(
                 ExceptionClassValue,
             )
             from sugar_lift_py_tests.outcome import Complete as _Complete
+            from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+                AuthenticatedExceptionTypeSugar,
+            )
             from sugar_source_tree.nodes import Attribute, Name
 
             if isinstance(node, Name):
                 builtin = actual_ctx.temporal.value_if_bound(node.id)
                 if builtin is not None:
                     return _Complete(builtin)
+            # Exception-type formals: seal import / provider-gated identity.
+            if formal_name in _EXCEPTION_TYPE_FORMALS and isinstance(
+                node, (Name, Attribute)
+            ):
+                identity = None
+                mro = None
+                class_value = None
+                if isinstance(node, Name):
+                    identity = node.unit.exception_type_identity(node)
+                    if identity is None:
+                        identity = node.unit.imported_exception_type_identity(node)
+                    else:
+                        mro = node.unit.exception_type_mro(node)
+                        try:
+                            class_value = node.unit.exception_class_value(node)
+                        except Exception:
+                            class_value = None
+                else:
+                    identity = node.unit.imported_exception_type_identity(node)
+                if identity is not None:
+                    return AuthenticatedExceptionTypeSugar(
+                        node.sugar(),
+                        identity,
+                        mro,
+                        site=node.fragment,
+                        class_value=class_value,
+                    ).desugar(actual_ctx)
             if isinstance(node, Attribute):
                 identity = node.unit.imported_exception_type_identity(node)
                 if identity is not None:
@@ -721,8 +765,11 @@ def populate_source_derived_resource_refs(
             return node.sugar().desugar(actual_ctx)
 
         actuals = []
-        for node in call.args:
-            outcome = _actual_outcome(node)
+        for index, node in enumerate(call.args):
+            formal_name = (
+                frame_parameters[index] if index < len(frame_parameters) else None
+            )
+            outcome = _actual_outcome(node, formal_name=formal_name)
             if not isinstance(outcome, Complete):
                 actuals = []
                 break
@@ -743,7 +790,9 @@ def populate_source_derived_resource_refs(
                     keyword_actuals = []
                     actuals = []
                     break
-                outcome = _actual_outcome(keyword.value)
+                outcome = _actual_outcome(
+                    keyword.value, formal_name=keyword.arg
+                )
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []

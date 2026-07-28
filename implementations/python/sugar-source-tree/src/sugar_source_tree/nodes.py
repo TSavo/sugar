@@ -526,9 +526,20 @@ class SourceUnit:
 
         The context-manager contract authenticates the operand's role as an
         exception type.  This method authenticates only its source identity:
-        the exact head occurrence must have one reaching import definition,
-        and every remaining component must be a static Attribute link.  A
-        shadowed, computed, or ambiguous head has no coordinate and stays loud.
+        the exact head occurrence must have one reaching import definition
+        (static import, or a closed optional-provider gate), and every remaining
+        component must be a static Attribute link.  A shadowed, computed, or
+        ambiguous head has no coordinate and stays loud.
+
+        Optional-provider heads recognized here (exception-type identity only):
+
+        - ``name = pytest.importorskip("mod")`` with ``pytest`` import-bound and
+          a string-literal module argument
+        - ``try: import mod`` / ``except ImportError:`` that does not rebind
+          ``mod`` on the handler path
+
+        The coordinate names the import target path.  It does not invent MRO or
+        ClassValue ancestry when defining source is absent from the seat.
         """
         from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -544,12 +555,242 @@ class SourceUnit:
             (span.start_line, span.start_col, span.end_line, span.end_col)
         )
         if target is None:
+            target = self.provider_gated_import_target(link)
+        if target is None:
             return None
         module = target[len("python:") :] if target.startswith("python:") else target
         qualified = ".".join([module, *reversed(attributes)])
         return ctor(
             "python:exception_type_identity",
             [str_const("import"), str_const(qualified)],
+        )
+
+    def provider_gated_import_target(self, node: "Name") -> str | None:
+        """Closed optional-provider module target reaching ``node``, or None.
+
+        Lexical only: no install hunt, no execute.  Returns ``python:<mod>``
+        when exactly one provider-gate definition of ``node.id`` reaches the
+        use.  Competing, shadowed, or computed heads stay absent.
+        """
+        span = node.line_col_span()
+        use_line = span.start_line
+        module = self._require_typed_module(
+            "SourceUnit.provider_gated_import_target", blame=node.fragment
+        )
+
+        function_owner = None
+        containing = []
+        for candidate in self.function_nodes:
+            cspan = candidate.line_col_span()
+            start = (cspan.start_line, cspan.start_col)
+            end = (cspan.end_line, cspan.end_col)
+            if start <= (span.start_line, span.start_col) <= end:
+                containing.append(candidate)
+        if containing:
+            function_owner = max(
+                containing, key=lambda value: value.line_col_span().start_line
+            )
+            table = self.function_symtable(
+                function_owner.name, function_owner.line_col_span().start_line
+            )
+            try:
+                symbol = table.lookup(node.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and symbol.is_parameter():
+                return None
+            if symbol is not None and symbol.is_local():
+                local_mod = self._provider_gate_module_in_statements(
+                    function_owner.body, node.id, use_line=use_line
+                )
+                return f"python:{local_mod}" if local_mod is not None else None
+
+        module_mod = self._provider_gate_module_in_statements(
+            module.body,
+            node.id,
+            use_line=use_line,
+        )
+        return f"python:{module_mod}" if module_mod is not None else None
+
+    def _provider_gate_module_in_statements(
+        self, statements, name: str, *, use_line: int
+    ) -> str | None:
+        """Sole closed provider-gate module for ``name`` before ``use_line``."""
+        modules: list[str] = []
+        for statement in statements:
+            stmt_line = statement.line_col_span().start_line
+            if stmt_line > use_line:
+                continue
+            if statement.kind == "Assign":
+                mod = self._importorskip_assign_module(statement, name)
+                if mod is not None:
+                    modules.append(mod)
+                    continue
+                if self._statement_rebinds_name(statement, name):
+                    return None
+                continue
+            if statement.kind in ("AnnAssign", "AugAssign"):
+                if self._statement_rebinds_name(statement, name):
+                    return None
+                continue
+            if statement.kind in ("Import", "ImportFrom"):
+                # A later static import is ordinary import binding, not this door.
+                continue
+            if statement.kind in ("Try", "TryStar"):
+                mod = self._try_import_provider_module(statement, name)
+                if mod is not None:
+                    modules.append(mod)
+                elif self._try_rebinds_name(statement, name):
+                    return None
+                continue
+            if statement.kind in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+                if statement.name == name:
+                    return None
+                continue
+            if self._statement_rebinds_name(statement, name):
+                return None
+        if len(modules) != 1:
+            return None
+        return modules[0]
+
+    def _importorskip_assign_module(self, statement, name: str) -> str | None:
+        """``name = <pytest>.importorskip(\"mod\"[, ...])`` → ``mod``."""
+        if statement.kind != "Assign" or len(statement.targets) != 1:
+            return None
+        target = statement.targets[0]
+        if not isinstance(target, Name) or target.id != name:
+            return None
+        call = statement.value
+        if not isinstance(call, Call) or not call.args:
+            return None
+        func = call.func
+        if not isinstance(func, Attribute) or func.attr != "importorskip":
+            return None
+        head = func.value
+        if not isinstance(head, Name):
+            return None
+        head_span = head.line_col_span()
+        bound = self.import_bound_name_target(
+            (
+                head_span.start_line,
+                head_span.start_col,
+                head_span.end_line,
+                head_span.end_col,
+            )
+        )
+        if bound not in ("python:pytest", "pytest"):
+            return None
+        module_arg = call.args[0]
+        if not isinstance(module_arg, Constant) or not isinstance(
+            module_arg.value, str
+        ):
+            return None
+        if not module_arg.value or "/" in module_arg.value or "\\" in module_arg.value:
+            return None
+        return module_arg.value
+
+    def _try_import_provider_module(self, statement, name: str) -> str | None:
+        """Closed ``try: import name`` / ``except ImportError`` provider gate."""
+        if statement.kind not in ("Try", "TryStar"):
+            return None
+        imported: list[str] = []
+        for body_stmt in statement.body:
+            if body_stmt.kind != "Import":
+                if self._statement_rebinds_name(body_stmt, name):
+                    return None
+                continue
+            for alias in body_stmt.names:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                if local == name:
+                    imported.append(alias.name.split(".", 1)[0])
+        if len(imported) != 1:
+            return None
+        for handler in statement.handlers:
+            if handler.name == name:
+                return None
+            if not self._handler_is_import_error(handler):
+                return None
+            for handler_stmt in handler.body:
+                if self._statement_rebinds_name(handler_stmt, name):
+                    return None
+        for tail in (*statement.orelse, *statement.finalbody):
+            if self._statement_rebinds_name(tail, name):
+                return None
+        return imported[0]
+
+    def _handler_is_import_error(self, handler) -> bool:
+        """Whether the except type is ImportError (or a tuple containing it)."""
+        type_node = handler.type
+        if type_node is None:
+            return False
+
+        def is_import_error_name(node) -> bool:
+            return isinstance(node, Name) and node.id in (
+                "ImportError",
+                "ModuleNotFoundError",
+            )
+
+        if is_import_error_name(type_node):
+            return True
+        if isinstance(type_node, Tuple):
+            return any(is_import_error_name(elt) for elt in type_node.elts)
+        return False
+
+    @staticmethod
+    def _statement_rebinds_name(statement, name: str) -> bool:
+        if statement.kind in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+            return statement.name == name
+        if statement.kind == "Assign":
+            return any(
+                isinstance(node, Name) and node.id == name
+                for target in statement.targets
+                for node in target.walk()
+            )
+        if statement.kind in ("AnnAssign", "AugAssign"):
+            return any(
+                isinstance(node, Name) and node.id == name
+                for node in statement.target.walk()
+            )
+        if statement.kind in ("Import", "ImportFrom"):
+            return any(
+                (alias.asname or alias.name.split(".", 1)[0]) == name
+                for alias in statement.names
+            )
+        if statement.kind in ("For", "AsyncFor"):
+            return any(
+                isinstance(node, Name) and node.id == name
+                for node in statement.target.walk()
+            )
+        if statement.kind in ("With", "AsyncWith"):
+            for item in statement.items:
+                if item.optional_vars is None:
+                    continue
+                if any(
+                    isinstance(node, Name) and node.id == name
+                    for node in item.optional_vars.walk()
+                ):
+                    return True
+            return False
+        if statement.kind == "NamedExpr":
+            return any(
+                isinstance(node, Name) and node.id == name
+                for node in statement.target.walk()
+            )
+        return False
+
+    def _try_rebinds_name(self, statement, name: str) -> bool:
+        if any(self._statement_rebinds_name(body, name) for body in statement.body):
+            return True
+        for handler in statement.handlers:
+            if handler.name == name:
+                return True
+            if any(
+                self._statement_rebinds_name(body, name) for body in handler.body
+            ):
+                return True
+        return any(
+            self._statement_rebinds_name(tail, name)
+            for tail in (*statement.orelse, *statement.finalbody)
         )
 
     def _compute_exception_type_identity(

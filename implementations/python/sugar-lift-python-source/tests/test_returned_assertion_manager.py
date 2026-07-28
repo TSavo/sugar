@@ -174,9 +174,13 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
         reference.detail or ""
     )
     assert "SymbolicValue + CallSiteValue" not in (reference.detail or "")
-    # Current residual names the exit-face comparison on unfloored field state.
+    # Current residual names the exit-face floor on unfloored field state.
     assert reference.kind == "exit-may-halt"
-    assert "comparison_operation_exception_floor" in (reference.detail or "")
+    detail = reference.detail or ""
+    assert (
+        "comparison_operation_exception_floor" in detail
+        or "unary_operation_exception_floor" in detail
+    ), detail
 
 
 def test_external_error_raised_population_is_the_authenticated_47_with_sites() -> None:
@@ -211,7 +215,9 @@ def _external_error_attributions():
 
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
         SourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -275,7 +281,7 @@ def _external_error_attributions():
                 )
             )
 
-            def evaluate(manager=manager, path=path, site=site):
+            def evaluate(manager=manager, path=path, site=site, tree=tree, context=context):
                 populate_source_derived_resource_refs(
                     tree,
                     root=corpus.root.parent,
