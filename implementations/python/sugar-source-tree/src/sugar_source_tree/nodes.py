@@ -5610,11 +5610,21 @@ class With(Statement):
             enter_definition, exit_definition = (
                 self._require_native_resource_definitions(resolved_ref)
             )
+            from dataclasses import replace
+
+            enter_sugar = replace(
+                item._make_enter_call().sugar(),
+                native_definition_coordinate=enter_definition,
+            )
+            exit_sugar = replace(
+                item._make_parametric_exit_call().sugar(),
+                native_definition_coordinate=exit_definition,
+            )
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
-                enter=item._make_enter_call().sugar(),
-                exit=item._make_parametric_exit_call().sugar(),
+                enter=enter_sugar,
+                exit=exit_sugar,
                 exit_face_id=item._exit_face_id(),
                 body=tuple(stmt.sugar() for stmt in self.body),
                 disposition=resolved_ref.semantics.exit.disposition,
