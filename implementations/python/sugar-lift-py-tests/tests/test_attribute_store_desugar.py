@@ -47,19 +47,23 @@ from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectMethodValue,
     ObjectValue,
+    RaiseValue,
+    StringValue,
     SymbolicValue,
     TermValue,
     TupleValue,
 )
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
@@ -415,3 +419,146 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     outcome = store.desugar(None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setattr_named"
+
+
+def _real_pandas_name_store():
+    """Return the exact line-113 store and its undischarged caller demand."""
+    corpus = authenticated_pandas_corpus()
+    install_root = corpus.root.parent
+    path = install_root / CORPUS_RELATIVE
+    tree = SourceFile(workspace_path_source(str(path), root=str(install_root)))
+    function = next(
+        fn for fn in tree.functions() if fn.name == "test_pickle_preserves_name"
+    )
+    from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
+
+    unpack = next(
+        statement
+        for statement in function.sugar().statements
+        if isinstance(statement, UnpackStoreAssignSugar)
+    )
+    store = unpack.stores[0]
+    pending = store.desugar(None)
+    assert isinstance(store, AttributeStoreEffectSugar)
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "setattr_named"
+    assert store.site.line_col_span.start_line == CORPUS_LINE
+    return store, pending
+
+
+def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
+    """The exact pandas store owns completion, AttributeError, and occurrence."""
+    store, pending = _real_pandas_name_store()
+    receiver_cid = pending.demand.operand_coordinate_cids[0]
+    assert receiver_cid is not None
+
+    writable = ObjectValue("WritableIndex", (ObjectField("name", NoneValue()),))
+    completed = pending.discharge({receiver_cid: writable})
+    assert len(completed.exits) == 1
+    assert isinstance(completed.exits[0], Completed)
+
+    @dataclass(frozen=True)
+    class _GetterBody(Sugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            del ctx
+            from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+            return Complete(
+                BlockValue((ReturnValue(NoneValue()),), can_fall_through=False)
+            )
+
+    getter_only = ObjectValue(
+        "GetterOnlyIndex",
+        (),
+        methods=(
+            ObjectMethodValue(
+                name="name",
+                parameters=("self",),
+                body=_GetterBody(),
+                descriptor_kind="property",
+            ),
+        ),
+    )
+    getter_halt = pending.discharge({receiver_cid: getter_only}).exits[0]
+    immutable_halt = pending.discharge(
+        {receiver_cid: TupleValue((TermValue(1),))}
+    ).exits[0]
+    for halt, owner in (
+        (getter_halt, "ObjectValue.setattr"),
+        (immutable_halt, "TupleValue.setattr"),
+    ):
+        assert isinstance(halt, Halted)
+        assert "AttributeError" in repr(halt.effect.exception_type_coordinate)
+        assert halt.effect.occurrence_id is not None
+        assert f"'startLine': {CORPUS_LINE}" in halt.effect.occurrence_id
+
+    for receiver, owner in (
+        (getter_only, "ObjectValue.setattr"),
+        (TupleValue((TermValue(1),)), "TupleValue.setattr"),
+    ):
+        direct = receiver.setattr("name", StringValue("foo"), store.site)
+        assert isinstance(direct, Complete)
+        assert isinstance(direct.value, RaiseValue)
+        assert direct.value.effect.exception_name == "AttributeError"
+        assert direct.value.effect.producer_node_owner == owner
+
+    # A getter spelling is neither store authority nor permission to invent a
+    # readable value: its deliberately unconstructed body remains loud.
+    with pytest.raises(ConstructionPanic, match="CallSiteValue.force_floor"):
+        getter_only.attribute("name", store.site)
+    assert isinstance(getter_halt, Halted)
+    assert not isinstance(getter_halt, Completed)
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        AuthenticatedRaiseMatcher,
+        EffectBoundaryDisposition,
+    )
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.ir import ctor
+
+    class _WrongExpected:
+        def exception_type_identity(self):
+            return ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const("ValueError")],
+            )
+
+    produced = ExitSet((getter_halt,))
+    routed = produced.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(_WrongExpected()),
+            unmet=ExpectationNotMetEffect("raise", store.site),
+        ),
+    )
+    assert routed.exits == (getter_halt,)
+    assert routed.exits[0].state is getter_halt.state
+    assert routed.exits[0].effect is getter_halt.effect
+
+
+def test_same_spelled_foreign_provider_cannot_discharge_real_store() -> None:
+    """Provider spelling is not the exact formal-coordinate authority."""
+    _, pending = _real_pandas_name_store()
+    receiver_cid = pending.demand.operand_coordinate_cids[0]
+    assert receiver_cid is not None
+    foreign_path = Path("same-spelled-provider.py")
+    foreign_source = "def test_pickle_preserves_name(index, temp_file):\n    pass\n"
+    foreign_tree = SourceFile(
+        (foreign_source, str(foreign_path), "blake3-512:" + "00" * 64)
+    )
+    foreign = next(foreign_tree.functions())
+    foreign_formal = _formal(foreign.fragment)
+    assert foreign_formal.coordinate_cid != receiver_cid
+
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        pending.discharge(
+            {
+                foreign_formal.coordinate_cid: ObjectValue(
+                    "ForeignIndex", (ObjectField("name", NoneValue()),)
+                )
+            }
+        )
