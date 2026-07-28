@@ -122,6 +122,13 @@ class TupleValue(FloorValue):
 
         return Complete(TupleIteratorValue(self.elements, index=0))
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Authenticated finite members for list slice-assignment RHS."""
+        del operation, ctx
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self.elements)
+
     @property
     def items(self) -> tuple:
         """Member sequence for SequenceProjectionOperation.project_tuple."""

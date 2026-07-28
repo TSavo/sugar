@@ -59,63 +59,67 @@ class SliceSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # A BOUND IS AN ORDINARY OPERAND, and an operand does not answer with
-        # exactly one unconditional value. `out.value` asked it to -- it read the
-        # `Complete` field off whatever came back -- so a bound that PARTITIONS
-        # (`pattern.search(s, pos).span()[0]`, whose method coordinate reduces to
-        # an ExitSet) crashed with `'ExitSet' object has no attribute 'value'`,
-        # and a bound owing a parameter contract (`xs[p[0]:]` for a formal `p`)
-        # had its demand read off and dropped.
+        # Bounds are ordinary operands evaluated **left-to-right**: lower, then
+        # upper, then step.  A lower-bound halt must not evaluate upper/step
+        # (Python source order).  Collection ``_reduce_into`` eagerly maps
+        # ``desugar`` over every element before folding — that is wrong for
+        # slice bounds.  Sequence each present bound through ``and_then`` so
+        # Incomplete short-circuits later desugars while ExitSet / pending
+        # still thread.
         #
-        # This is the shape `collection_sugar._reduce_into` already owns and
-        # names: reduce operands in source order, factor each so an arm count
-        # does not multiply through the fold (#6324), accumulate every pending
-        # demand into one set, and re-attach it to what gets built (#6352). A
-        # slice is that same fold over its present bounds, so it goes through
-        # that door rather than growing a second copy of the law.
-        from sugar_lift_py_tests.sugar.collection_sugar import _reduce_into
+        # Pending parameter-contract demands on bounds (``xs[p[0]:]``) still
+        # accumulate and re-attach via the same pending/rewrap door collections
+        # use (#6352), without re-entering the eager map.
+        from dataclasses import replace
 
-        present = tuple(
-            bound
-            for bound in (self.lower, self.upper, self.step)
-            if bound is not None
+        from sugar_lift_py_tests.caller_parameter_contract import merge_demands
+        from sugar_lift_py_tests.floor.single_outcome_law import (
+            pending_demand,
+            rewrap_pending,
         )
-        omitted = tuple(
-            bound is None for bound in (self.lower, self.upper, self.step)
-        )
-        return _reduce_into(present, ctx, _slice_builder(omitted))
-
-
-def _slice_builder(omitted: tuple):
-    """The `build` the fold hands its reduced bound values.
-
-    ``omitted`` is one flag per slice position, in source order. Every position
-    is filled: a present bound contributes the next reduced value's term, an
-    omitted one contributes Python's own ``None`` -- which is a VALUE Python
-    fills in, not a missing operand, and so never reaches the fold. The two
-    sequences are consumed in lockstep, and the arity is checked rather than
-    assumed: a mismatch would silently shift a bound into a neighbouring
-    position and mint a `py.slice` that means something else.
-    """
-
-    def slice_value(values: tuple):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import true_guard
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
-        present = sum(1 for flag in omitted if not flag)
-        if len(values) != present:
-            raise AssertionError(
-                "LAW (a slice fills every position it declares): "
-                f"{len(values)} reduced bound(s) arrived for {present} present "
-                "position(s) of `py.slice`. Consuming them out of lockstep "
-                "would move a bound into a neighbouring position and mint a "
-                "different slice."
+        positions = (self.lower, self.upper, self.step)
+        pending = None
+        # Seed: no bounds reduced yet.  Each present bound desugars only after
+        # the prior outcome continues (Complete / ExitSet completed arms).
+        outcome: Outcome = Complete(())
+        for bound in positions:
+            if bound is None:
+                # Omitted position: Python fills None; do not desugar.
+                outcome = outcome.and_then(
+                    lambda collected: Complete((*collected, None))
+                )
+                continue
+
+            def _step(collected, bound_sugar=bound):
+                nonlocal pending
+                bound_out = bound_sugar.desugar(ctx)
+                entry, plain = pending_demand(bound_out, true_guard())
+                if entry is not None:
+                    pending = (
+                        entry
+                        if pending is None
+                        else replace(
+                            pending,
+                            demands=merge_demands(pending.demands, entry.demands),
+                        )
+                    )
+                factored = factored_operand(plain)
+                return factored.and_then(
+                    lambda value: Complete((*collected, value))
+                )
+
+            outcome = outcome.and_then(_step)
+
+        built = outcome.and_then(
+            lambda values: Complete(
+                SliceValue(values[0], values[1], values[2])
             )
-        remaining = list(values)
-        # Floor SliceValue (same species delitem/string-load already consume) —
-        # not a SymbolicValue term shell that erases bound Floor identity.
-        lower, upper, step = (
-            None if flag else remaining.pop(0) for flag in omitted
         )
-        return SliceValue(lower, upper, step)
-
-    return slice_value
+        return rewrap_pending(
+            pending, built, owner="SliceSugar", blame=str(self.site)
+        )

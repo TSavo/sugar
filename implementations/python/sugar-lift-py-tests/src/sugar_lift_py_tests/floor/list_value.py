@@ -343,12 +343,14 @@ class ListValue(FloorValue):
         """Python list slice assignment: ``xs[lo:hi:st] = iterable``.
 
         Ground integer (or omitted) bounds only — same decidability law as
-        ``delitem`` over SliceValue.  RHS must be a decided sequence of
-        FloorValues (ListValue / TupleValue); length may change for basic
-        slices, and must match for extended slices (Python ValueError).
+        ``delitem`` over SliceValue.  RHS materializes through the Floor-owned
+        ``SliceAssignIterableOperation`` door (exact containers answer;
+        decided non-iterables TypeError; unresolved iterability stays loud).
         """
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.operations.slice_assign_iterable_operation import (
+            SliceAssignIterableOperation,
+        )
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
         bounds = (index.lower, index.upper, index.step)
@@ -377,45 +379,47 @@ class ListValue(FloorValue):
                 owner="ListValue.setitem",
             )
 
-        if type(value) is ListValue:
-            rhs = list(value.elements)
-        elif type(value) is TupleValue:
-            rhs = list(value.elements)
-        else:
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        members_out = SliceAssignIterableOperation(
+            owner="ListValue.setitem",
+            blame=site,
+        ).submit(value, None)
 
-            # Decided non-sequence RHS → TypeError (not iterable for assignment).
-            if getattr(value, "denotes_value", lambda: False)() and getattr(
-                value, "runtime_type_is_decided", lambda: False
-            )():
+        # Decided TypeError faces are Complete(RaiseValue); do not feed the
+        # RaiseValue into the write step (and_then would treat it as members).
+        from sugar_lift_py_tests.floor import RaiseValue
+
+        if isinstance(members_out, Complete) and isinstance(
+            members_out.value, RaiseValue
+        ):
+            return members_out
+        if isinstance(members_out, Incomplete):
+            return members_out
+
+        def _write(members):
+            elements = list(self.elements)
+            try:
+                elements[slice(lower, upper, step)] = list(members)
+            except ValueError:
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
+                )
+
+                # Extended-slice length mismatch is Python's ValueError.
                 return ground_exceptional_exit(
-                    exception_name="TypeError",
+                    exception_name="ValueError",
                     site=site,
                     owner="ListValue.setitem",
                 )
-            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+            return Complete(ListValue(tuple(elements)))
 
-            return Incomplete(
-                SubscriptStoreRuntimeEffect(
-                    "list slice assignment RHS is not a ground sequence; "
-                    f"owner=ListValue.setitem site={site}",
-                    **runtime_effect_evidence("py.setitem", value, site),
-                )
-            )
+        return members_out.and_then(_write)
 
-        elements = list(self.elements)
-        try:
-            elements[slice(lower, upper, step)] = rhs
-        except ValueError:
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Authenticated finite members for slice-assignment RHS."""
+        del operation, ctx
+        from sugar_lift_py_tests.outcome import Complete
 
-            # Extended-slice length mismatch is Python's ValueError.
-            return ground_exceptional_exit(
-                exception_name="ValueError",
-                site=site,
-                owner="ListValue.setitem",
-            )
-        return Complete(ListValue(tuple(elements)))
+        return Complete(self.elements)
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
@@ -432,6 +436,16 @@ class ListValue(FloorValue):
                     bound.value if isinstance(bound, TermValue) else None
                     for bound in bounds
                 )
+                if step == 0:
+                    from sugar_lift_py_tests.floor.ground_exit import (
+                        ground_exceptional_exit,
+                    )
+
+                    return ground_exceptional_exit(
+                        exception_name="ValueError",
+                        site=site,
+                        owner="ListValue.delitem",
+                    )
                 selected = set(range(len(self.elements))[slice(lower, upper, step)])
                 return Complete(
                     ListValue(

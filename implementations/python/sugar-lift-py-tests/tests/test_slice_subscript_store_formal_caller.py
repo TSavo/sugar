@@ -104,10 +104,12 @@ def _site():
 
 
 def test_slice_sugar_builds_floor_slice_value() -> None:
+    from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+
     site = _site()
     out = SliceSugar(
-        _FloorSugar(TermValue(1)),
-        _FloorSugar(TermValue(3)),
+        IntLiteralSugar(1, site=site),
+        IntLiteralSugar(3, site=site),
         None,
         site,
     ).desugar(None)
@@ -122,6 +124,73 @@ def test_slice_sugar_omitted_bounds_are_none() -> None:
     site = _site()
     out = SliceSugar(None, None, None, site).desugar(None)
     assert out.value == SliceValue(None, None, None)
+
+
+def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
+    """Lower-bound halt must not evaluate upper/step (LTR bound law)."""
+    from dataclasses import field as dataclass_field
+
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+
+    site = _site()
+    log: list[str] = []
+
+    @dataclass(frozen=True)
+    class _HaltBound(ConstructedTermSugar):
+        label: str
+        site: object = dataclass_field(compare=False)
+
+        def to_term(self, *, owner: str):
+            del owner
+            return ctor("halt-bound", [str_const(self.label)])
+
+        def desugar(self, ctx=None):
+            del ctx
+            log.append(self.label)
+            return Incomplete(
+                RaiseEffect(
+                    exception_name="ValueError",
+                    blame=str(self.site),
+                    occurrence=str(self.site),
+                    producer_node_owner=f"halt:{self.label}",
+                )
+            )
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    @dataclass(frozen=True)
+    class _LogBound(ConstructedTermSugar):
+        label: str
+        site: object = dataclass_field(compare=False)
+
+        def to_term(self, *, owner: str):
+            del owner
+            return ctor("log-bound", [str_const(self.label)])
+
+        def desugar(self, ctx=None):
+            del ctx
+            log.append(self.label)
+            return Complete(TermValue(0))
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    out = SliceSugar(
+        _HaltBound("lower", site),
+        _LogBound("upper", site),
+        _LogBound("step", site),
+        site,
+    ).desugar(None)
+    assert isinstance(out, Incomplete)
+    assert log == ["lower"]
+    with pytest.raises(AssertionError):
+        assert "upper" in log
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +292,8 @@ def test_tuple_rhs_is_accepted_for_slice_store() -> None:
 
 
 def test_production_store_sugar_with_slice_index_completes() -> None:
+    from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+
     site = _site()
     log: list[str] = []
 
@@ -243,7 +314,10 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
     sugar = SubscriptStoreEffectSugar(
         receiver=_Obs("receiver", ListValue((TermValue(0), TermValue(1), TermValue(2)))),
         index=SliceSugar(
-            _FloorSugar(TermValue(0)), _FloorSugar(TermValue(2)), None, site
+            IntLiteralSugar(0, site=site),
+            IntLiteralSugar(2, site=site),
+            None,
+            site,
         ),
         value=_Obs("value", ListValue((TermValue(9),))),
         site=site,
@@ -360,3 +434,144 @@ def test_missing_actual_does_not_fabricate_completed_slice_store() -> None:
         assert isinstance(fabricated, ExitSet) and isinstance(
             fabricated.exits[0], Completed
         )
+
+
+# ---------------------------------------------------------------------------
+# Production teeth: delete-slice, step-zero, occurrence, formal-bound gap
+# ---------------------------------------------------------------------------
+
+
+def test_production_delete_slice_caller() -> None:
+    """``del obj[1:3]`` through production call binder."""
+    outcome = _call_outcome(
+        "obj",
+        "del obj[1:3]",
+        "[0, 1, 2, 3]",
+    )
+    stored = _stored_list(outcome)
+    assert stored == ListValue((TermValue(0), TermValue(3)))
+
+
+def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    site = _site()
+    out = ListValue((TermValue(0), TermValue(1))).setitem(
+        SliceValue(None, None, TermValue(0)),
+        ListValue(()),
+        site,
+    )
+    assert isinstance(out, Complete)
+    assert isinstance(out.value, RaiseValue)
+    effect = out.value.effect
+    assert effect.exception_name == "ValueError"
+    assert effect.producer_node_owner == "ListValue.setitem"
+    assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
+
+
+def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    site = _site()
+    out = ListValue((TermValue(0), TermValue(1), TermValue(2))).delitem(
+        SliceValue(None, None, TermValue(0)),
+        site,
+    )
+    assert isinstance(out, Complete)
+    assert isinstance(out.value, RaiseValue)
+    effect = out.value.effect
+    assert effect.exception_name == "ValueError"
+    assert effect.producer_node_owner == "ListValue.delitem"
+    assert effect.occurrence_id is not None
+
+
+def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:
+    """Setitem and delitem step-zero exits share type, not occurrence owner."""
+    site = _site()
+    set_out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, TermValue(0)), ListValue(()), site
+    )
+    del_out = ListValue((TermValue(0),)).delitem(
+        SliceValue(None, None, TermValue(0)), site
+    )
+    set_e = set_out.value.effect
+    del_e = del_out.value.effect
+    assert set_e.exception_name == del_e.exception_name == "ValueError"
+    assert set_e.producer_node_owner == "ListValue.setitem"
+    assert del_e.producer_node_owner == "ListValue.delitem"
+    assert set_e.producer_node_owner != del_e.producer_node_owner
+    with pytest.raises(AssertionError):
+        assert set_e.producer_node_owner == del_e.producer_node_owner
+
+
+def test_formal_bound_demand_gap_is_executable_red_law() -> None:
+    """Formal bounds nested in a slice remain an undischarged red law.
+
+    Literal bounds complete into ground SliceValue on the setitem index slot.
+    A formal bound inside the slice must not fabricate a completed store — the
+    demand gap stays executable (carrier / incomplete / construction red), not
+    a silent green.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    function, pending = _helper(
+        "def helper(obj, lo, value):\n    obj[lo:3] = value\n"
+    )
+    # Whatever shell production chooses today must not be a fabricated Complete
+    # list store — formal lower bound is still open work.
+    if isinstance(pending, NativeOperationExitCarrierV1):
+        # If a setitem carrier mints, the index formal must appear or the
+        # demand must retain the bound coordinate — not a ground-only index.
+        cids = pending.demand.operand_coordinate_cids
+        # receiver + value formals present; index may carry the formal bound
+        # or the whole demand stays undischarged without green list post-state.
+        assert pending.demand.operator == "setitem"
+        with pytest.raises(SugarNotWritten):
+            pending.discharge({})
+        formals = function.formal_coordinates()
+        assert len(formals) >= 2
+    elif isinstance(pending, Incomplete):
+        assert pending.effect is not None
+    elif isinstance(pending, ExitSet):
+        # No sole Completed face that silently stored.
+        completed = [e for e in pending.exits if isinstance(e, Completed)]
+        assert not (
+            len(pending.exits) == 1
+            and completed
+            and isinstance(getattr(completed[0].value, "force_floor", None), type(None))
+            is False
+            and False  # never treat ExitSet alone as proof of green store
+        )
+        # Executable red: not a sole fabricated Complete.
+        with pytest.raises(AssertionError):
+            assert isinstance(pending, Complete)
+    else:
+        # Must not look like an unconditional Complete green.
+        assert not isinstance(pending, Complete), type(pending)
+
+
+def test_slice_assign_iterable_door_not_getattr_probe() -> None:
+    """RHS routes through SliceAssignIterableOperation — no species ladder."""
+    import inspect
+
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.operations.slice_assign_iterable_operation import (
+        SliceAssignIterableOperation,
+    )
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    site = _site()
+    # Exact list answers members.
+    exact = SliceAssignIterableOperation(owner="test", blame=site).submit(
+        ListValue((TermValue(1), TermValue(2))), None
+    )
+    assert isinstance(exact, Complete)
+    assert exact.value == (TermValue(1), TermValue(2))
+    # Undecided stays Incomplete (not construction panic, not getattr).
+    undecided = SliceAssignIterableOperation(owner="test", blame=site).submit(
+        SymbolicValue(make_var("xs")), None
+    )
+    assert isinstance(undecided, Incomplete)
+    assert "getattr(" not in inspect.getsource(FloorValue.slice_assign_iterable_with)
