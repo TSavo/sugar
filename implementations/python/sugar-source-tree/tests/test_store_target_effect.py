@@ -84,14 +84,27 @@ def test_attribute_store_post_out_equals_the_returned_value():
     assert post.args[1].name == "v"
 
 
-def test_subscript_store_stays_loud_without_setitem_testimony():
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
-        _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+def _pending_subscript_store():
+    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+    pending = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    return pending
+
+
+def test_subscript_store_retains_setitem_demand_without_caller():
+    pending = _pending_subscript_store()
+
+    assert pending.demand.operator == "setitem"
+    assert all(pending.demand.operand_coordinate_cids)
 
 
 def test_subscript_store_does_not_borrow_the_read_path():
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
-        _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+    pending = _pending_subscript_store()
+
+    assert pending.demand.operator == "setitem"
+    assert len(pending.operands) == 3
+    assert len(pending.demand.operand_coordinate_cids) == 3
 
 
 def test_attribute_store_witness_site_is_the_tree_fragment():
@@ -112,9 +125,11 @@ def test_attribute_store_witness_site_is_the_tree_fragment():
     assert "store_target" not in operand
 
 
-def test_subscript_store_refusal_names_the_missing_nary_carrier():
-    with pytest.raises(SugarNotWritten, match="n-ary setitem demand"):
-        _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+def test_subscript_store_demand_names_all_three_formal_coordinates():
+    pending = _pending_subscript_store()
+
+    assert len(pending.demand.operand_coordinate_cids) == 3
+    assert len(set(pending.demand.operand_coordinate_cids)) == 3
 
 
 def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():

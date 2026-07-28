@@ -208,9 +208,15 @@ def test_attribute_store_target_lifts_a_typed_red_effect():
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
-def test_subscript_store_target_stays_loud_without_setitem_testimony():
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
-        _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar()
+def test_subscript_store_target_retains_setitem_demand_without_caller():
+    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+    pending = _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar()
+
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "setitem"
+    assert pending.demand.operand_coordinate_cids[0] is not None
+    assert pending.demand.operand_coordinate_cids[1:] == (None, None)
 
 
 def test_subscript_store_producer_retains_receiver_key_and_rhs():
@@ -236,7 +242,7 @@ if __name__ == "__main__":
     test_non_display_rhs_stays_loud()
     test_mixed_chained_targets_stay_loud()
     test_attribute_store_target_lifts_a_typed_red_effect()
-    test_subscript_store_target_stays_loud_without_setitem_testimony()
+    test_subscript_store_target_retains_setitem_demand_without_caller()
     print(
         "ok: tuple/chained assign destructures; starred/nested stay loud; "
         "subscript stores require setitem testimony"
