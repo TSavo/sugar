@@ -5337,7 +5337,7 @@ class If(Statement):
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
-        node = self._rewrite_with_slot(changed, slot)
+        node = self._rewrite_with_slot(changed, slot, authenticated_slot=slot)
 
         names = set(then_net) | set(else_net)
         phis = []
@@ -5362,18 +5362,27 @@ class If(Statement):
             return node
         return _Splice((node, *phis), availability)
 
-    def _rewrite_with_slot(self, changed, slot):
+    def _rewrite_with_slot(self, changed, slot, *, authenticated_slot=None):
         from .backend import Leaf, materialize
         from .shadow import ShadowNode, rewrite
 
         rewritten = rewrite(self, **changed)
+        if authenticated_slot is None:
+            authenticated_slot = branch_result_slot(rewritten.test)
         desc = rewritten.ref.describe()
         return materialize(
             self.unit,
             ShadowNode(
                 desc.kind,
                 desc.raw_span or self.span,
-                (*desc.slots, ("branch_result_slot_id", Leaf(slot.slot_id))),
+                (
+                    *desc.slots,
+                    ("branch_result_slot_id", Leaf(slot.slot_id)),
+                    (
+                        "authenticated_branch_result_slot_id",
+                        Leaf(authenticated_slot.slot_id),
+                    ),
+                ),
             ),
             self.reporter,
         )
@@ -5440,6 +5449,26 @@ class If(Statement):
                 observed="If without a stored branch-result slot",
                 requested="consume the slot minted once by If.substitute",
                 fix="route every If through substitution before Sugar construction",
+            )
+        try:
+            authenticated_slot = BranchResultSlot(
+                self.authenticated_branch_result_slot_id
+            )
+        except AttributeError:
+            backend_defect(
+                blame=self.fragment,
+                owner="If._construct_sugar",
+                observed="If without condition-owned branch-result authentication",
+                requested="the slot identity authenticated once by If.substitute",
+                fix="carry the authenticated slot through If._rewrite_with_slot",
+            )
+        if slot != authenticated_slot:
+            backend_defect(
+                blame=self.fragment,
+                owner="If._construct_sugar",
+                observed="If stored a branch-result slot from a different condition",
+                requested="the branch-result slot authenticated for this exact If.test",
+                fix="carry branch_result_slot(If.test) through If.substitute unchanged",
             )
         where = f"{self.unit.filename}"
         try:
