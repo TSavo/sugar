@@ -498,6 +498,9 @@ class NativeOperationExitCarrierV1:
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
     guards: tuple = dataclass_field(default=(), repr=False)
+    prefix_composition: object | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
@@ -588,6 +591,63 @@ class NativeOperationExitCarrierV1:
         del face
         return replace(self, guards=(*self.guards, guard))
 
+    @classmethod
+    def compose_prefix(cls, prefix, step):
+        """Sequence a prefix without exposing a deferred carrier to ExitSet.
+
+        Each completed prefix arm retains its own carrier instance because its
+        continuations and pre-effect state belong to that arm.  Halted and
+        already-resolved arms are retained verbatim.  Compatible carrier arms
+        share one authenticated demand; different demands are not mergeable.
+        """
+        from sugar_lift_py_tests.outcome import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        resolved = []
+        deferred = []
+        for prefix_exit in prefix.exits:
+            if isinstance(prefix_exit, Halted):
+                resolved.append(prefix_exit)
+                continue
+            following = step(prefix_exit.value)
+            if isinstance(following, cls):
+                deferred.append((prefix_exit, following))
+                continue
+            if not isinstance(following, ExitSet):
+                following = outcome_to_exitset(following)
+            sequenced = ExitSet((prefix_exit,)).sequence(
+                lambda _value, *, exits=following: exits
+            )
+            resolved.extend(sequenced.exits)
+
+        if not deferred:
+            return ExitSet(tuple(resolved)).normalize()
+
+        demand_cids = {carrier.demand.demand_cid for _, carrier in deferred}
+        if len(demand_cids) != 1:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.compose_prefix",
+                blame=tuple(sorted(demand_cids)),
+                observed="incompatible native-operation demands beneath one prefix",
+                requested="one authenticated demand shared by every deferred prefix arm",
+                fix="keep distinct native-operation demands in separate control-flow joins",
+                gap_kind=GapKind.FLOOR,
+            )
+
+        representative = deferred[0][1]
+        return replace(
+            representative,
+            prefix_composition=(
+                tuple(resolved),
+                tuple(deferred),
+                len(representative.continuations),
+                len(representative.guards),
+            ),
+        )
+
     def discharge(self, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits.
 
@@ -599,6 +659,29 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        if self.prefix_composition is not None:
+            resolved, deferred, continuation_count, guard_count = (
+                self.prefix_composition
+            )
+            exits = list(resolved)
+            for prefix_exit, carrier in deferred:
+                following = carrier.discharge(actuals_by_formal_coordinate)
+                sequenced = ExitSet((prefix_exit,)).sequence(
+                    lambda _value, *, result=following: result
+                )
+                exits.extend(sequenced.exits)
+            # Do not normalize across prefix arms: each arm's partition faces,
+            # obligations, and temporal state remain independently testified.
+            projected = ExitSet(tuple(exits))
+            for continuation in self.continuations[continuation_count:]:
+                projected = type(self).compose_prefix(projected, continuation)
+                if isinstance(projected, NativeOperationExitCarrierV1):
+                    projected = projected.discharge(actuals_by_formal_coordinate)
+            guard = _conjoin_guards(self.guards[guard_count:])
+            if guard is not None:
+                projected = projected.guarded(guard)
+            return projected
 
         def undischarged(reason):
             return NativeOperationResolutionV1.undischarged(reason).project(
