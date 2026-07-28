@@ -4,6 +4,11 @@
 constructed lists/tuples.  ``__next__`` yields ``NextResult(value, advanced)``
 or a named ``StopIteration`` face — never a silent end, never a wrong exception
 identity for exhaustion.
+
+Exhaustion cites the same ground-exit authority door as other named exceptional
+faces: authenticated operation occurrence (source fragment) + builtin
+``StopIteration`` type coordinate.  Synthetic string blame cannot mint
+identity from spelling.
 """
 
 from __future__ import annotations
@@ -67,36 +72,23 @@ class TupleIteratorValue(FloorValue):
 
 
 def _stop_iteration(site, *, owner: str):
-    """Named StopIteration — not TypeError, not a silent Incomplete without identity."""
+    """Named StopIteration through the ground exceptional-exit door only.
+
+    Same authority as other named ground exits: fragment locus + builtin type
+    coordinate from ``ground_exceptional_exit`` / ``ground_raise_effect``.
+    String or synthetic blame cannot fabricate ``python:exception_type_identity``
+    or an occurrence from spelling — that path is typed-loud at the ground door.
+    """
     from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
     from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-    if hasattr(site, "filename") and hasattr(site, "line"):
-        projected = ground_exceptional_exit(
-            exception_name="StopIteration",
-            site=site,
-            owner=owner,
-        )
-        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
-            # Iterator exhaustion is a control-face halt for consumers.
-            return Incomplete(projected.value.effect)
-        return projected
-    # Synthetic blame: still name StopIteration on the effect without fragment cite.
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    identity = ctor(
-        "python:exception_type_identity",
-        [str_const("builtins"), str_const("StopIteration")],
+    projected = ground_exceptional_exit(
+        exception_name="StopIteration",
+        site=site,
+        owner=owner,
     )
-    return Incomplete(
-        RaiseEffect(
-            exception_name="StopIteration",
-            blame=str(site),
-            exception_type_coordinate=identity,
-            exception_type_mro=(identity,),
-            occurrence=str(site),
-            producer_node_owner=owner,
-        )
-    )
+    if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
+        # Iterator exhaustion is a control-face halt for consumers.
+        return Incomplete(projected.value.effect)
+    return projected
