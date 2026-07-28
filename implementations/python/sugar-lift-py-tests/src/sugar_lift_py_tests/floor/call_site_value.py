@@ -1138,14 +1138,9 @@ class CallSiteValue(FloorValue):
             _ACTIVE_DIG_DEMAND.reset(token)
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
-            source_actuals = self.bound_source_actuals or self.bound_native_source_actuals
-            if source_actuals is not None:
-                outcome = outcome.discharge(
-                    {
-                        pair.coordinate.coordinate_cid: pair.actual
-                        for pair in source_actuals.pairs
-                    }
-                )
+            actuals = self.bound_native_actuals_by_coordinate
+            if actuals is not None:
+                outcome = outcome.discharge(actuals)
         # ConstructionPanic is BaseException and process-terminal: dig must not convert
         # it into opacity/None (python-sole-construction; #5238).
         if isinstance(outcome, Incomplete):
@@ -1314,15 +1309,7 @@ class CallSiteValue(FloorValue):
             return Complete(self)
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
-            source_actuals = self.bound_source_actuals or self.bound_native_source_actuals
-            actuals = (
-                None
-                if source_actuals is None
-                else {
-                    pair.coordinate.coordinate_cid: pair.actual
-                    for pair in source_actuals.pairs
-                }
-            )
+            actuals = self.bound_native_actuals_by_coordinate
             if actuals is None:
                 return outcome
             outcome = outcome.discharge(actuals)
