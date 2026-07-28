@@ -352,6 +352,19 @@ class SymbolicValue(FloorValue):
             for method, coordinate in _BINARY_OPERATOR_COORDINATE.items()
             if coordinate == operator
         )
+        left_coordinate = self.formal_coordinate
+        right_coordinate = getattr(other, "formal_coordinate", None)
+        if left_coordinate is not None or right_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator=owner,
+                operands=(self, other),
+                coordinates=(left_coordinate, right_coordinate),
+            )
         if isinstance(other, GuardedValue):
             return other.map_from_left(owner, self, site)
         denotes_other = getattr(other, "denotes_value", None)
