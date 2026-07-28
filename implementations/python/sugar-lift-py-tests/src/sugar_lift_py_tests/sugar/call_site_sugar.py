@@ -118,6 +118,7 @@ class CallSiteSugar(Sugar):
             return self._collect_bridged(positional)
         source_body = None
         source_frame_cid = None
+        formal_actuals = None
         if self.source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
             from sugar_source_tree.panic import SugarNotWritten
@@ -133,9 +134,15 @@ class CallSiteSugar(Sugar):
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
-                positional = self.source_call_frame.bind_actuals(
-                    positional, kw_values, ctx
-                )
+                if self.source_call_frame.pending_native_operation is None:
+                    positional = self.source_call_frame.bind_actuals(
+                        positional, kw_values, ctx
+                    )
+                else:
+                    formal_actuals = self.source_call_frame.bind_formal_actuals(
+                        positional, kw_values, ctx
+                    )
+                    positional = formal_actuals.actuals
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
@@ -155,7 +162,11 @@ class CallSiteSugar(Sugar):
             owner = getattr(self.source_call_frame, "owner", None)
             if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
                 source_body = owner.source_visible_constructor_frame().body
-            elif owner is not None and hasattr(owner, "source_visible_call_frame"):
+            elif (
+                formal_actuals is None
+                and owner is not None
+                and hasattr(owner, "source_visible_call_frame")
+            ):
                 # Imported helper calls are node-specialized when the caller's
                 # Sugar is built. Their FloorValue actuals are curried below,
                 # so reduction must use the callee's declaration body whose
@@ -212,6 +223,12 @@ class CallSiteSugar(Sugar):
                 else ()
             ),
         )
+        if formal_actuals is not None:
+            pending = self.source_call_frame.pending_native_operation
+            if not formal_actuals.resolves(pending.demand):
+                return pending
+            projected = pending.discharge(formal_actuals.by_formal_coordinate)
+            return callsite.project_producer_outcome(projected)
         return callsite.producer_outcome(ctx)
 
     def _collect_bridged(self, positional: tuple) -> Outcome:

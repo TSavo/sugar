@@ -1261,6 +1261,11 @@ class CallSiteValue(FloorValue):
 
             return Complete(self)
 
+        return self.project_producer_outcome(self.reduce_source_outcome(ctx))
+
+    def project_producer_outcome(self, outcome):
+        """Project one already-produced source outcome onto this Call node."""
+
         from dataclasses import replace
 
         from sugar_lift_py_tests.effect import RaiseEffect
@@ -1272,7 +1277,6 @@ class CallSiteValue(FloorValue):
                 return replace(effect, producer_node_owner="Call")
             return effect
 
-        outcome = self.reduce_source_outcome(ctx)
         if isinstance(outcome, Complete):
             return Complete(self)
         exits = outcome_to_exitset(outcome)

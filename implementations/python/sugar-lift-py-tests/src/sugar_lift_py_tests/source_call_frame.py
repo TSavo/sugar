@@ -10,6 +10,44 @@ from .context_manager_resolution import SourceFragmentCoordinateV1
 
 
 @dataclass(frozen=True)
+class FormalActualSubstitutionV1:
+    """Existing-binder result indexed only by declaration coordinates."""
+
+    formal_coordinates: tuple
+    actuals: tuple
+
+    def __post_init__(self) -> None:
+        if len(self.formal_coordinates) != len(self.actuals):
+            raise SourceCallBindingGap("formal coordinate/actual arity mismatch")
+        coordinate_cids = tuple(
+            coordinate.coordinate_cid for coordinate in self.formal_coordinates
+        )
+        if len(set(coordinate_cids)) != len(coordinate_cids):
+            raise SourceCallBindingGap("duplicate formal coordinate")
+
+    @property
+    def by_formal_coordinate(self) -> dict:
+        return {
+            coordinate.coordinate_cid: actual
+            for coordinate, actual in zip(
+                self.formal_coordinates, self.actuals, strict=True
+            )
+        }
+
+    def resolves(self, demand) -> bool:
+        """Whether every demanded caller actual has a decided runtime type."""
+        actuals = self.by_formal_coordinate
+        return all(
+            coordinate_cid is None
+            or (
+                coordinate_cid in actuals
+                and actuals[coordinate_cid].runtime_type_is_decided()
+            )
+            for coordinate_cid in demand.operand_coordinate_cids
+        )
+
+
+@dataclass(frozen=True)
 class SourceVisibleCallFrameV1:
     """A body constructed by FunctionDef through the ordinary tree door."""
 
@@ -25,6 +63,8 @@ class SourceVisibleCallFrameV1:
     default_fragment_cids: tuple[str | None, ...]
     body: object = field(compare=False)
     owner: object = field(compare=False, repr=False)
+    projection_formal_coordinates: tuple = field(default=(), compare=False)
+    pending_native_operation: object | None = field(default=None, compare=False)
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
@@ -46,6 +86,13 @@ class SourceVisibleCallFrameV1:
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
         }
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
+
+        if self.projection_formal_coordinates and len(
+            self.projection_formal_coordinates
+        ) != len(self.parameters):
+            raise SourceCallBindingGap(
+                "projection formal coordinate/signature arity mismatch"
+            )
 
     def bind_actuals(self, positional: tuple, keywords: tuple, ctx=None) -> tuple:
         """Bind positional/keyword FloorValues onto this frame's formals.
@@ -69,9 +116,7 @@ class SourceVisibleCallFrameV1:
                     )
                 for entry_key, entry_value in value.entries:
                     if type(entry_key) is not StringValue:
-                        raise SourceCallBindingGap(
-                            "non-string keyword expansion key"
-                        )
+                        raise SourceCallBindingGap("non-string keyword expansion key")
                     if entry_key.value in named:
                         raise SourceCallBindingGap(
                             "duplicate keyword actual from expansion"
@@ -126,6 +171,19 @@ class SourceVisibleCallFrameV1:
         if remaining or named:
             raise SourceCallBindingGap("unconsumed call actual")
         return tuple(bound)
+
+    def bind_formal_actuals(
+        self, positional: tuple, keywords: tuple, ctx=None
+    ) -> FormalActualSubstitutionV1:
+        """Run the sole Python binder, then index its result by formal CID."""
+        if not self.projection_formal_coordinates:
+            raise SourceCallBindingGap(
+                "formal projection coordinates absent from source call frame"
+            )
+        return FormalActualSubstitutionV1(
+            self.projection_formal_coordinates,
+            self.bind_actuals(positional, keywords, ctx),
+        )
 
     def bind_node_actuals(
         self,

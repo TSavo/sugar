@@ -790,9 +790,7 @@ class SourceUnit:
         for handler in statement.handlers:
             if handler.name == name:
                 return True
-            if any(
-                self._statement_rebinds_name(body, name) for body in handler.body
-            ):
+            if any(self._statement_rebinds_name(body, name) for body in handler.body):
                 return True
         return any(
             self._statement_rebinds_name(tail, name)
@@ -2312,6 +2310,14 @@ class FunctionDef(Statement):
             ),
             self.fragment,
         )
+        formal_projection = self.sugar().desugar(None)
+        from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+        pending_native_operation = (
+            formal_projection
+            if isinstance(formal_projection, NativeOperationExitCarrierV1)
+            else None
+        )
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
             definition_site=site,
@@ -2334,6 +2340,8 @@ class FunctionDef(Statement):
             ),
             body=body,
             owner=self,
+            projection_formal_coordinates=self.formal_coordinates(),
+            pending_native_operation=pending_native_operation,
             generator_steps=generator_steps,
             generator_step_fragment_cids=(
                 ()
@@ -5968,9 +5976,7 @@ class Raise(Statement):
                     else:
                         mro = self.unit.exception_type_mro(type_operand)
                 else:
-                    identity = self.unit.imported_exception_type_identity(
-                        type_operand
-                    )
+                    identity = self.unit.imported_exception_type_identity(type_operand)
                     mro = None
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
@@ -7941,6 +7947,7 @@ class Call(Expression):
             bound_frame = (
                 source_call_frame
                 if source_call_resolution is not None
+                or source_call_frame.pending_native_operation is not None
                 else source_call_frame.bind_node_actuals(
                     self.args,
                     tuple(
