@@ -15,8 +15,6 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundarySemanticsV1,
-    NoMessagePatternV1,
-    OptionalFormalArgumentProjectionV1,
     ProtocolResourceSemanticsV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
@@ -128,25 +126,70 @@ def _with_chain(sugar):
     return chain
 
 
-def _item_refs(tree, context):
-    """Per-item prebound manager resolution for the multi-item With site."""
-    site = next(n for n in _with_nodes(tree) if len(n.items) >= 1)
-    # Multi-item sites nest; resolve each item coordinate through populate table.
-    refs = []
-    for item in site.items:
-        try:
-            ref = item.context_expr and site._prebound_manager_resolution(item)
-        except Exception:
-            ref = None
-        if ref is None:
-            # Fall back to all source-derived refs ordered by use-site appearance.
-            break
-        refs.append(ref)
-    if len(refs) == len(site.items):
-        return site, refs
-    # Assigned Name managers seat refs by projected call, not always on the item.
-    all_refs = list(context.source_derived_contract_refs.values())
-    return site, all_refs
+def _item_use_site_coordinate(site: With, item):
+    """Exact SourceFragmentCoordinate for one With-item occurrence."""
+    from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
+    start_line, start_col, end_line, end_col = item._manager_use_site_span()
+    return SourceFragmentCoordinateV1(
+        site.unit.source_cid,
+        start_line,
+        start_col,
+        end_line,
+        end_col,
+    )
+
+
+def _require_item_ref(site: With, item, *, index: int):
+    """Exact seated ref for one With-item coordinate.
+
+    No try/except swallow. No table-wide fallback. A missing seat is an
+    honorable red naming the coordinate — the dual-Name producer instrument.
+    """
+    coordinate = _item_use_site_coordinate(site, item)
+    ref = site._prebound_manager_resolution(item)
+    if ref is None:
+        pytest.fail(
+            "MISSING PRODUCER: With-item has no prebound manager resolution.\n"
+            f"  item index: {index}\n"
+            f"  coordinate: {coordinate}\n"
+            f"  expected: SourceDerivedContextManagerRefV1 (or factored) seated "
+            f"at this exact use-site coordinate in source_derived_contract_refs\n"
+            f"  fix: seat the returned/assigned manager identity at the item "
+            f"coordinate before With construction — never prove the stack from "
+            f"an unrelated published ref"
+        )
+    if isinstance(ref, ContextManagerResolutionGapV1):
+        pytest.fail(
+            "MISSING PRODUCER: With-item coordinate seats a resolution gap, "
+            "not an authenticated manager contract.\n"
+            f"  item index: {index}\n"
+            f"  coordinate: {coordinate}\n"
+            f"  gap: {ref}\n"
+            f"  expected: ProtocolResource or EffectBoundary source-derived ref "
+            f"at this exact coordinate"
+        )
+    return ref
+
+
+def _require_item_refs(site: With):
+    """One exact ref per With-item, in source order — no soft green."""
+    return tuple(
+        _require_item_ref(site, item, index=index)
+        for index, item in enumerate(site.items)
+    )
+
+
+def _ref_kind(ref) -> str:
+    if isinstance(ref, FactoredSourceDerivedContextManagerRefV1):
+        return "factored-boundary"
+    if isinstance(ref, SourceDerivedContextManagerRefV1):
+        if isinstance(ref.semantics, EffectBoundarySemanticsV1):
+            return "boundary"
+        if isinstance(ref.semantics, ProtocolResourceSemanticsV1):
+            return "resource"
+        return type(ref.semantics).__name__
+    return type(ref).__name__
 
 
 def test_returned_stack_resource_then_assertion_preserves_both_identities(
@@ -172,28 +215,19 @@ def test_returned_stack_resource_then_assertion_preserves_both_identities(
     assert isinstance(chain[1], WithEffectBoundarySugar), type(chain[1])
     assert chain[1] in chain[0].body
 
-    # Both managers authenticated — not gaps.
-    site2, refs = _item_refs(tree, context)
-    assert len(refs) >= 2 or context.source_derived_contract_refs, (
-        "stack left no source-derived refs"
+    # Exact seating: each With-item coordinate owns its own ref (no table sweep).
+    refs = _require_item_refs(site)
+    assert len(refs) == 2
+    assert _ref_kind(refs[0]) == "resource", (_ref_kind(refs[0]), refs[0])
+    assert _ref_kind(refs[1]) in {"boundary", "factored-boundary"}, (
+        _ref_kind(refs[1]),
+        refs[1],
     )
-    # At least one ProtocolResource and one EffectBoundary among seated refs.
-    kinds = []
-    for ref in context.source_derived_contract_refs.values():
-        if isinstance(ref, ContextManagerResolutionGapV1):
-            continue
-        if isinstance(ref, FactoredSourceDerivedContextManagerRefV1):
-            kinds.append("factored-boundary")
-        elif isinstance(ref, SourceDerivedContextManagerRefV1):
-            if isinstance(ref.semantics, EffectBoundarySemanticsV1):
-                kinds.append("boundary")
-            elif isinstance(ref.semantics, ProtocolResourceSemanticsV1):
-                kinds.append("resource")
-            else:
-                kinds.append(type(ref.semantics).__name__)
-    assert "resource" in kinds, kinds
-    assert "boundary" in kinds or "factored-boundary" in kinds, kinds
-
+    # Distinct seats — item 1 must not silently borrow item 0's ref.
+    assert refs[0] is not refs[1]
+    assert _item_use_site_coordinate(site, site.items[0]) != _item_use_site_coordinate(
+        site, site.items[1]
+    )
 
 def test_returned_stack_assertion_then_resource_swaps_outer(
     tmp_path: Path,
@@ -214,6 +248,62 @@ def test_returned_stack_assertion_then_resource_swaps_outer(
     assert isinstance(chain[0], WithEffectBoundarySugar), type(chain[0])
     assert isinstance(chain[1], WithSourceResourceSugar), type(chain[1])
     assert chain[1] in chain[0].body
+    # Exact per-item seats follow source order too.
+    refs = _require_item_refs(site)
+    assert _ref_kind(refs[0]) in {"boundary", "factored-boundary"}, _ref_kind(refs[0])
+    assert _ref_kind(refs[1]) == "resource", _ref_kind(refs[1])
+
+
+def test_dual_name_assigned_stack_seats_each_item_coordinate(tmp_path: Path):
+    """Acceptance instrument for dual-Name assigned multi-item producer (codex-3).
+
+    ``r = make_guard(...); b = make_boundary(...); with r, b:`` must seat an
+    authenticated ref at **each** Name use-site coordinate. Soft green via
+    table-wide fallback is forbidden. Missing seats / construction gaps fail
+    with MISSING PRODUCER — never catch-and-continue.
+    """
+    from sugar_source_tree.panic import WithConstructionGap
+
+    dist = _distribution(tmp_path, _STACK_PKG)
+    consumer = (
+        "import arbitrary\n"
+        "def use():\n"
+        "    r = arbitrary.make_guard('r')\n"
+        "    b = arbitrary.make_boundary(ValueError)\n"
+        "    with r, b as info:\n"
+        "        raise ValueError('boom')\n"
+    )
+    try:
+        tree, context, _ = _populate(tmp_path, consumer, dist=dist)
+    except WithConstructionGap as gap:
+        # Honest red: projection never seated the Name coordinates. Do not
+        # recover; restate as the dual-Name producer handoff for codex-3.
+        pytest.fail(
+            "MISSING PRODUCER: dual-Name assigned multi-item stack failed during "
+            "populate/projection before each With-item coordinate can be read.\n"
+            f"  error: {gap}\n"
+            "  expected: both Name use sites (r and b) seat "
+            "SourceDerivedContextManagerRefV1 at their exact coordinates, then "
+            "With._nest_items builds outer WithSourceResourceSugar + inner "
+            "WithEffectBoundarySugar\n"
+            "  owned boundary: return/assignment projection into "
+            "source_derived_contract_refs for multi-item Name heads before "
+            "substitute — never prove the stack from a table-wide fallback"
+        )
+    site = next(n for n in _with_nodes(tree) if len(n.items) == 2)
+    assert [item.context_expr.kind for item in site.items] == ["Name", "Name"]
+    # Exact seats — this is the green path once the dual-Name producer lands.
+    refs = _require_item_refs(site)
+    assert len(refs) == 2
+    assert _ref_kind(refs[0]) == "resource", (_ref_kind(refs[0]), refs[0])
+    assert _ref_kind(refs[1]) in {"boundary", "factored-boundary"}, (
+        _ref_kind(refs[1]),
+        refs[1],
+    )
+    chain = _with_chain(site._nest_items().sugar())
+    assert len(chain) == 2, [type(n).__name__ for n in chain]
+    assert isinstance(chain[0], WithSourceResourceSugar)
+    assert isinstance(chain[1], WithEffectBoundarySugar)
 
 
 def test_returned_call_stack_is_stable_across_populate_runs(tmp_path: Path):
@@ -282,9 +372,11 @@ def test_discrimination_lying_resource_cannot_borrow_assertion_in_stack(
     assert not any(isinstance(n, WithEffectBoundarySugar) for n in chain), [
         type(n).__name__ for n in chain
     ]
-    # Resource identity for the first manager may still seat.
-    assert any(isinstance(n, WithSourceResourceSugar) for n in chain) or any(
-        isinstance(ref, SourceDerivedContextManagerRefV1)
-        and isinstance(ref.semantics, ProtocolResourceSemanticsV1)
-        for ref in context.source_derived_contract_refs.values()
+    # Exact seats: item 0 is resource; item 1 must not become EffectBoundary.
+    refs = _require_item_refs(site)
+    assert _ref_kind(refs[0]) == "resource", _ref_kind(refs[0])
+    assert _ref_kind(refs[1]) != "boundary" and _ref_kind(refs[1]) != "factored-boundary", (
+        _ref_kind(refs[1]),
+        refs[1],
     )
+    assert any(isinstance(n, WithSourceResourceSugar) for n in chain)
