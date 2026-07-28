@@ -3,13 +3,15 @@
 Law (same door as formal binary / unary_truth):
 
   - formal alone → undischarged ``NativeOperationExitCarrierV1``
-  - authenticated discharge → Floor fold (TermValue arithmetic / invert)
-  - missing actuals stay undischarged
+  - production caller (positional / keyword / default) → bind_actuals →
+    carrier discharge → Completed fold
+  - wrong-coordinate / missing actual → no fabricated completion
   - open (non-formal) SymbolicValue still refuses inventing success vs TypeError
   - ground production folds without a carrier
   - ``not x`` remains the separate ``unary_truth`` path (already enrolled)
 
-No second dispatch table; projectors call Floor free methods explicitly.
+Discharge is proved only through the production call binder — never by
+manually building a coordinate dict and calling ``pending.discharge``.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import FunctionDef, UnaryOp
+from sugar_source_tree.nodes import Call, FunctionDef, UnaryOp
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -46,6 +48,42 @@ def _helper(source: str):
     tree = _tree(source, "helper.py")
     function = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _call_outcome(signature: str, body: str, actuals: str):
+    """Production call: helper body + call site through call construction."""
+    source = f"def helper({signature}):\n    {body}\n\nhelper({actuals})\n"
+    tree = _tree(source, "unary_call.py")
+    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
+    return call.sugar().desugar(None)
+
+
+def _returned_value(outcome):
+    """Completed production call → body return Floor value."""
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert len(outcome.exits) == 1
+    face = outcome.exits[0]
+    assert isinstance(face, Completed), type(face)
+    value = face.value
+    force = getattr(value, "force_floor", None)
+    if callable(force):
+        forced = force(None, owner="unary_formal_caller")
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+        if isinstance(forced, BlockValue):
+            returns = [s for s in forced.statements if isinstance(s, ReturnValue)]
+            assert returns, forced.statements
+            return returns[-1].value
+        return forced
+    record = getattr(value, "record", None)
+    if record is not None:
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+        returns = [s for s in record.statements if isinstance(s, ReturnValue)]
+        if returns:
+            return returns[-1].value
+    return value
 
 
 @dataclass(frozen=True)
@@ -107,7 +145,7 @@ def test_discrimination_neg_is_not_identity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Formal undischarged carriers
+# Formal undischarged carriers (helper alone — no caller)
 # ---------------------------------------------------------------------------
 
 
@@ -143,61 +181,84 @@ def test_not_formal_stays_unary_truth_not_unary_minus() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Authenticated discharge
+# Production callers: call construction → bind_actuals → discharge → Completed
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "source,operator,actual,expected",
+    "body,actuals,expected",
     [
-        ("def helper(x):\n    return -x\n", "unary_minus", TermValue(3), TermValue(-3)),
-        ("def helper(x):\n    return +x\n", "unary_plus", TermValue(3), TermValue(3)),
-        (
-            "def helper(x):\n    return ~x\n",
-            "bitwise_invert",
-            TermValue(5),
-            TermValue(~5),
-        ),
+        ("return -x", "3", TermValue(-3)),
+        ("return +x", "3", TermValue(3)),
+        ("return ~x", "5", TermValue(~5)),
     ],
 )
-def test_authenticated_discharge_folds_unary(
-    source: str, operator: str, actual, expected
+def test_positional_caller_discharges_unary_through_production_binder(
+    body: str, actuals: str, expected
 ) -> None:
-    function, pending = _helper(source)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == operator
-    coords = {
-        c.declared_name: c.coordinate_cid
-        for c in function.sugar().formal_coordinates
-    }
-    exits = pending.discharge({coords["x"]: actual})
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    from sugar_lift_py_tests.floor.return_value import ReturnValue
-
-    record = exits.exits[0].value.record
-    rets = [s for s in record.statements if isinstance(s, ReturnValue)]
-    assert rets and rets[-1].value == expected
+    """Real SourceFile caller — not a hand-built coordinate discharge dict."""
+    outcome = _call_outcome("x", body, actuals)
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    assert isinstance(outcome.exits[0], Completed)
+    assert _returned_value(outcome) == expected
 
 
-def test_discrimination_discharged_neg_is_not_prior_value() -> None:
-    function, pending = _helper("def helper(x):\n    return -x\n")
-    coords = {
-        c.declared_name: c.coordinate_cid
-        for c in function.sugar().formal_coordinates
-    }
-    exits = pending.discharge({coords["x"]: TermValue(3)})
-    from sugar_lift_py_tests.floor.return_value import ReturnValue
+def test_keyword_caller_discharges_unary_neg() -> None:
+    outcome = _call_outcome("x", "return -x", "x=4")
+    assert isinstance(outcome.exits[0], Completed)
+    assert _returned_value(outcome) == TermValue(-4)
 
-    ret = next(
-        s
-        for s in exits.exits[0].value.record.statements
-        if isinstance(s, ReturnValue)
-    )
-    assert ret.value == TermValue(-3)
+
+def test_default_caller_discharges_unary_neg() -> None:
+    outcome = _call_outcome("x=7", "return -x", "")
+    assert isinstance(outcome.exits[0], Completed)
+    assert _returned_value(outcome) == TermValue(-7)
+
+
+def test_positional_keyword_and_default_callers_complete_same_neg_fold() -> None:
+    """Binder twins: positional, keyword, and default all fold ``-x`` the same way."""
+    positional = _call_outcome("x", "return -x", "3")
+    keyword = _call_outcome("x", "return -x", "x=3")
+    default = _call_outcome("x=3", "return -x", "")
+    for outcome in (positional, keyword, default):
+        assert isinstance(outcome, ExitSet)
+        assert isinstance(outcome.exits[0], Completed)
+        assert _returned_value(outcome) == TermValue(-3)
+
+
+def test_discrimination_production_neg_is_not_prior_actual() -> None:
+    outcome = _call_outcome("x", "return -x", "3")
+    returned = _returned_value(outcome)
+    assert returned == TermValue(-3)
     with pytest.raises(AssertionError):
-        assert ret.value == TermValue(3)
+        assert returned == TermValue(3)
+
+
+# ---------------------------------------------------------------------------
+# Wrong-coordinate / missing-actual: no fabricated completion
+# ---------------------------------------------------------------------------
+
+
+def test_wrong_coordinate_actual_cannot_discharge_pending_unary() -> None:
+    """Swapped/wrong coordinate keys must not fabricate a Completed fold."""
+    function, pending = _helper("def helper(x):\n    return -x\n")
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    (coord,) = function.formal_coordinates()
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        pending.discharge({f"wrong:{coord.coordinate_cid}": TermValue(3)})
+
+
+def test_missing_actual_does_not_fabricate_completed_neg() -> None:
+    """Empty discharge stays undischarged — never Completed TermValue(0) etc."""
+    _, pending = _helper("def helper(x):\n    return -x\n")
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        fabricated = pending.discharge({})
+        # If discharge ever went soft, a lying complete would look like this:
+        assert isinstance(fabricated, ExitSet) and isinstance(
+            fabricated.exits[0], Completed
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -249,4 +310,7 @@ def test_unary_projectors_call_floor_methods_not_binary_standin() -> None:
     )
     with pytest.raises(AssertionError):
         # Lying: unary_minus is not add-shaped (2 operands + site).
-        assert len(inspect.signature(_NATIVE_OPERATION_PROJECTORS["unary_minus"]).parameters) == 3
+        assert (
+            len(inspect.signature(_NATIVE_OPERATION_PROJECTORS["unary_minus"]).parameters)
+            == 3
+        )
