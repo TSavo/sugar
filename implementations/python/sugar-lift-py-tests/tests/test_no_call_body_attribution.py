@@ -164,6 +164,11 @@ def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
     assert len(report.discrepancies) == 1
     assert "completed without" in report.discrepancies[0].detail
     assert (
+        "unaccounted body=pandas/example.py:1:BoolOp node=BoolOp "
+        "detail=pandas/example.py:1:BoolOp (BoolOp) completed without"
+        in report.render()
+    )
+    assert (
         "OUTCOME TOTAL DISCREPANCY enrolled=1 threeOutcomeTotal=0 unaccounted=1"
         in report.render()
     )

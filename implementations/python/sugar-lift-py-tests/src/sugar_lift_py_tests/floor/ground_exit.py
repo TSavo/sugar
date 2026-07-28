@@ -6,7 +6,48 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.outcome import Outcome
 
 
-def ground_raise_effect(*, exception_name: str, site, owner: str):
+def _builtin_exception_identity(exception_name: str):
+    """Authenticated builtins identity + MRO for a language-owned exception class.
+
+    Ground floors mint exceptions by language law (``1 + "a"`` → TypeError), not
+    by reducing a ``raise TypeError(...)`` child.  The assertion boundary matches
+    by ``python:exception_type_identity`` coordinates — the same ones
+    ``SourceUnit.exception_type_identity`` publishes for the ``pytest.raises``
+    expected operand — so the ground door must carry that coordinate or every
+    producer → ExitSet → boundary route refuses matching.
+    """
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        BUILTIN_EXCEPTION_BASES,
+        BUILTIN_EXCEPTION_NAMES,
+    )
+
+    if exception_name not in BUILTIN_EXCEPTION_NAMES:
+        return None, None
+
+    def identity(name: str):
+        return ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(name)],
+        )
+
+    # Linearize the closed bases table: leaf first, then each ancestor once.
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def walk(name: str) -> None:
+        if name in seen:
+            return
+        seen.add(name)
+        ordered.append(name)
+        for base in BUILTIN_EXCEPTION_BASES.get(name, ()):
+            walk(base)
+
+    walk(exception_name)
+    return identity(exception_name), tuple(identity(name) for name in ordered)
+
+
+def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=None):
     """The ONE door that mints a ground exceptional exit's `RaiseEffect`.
 
     Every ground exit -- IndexError from a proved out-of-bounds constant
@@ -66,7 +107,18 @@ def ground_raise_effect(*, exception_name: str, site, owner: str):
     source_sha256 = (
         hashlib.sha256(source.encode()).hexdigest() if source is not None else None
     )
-    return RaiseEffect(exception_name, str(site), source_sha256)
+    blame = str(site)
+    type_coordinate, type_mro = _builtin_exception_identity(exception_name)
+    return RaiseEffect(
+        exception_name=exception_name,
+        blame=blame,
+        source_sha256=source_sha256,
+        occurrence=blame,
+        exception_type_coordinate=type_coordinate,
+        exception_type_mro=type_mro,
+        raised_value=raised_value,
+        producer_node_owner=owner,
+    )
 
 
 def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome:
@@ -74,10 +126,16 @@ def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome
     from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
     from sugar_lift_py_tests.outcome import Complete
 
+    exception = ExceptionValue(exception_name, (), site)
     return Complete(
         RaiseValue(
-            ground_raise_effect(exception_name=exception_name, site=site, owner=owner),
-            exception=ExceptionValue(exception_name, (), site),
+            ground_raise_effect(
+                exception_name=exception_name,
+                site=site,
+                owner=owner,
+                raised_value=exception,
+            ),
+            exception=exception,
         )
     )
 

@@ -35,12 +35,25 @@ def refuse_undecided_unary_truth(value, site) -> None:
     ``ValueError``).  Emitting ``py.truthy`` invents a total completion; inventing
     an exception identity invents the failure.  Both stay refused until
     source-visible type testimony decides.
+
+    ``CallSiteValue`` is the established exception: its ``truth`` floor already
+    emits ``PredicateValue(py.truthy(term))`` over the authenticated call term
+    (#4993 / #5147).  That is coordinate testimony, not an invented native
+    ``bool`` completion.  Refusing it here collapses installed-source manager
+    derivation (``pytest.raises`` ``__exit__`` uses ``not self.…`` over call
+    coordinates) and zeroes every producer → ExitSet → assertion-boundary route.
     """
     denotes = getattr(value, "denotes_value", None)
     decided = getattr(value, "runtime_type_is_decided", None)
     if not callable(denotes) or not callable(decided):
         return
     if not denotes() or decided():
+        return
+
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    # Authenticated call coordinates own a lawful truth floor; do not refuse them.
+    if isinstance(value, CallSiteValue):
         return
 
     from sugar_source_tree.panic import SugarNotWritten
@@ -84,6 +97,31 @@ class UnaryOpSugar(Sugar):
         if self.op_kind == "Not":
             # `not x` = not bool(x): only a decided truthiness may be negated.
             def project_not(value):
+                from sugar_lift_py_tests.floor.block_value import BlockValue
+                from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+                from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+                # Method calls with authenticated bodies
+                # (``not self._check_type(e)`` / ``not self.matches(e)``) dig
+                # the body before truth refusal. Opaque CallSiteValue is neither
+                # bool nor TypeError — dig is the sole door for source-visible
+                # method returns on returned-manager exit faces.
+                if isinstance(value, CallSiteValue) and value.body is not None:
+                    dug = value._dig_floor_or_none(
+                        ctx, owner="UnaryOpSugar.not method body"
+                    )
+                    if dug is not None:
+                        value = dug
+                # Method bodies dig to BlockValue; truth rides the returned floor
+                # (side-effect assigns precede the return).
+                if isinstance(value, BlockValue) and not value.fall_through:
+                    returns = [
+                        statement.value
+                        for statement in value.statements
+                        if isinstance(statement, ReturnValue)
+                    ]
+                    if len(returns) == 1:
+                        value = returns[0]
                 refuse_undecided_unary_truth(value, self.site)
                 return value.truth(self.site)
 

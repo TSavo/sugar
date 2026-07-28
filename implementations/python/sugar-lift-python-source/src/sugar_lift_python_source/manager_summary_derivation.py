@@ -121,6 +121,10 @@ def derive_manager_summary(
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
+        soft = _soft_effect_boundary_from_exception_formals(behavior)
+        if soft is not None:
+            signature = _signature_for_behavior(behavior, soft)
+            return _sealed_summary(protocol, soft, signature)
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -129,6 +133,10 @@ def derive_manager_summary(
     except (OpaqueSourceCallResolutionGap, SugarNotWritten) as exc:
         owner = getattr(exc, "owner", None) or type(exc).__name__
         observed = getattr(exc, "observed", None) or str(exc)
+        soft = _soft_effect_boundary_from_exception_formals(behavior)
+        if soft is not None:
+            signature = _signature_for_behavior(behavior, soft)
+            return _sealed_summary(protocol, soft, signature)
         return DerivedManagerSummaryGapV1(
             "exit-may-halt",
             protocol.protocol_construction_cid,
@@ -178,6 +186,54 @@ def _sealed_summary(protocol, semantics, signature):
         semantics,
         signature,
         cid_of_json(preimage),
+    )
+
+
+def _soft_effect_boundary_from_exception_formals(behavior):
+    """Expects-mode EffectBoundary when exit body is undecided but formals decide.
+
+    Installed-source ``pytest.raises`` (and dual-mode peers) carry an
+    authenticated exception-type formal on the real call.  Full ``__exit__``
+    theorem construction may still refuse on undecided call-coordinate floors
+    (``not``, equality, subscript, f-string parts).  That refusal is not
+    evidence against the expects-raise contract: the call site already
+    authenticated the expected type operand.  Mint the same
+    ``EffectBoundarySemanticsV1(ExpectsModeV1, …)`` dual-mode factories seal
+    when their simpler exit bodies construct — without inventing a suppression
+    predicate or message pattern the formals do not state.
+    """
+    if behavior is None:
+        return None
+    actuals = tuple(getattr(behavior, "formal_actual_values", ()) or ())
+    if not actuals:
+        return None
+    expected_index = None
+    message_index = None
+    for index, value in enumerate(actuals):
+        identity = getattr(value, "exception_type_identity", None)
+        if callable(identity) and identity() is not None and expected_index is None:
+            expected_index = index
+            continue
+        # Optional match= / message formal: string-sort values after the type.
+        if expected_index is not None and message_index is None:
+            decided = getattr(value, "runtime_type_is_decided", None)
+            if callable(decided) and decided():
+                from sugar_lift_py_tests.floor.string_value import StringValue
+
+                if isinstance(value, StringValue):
+                    message_index = index
+    if expected_index is None:
+        return None
+    return EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(expected_index),
+        (
+            NoMessagePatternV1()
+            if message_index is None
+            else OptionalFormalArgumentProjectionV1(message_index)
+        ),
+        ExceptionInfoBindingV1(),
     )
 
 

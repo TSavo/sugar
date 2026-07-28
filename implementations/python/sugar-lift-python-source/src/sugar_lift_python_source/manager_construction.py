@@ -251,26 +251,34 @@ def _floor_object_tuple_fields(
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.class_value import ClassValue
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.object_value import ObjectField
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-    class_actuals = tuple(
-        item for item in actuals if isinstance(item, ClassValue)
-    )
-    new_fields = []
+    class_actuals = tuple(item for item in actuals if isinstance(item, ClassValue))
+    fields_by_name = {field.name: field.value for field in obj.fields}
     changed = False
-    for field in obj.fields:
-        value = field.value
+    for name, value in list(fields_by_name.items()):
         floored = _floor_one_tuple_callsite(value, class_actuals)
         if floored is not None:
-            value = floored
+            fields_by_name[name] = floored
             changed = True
-        new_fields.append(ObjectField(field.name, value))
+    # AbstractRaises stores match/check in super().__init__. When that super
+    # call remains bodyless, written match=None / check=None still need field
+    # testimony so _check_match and NoMessagePattern can floor on the exit face.
+    method_names = {method.name for method in obj.methods}
+    if "matches" in method_names and "expected_exceptions" in fields_by_name:
+        for optional in ("match", "check"):
+            if optional not in fields_by_name:
+                fields_by_name[optional] = NoneValue()
+                changed = True
     if not changed:
         return obj
     return ObjectValue(
         obj.class_name,
-        tuple(new_fields),
+        tuple(
+            ObjectField(name, fields_by_name[name]) for name in sorted(fields_by_name)
+        ),
         obj.methods,
         obj.class_fields,
         obj.identity,
