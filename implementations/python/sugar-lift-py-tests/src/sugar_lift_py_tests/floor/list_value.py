@@ -242,8 +242,37 @@ class ListValue(FloorValue):
     def subscript(self, index, site):
         # Concrete list + integer index is fully decided. A known non-integer
         # is TypeError; an index with undecided runtime semantics stays loud.
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(index, SliceValue):
+            bounds = (index.lower, index.upper, index.step)
+            if all(
+                bound is None
+                or (type(bound) is TermValue and type(bound.value) is int)
+                for bound in bounds
+            ):
+                lower, upper, step = (
+                    bound.value if isinstance(bound, TermValue) else None
+                    for bound in bounds
+                )
+                if step == 0:
+                    from sugar_lift_py_tests.floor.ground_exit import (
+                        ground_exceptional_exit,
+                    )
+
+                    return ground_exceptional_exit(
+                        exception_name="ValueError",
+                        site=site,
+                        owner="ListValue.subscript",
+                    )
+                return Complete(
+                    ListValue(tuple(self.elements[slice(lower, upper, step)]))
+                )
+            return self.undecided_subscript(
+                index, site, owner="ListValue.subscript"
+            )
 
         if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
@@ -270,8 +299,12 @@ class ListValue(FloorValue):
         return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
     def setitem(self, index, value, site):
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if isinstance(index, SliceValue):
+            return self._setitem_slice(index, value, site)
 
         if type(index) is TermValue and type(index.value) is int:
             i = index.value
@@ -299,11 +332,90 @@ class ListValue(FloorValue):
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(
-                "list subscript store requires a concrete integer index; "
+                "list subscript store requires a concrete integer index or "
+                "ground SliceValue; "
                 f"owner=ListValue.setitem site={site}",
                 **runtime_effect_evidence("py.setitem", index, site),
             )
         )
+
+    def _setitem_slice(self, index, value, site):
+        """Python list slice assignment: ``xs[lo:hi:st] = iterable``.
+
+        Ground integer (or omitted) bounds only — same decidability law as
+        ``delitem`` over SliceValue.  RHS must be a decided sequence of
+        FloorValues (ListValue / TupleValue); length may change for basic
+        slices, and must match for extended slices (Python ValueError).
+        """
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        bounds = (index.lower, index.upper, index.step)
+        if not all(
+            bound is None or (type(bound) is TermValue and type(bound.value) is int)
+            for bound in bounds
+        ):
+            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+            return Incomplete(
+                SubscriptStoreRuntimeEffect(
+                    "list slice assignment depends on runtime slice bounds; "
+                    f"owner=ListValue.setitem site={site}",
+                    **runtime_effect_evidence("py.setitem", index, site),
+                )
+            )
+        lower, upper, step = (
+            bound.value if isinstance(bound, TermValue) else None for bound in bounds
+        )
+        if step == 0:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="ValueError",
+                site=site,
+                owner="ListValue.setitem",
+            )
+
+        if type(value) is ListValue:
+            rhs = list(value.elements)
+        elif type(value) is TupleValue:
+            rhs = list(value.elements)
+        else:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            # Decided non-sequence RHS → TypeError (not iterable for assignment).
+            if getattr(value, "denotes_value", lambda: False)() and getattr(
+                value, "runtime_type_is_decided", lambda: False
+            )():
+                return ground_exceptional_exit(
+                    exception_name="TypeError",
+                    site=site,
+                    owner="ListValue.setitem",
+                )
+            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+
+            return Incomplete(
+                SubscriptStoreRuntimeEffect(
+                    "list slice assignment RHS is not a ground sequence; "
+                    f"owner=ListValue.setitem site={site}",
+                    **runtime_effect_evidence("py.setitem", value, site),
+                )
+            )
+
+        elements = list(self.elements)
+        try:
+            elements[slice(lower, upper, step)] = rhs
+        except ValueError:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            # Extended-slice length mismatch is Python's ValueError.
+            return ground_exceptional_exit(
+                exception_name="ValueError",
+                site=site,
+                owner="ListValue.setitem",
+            )
+        return Complete(ListValue(tuple(elements)))
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue

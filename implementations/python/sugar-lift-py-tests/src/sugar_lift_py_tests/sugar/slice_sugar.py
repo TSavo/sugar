@@ -99,9 +99,7 @@ def _slice_builder(omitted: tuple):
     """
 
     def slice_value(values: tuple):
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
 
         present = sum(1 for flag in omitted if not flag)
         if len(values) != present:
@@ -113,12 +111,11 @@ def _slice_builder(omitted: tuple):
                 "different slice."
             )
         remaining = list(values)
-        terms = [
-            NoneValue().to_term(owner="slice")
-            if flag
-            else remaining.pop(0).to_term(owner="slice")
-            for flag in omitted
-        ]
-        return SymbolicValue(ctor("py.slice", terms))
+        # Floor SliceValue (same species delitem/string-load already consume) —
+        # not a SymbolicValue term shell that erases bound Floor identity.
+        lower, upper, step = (
+            None if flag else remaining.pop(0) for flag in omitted
+        )
+        return SliceValue(lower, upper, step)
 
     return slice_value
