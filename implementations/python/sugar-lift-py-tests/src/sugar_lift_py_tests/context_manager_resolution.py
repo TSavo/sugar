@@ -391,6 +391,10 @@ class TreeConstructionContextV1:
     # subclass definition coordinate.  These are never serialized; the class
     # definition projects their sealed CIDs into its own preimage.
     source_class_bases: dict = field(default_factory=dict)
+    # Final-checked import *value-use* resolutions seated at exact use sites
+    # of the frame's own SourceUnit (source_cid-matched).  Never carries
+    # cross-unit spans; keyed by SourceFragmentCoordinateV1 of this unit.
+    source_import_value_resolutions: dict = field(default_factory=dict)
     # When projecting an authenticated definition into a call frame, dual-mode
     # factory bodies may contain With sites only on non-manager return paths
     # (e.g. pytest.raises function form). Soft projection does not require

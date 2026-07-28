@@ -207,6 +207,14 @@ class SourceVisibleCallFrameV1:
         if remaining or named:
             raise SourceCallBindingGap("unconsumed call actual")
 
+        # Rehost foreign-unit actuals onto this frame's SourceUnit so binding
+        # never carries cross-unit LineTable offsets into construction.
+        owner_unit = self.owner.unit
+        bound = tuple(
+            _same_unit_actual_node(owner_unit, node, coordinate)
+            for node, coordinate in zip(bound, self.formal_coordinates, strict=True)
+        )
+
         supplied_testimonies = testimonies or (None,) * len(bound)
         if len(supplied_testimonies) != len(bound):
             raise SourceCallBindingGap("formal testimony arity mismatch")
@@ -296,6 +304,97 @@ class SourceVisibleCallFrameV1:
 
 class SourceCallBindingGap(ValueError):
     pass
+
+
+def _same_unit_actual_node(owner_unit, node, coordinate):
+    """Rehost a bound actual onto the frame owner unit when needed.
+
+    Same-unit nodes pass through. Foreign-unit actuals must never carry their
+    LineTable offsets into owner-unit construction (``offset N outside 0..M``):
+    mint a ``BindingCoordinateRef`` at the formal's owner-local span. When the
+    foreign use site already has a seated import value-use resolution, transfer
+    that definition-coordinate identity onto the formal span on the owner unit
+    so Floor binding stays authenticated without spelling or cross-unit spans.
+    """
+    from sugar_source_tree.backend import Leaf, materialize
+    from sugar_source_tree.nodes import Node
+    from sugar_source_tree.shadow import ShadowNode
+    from sugar_source_tree.spans import Span
+
+    if not isinstance(node, Node):
+        return node
+    if node.unit.source_cid == owner_unit.source_cid:
+        return node
+
+    site = coordinate.binding_site
+    if not isinstance(site, dict):
+        raise SourceCallBindingGap(
+            "foreign actual requires owner-local formal binding site"
+        )
+    site_cid = site.get("source_cid") or site.get("sourceCid")
+    if site_cid != owner_unit.source_cid:
+        raise SourceCallBindingGap(
+            "formal binding site is not on the frame owner unit"
+        )
+    span_info = site.get("span")
+    if not isinstance(span_info, dict):
+        raise SourceCallBindingGap("formal binding site missing sealed span")
+    start = span_info.get("start")
+    end = span_info.get("end")
+    if not isinstance(start, int) or not isinstance(end, int) or end < start:
+        raise SourceCallBindingGap("formal binding site span is not unit-local")
+    owner_span = Span(start, end)
+
+    # Transfer seated import value-use definition-coordinate identity, if any.
+    # Never project foreign offsets through the owner LineTable.
+    foreign_unit = node.unit
+    try:
+        foreign_lc = node.line_col_span()
+        foreign_key = (
+            foreign_lc.start_line,
+            foreign_lc.start_col,
+            foreign_lc.end_line,
+            foreign_lc.end_col,
+        )
+        resolved = foreign_unit.import_value_use_resolution(foreign_key)
+    except Exception:
+        resolved = None
+    if resolved is not None:
+        owner_lc = owner_unit.line_table.project(owner_span)
+        owner_key = (
+            owner_lc.start_line,
+            owner_lc.start_col,
+            owner_lc.end_line,
+            owner_lc.end_col,
+        )
+        owner_unit.seat_import_value_use_resolution(owner_key, resolved)
+        context = owner_unit.construction_context
+        if context is not None:
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+
+            resolutions = getattr(context, "source_import_value_resolutions", None)
+            if isinstance(resolutions, dict):
+                resolutions[
+                    SourceFragmentCoordinateV1(
+                        owner_unit.source_cid,
+                        owner_lc.start_line,
+                        owner_lc.start_col,
+                        owner_lc.end_line,
+                        owner_lc.end_col,
+                    )
+                ] = resolved
+
+    return materialize(
+        owner_unit,
+        ShadowNode(
+            "BindingCoordinateRef",
+            owner_span,
+            (("coordinate", Leaf(coordinate)),),
+        ),
+        node.reporter,
+    )
 
 
 SourceCallFrameV1 = SourceVisibleCallFrameV1

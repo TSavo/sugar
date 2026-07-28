@@ -977,6 +977,19 @@ def _resolve_source_visible_frame_uncached(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
     )
+    dependency_graphs: dict[str, DependencyArtifactGraph] = {
+        resolved.module_name.split(".", 1)[0]: graph
+    }
+    # Seat final-checked import value-use receipts into THIS frame's SourceUnit
+    # before any construction.  Identity operands (e.g. ``pd.array``) bind via
+    # authenticated definition coordinates on this unit — never cross-unit spans.
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        session=session,
+        context=context,
+        dependency_graphs=dependency_graphs,
+    )
     definitions = tuple(
         item
         for item in source_file.root.body
@@ -1087,9 +1100,6 @@ def _resolve_source_visible_frame_uncached(
         )
     else:
         import_receipts = ()
-    dependency_graphs: dict[str, DependencyArtifactGraph] = {
-        resolved.module_name.split(".", 1)[0]: graph
-    }
     for receipt in import_receipts:
         raw_site = receipt.use["useSite"]
         call = reachable_calls.get(
@@ -1755,6 +1765,85 @@ def _call_coordinate(call: Call):
         span.end_line,
         span.end_col,
     )
+
+
+def _seat_import_value_use_receipts(
+    *,
+    source_file,
+    module,
+    session: SourceResolutionSession,
+    context: TreeConstructionContextV1,
+    dependency_graphs: dict[str, DependencyArtifactGraph],
+) -> None:
+    """Seat final-checked value-use receipts into the frame unit before construction.
+
+    Each receipt's useSite must match this unit's source_cid.  Resolved objects
+    are stored on both the construction context and the SourceUnit so Name /
+    Attribute identity operands bind by authenticated definition coordinate
+    without substituting foreign-unit spans into this frame.
+    """
+    from pathlib import Path
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_value_use_receipts,
+    )
+
+    unit = source_file.unit
+    try:
+        receipts, _ = authenticated_import_value_use_receipts(
+            Path("."),
+            Path(module.source_seat),
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
+    except ValueError:
+        # Stale CID / dual-door refuse — leave unit unseated (loud later).
+        return
+    for receipt in receipts:
+        site = receipt.use.get("useSite") or {}
+        if site.get("sourceCid") != module.source_cid:
+            # Never seat a foreign unit's use into this frame.
+            continue
+        coordinate = SourceFragmentCoordinateV1(
+            module.source_cid,
+            site["startLine"],
+            site["startCol"],
+            site["endLine"],
+            site["endCol"],
+        )
+        span_key = (
+            site["startLine"],
+            site["startCol"],
+            site["endLine"],
+            site["endCol"],
+        )
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        # Frame graph is pre-seeded into ``dependency_graphs`` under the frame
+        # module top-level at the call site; only reuse that entry when the
+        # value-use top-level matches (never apply it to a foreign top-level).
+        dependency_graph = dependency_graphs.get(top_level)
+        if dependency_graph is None:
+            from .dependency_artifact import (
+                DependencyArtifactAuthenticationError,
+                authenticate_dependency_top_level,
+            )
+
+            try:
+                dependency_graph = authenticate_dependency_top_level(top_level)
+            except DependencyArtifactAuthenticationError:
+                continue
+            dependency_graphs[top_level] = dependency_graph
+        imported = resolve_import_binding(
+            receipt, graph=dependency_graph, session=session
+        )
+        if not isinstance(imported, ResolvedPythonObjectV1):
+            continue
+        context.source_import_value_resolutions[coordinate] = imported
+        unit.seat_import_value_use_resolution(span_key, imported)
 
 
 def _install_opaque_call_obligation(
