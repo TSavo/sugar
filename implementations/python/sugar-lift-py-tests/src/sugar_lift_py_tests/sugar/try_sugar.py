@@ -49,6 +49,22 @@ class TrySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        body_es = reduce_block_to_exitset(self.body, ctx)
+        if isinstance(body_es, NativeOperationExitCarrierV1):
+            return body_es.after_discharge(
+                lambda discharged: self._route_discharged_body(discharged, ctx)
+            )
+        return self._route_discharged_body(body_es, ctx)
+
+    def _route_discharged_body(self, body_es, ctx):
+        """Route one concrete body ExitSet; carriers enter only after discharge."""
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.sugar.exit_set_routing import (
             exitset_to_outcome,
@@ -59,9 +75,8 @@ class TrySugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        body_es = promote_raise_halts(reduce_block_to_exitset(self.body, ctx))
         pre_finally = _route_handlers_over_exits(
-            body_es,
+            promote_raise_halts(body_es),
             self.handlers,
             self.orelse,
             site=self.site,
