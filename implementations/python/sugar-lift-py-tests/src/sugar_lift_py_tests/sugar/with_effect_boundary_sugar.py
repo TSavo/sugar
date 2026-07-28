@@ -142,7 +142,13 @@ class WithEffectBoundarySugar(Sugar):
             # same way here, because the exit face is not ref-shaped data.
             boundary_exit_es = ExitSet.completed(self.contract_ref)
 
-            routed.append(body_es.and_exit(boundary_exit_es, disposition=disposition))
+            routed.append(
+                _route_raise_boundary(
+                    body_es,
+                    boundary_exit_es=boundary_exit_es,
+                    disposition=disposition,
+                )
+            )
 
         if not routed:
             raise SugarNotWritten(
@@ -156,6 +162,45 @@ class WithEffectBoundarySugar(Sugar):
         for part in routed[1:]:
             result = result.union(part)
         return result
+
+
+def _route_raise_boundary(body_es, *, boundary_exit_es, disposition):
+    """Route only halts that carry a possible exception-type subject.
+
+    A wholly nameless ``RaiseEffect`` -- no name, authenticated type identity,
+    or raised value -- has no operand on which the boundary can state its type
+    predicate.  It therefore stays outside this boundary unchanged.  The
+    expected type verifies producer testimony; it cannot manufacture the
+    missing raised value or identity merely because a matcher is present.
+
+    Effects with a value term but no closed identity still reach the shared
+    matcher and retain its three-valued runtime type obligation.  Every other
+    face continues through ``ExitSet.and_exit`` unchanged, so this partition
+    neither duplicates the matcher nor locates a raising expression.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+
+    outside = []
+    candidates = []
+    for face in body_es.exits:
+        effect = face.effect if isinstance(face, Halted) else None
+        if (
+            isinstance(effect, RaiseEffect)
+            and effect.exception_name is None
+            and effect.exception_type_coordinate is None
+            and effect.raised_value is None
+        ):
+            outside.append(face)
+        else:
+            candidates.append(face)
+
+    routed = ExitSet(tuple(candidates)).and_exit(
+        boundary_exit_es, disposition=disposition
+    )
+    if not outside:
+        return routed
+    return routed.union(ExitSet(tuple(outside)))
 
 
 def _bind_real_actuals(signature, manager_value):
