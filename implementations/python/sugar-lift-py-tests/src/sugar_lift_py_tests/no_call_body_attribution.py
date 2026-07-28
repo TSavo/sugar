@@ -268,6 +268,19 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
 
     exceptional_effects = _exceptional_exit_effects(outcome)
     if exceptional_effects:
+        unnamed = tuple(
+            effect
+            for effect in exceptional_effects
+            if effect.exception_type_coordinate is None
+            or effect.occurrence_id is None
+        )
+        if unnamed:
+            return BodyAttribution(
+                probe.body_id,
+                probe.family,
+                AttributionOutcome.NAMED_REFUSAL,
+                "native-operation exception identity unproven",
+            )
         owners = {
             effect.producer_node_owner
             for effect in exceptional_effects

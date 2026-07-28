@@ -108,18 +108,29 @@ def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
         (_probe(ProducerFamily.SUBSCRIPT, _nameless_raise_value),)
     )
 
-    assert (
-        report.by_family[ProducerFamily.SUBSCRIPT].authenticated_exceptional_exits == 1
+    row = report.by_family[ProducerFamily.SUBSCRIPT]
+    assert row.authenticated_exceptional_exits == 0
+    assert row.named_refusals == 1
+    assert report.loud_failure_count == 0
+    assert "authenticatedExceptionalExit body=" not in report.render()
+    assert "native-operation exception identity unproven" in report.render()
+
+
+def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
+    report = attribute_body_probes(
+        tuple(
+            _probe(ProducerFamily.COMPARE, _nameless_raise_value)
+            for _ in range(503)
+        )
     )
-    assert report.loud_failure_count == 1
-    assert (
-        "authenticatedExceptionalExit body=pandas/example.py:1:Subscript "
-        "exceptionTypeCoordinate=None raiseOccurrence=None"
-    ) in report.render()
-    assert (
-        "NAMELESS HALTED FACE body=pandas/example.py:1:Subscript "
-        "missing=exceptionTypeCoordinate,raiseOccurrence"
-    ) in report.render()
+
+    row = report.by_family[ProducerFamily.COMPARE]
+    assert row.enrolled == 503
+    assert row.authenticated_exceptional_exits == 0
+    assert row.named_refusals == 503
+    assert row.construction_panics == 0
+    assert report.outcome_total == 503
+    assert report.loud_failure_count == 0
 
 
 def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
