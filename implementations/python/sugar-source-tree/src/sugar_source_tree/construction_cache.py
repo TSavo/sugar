@@ -152,7 +152,13 @@ def remember_constructed_value_cid_v2(value: object, cid: str) -> None:
 class ConstructionCache:
     """Shared field rows keyed by backend site + reporter + control context."""
 
-    __slots__ = ("fields", "sugar_results", "sugar_panics", "_pinned")
+    __slots__ = (
+        "fields",
+        "sugar_results",
+        "sugar_panics",
+        "leaf_assertion_products",
+        "_pinned",
+    )
 
     def __init__(self) -> None:
         # key -> {slot_name: resolved value}
@@ -178,6 +184,10 @@ class ConstructionCache:
         # the coordinate rule -- the reporter testifies each coordinate once,
         # whether it answers present or absent.
         self.sugar_panics: dict[tuple, BaseException] = {}
+        # Exact FunctionDef+Assert construction coordinate -> the closed leaf
+        # term/call roster minted by the source tree. Verify-facing consumers
+        # project this row; they never walk the source again.
+        self.leaf_assertion_products: dict[tuple, Any] = {}
         # key -> ref. The cache key embeds ``id(ref)``, and shadow refs minted
         # during substitution are transient: once a rewritten shadow is GC'd its
         # address is reused by the NEXT shadow (e.g. one loop-unroll iteration's
