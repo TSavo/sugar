@@ -310,6 +310,11 @@ def reduce_block_to_exitset(
             )
 
             if isinstance(outcome, NativeOperationExitCarrierV1):
+                # A formal native operation is neither a completion nor a halt
+                # until an authenticated caller supplies its actual operands.
+                # Retain the ordinary statement projection as a continuation;
+                # discharge will feed its Completed face through this exact
+                # block seam, while its Halted face bypasses the tail.
                 return outcome.and_then(project)
 
             if (
@@ -492,6 +497,11 @@ def reduce_block_to_exitset(
             and not exits.exits[0].faces
             and not exits.exits[0].pending_contracts
         ):
+            # The straight-line singleton is the only ExitSet face that can
+            # become a deferred native-operation carrier without needing a
+            # guarded carrier algebra. Preserve it directly. Branching paths
+            # continue through ExitSet.sequence and remain loud if they try to
+            # smuggle an undischarged carrier through a guard.
             exits = reduce_next(exits.exits[0].value)
         else:
             exits = exits.sequence(reduce_next)

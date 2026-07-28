@@ -409,6 +409,58 @@ class SourceUnit:
             return None
         return definition
 
+    def source_function_definition_for_call(
+        self, call: "Call"
+    ) -> "FunctionDef | AsyncFunctionDef | None":
+        """Resolve one ordinary source function at an exact lexical call site.
+
+        The name is only a lookup key. Authority is the unique typed module
+        binding plus CPython's scope classification at this occurrence. A
+        parameter, local, free, nonlocal, ambiguous, or recursive binding is
+        not silently treated as this module definition.
+        """
+        if not isinstance(call.func, Name) or self.typed_module is None:
+            return None
+        span = call.line_col_span()
+        containing = []
+        for candidate in self.function_nodes:
+            owner_span = candidate.line_col_span()
+            if (
+                (owner_span.start_line, owner_span.start_col)
+                <= (span.start_line, span.start_col)
+                <= (owner_span.end_line, owner_span.end_col)
+            ):
+                containing.append(candidate)
+        if containing:
+            owner = max(containing, key=lambda item: item.line_col_span().start_line)
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
+            try:
+                symbol = table.lookup(call.func.id)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_parameter()
+                or symbol.is_local()
+                or symbol.is_free()
+                or symbol.is_nonlocal()
+            ):
+                return None
+
+        bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
+        if len(bindings) != 1 or not isinstance(
+            bindings[0], (FunctionDef, AsyncFunctionDef)
+        ):
+            return None
+        definition = bindings[0]
+        definition_span = definition.line_col_span()
+        if (
+            (definition_span.start_line, definition_span.start_col)
+            <= (span.start_line, span.start_col)
+            <= (definition_span.end_line, definition_span.end_col)
+        ):
+            return None
+        return definition
+
     @staticmethod
     def source_class_has_authenticated_default_attribute_behavior(
         definition: "ClassDef",
@@ -8041,6 +8093,9 @@ class Call(Expression):
                 contract_ref = resolution
 
             source_call_frame = None
+            function_definition = self.unit.source_function_definition_for_call(self)
+            if function_definition is not None:
+                source_call_frame = function_definition.source_visible_call_frame()
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
