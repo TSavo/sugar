@@ -4272,17 +4272,18 @@ class AugAssign(Statement):
         """`<target> OP= <value>` -- substitute the value and load-side targets.
 
         A plain Name target is a binding site: the rebind (target OP value) is
-        threaded by ``substitution_binding`` / the ``operation`` slot. Attribute
-        and Subscript targets are runtime stores, not lexical rebinds — their
-        receivers (and subscript indices) are ordinary load expressions and
-        must substitute so formals become ``FormalRefSugar`` and prior
-        constructions reach the store, matching Assign's store-target law.
+        threaded by ``substitution_binding`` / the ``operation`` slot.
+
+        Subscript targets are runtime stores — receivers and indices are load
+        expressions and must substitute so formals become ``FormalRefSugar``
+        (same door as Assign).  Attribute targets stay value-only here until
+        Attribute AugAssign production owns that substitute tooth.
         """
         from .shadow import rewrite
 
         new_value, value_changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if value_changed else {}
-        if isinstance(self.target, (Attribute, Subscript)):
+        if isinstance(self.target, Subscript):
             new_target = _substituted_store_target(self, self.target, scope)
             if new_target is not None:
                 changes["target"] = new_target
@@ -4291,6 +4292,8 @@ class AugAssign(Statement):
             return rewrite(self, **changes)
         rewritten = self if not changes else rewrite(self, **changes)
         if not isinstance(rewritten.target, Name):
+            # Attribute (and any other non-Name non-Subscript) keeps value-only
+            # rewrite until its production path enrolls store-target substitute.
             return rewritten
         name = rewritten.target.id
         old_state = unwrap_binding_state(scope.get(name, rewritten.target))
@@ -4311,6 +4314,59 @@ class AugAssign(Statement):
                 (*desc.slots, ("operation", Child(_handle_of(operation)))),
             ),
             self.reporter,
+        )
+
+    def _augassign_operator_site(self):
+        """Source-authenticated operator-token interval (``+=``, ``-=``, …).
+
+        The arithmetic occurrence is the operator token itself — not the RHS
+        fragment and not the whole statement.  After formal substitute the RHS
+        node may carry a declaration span, so we locate the token in source
+        after the target span (when that span still sits inside the statement)
+        using the operator's surface spelling plus ``=``.
+        """
+        from sugar_source_tree.panic import SugarNotWritten
+        from .fragment import SourceFragment
+        from .spans import Span
+
+        aug_token = f"{self.op.symbol}="
+        source = self.unit.source
+        target = self.target
+
+        def reject(observed):
+            raise SugarNotWritten(
+                blame=self.fragment,
+                owner="AugAssign._augassign_operator_site",
+                observed=observed,
+                requested=(
+                    f"the source-authenticated operator-token interval for "
+                    f"{aug_token!r} in this AugAssign"
+                ),
+                fix=(
+                    "preserve the AugAssign statement span and target span so "
+                    f"{aug_token!r} is findable in source after the target"
+                ),
+            )
+
+        if (
+            self.span.start <= target.span.start
+            and target.span.end <= self.span.end
+        ):
+            search_start = target.span.end
+        else:
+            search_start = self.span.start
+        region = source[search_start : self.span.end]
+        idx = region.find(aug_token)
+        if idx < 0:
+            reject((aug_token, self.span, target.span, region))
+        start = search_start + idx
+        end = start + len(aug_token)
+        if source[start:end] != aug_token:
+            reject((aug_token, start, end, source[start:end]))
+        return SourceFragment(
+            unit=self.unit,
+            span=Span(start, end),
+            node=self,
         )
 
     def substitution_binding(self, scope):
@@ -4361,19 +4417,23 @@ class AugAssign(Statement):
                 site=self.fragment,
             )
         if isinstance(self.target, Subscript):
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                inplace_projector_for,
+            )
             from sugar_lift_py_tests.sugar.augassign_sugar import (
                 SubscriptAugAssignSugar,
             )
 
             # Distinct occurrence sites for get / arithmetic / store.
             # Receiver+index evaluated once inside SubscriptAugAssignSugar.
+            # op_site is the operator-token interval, not the RHS occurrence.
             return SubscriptAugAssignSugar(
                 receiver=self.target.value.sugar(),
                 index=self.target.slice_.sugar(),
                 rhs=self.value.sugar(),
-                op_kind=self.op.kind,
+                operation=inplace_projector_for(self.op),
                 get_site=self.target.fragment,
-                op_site=self.value.fragment,
+                op_site=self._augassign_operator_site(),
                 set_site=self.fragment,
                 site=self.fragment,
             )

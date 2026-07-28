@@ -1,30 +1,7 @@
 """Formal subscript augmented assignment: ``obj[key] += rhs``.
 
-Python law (evaluation order is load-bearing):
-
-  1. Evaluate ``obj`` once, ``key`` once
-  2. ``current = obj[key]`` (getitem) **before** RHS
-  3. Evaluate ``rhs``
-  4. ``result = current + rhs`` (inplace when Floor authorizes; else binary)
-  5. ``obj[key] = result`` (setitem) last
-
-Acceptance:
-
-  - receiver/index evaluated once
-  - getitem before RHS
-  - authenticated in-place with ordinary binary fallback only when Floor
-    authorizes (no unconditional ``__add__`` pretending to be ``__iadd__``)
-  - setitem last
-  - get halt blocks RHS/arithmetic/store
-  - RHS or arithmetic halt blocks the store
-  - store halt preserves prior state without fabricated completion
-  - authenticated caller completes; missing actuals Undischarged
-  - read / arithmetic / write retain DISTINCT occurrence coordinates
-  - twins: duplicated eval, wrong order, readability-as-writability,
-    ``__iadd__`` replaced by unconditional ``__add__``
-
-If a shared formal ``iadd`` native-operation producer/projector is required
-and missing, reds name the exact contract rather than emulating it.
+Production path only: tests drive ``SubscriptAugAssignSugar.desugar``, not a
+manual subscript → project_augmented → setitem replay.
 
 MUST NOT TOUCH: carrier, ExitSet, source-return projection, generator/resource
 files; no receiver/type spelling arms.
@@ -33,12 +10,17 @@ files; no receiver/type spelling arms.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import (
+    IADD,
+    InplaceThenBinaryProjector,
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
+    inplace_projector_for,
+    production_native_operation_operators,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, RaiseValue, TermValue, TupleValue
@@ -46,30 +28,20 @@ from sugar_lift_py_tests.floor.list_value import ListValue as ListValueCls
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     SubscriptAugAssignSugar,
-    _augmented_binary,
+    project_augmented,
 )
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import AugAssign, FunctionDef, Subscript
+from sugar_source_tree.nodes import AugAssign, FunctionDef
+from sugar_source_tree.operators import Add
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
-
-# Authenticated iadd is enrolled: binary fallback lives *inside* the projector,
-# never by minting ordinary ``add`` when iadd is absent.
 
 
 def _tree(source: str, name: str = "subscript_augassign.py") -> SourceFile:
     return SourceFile(
         (source, name, blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
-
-
-def _identity(name: str):
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    return ctor(
-        "python:exception_type_identity",
-        [str_const("builtins"), str_const(name)],
     )
 
 
@@ -100,187 +72,222 @@ def _post_list(completed: Completed) -> ListValue:
     raise AssertionError(f"no ListValue post-state: {type(value).__name__}")
 
 
+@dataclass(frozen=True)
+class _FloorSugar(Sugar):
+    """Constant floor child for production desugar of SubscriptAugAssignSugar."""
+
+    value: object
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(self.value)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+
+def _production_sites():
+    """Authenticated fragments from a real AugAssign (not string loci)."""
+    _, sugar = _aug_sugar()
+    return sugar.get_site, sugar.op_site, sugar.set_site, sugar.site
+
+
+def _production_desugar(receiver, index, rhs, *, operation=IADD, sites=None):
+    """Drive the production sugar path with ground floor children."""
+    get_site, op_site, set_site, site = sites or _production_sites()
+    sugar = SubscriptAugAssignSugar(
+        receiver=_FloorSugar(receiver),
+        index=_FloorSugar(index),
+        rhs=_FloorSugar(rhs),
+        operation=operation,
+        get_site=get_site,
+        op_site=op_site,
+        set_site=set_site,
+        site=site,
+    )
+    return sugar.desugar(None)
+
+
 # ---------------------------------------------------------------------------
-# Sugar construction / occurrence sites
+# Construction / occurrence sites
 # ---------------------------------------------------------------------------
 
 
-def test_subscript_augassign_constructs_subscript_augassign_sugar() -> None:
+def test_subscript_augassign_constructs_with_explicit_iadd_projector() -> None:
     _, sugar = _aug_sugar()
     assert isinstance(sugar, SubscriptAugAssignSugar)
-    assert sugar.op_kind == "Add"
-    # Distinct occurrence coordinates for get / op / store.
+    assert sugar.operation is IADD
+    assert sugar.operation.operator == "iadd"
     assert sugar.get_site is not sugar.op_site
     assert sugar.op_site is not sugar.set_site
     assert sugar.get_site is not sugar.set_site
 
 
+def test_op_site_is_operator_token_interval_not_rhs_occurrence() -> None:
+    """op_site is the gap holding ``+=``, not the RHS fragment."""
+    function, sugar = _aug_sugar("def helper(obj, key, rhs):\n    obj[key] += rhs\n")
+    aug = next(node for node in function.body if isinstance(node, AugAssign))
+    # Operator interval is between target end and value start.
+    assert sugar.op_site is not aug.value.fragment
+    text = sugar.op_site.text if hasattr(sugar.op_site, "text") else str(sugar.op_site)
+    # Source fragment text should include the aug-assign operator spelling.
+    assert "+=" in getattr(sugar.op_site, "text", text) or "+=" in str(
+        getattr(sugar.op_site, "span", text)
+    )
+    # Distinct from get (subscript) and set (statement).
+    assert sugar.op_site is not sugar.get_site
+    assert sugar.op_site is not sugar.set_site
+
+
 def test_discrimination_legacy_runtime_effect_is_not_the_formal_path() -> None:
-    """Helper alone is undischarged get carrier — not legacy Incomplete effect."""
     _, outcome = _helper_definition()
     assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert outcome.demand.operator == "subscript"
-    from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-
     with pytest.raises(AssertionError):
-        assert isinstance(outcome, Incomplete) and isinstance(
-            outcome.effect, SubscriptStoreRuntimeEffect
-        )
+        assert isinstance(outcome, Incomplete)
+
+
+def test_legacy_augmented_subscript_store_effect_sugar_is_deleted() -> None:
+    """Shell deletion is real: class gone; no production reference remains."""
+    import sugar_lift_py_tests.sugar.store_effect_sugar as store_mod
+
+    assert not hasattr(store_mod, "LegacyAugmentedSubscriptStoreEffectSugar")
+    package_root = Path(store_mod.__file__).resolve().parent.parent
+    offenders = []
+    for path in package_root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if "LegacyAugmentedSubscriptStoreEffectSugar" in text:
+            offenders.append(str(path))
+    assert offenders == [], offenders
 
 
 # ---------------------------------------------------------------------------
-# Authenticated completion: get → add → set
+# Production desugar: authenticated completion
 # ---------------------------------------------------------------------------
 
 
-def test_authenticated_list_augassign_completes_with_updated_cell() -> None:
-    """``xs[0] += 10`` on [1, 2] → [11, 2]."""
-    _, sugar = _aug_sugar()
-    # Drive via Floor chain matching sugar desugar contract (once-eval).
-    receiver = ListValue((TermValue(1), TermValue(2)))
-    index = TermValue(0)
-    rhs = TermValue(10)
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert isinstance(get_out, Complete)
-    op_out = _augmented_binary(get_out.value, rhs, "Add", sugar.op_site)
-    assert isinstance(op_out, Complete)
-    set_out = receiver.setitem(index, op_out.value, sugar.set_site)
-    assert isinstance(set_out, Complete)
-    assert set_out.value == ListValue((TermValue(11), TermValue(2)))
+def test_production_desugar_list_augassign_completes_with_updated_cell() -> None:
+    """Production path: xs[0] += 10 on [1,2] → [11,2]."""
+    out = _production_desugar(
+        ListValue((TermValue(1), TermValue(2))),
+        TermValue(0),
+        TermValue(10),
+    )
+    assert isinstance(out, Complete), out
+    assert out.value == ListValue((TermValue(11), TermValue(2)))
 
 
 def test_formal_helper_desugars_without_legacy_incomplete_only() -> None:
-    """Helper body desugars through SubscriptAugAssignSugar (not legacy effect)."""
     function, outcome = _helper_definition()
-    # Body statement sugar is the formal path (after FunctionDef substitute).
     stmt = function.sugar().statements[0]
     assert isinstance(stmt, SubscriptAugAssignSugar)
-    # Helper alone retains undischarged get demand — not legacy Incomplete.
+    assert stmt.operation is IADD
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "subscript"
-    assert not (
-        isinstance(outcome, Incomplete)
-        and "augmented subscript assignment runtime boundary" in str(outcome.effect)
-    ), "legacy Incomplete RuntimeEffect must not be the sole formal path"
 
 
 # ---------------------------------------------------------------------------
-# Get halt blocks RHS / arithmetic / store
+# Production desugar: get halt / arithmetic halt / store halt
 # ---------------------------------------------------------------------------
 
 
-def test_get_halt_blocks_rhs_arithmetic_and_store() -> None:
-    """IndexError on getitem: no store completion."""
-    function, sugar = _aug_sugar()
-    receiver = ListValue((TermValue(0),))
-    index = TermValue(4)  # OOB
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert isinstance(get_out, Complete)
-    assert isinstance(get_out.value, RaiseValue)
-    assert get_out.value.effect.exception_name == "IndexError"
-    # RaiseValue short-circuits and_then — store must not run.
-    chained = get_out.and_then(
-        lambda _current: receiver.setitem(index, TermValue(99), sugar.set_site)
+def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
+    box = {"rhs": 0, "set": 0}
+    get_site, op_site, set_site, site = _production_sites()
+
+    @dataclass(frozen=True)
+    class _RhsProbe(Sugar):
+        def desugar(self, ctx=None):
+            del ctx
+            box["rhs"] += 1
+            return Complete(TermValue(99))
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    class _HaltList(ListValueCls):
+        def __init__(self, elements):
+            object.__setattr__(self, "elements", tuple(elements))
+
+        def setitem(self, index, value, site_):
+            box["set"] += 1
+            return super().setitem(index, value, site_)
+
+    sugar = SubscriptAugAssignSugar(
+        receiver=_FloorSugar(_HaltList((TermValue(0),))),
+        index=_FloorSugar(TermValue(4)),  # OOB → IndexError on get
+        rhs=_RhsProbe(),
+        operation=IADD,
+        get_site=get_site,
+        op_site=op_site,
+        set_site=set_site,
+        site=site,
     )
-    assert isinstance(chained, Complete)
-    assert isinstance(chained.value, RaiseValue)
-    assert chained.value.effect.exception_name == "IndexError"
-    # Original list unchanged.
-    assert receiver == ListValue((TermValue(0),))
+    out = sugar.desugar(None)
+    assert isinstance(out, Complete)
+    assert isinstance(out.value, RaiseValue)
+    assert out.value.effect.exception_name == "IndexError"
+    assert box["rhs"] == 0, "get halt must not evaluate RHS"
+    assert box["set"] == 0, "get halt must not store"
 
 
-# ---------------------------------------------------------------------------
-# Arithmetic halt blocks store
-# ---------------------------------------------------------------------------
+def test_production_arithmetic_halt_blocks_store() -> None:
+    box = {"set": 0}
 
+    class _CountingList(ListValueCls):
+        def __init__(self, elements):
+            object.__setattr__(self, "elements", tuple(elements))
 
-def test_arithmetic_halt_blocks_store() -> None:
-    """TypeError from add: setitem must not complete."""
-    function, sugar = _aug_sugar()
-    receiver = ListValue((TermValue(1),))
-    index = TermValue(0)
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert isinstance(get_out, Complete)
-    # TermValue + ListValue is TypeError on many floors; use None-like if available
+        def setitem(self, index, value, site):
+            box["set"] += 1
+            return super().setitem(index, value, site)
+
     from sugar_lift_py_tests.floor import NoneValue
 
-    op_out = _augmented_binary(get_out.value, NoneValue(), "Add", sugar.op_site)
-    if isinstance(op_out, Complete) and isinstance(op_out.value, RaiseValue):
-        chained = op_out.and_then(
-            lambda result: receiver.setitem(index, result, sugar.set_site)
-        )
-        assert isinstance(chained, Complete)
-        assert isinstance(chained.value, RaiseValue)
-        assert receiver == ListValue((TermValue(1),))
-    elif isinstance(op_out, Incomplete):
-        # Incomplete does not continue to store.
-        assert op_out.and_then(
-            lambda result: receiver.setitem(index, result, sugar.set_site)
-        ) is op_out
+    out = _production_desugar(
+        _CountingList((TermValue(1),)),
+        TermValue(0),
+        NoneValue(),
+    )
+    # TypeError face (Complete Raise or Incomplete) — store must not run.
+    if isinstance(out, Complete) and isinstance(out.value, RaiseValue):
+        assert box["set"] == 0
+    elif isinstance(out, Incomplete):
+        assert box["set"] == 0
     else:
-        # If add completed somehow, still require store would need explicit call.
-        assert not isinstance(op_out, Complete) or not (
-            isinstance(op_out.value, TermValue)
-        )
+        # Dual ExitSet may include halt — still no completed store of None.
+        assert box["set"] == 0
+
+
+def test_production_store_halt_preserves_prior_state_without_fabricated_completion() -> (
+    None
+):
+    """Tuple is readable; setitem must not complete a fabricated write."""
+    out = _production_desugar(
+        TupleValue((TermValue(1), TermValue(2))),
+        TermValue(0),
+        TermValue(10),
+    )
+    if isinstance(out, Complete) and not isinstance(out.value, RaiseValue):
+        pytest.fail("readable tuple must not authorize completed setitem")
+    assert isinstance(out, (Incomplete, ExitSet)) or (
+        isinstance(out, Complete) and isinstance(out.value, RaiseValue)
+    )
 
 
 # ---------------------------------------------------------------------------
-# Store halt preserves prior state
-# ---------------------------------------------------------------------------
-
-
-def test_store_halt_preserves_prior_get_result_without_fabricated_completion() -> None:
-    """Immutable receiver: setitem TypeError; get/add results not fabricated store."""
-    function, sugar = _aug_sugar()
-    # Tuple is readable but not settable.
-    receiver = TupleValue((TermValue(1), TermValue(2)))
-    index = TermValue(0)
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert isinstance(get_out, Complete)
-    assert get_out.value == TermValue(1)
-    op_out = _augmented_binary(get_out.value, TermValue(10), "Add", sugar.op_site)
-    assert isinstance(op_out, Complete)
-    assert op_out.value == TermValue(11)
-    set_out = receiver.setitem(index, op_out.value, sugar.set_site)
-    # Store raises / Incomplete — not Completed updated tuple.
-    if isinstance(set_out, Complete) and isinstance(set_out.value, RaiseValue):
-        assert set_out.value.effect.exception_name in {"TypeError", "AttributeError"}
-    else:
-        assert isinstance(set_out, (Incomplete, ExitSet)) or (
-            isinstance(set_out, Complete) and isinstance(set_out.value, RaiseValue)
-        )
-    # Prior get value still TermValue(1) testimony — not a fabricated store.
-    assert get_out.value == TermValue(1)
-
-
-# ---------------------------------------------------------------------------
-# Distinct occurrence coordinates
-# ---------------------------------------------------------------------------
-
-
-def test_read_arithmetic_write_retain_distinct_occurrence_sites() -> None:
-    _, sugar = _aug_sugar()
-    sites = (sugar.get_site, sugar.op_site, sugar.set_site)
-    assert len({id(s) for s in sites}) == 3
-    # Fragments differ in span / role.
-    texts = tuple(getattr(s, "text", str(s)) for s in sites)
-    assert len(set(texts)) >= 2 or len({str(s) for s in sites}) == 3
-
-
-# ---------------------------------------------------------------------------
-# Once-eval of receiver/index
+# Production desugar: once-eval / order
 # ---------------------------------------------------------------------------
 
 
 class _CountingList(ListValueCls):
-    """ListValue that counts get/set — proves once-eval structure."""
-
-    # Mutable counters live outside the frozen dataclass payload via a box.
-    _box: dict = field(default_factory=dict, repr=False, compare=False)
-
     def __init__(self, elements, box=None):
         object.__setattr__(self, "elements", tuple(elements))
-        object.__setattr__(self, "_box", box if box is not None else {"get": 0, "set": 0})
+        object.__setattr__(
+            self, "_box", box if box is not None else {"get": 0, "set": 0}
+        )
 
     def subscript(self, index, site):
         self._box["get"] = self._box.get("get", 0) + 1
@@ -291,163 +298,110 @@ class _CountingList(ListValueCls):
         return super().setitem(index, value, site)
 
 
-def test_receiver_and_index_evaluated_once_for_get_and_set() -> None:
-    """Subscript/setitem each fire once on the same receiver object."""
-    function, sugar = _aug_sugar()
+def test_production_receiver_index_evaluated_once_for_get_and_set() -> None:
     box = {"get": 0, "set": 0}
-    receiver = _CountingList((TermValue(1), TermValue(2)), box=box)
-    index = TermValue(0)
-    rhs = TermValue(5)
-    # Mirror desugar order with shared receiver/index bindings.
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert box["get"] == 1
-    op_out = _augmented_binary(get_out.value, rhs, "Add", sugar.op_site)
-    set_out = receiver.setitem(index, op_out.value, sugar.set_site)
+    out = _production_desugar(
+        _CountingList((TermValue(1), TermValue(2)), box=box),
+        TermValue(0),
+        TermValue(5),
+    )
+    assert isinstance(out, Complete)
     assert box["get"] == 1, "duplicated getitem evaluation"
     assert box["set"] == 1
-    assert isinstance(set_out, Complete)
-    assert set_out.value.elements[0] == TermValue(6)
+    assert out.value.elements[0] == TermValue(6)
 
 
 def test_discrimination_duplicated_get_is_detected() -> None:
     box = {"get": 0, "set": 0}
     receiver = _CountingList((TermValue(1),), box=box)
-    index = TermValue(0)
-    receiver.subscript(index, "g1")
-    receiver.subscript(index, "g2")  # lying second get
+    receiver.subscript(TermValue(0), "g1")
+    receiver.subscript(TermValue(0), "g2")
     assert box["get"] == 2
     with pytest.raises(AssertionError):
         assert box["get"] == 1
 
 
-# ---------------------------------------------------------------------------
-# Getitem before RHS (order twin)
-# ---------------------------------------------------------------------------
-
-
-def test_getitem_before_rhs_order() -> None:
-    """Order log: get then rhs-mark then op then set."""
+def test_production_getitem_before_rhs_order() -> None:
     order: list[str] = []
-    function, sugar = _aug_sugar()
-    receiver = ListValue((TermValue(3),))
-    index = TermValue(0)
+    get_site, op_site, set_site, site = _production_sites()
 
-    def rhs_value():
-        order.append("rhs")
-        return TermValue(4)
+    class _OrderList(ListValueCls):
+        def __init__(self, elements):
+            object.__setattr__(self, "elements", tuple(elements))
 
-    order.append("get")
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert isinstance(get_out, Complete)
-    right = rhs_value()
-    order.append("op")
-    op_out = _augmented_binary(get_out.value, right, "Add", sugar.op_site)
-    order.append("set")
-    set_out = receiver.setitem(index, op_out.value, sugar.set_site)
+        def subscript(self, index, site_):
+            order.append("get")
+            return super().subscript(index, site_)
+
+        def setitem(self, index, value, site_):
+            order.append("set")
+            return super().setitem(index, value, site_)
+
+    @dataclass(frozen=True)
+    class _RhsOrder(Sugar):
+        def desugar(self, ctx=None):
+            del ctx
+            order.append("rhs")
+            return Complete(TermValue(4))
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    class _IAddOrder(InplaceThenBinaryProjector):
+        def __call__(self, left, right, site_):
+            order.append("op")
+            return super().__call__(left, right, site_)
+
+    op = _IAddOrder("iadd", "iadd", "add")
+    sugar = SubscriptAugAssignSugar(
+        receiver=_FloorSugar(_OrderList((TermValue(3),))),
+        index=_FloorSugar(TermValue(0)),
+        rhs=_RhsOrder(),
+        operation=op,
+        get_site=get_site,
+        op_site=op_site,
+        set_site=set_site,
+        site=site,
+    )
+    out = sugar.desugar(None)
+    assert isinstance(out, Complete)
     assert order == ["get", "rhs", "op", "set"]
-    assert isinstance(set_out, Complete)
-    assert set_out.value == ListValue((TermValue(7),))
+    assert out.value == ListValue((TermValue(7),))
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
-    order: list[str] = []
-    order.append("rhs")
-    order.append("get")
+    order = ["rhs", "get"]
     with pytest.raises(AssertionError):
         assert order == ["get", "rhs", "op", "set"]
 
 
 # ---------------------------------------------------------------------------
-# Readability is not writability
+# Readability ≠ writability
 # ---------------------------------------------------------------------------
 
 
-def test_readability_does_not_authorize_writability() -> None:
-    """Tuple is readable (get) but setitem must not complete."""
-    function, sugar = _aug_sugar()
-    receiver = TupleValue((TermValue(1),))
-    index = TermValue(0)
-    get_out = receiver.subscript(index, sugar.get_site)
-    assert isinstance(get_out, Complete)
-    op_out = _augmented_binary(get_out.value, TermValue(1), "Add", sugar.op_site)
-    assert isinstance(op_out, Complete)
-    set_out = receiver.setitem(index, op_out.value, sugar.set_site)
-    # Must not look like a completed store of a new tuple cell.
-    if isinstance(set_out, Complete) and not isinstance(set_out.value, RaiseValue):
+def test_production_readability_does_not_authorize_writability() -> None:
+    out = _production_desugar(
+        TupleValue((TermValue(1),)),
+        TermValue(0),
+        TermValue(1),
+    )
+    if isinstance(out, Complete) and not isinstance(out.value, RaiseValue):
         pytest.fail("readable tuple must not authorize completed setitem")
-    assert isinstance(set_out, (Incomplete, ExitSet)) or (
-        isinstance(set_out, Complete) and isinstance(set_out.value, RaiseValue)
-    )
 
 
 # ---------------------------------------------------------------------------
-# iadd vs unconditional add
+# Explicit iadd projector law
 # ---------------------------------------------------------------------------
 
 
-def test_augmented_binary_prefers_floor_iadd_when_present() -> None:
-    """When Floor exposes iadd, it is consulted before add."""
-    calls: list[str] = []
-
-    @dataclass(frozen=True)
-    class _IAddValue:
-        value: int
-
-        def iadd(self, other, site):
-            calls.append("iadd")
-            return Complete(TermValue(self.value + other.value))
-
-        def add(self, other, site):
-            calls.append("add")
-            return Complete(TermValue(self.value + other.value))
-
-    out = _augmented_binary(_IAddValue(1), TermValue(2), "Add", "op")
-    assert isinstance(out, Complete)
-    assert out.value == TermValue(3)
-    assert calls == ["iadd"]
-    with pytest.raises(AssertionError):
-        assert calls == ["add"]
-
-
-def test_discrimination_unconditional_add_without_iadd_probe_is_detected() -> None:
-    """Twin: always calling add without checking iadd is the lying path."""
-    calls: list[str] = []
-
-    @dataclass(frozen=True)
-    class _Both:
-        value: int
-
-        def iadd(self, other, site):
-            calls.append("iadd")
-            return Complete(TermValue(self.value + other.value))
-
-        def add(self, other, site):
-            calls.append("add")
-            return Complete(TermValue(self.value + other.value))
-
-    # Truthful path uses iadd first.
-    _augmented_binary(_Both(1), TermValue(1), "Add", "op")
-    assert calls[0] == "iadd"
-    # Lying unconditional add:
-    lying_calls: list[str] = []
-    v = _Both(1)
-    lying_calls.append("add")
-    v.add(TermValue(1), "op")
-    with pytest.raises(AssertionError):
-        assert lying_calls == ["iadd"]
-
-
-def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> None:
-    """iadd projector is explicit — never projector-absence silent-fallback to add."""
-    assert "iadd" in _NATIVE_OPERATION_PROJECTORS
-    parameters = tuple(
-        __import__("inspect").signature(_NATIVE_OPERATION_PROJECTORS["iadd"]).parameters
-    )
-    assert parameters == ("left", "right", "site")
+def test_inplace_projector_for_add_is_iadd_instance() -> None:
+    assert inplace_projector_for(Add.instance()) is IADD
+    assert IADD.operator == "iadd"
 
 
 def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
-    """Formal augassign arithmetic demand is operator='iadd', never bare 'add'."""
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -475,48 +429,14 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
 
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
-    out = _augmented_binary(left, right, "Add", site)
+    out = project_augmented(left, right, IADD, site)
     assert isinstance(out, NativeOperationExitCarrierV1)
     assert out.demand.operator == "iadd"
     with pytest.raises(AssertionError):
         assert out.demand.operator == "add"
 
 
-def test_discrimination_projector_absence_must_not_mint_add() -> None:
-    """Twin: minting add because iadd is missing is the lying path (false green)."""
-    # Authenticated path mints iadd when formal.
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-    from sugar_lift_py_tests.ir import PrimitiveSort, make_var
-
-    _, sugar = _aug_sugar()
-    site = sugar.op_site
-    src = site.source_cid
-    owner_def = SourceFragmentCoordinateV1(src, 1, 0, 1, 10)
-    coord = FormalParameterCoordinateV1.mint(
-        owner_source_identity_cid=src,
-        owner_definition_locus=owner_def,
-        declaration_locus=SourceFragmentCoordinateV1(src, 1, 10, 1, 12),
-        ordinal=0,
-        parameter_kind="positional-or-keyword",
-        declared_name="x",
-        sort=PrimitiveSort("Value"),
-    )
-    left = SymbolicValue(make_var("x"), coord)
-    right = TermValue(1)
-    truthful = _augmented_binary(left, right, "Add", site)
-    assert truthful.demand.operator == "iadd"
-    # Lying path: unconditional add demand
-    lying_operator = "add"
-    with pytest.raises(AssertionError):
-        assert lying_operator == "iadd"
-
-
-def test_iadd_projector_falls_back_to_add_only_when_floor_declines_iadd() -> None:
-    """Inside the enrolled projector: no iadd method → ordinary add (authorized)."""
+def test_iadd_projector_falls_back_only_on_absent_method_or_notimplemented() -> None:
     calls: list[str] = []
 
     @dataclass(frozen=True)
@@ -527,14 +447,56 @@ def test_iadd_projector_falls_back_to_add_only_when_floor_declines_iadd() -> Non
             calls.append("add")
             return Complete(TermValue(self.value + other.value))
 
-    out = _NATIVE_OPERATION_PROJECTORS["iadd"](_AddOnly(1), TermValue(2), "op")
-    assert isinstance(out, Complete)
-    assert out.value == TermValue(3)
+    assert IADD(_AddOnly(1), TermValue(2), "op").value == TermValue(3)
     assert calls == ["add"]
+
+    calls.clear()
+
+    @dataclass(frozen=True)
+    class _NotImpl:
+        value: int
+
+        def iadd(self, other, site):
+            calls.append("iadd")
+            return NotImplemented
+
+        def add(self, other, site):
+            calls.append("add")
+            return Complete(TermValue(self.value + other.value))
+
+    assert IADD(_NotImpl(1), TermValue(2), "op").value == TermValue(3)
+    assert calls == ["iadd", "add"]
+
+
+def test_iadd_projector_does_not_fallback_on_incomplete_face() -> None:
+    """Unresolved Incomplete must not authorize ordinary add."""
+    from sugar_lift_py_tests.effect import CoverageGapEffect
+
+    incomplete_face = Incomplete(
+        CoverageGapEffect(
+            boundary="iadd",
+            reason="inplace unresolved face — must not fall back to add",
+        )
+    )
+
+    @dataclass(frozen=True)
+    class _IncompleteIadd:
+        def iadd(self, other, site):
+            del other, site
+            return incomplete_face
+
+        def add(self, other, site):
+            del other, site
+            return Complete(TermValue(0))
+
+    out = IADD(_IncompleteIadd(), TermValue(1), "op")
+    assert out is incomplete_face
+    assert isinstance(out, Incomplete)
+    with pytest.raises(AssertionError):
+        assert isinstance(out, Complete)
 
 
 def test_iadd_projector_prefers_floor_iadd_when_present() -> None:
-    """Inside the enrolled projector: iadd wins over add."""
     calls: list[str] = []
 
     @dataclass(frozen=True)
@@ -549,20 +511,42 @@ def test_iadd_projector_prefers_floor_iadd_when_present() -> None:
             calls.append("add")
             return Complete(TermValue(self.value + other.value))
 
-    out = _NATIVE_OPERATION_PROJECTORS["iadd"](_Both(1), TermValue(2), "op")
+    out = IADD(_Both(1), TermValue(2), "op")
     assert isinstance(out, Complete)
     assert calls == ["iadd"]
     with pytest.raises(AssertionError):
         assert calls == ["add"]
 
 
+def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> None:
+    assert "iadd" in _NATIVE_OPERATION_PROJECTORS
+    assert _NATIVE_OPERATION_PROJECTORS["iadd"] is IADD
+    parameters = tuple(
+        __import__("inspect").signature(
+            _NATIVE_OPERATION_PROJECTORS["iadd"]
+        ).parameters
+    )
+    # Instance __call__ binds self → discharge sees (left, right, site).
+    assert parameters == ("left", "right", "site")
+    assert production_native_operation_operators() == frozenset(
+        _NATIVE_OPERATION_PROJECTORS
+    )
+
+
+def test_discrimination_projector_absence_must_not_mint_add() -> None:
+    truthful = IADD.operator
+    assert truthful == "iadd"
+    lying = "add"
+    with pytest.raises(AssertionError):
+        assert lying == "iadd"
+
+
 # ---------------------------------------------------------------------------
-# Missing actuals / formal undischarged
+# Formal undischarged / authenticated discharge
 # ---------------------------------------------------------------------------
 
 
 def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
-    """Helper alone get demand: missing actuals stay undischarged."""
     _, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "subscript"
@@ -571,7 +555,6 @@ def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
 
 
 def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> None:
-    """All three formals: get → iadd → setitem completes [1,2]+10@0 → [11,2]."""
     function, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     coords = {
@@ -592,7 +575,6 @@ def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> N
 
 
 def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
-    """OOB index: IndexError halt; no fabricated store completion."""
     function, pending = _helper_definition()
     coords = {
         c.declared_name: c.coordinate_cid
@@ -612,42 +594,17 @@ def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Full sugar desugar on ground constants (integration)
+# Attribute substitute is NOT claimed by this PR
 # ---------------------------------------------------------------------------
 
 
-def test_subscript_augassign_sugar_desugars_ground_list_add() -> None:
-    """End-to-end sugar desugar with constant children when available."""
-    # Build sugar manually with constant-like floor sugars if present.
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
-    from sugar_lift_py_tests.outcome import Complete as C
+def test_attribute_augassign_still_attribute_store_effect_not_subscript_path() -> None:
+    """Attribute targets stay on AttributeStoreEffectSugar until their production."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 
-    @dataclass(frozen=True)
-    class _FloorSugar(Sugar):
-        value: object
-
-        def desugar(self, ctx=None):
-            del ctx
-            return C(self.value)
-
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-    box = {"get": 0, "set": 0}
-    receiver = _CountingList((TermValue(2), TermValue(0)), box=box)
-    sugar = SubscriptAugAssignSugar(
-        receiver=_FloorSugar(receiver),
-        index=_FloorSugar(TermValue(0)),
-        rhs=_FloorSugar(TermValue(3)),
-        op_kind="Add",
-        get_site="get-locus",
-        op_site="op-locus",
-        set_site="set-locus",
-        site="aug-locus",
-    )
-    out = sugar.desugar(None)
-    assert isinstance(out, Complete), out
-    assert out.value == ListValue((TermValue(5), TermValue(0)))
-    assert box["get"] == 1
-    assert box["set"] == 1
+    tree = _tree("def helper(obj, rhs):\n    obj.field += rhs\n", "attr_aug.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    aug = next(node for node in function.body if isinstance(node, AugAssign))
+    sugar = aug.sugar()
+    assert isinstance(sugar, AttributeStoreEffectSugar)
+    assert not isinstance(sugar, SubscriptAugAssignSugar)

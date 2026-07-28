@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
+from sugar_lift_py_tests.caller_parameter_contract import (
+    InplaceThenBinaryProjector,
+    NativeOperationExitCarrierV1,
+    _NATIVE_OPERATION_PROJECTORS,
+)
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -36,103 +41,41 @@ class AugAssignSugar(Sugar):
         )
 
 
-def _chain(outcome, step):
-    """Continue only on completed ordinary values / carriers; halt faces stay loud."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+def project_augmented(
+    left,
+    right,
+    operation: InplaceThenBinaryProjector,
+    site,
+) -> Outcome:
+    """Mint formal i* demand, or project ground through the explicit projector.
 
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        return outcome.and_then(step)
-    if isinstance(outcome, Incomplete):
-        return outcome
-    if isinstance(outcome, ExitSet):
-        # Multi-arm get/add: only continue completed faces via ExitSet.and_then
-        return outcome.and_then(step)
-    if isinstance(outcome, Complete):
-        if isinstance(outcome.value, RaiseValue):
-            # Get/arithmetic halt: do not evaluate RHS/store (RaiseValue short-circuit).
-            return outcome
-        return step(outcome.value)
-    # Other outcomes (e.g. Complete-like) try step only if and_then exists.
-    and_then = getattr(outcome, "and_then", None)
-    if and_then is not None:
-        return and_then(step)
-    return outcome
-
-
-def _augmented_binary(left, right, op_kind: str, site) -> Outcome:
-    """In-place when Floor authorizes; otherwise ordinary binary.
-
-    Formal operands mint the **authenticated i*** native-operation demand
-    (``operator='iadd'`` for ``+=``).  Projector absence is an honorable red —
-    never silent-fallback to minting ordinary ``add`` (false green about
-    in-place semantics).  Binary fallback lives only *inside* the enrolled
-    i* projector (Floor declines i* → ordinary binary), matching Python.
-
-    Ground (non-formal) path: Floor ``left.iadd`` when present, else
-    ``left.add`` — same law, no carrier mint.
+    Formal operands always mint ``operation.operator`` (e.g. ``iadd``).
+    Projector absence is an honorable red — never mint ordinary binary as a
+    stand-in.  Ground projection is ``operation(left, right, site)``.
     """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-        _NATIVE_OPERATION_PROJECTORS,
-    )
-    from sugar_lift_py_tests.floor import RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
-
-    method_by_kind = {
-        "Add": ("iadd", "add"),
-        "Sub": ("isub", "subtract"),
-        "Mult": ("imul", "multiply"),
-        "Div": ("itruediv", "divide"),
-        "FloorDiv": ("ifloordiv", "floor_divide"),
-        "Mod": ("imod", "modulo"),
-        "Pow": ("ipow", "power"),
-        "BitAnd": ("iand", "bitwise_and"),
-        "BitOr": ("ior", "bitwise_or"),
-        "BitXor": ("ixor", "bitwise_xor"),
-        "LShift": ("ilshift", "left_shift"),
-        "RShift": ("irshift", "right_shift"),
-        "MatMult": ("imatmul", "matrix_multiply"),
-    }
-    names = method_by_kind.get(op_kind, (None, "add"))
-    inplace_name, binary_name = names
-
     left_coord = getattr(left, "formal_coordinate", None)
     right_coord = getattr(right, "formal_coordinate", None)
     if left_coord is not None or right_coord is not None:
-        # Formal path: always mint authenticated i* when the op has one.
-        # Projector absence → honorable red.  Never mint ordinary binary as a
-        # stand-in for missing i* (advisor: that fallback is a false green).
-        if inplace_name is None:
-            operator = binary_name
-        else:
-            operator = inplace_name
-        if operator not in _NATIVE_OPERATION_PROJECTORS:
+        if operation.operator not in _NATIVE_OPERATION_PROJECTORS:
             from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
             from sugar_lift_py_tests.gap.panic import construction_panic
 
             construction_panic(
                 ConstructionGap(
-                    owner="SubscriptAugAssignSugar._augmented_binary",
+                    owner="project_augmented",
                     blame=str(site),
                     observed=(
-                        f"formal AugAssign {op_kind} requires enrolled projector "
-                        f"operator={operator!r}; projector is ABSENT"
+                        f"formal AugAssign requires enrolled projector "
+                        f"operator={operation.operator!r}; projector is ABSENT"
                     ),
                     requested=(
-                        "shared authenticated native-operation projector: "
-                        f"operator={operator!r} with signature "
-                        f"(left, right, site) -> Floor {operator} then "
-                        f"authorized {binary_name} only inside that projector"
+                        f"InplaceThenBinaryProjector enrolled as "
+                        f"operator={operation.operator!r}"
                     ),
                     fix=(
-                        f"enroll {operator!r} on _NATIVE_OPERATION_PROJECTORS "
-                        "(see _project_inplace_then_binary); do not mint "
-                        f"{binary_name!r} as a silent stand-in for missing i*"
+                        f"enroll {operation.operator!r} on "
+                        "_NATIVE_OPERATION_PROJECTORS; do not mint ordinary "
+                        "binary as a silent stand-in for missing i*"
                     ),
                     gap_kind=GapKind.FLOOR,
                     gap_locus=GapLocus.CONSTRUCTION,
@@ -140,51 +83,11 @@ def _augmented_binary(left, right, op_kind: str, site) -> Outcome:
             )
         return NativeOperationExitCarrierV1.mint(
             site=site,
-            operator=operator,
+            operator=operation.operator,
             operands=(left, right),
             coordinates=(left_coord, right_coord),
         )
-
-    if inplace_name is not None:
-        inplace = getattr(left, inplace_name, None)
-        if callable(inplace):
-            projected = inplace(right, site)
-            # Floor NotImplemented-style gaps fall through; RaiseValue stops.
-            if isinstance(projected, Complete) and isinstance(
-                projected.value, RaiseValue
-            ):
-                return projected
-            if isinstance(projected, Complete):
-                return projected
-            # Incomplete / ExitSet from inplace: surface them (authorized faces).
-            from sugar_lift_py_tests.outcome import Incomplete
-            from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-            if isinstance(projected, (Incomplete, ExitSet)):
-                return projected
-
-    binary = getattr(left, binary_name, None)
-    if not callable(binary):
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-        from sugar_lift_py_tests.gap.panic import construction_panic
-
-        construction_panic(
-            ConstructionGap(
-                owner="SubscriptAugAssignSugar._augmented_binary",
-                blame=str(site),
-                observed=f"{type(left).__name__} has no {binary_name} for AugAssign {op_kind}",
-                requested=(
-                    "Floor binary (or authorized i*) for augmented assignment"
-                ),
-                fix=(
-                    f"implement Floor {inplace_name or binary_name}/{binary_name} "
-                    "for this value species"
-                ),
-                gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,
-            )
-        )
-    return binary(right, site)
+    return operation(left, right, site)
 
 
 @dataclass(frozen=True)
@@ -197,19 +100,21 @@ class SubscriptAugAssignSugar(Sugar):
       2. Evaluate ``index`` once
       3. ``current = receiver.subscript(index)``  (getitem) — **before** RHS
       4. Evaluate ``rhs``
-      5. ``result = current OP rhs`` (inplace when Floor authorizes, else binary)
+      5. ``result = current OP rhs`` via explicit ``InplaceThenBinaryProjector``
       6. ``receiver.setitem(index, result)`` last
 
-    Get halt blocks RHS / arithmetic / store.  RHS or arithmetic halt blocks
-    the store.  Store halt preserves prior get/arithmetic testimony (no
-    fabricated completion).  Read, arithmetic, and write use **distinct**
-    occurrence sites (``get_site``, ``op_site``, ``set_site``).
+    Composition uses the outcome/carrier ``and_then`` law directly
+    (``Complete`` short-circuits RaiseValue; ``Incomplete``/carriers/ExitSet
+    compose themselves).  No bespoke control-kind ladder.
+
+    Read, arithmetic, and write use **distinct** occurrence sites
+    (``get_site``, ``op_site`` = operator-token interval, ``set_site``).
     """
 
     receiver: Sugar
     index: Sugar
     rhs: Sugar
-    op_kind: str
+    operation: InplaceThenBinaryProjector
     get_site: object = dataclass_field(compare=False)
     op_site: object = dataclass_field(compare=False)
     set_site: object = dataclass_field(compare=False)
@@ -221,29 +126,20 @@ class SubscriptAugAssignSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Receiver and index once each — closed over for get and setitem.
+        # Outcome composition law owns control: no isinstance ladder on faces.
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: self._after_receiver_index(receiver, index, ctx)
+                lambda index: receiver.subscript(index, self.get_site).and_then(
+                    lambda current: self.rhs.desugar(ctx).and_then(
+                        lambda right: project_augmented(
+                            current, right, self.operation, self.op_site
+                        ).and_then(
+                            lambda result: self._store(receiver, index, result)
+                        )
+                    )
+                )
             )
         )
-
-    def _after_receiver_index(self, receiver, index, ctx) -> Outcome:
-        get_outcome = receiver.subscript(index, self.get_site)
-
-        def after_get(current):
-            return self.rhs.desugar(ctx).and_then(
-                lambda right: self._after_rhs(receiver, index, current, right)
-            )
-
-        return _chain(get_outcome, after_get)
-
-    def _after_rhs(self, receiver, index, current, right) -> Outcome:
-        op_outcome = _augmented_binary(current, right, self.op_kind, self.op_site)
-
-        def after_op(result):
-            return self._store(receiver, index, result)
-
-        return _chain(op_outcome, after_op)
 
     def _store(self, receiver, index, result) -> Outcome:
         """setitem last — formal operands stay undischarged carriers.

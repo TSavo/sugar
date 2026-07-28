@@ -423,55 +423,60 @@ def _project_delattr_named(receiver, name, site):
     return receiver.delattr(name.value, site)
 
 
-def _project_inplace_then_binary(inplace_name: str, binary_name: str):
-    """Authenticated in-place projection with Floor-authorized binary fallback.
+@dataclass(frozen=True)
+class InplaceThenBinaryProjector:
+    """Explicit authenticated inplace projector (one type per AugAssign op).
 
-    This is the discharge body for AugAssign formal demands (``iadd``, …).
-    Projector *absence* must never be patched by minting ordinary ``add`` —
-    that is a false green about in-place semantics.  Binary fallback lives
-    **inside** the enrolled i* projector, only after Floor declines i*
-    (no method / non-authorizing face), matching Python's ``__iadd__`` then
-    ``__add__`` law.
+    Discharge signature ``(left, right, site)``.  Binary fallback is authorized
+    only when:
+
+    * the inplace Floor method is **absent**, or
+    * inplace returns bare ``NotImplemented`` / ``Complete(NotImplemented)``.
+
+    Incomplete, ExitSet, RaiseValue, carriers, and other unresolved or
+    exceptional faces surface as themselves — they never authorize add.
     """
 
-    def project(left, right, site):
-        from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    operator: str
+    inplace_method: str
+    binary_method: str
 
-        inplace = getattr(left, inplace_name, None)
-        if callable(inplace):
-            projected = inplace(right, site)
-            if isinstance(projected, Complete) and isinstance(
-                projected.value, RaiseValue
-            ):
-                return projected
-            if isinstance(projected, Complete):
-                return projected
-            if isinstance(projected, (Incomplete, ExitSet)):
-                return projected
-            # Unknown Outcome / nested carrier face: surface rather than invent add.
-            return projected
-        binary = getattr(left, binary_name, None)
+    def __call__(self, left, right, site):
+        from sugar_lift_py_tests.outcome import Complete
+
+        inplace = getattr(left, self.inplace_method, None)
+        if not callable(inplace):
+            return self._binary(left, right, site)
+        projected = inplace(right, site)
+        if projected is NotImplemented:
+            return self._binary(left, right, site)
+        if isinstance(projected, Complete) and projected.value is NotImplemented:
+            return self._binary(left, right, site)
+        # Success, RaiseValue-in-Complete, Incomplete, ExitSet, carrier, …:
+        # surface.  Unresolved/exceptional faces do not authorize binary.
+        return projected
+
+    def _binary(self, left, right, site):
+        binary = getattr(left, self.binary_method, None)
         if not callable(binary):
             from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
             from sugar_lift_py_tests.gap.panic import construction_panic
 
             construction_panic(
                 ConstructionGap(
-                    owner=f"_project_{inplace_name}",
+                    owner=f"InplaceThenBinaryProjector[{self.operator}]",
                     blame=str(site),
                     observed=(
-                        f"{type(left).__name__} has neither {inplace_name} nor "
-                        f"{binary_name} for authenticated augmented assignment"
+                        f"{type(left).__name__} has neither {self.inplace_method} "
+                        f"nor {self.binary_method} for authenticated AugAssign"
                     ),
                     requested=(
-                        f"Floor {inplace_name} and/or {binary_name} on this value "
-                        "species"
+                        f"Floor {self.inplace_method} and/or {self.binary_method} "
+                        "on this value species"
                     ),
                     fix=(
-                        f"implement Floor {inplace_name} (preferred) or "
-                        f"{binary_name} for this species"
+                        f"implement Floor {self.inplace_method} (preferred) or "
+                        f"{self.binary_method} for this species"
                     ),
                     gap_kind=GapKind.FLOOR,
                     gap_locus=GapLocus.CONSTRUCTION,
@@ -479,31 +484,109 @@ def _project_inplace_then_binary(inplace_name: str, binary_name: str):
             )
         return binary(right, site)
 
-    project.__name__ = f"_project_{inplace_name}"
-    project.__qualname__ = f"_project_{inplace_name}"
-    project.__doc__ = (
-        f"Authenticated ``{inplace_name}`` then Floor-authorized ``{binary_name}``."
-    )
-    return project
 
+# Explicit projector instances — one type identity per inplace operator.
+# Not a string dispatch table: production resolves via isinstance on source
+# BinaryOperator classes → these values (see inplace_projector_for).
+IADD = InplaceThenBinaryProjector("iadd", "iadd", "add")
+ISUB = InplaceThenBinaryProjector("isub", "isub", "subtract")
+IMUL = InplaceThenBinaryProjector("imul", "imul", "multiply")
+ITRUEDIV = InplaceThenBinaryProjector("itruediv", "itruediv", "divide")
+IFLOORDIV = InplaceThenBinaryProjector("ifloordiv", "ifloordiv", "floor_divide")
+IMOD = InplaceThenBinaryProjector("imod", "imod", "modulo")
+IPOW = InplaceThenBinaryProjector("ipow", "ipow", "power")
+IAND = InplaceThenBinaryProjector("iand", "iand", "bitwise_and")
+IOR = InplaceThenBinaryProjector("ior", "ior", "bitwise_or")
+IXOR = InplaceThenBinaryProjector("ixor", "ixor", "bitwise_xor")
+ILSHIFT = InplaceThenBinaryProjector("ilshift", "ilshift", "left_shift")
+IRSHIFT = InplaceThenBinaryProjector("irshift", "irshift", "right_shift")
+IMATMUL = InplaceThenBinaryProjector("imatmul", "imatmul", "matrix_multiply")
 
-# In-place operators minted by AugAssign formal path.  Production set and
-# projector keys must include every name so absence cannot merge green as add.
+_INPLACE_PROJECTOR_INSTANCES: tuple[InplaceThenBinaryProjector, ...] = (
+    IADD,
+    ISUB,
+    IMUL,
+    ITRUEDIV,
+    IFLOORDIV,
+    IMOD,
+    IPOW,
+    IAND,
+    IOR,
+    IXOR,
+    ILSHIFT,
+    IRSHIFT,
+    IMATMUL,
+)
+
+# Production set and projector keys: every enrolled inplace operator name.
 _INPLACE_NATIVE_OPERATION_PROJECTORS = {
-    "iadd": _project_inplace_then_binary("iadd", "add"),
-    "isub": _project_inplace_then_binary("isub", "subtract"),
-    "imul": _project_inplace_then_binary("imul", "multiply"),
-    "itruediv": _project_inplace_then_binary("itruediv", "divide"),
-    "ifloordiv": _project_inplace_then_binary("ifloordiv", "floor_divide"),
-    "imod": _project_inplace_then_binary("imod", "modulo"),
-    "ipow": _project_inplace_then_binary("ipow", "power"),
-    "iand": _project_inplace_then_binary("iand", "bitwise_and"),
-    "ior": _project_inplace_then_binary("ior", "bitwise_or"),
-    "ixor": _project_inplace_then_binary("ixor", "bitwise_xor"),
-    "ilshift": _project_inplace_then_binary("ilshift", "left_shift"),
-    "irshift": _project_inplace_then_binary("irshift", "right_shift"),
-    "imatmul": _project_inplace_then_binary("imatmul", "matrix_multiply"),
+    projector.operator: projector for projector in _INPLACE_PROJECTOR_INSTANCES
 }
+
+
+def inplace_projector_for(op) -> InplaceThenBinaryProjector:
+    """Resolve the authenticated inplace projector from a source BinaryOperator.
+
+    Uses isinstance on our operator classes — never a source-spelling string
+    table.  Unknown operators are construction gaps (honorable red).
+    """
+    from sugar_source_tree.operators import (
+        Add,
+        BitAnd,
+        BitOr,
+        BitXor,
+        Div,
+        FloorDiv,
+        LShift,
+        MatMult,
+        Mod,
+        Mult,
+        Pow,
+        RShift,
+        Sub,
+    )
+
+    if isinstance(op, Add):
+        return IADD
+    if isinstance(op, Sub):
+        return ISUB
+    if isinstance(op, Mult):
+        return IMUL
+    if isinstance(op, Div):
+        return ITRUEDIV
+    if isinstance(op, FloorDiv):
+        return IFLOORDIV
+    if isinstance(op, Mod):
+        return IMOD
+    if isinstance(op, Pow):
+        return IPOW
+    if isinstance(op, BitAnd):
+        return IAND
+    if isinstance(op, BitOr):
+        return IOR
+    if isinstance(op, BitXor):
+        return IXOR
+    if isinstance(op, LShift):
+        return ILSHIFT
+    if isinstance(op, RShift):
+        return IRSHIFT
+    if isinstance(op, MatMult):
+        return IMATMUL
+    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import construction_panic
+
+    construction_panic(
+        ConstructionGap(
+            owner="inplace_projector_for",
+            blame=str(op),
+            observed=f"no enrolled inplace projector for {type(op).__name__}",
+            requested="an InplaceThenBinaryProjector for this BinaryOperator class",
+            fix="enroll the operator as an explicit InplaceThenBinaryProjector instance",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    )
+    raise AssertionError("unreachable")
 
 
 # Explicit projectors for authenticated native operations.
