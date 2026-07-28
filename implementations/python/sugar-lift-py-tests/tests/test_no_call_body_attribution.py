@@ -110,10 +110,11 @@ def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
 
     row = report.by_family[ProducerFamily.SUBSCRIPT]
     assert row.authenticated_exceptional_exits == 0
-    assert row.named_refusals == 1
+    assert row.named_refusals == 0
+    assert row.undischarged == 1
     assert report.loud_failure_count == 0
     assert "authenticatedExceptionalExit body=" not in report.render()
-    assert "native-operation exception identity unproven" in report.render()
+    assert "undischarged body=pandas/example.py:1:Subscript" in report.render()
 
 
 def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
@@ -127,7 +128,8 @@ def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
     row = report.by_family[ProducerFamily.COMPARE]
     assert row.enrolled == 503
     assert row.authenticated_exceptional_exits == 0
-    assert row.named_refusals == 503
+    assert row.named_refusals == 0
+    assert row.undischarged == 503
     assert row.construction_panics == 0
     assert report.outcome_total == 503
     assert report.loud_failure_count == 0
@@ -227,10 +229,10 @@ def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
     )
     assert (
         "FAMILY OUTCOME DISCREPANCY family=BoolOp enrolled=1 "
-        "threeOutcomeTotal=0 unaccounted=1" in report.render()
+        "outcomeTotal=0 unaccounted=1" in report.render()
     )
     assert (
-        "OUTCOME TOTAL DISCREPANCY enrolled=1 threeOutcomeTotal=0 unaccounted=1"
+        "OUTCOME TOTAL DISCREPANCY enrolled=1 outcomeTotal=0 unaccounted=1"
         in report.render()
     )
 
@@ -265,7 +267,7 @@ def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing
     assert report.loud_failure_count == 2
     assert "constructionPanic body=pandas/example.py:1:Subscript" in report.render()
     assert (
-        "OUTCOME TOTAL DISCREPANCY enrolled=2 threeOutcomeTotal=1 unaccounted=1"
+            "OUTCOME TOTAL DISCREPANCY enrolled=2 outcomeTotal=1 unaccounted=1"
         in report.render()
     )
 
