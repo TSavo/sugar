@@ -1,6 +1,6 @@
 """Comprehensions are scoped folds and preserve temporal halts verbatim."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -140,16 +140,38 @@ def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
 
 
 def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
-    outcome = _source_outcome(
+    source = (
         "def helper(outer, items):\n"
         "    x = outer\n"
         "    result = [x for x in items]\n"
         "    return (x, result)\n"
     )
+    function = next(_source_file(source).functions()).sugar()
+    returned = function.statements[-1]
+    pair = returned.value
+    fold = pair.elements[1]
+    generator = fold.generators[0]
+
+    # LYING COORDINATE: deliberately collide the comprehension-local binder
+    # with the enclosing formal's spelling. Lexical lambda scope must contain
+    # that mutation; it may alter the fold binder but never the tuple's outer x.
+    liar = replace(
+        fold,
+        generators=(replace(generator, binding_coordinate_cid="outer"),),
+    )
+    mutated_return = replace(
+        returned,
+        value=replace(pair, elements=(pair.elements[0], liar)),
+    )
+    outcome = replace(
+        function,
+        statements=(*function.statements[:-1], mutated_return),
+    ).desugar()
 
     assert isinstance(outcome, Complete)
     post = outcome.value.post().args[1]
-    outer, fold = post.args
+    outer, mutated_fold = post.args
     assert outer == make_var("outer")
-    assert fold.args[1].body == make_var(fold.args[1].param_name)
-    assert outer != fold.args[1].body
+    assert mutated_fold.args[1].param_name == "outer"
+    assert mutated_fold.args[1].body == make_var("outer")
+    assert post.args[0] == outer

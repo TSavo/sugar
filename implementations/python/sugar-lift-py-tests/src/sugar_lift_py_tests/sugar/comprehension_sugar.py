@@ -208,9 +208,38 @@ class ComprehensionSugar(ConstructedTermSugar):
             return None
         from dataclasses import replace
 
-        projected = []
         owner = str(self.site)
-        for member in members:
+
+        def project(index, projected):
+            if index == len(members):
+                if projected:
+                    element_term = projected[0].to_term(owner=owner)
+                else:
+                    element_term = ctor(
+                        "python:loop.latch", [], symbol_kind="coordinate"
+                    )
+                term = ctor(
+                    self.kind,
+                    [
+                        iterable.to_term(owner=owner),
+                        _intern_term(
+                            _Lambda(
+                                generator.binding_coordinate_cid,
+                                PrimitiveSort("Value"),
+                                element_term,
+                            )
+                        ),
+                        ctor(
+                            "python:loop.exhaustion", [], symbol_kind="coordinate"
+                        ),
+                    ],
+                    symbol_kind="coordinate",
+                )
+                return Complete(
+                    ComprehensionValue(term, finite_elements=tuple(projected))
+                )
+
+            member = members[index]
             temporal = ctx.temporal.bind_value(
                 generator.binding_coordinate_cid, member
             )
@@ -220,41 +249,14 @@ class ComprehensionSugar(ConstructedTermSugar):
                 inner_ctx = replace(ctx, temporal=temporal)
             except TypeError:
                 return None
-            try:
-                outcome = self.element.desugar(inner_ctx)
-            except Exception:
-                return None
-            if not isinstance(outcome, Complete):
-                return outcome
-            from sugar_lift_py_tests.floor import RaiseValue
+            return self.element.desugar(inner_ctx).and_then(
+                lambda value: project(index + 1, (*projected, value))
+            )
 
-            if isinstance(outcome.value, RaiseValue):
-                from sugar_lift_py_tests.outcome import Incomplete
-
-                return Incomplete(outcome.value.effect)
-            projected.append(outcome.value)
-        # Term carries iterable + projected-element coordinate; finite_elements
-        # is the exact member testimony consumers (tuple construct) demand.
-        if projected:
-            element_term = projected[0].to_term(owner=owner)
-        else:
-            element_term = ctor("python:loop.latch", [], symbol_kind="coordinate")
-        term = ctor(
-            self.kind,
-            [
-                iterable.to_term(owner=owner),
-                _intern_term(
-                    _Lambda(
-                        generator.binding_coordinate_cid,
-                        PrimitiveSort("Value"),
-                        element_term,
-                    )
-                ),
-                ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
-            ],
-            symbol_kind="coordinate",
-        )
-        return Complete(ComprehensionValue(term, finite_elements=tuple(projected)))
+        # Outcome.and_then owns terminal/guarded propagation. ``None`` is the
+        # sole finite-projection-unavailable result; every constructed outcome
+        # propagates unchanged through its own continuation law.
+        return project(0, ())
 
     def _desugar_filters(
         self, generator, filter_index, filters, iterable, index, resolved, ctx
