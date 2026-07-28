@@ -249,6 +249,150 @@ class NativeOperationDemandV1:
         )
 
 
+def _ast_minted_native_operator_constants() -> frozenset[str]:
+    """String ``operator=`` kwargs that feed native-operation carrier mints.
+
+    Discovers:
+
+    * ``NativeOperationExitCarrierV1.mint(operator="...")`` literals
+    * ``defer_formal_native_operation(..., operator="...")`` and other call
+      sites that pass a floor-method name through to ``mint``
+
+    Dynamic ``operator=owner`` / ``operator=method`` paths are not string
+    constants; :func:`production_native_operation_operators` unions the tables
+    those paths draw from so the coverage tooth still closes both directions.
+
+    Single-character / non-identifier strings (e.g. ``BinaryOperatorOperation``
+    term coordinates ``"+"``) are excluded — those are term spellings, not
+    carrier operator names.
+    """
+    import ast
+    from pathlib import Path
+
+    package_root = Path(__file__).resolve().parent
+    found: set[str] = set()
+    for path in package_root.rglob("*.py"):
+        if path.name == "caller_parameter_contract.py":
+            # This module defines projectors and mint plumbing, not producers.
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "operator":
+                    continue
+                value = keyword.value
+                if not (
+                    isinstance(value, ast.Constant) and isinstance(value.value, str)
+                ):
+                    continue
+                name = value.value
+                # Carrier operators are Floor method names (identifiers), never
+                # binary term spellings like "+" / "//".
+                if name.isidentifier():
+                    found.add(name)
+    return frozenset(found)
+
+
+def production_native_operation_operators() -> frozenset[str]:
+    """Every operator production code mints onto the native-operation carrier.
+
+    Sources (union — each is a real mint path, not a guess):
+
+    * AST string constants on ``NativeOperationExitCarrierV1.mint(operator=...)``
+    * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
+    * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
+    * contracted store operators whose producers pin the mint shape for this
+      table even when the live store path still carries dual-face Incomplete
+      instrumentation (``setitem`` window 10876, ``setattr_named`` window 17534)
+
+    The projector table's key set must equal this set exactly, both directions.
+    """
+    from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
+
+    # Store producers pin these operator strings for n-ary discharge.  Keep
+    # them in the production set so a missing projector cannot merge green.
+    contracted_store_operators = frozenset({"setitem", "setattr_named"})
+    return (
+        _ast_minted_native_operator_constants()
+        | frozenset(_BINARY_OPERATOR_COORDINATE)
+        | frozenset(COMPARE_METHODS.values())
+        | contracted_store_operators
+    )
+
+
+# Explicit projectors for authenticated native operations.
+#
+# Each entry names its own Floor signature.  A generic
+# ``operation(*operands, site)`` splat would conceal argument-order defects
+# (swapped index/value still calls cleanly and yields a plausible wrong
+# answer).  The table is the contract: producers mint operands in the
+# *discharge* order these parameters declare.
+#
+# Discharge order for stores is not source evaluation order.  Python evaluates
+# ``receiver[index] = value`` as RHS, then receiver, then index — but the
+# resolved operation is called as ``receiver.setitem(index, value)``.  Those
+# two orders are distinct; producers (windows 10876 / 17534) own the source
+# chain, and these projectors own the call signature.
+#
+# Key set must equal :func:`production_native_operation_operators` exactly.
+_NATIVE_OPERATION_PROJECTORS = {
+    # Unary / adapter Floor methods.
+    "truth": lambda value, site: value.truth(site),
+    "boolop_truth": lambda value, site: value.boolop_truth(site),
+    "unary_truth": lambda value, unit, site: value.unary_truth(unit, site),
+    "attribute_named": lambda receiver, name, site: receiver.attribute_named(
+        name, site
+    ),
+    # Formal subscript load (#6611): receiver[index] — binary, not the store.
+    "subscript": lambda receiver, index, site: receiver.subscript(index, site),
+    # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys).
+    "add": lambda left, right, site: left.add(right, site),
+    "subtract": lambda left, right, site: left.subtract(right, site),
+    "multiply": lambda left, right, site: left.multiply(right, site),
+    "divide": lambda left, right, site: left.divide(right, site),
+    "floor_divide": lambda left, right, site: left.floor_divide(right, site),
+    "modulo": lambda left, right, site: left.modulo(right, site),
+    "power": lambda left, right, site: left.power(right, site),
+    "matrix_multiply": lambda left, right, site: left.matrix_multiply(right, site),
+    "bitwise_and": lambda left, right, site: left.bitwise_and(right, site),
+    "bitwise_or": lambda left, right, site: left.bitwise_or(right, site),
+    "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
+    "left_shift": lambda left, right, site: left.left_shift(right, site),
+    "right_shift": lambda left, right, site: left.right_shift(right, site),
+    # Equality, ordering, membership (compare / equality sugars).
+    "equals": lambda left, right, site: left.equals(right, site),
+    "less_than": lambda left, right, site: left.less_than(right, site),
+    "less_equal": lambda left, right, site: left.less_equal(right, site),
+    "greater_than": lambda left, right, site: left.greater_than(right, site),
+    "greater_equal": lambda left, right, site: left.greater_equal(right, site),
+    "contains": lambda container, item, site: container.contains(item, site),
+    # Ternary store protocol (receiver, index|name, value + site).
+    # Discharge order: receiver, index, value — never RHS-first.
+    "setitem": lambda receiver, index, value, site: receiver.setitem(
+        index, value, site
+    ),
+    # Attribute store: name arrives as StringValue; unwrap with .value.
+    # Window 17534 mints operator="setattr_named" with operands
+    # (receiver, StringValue(name), value).
+    "setattr_named": lambda receiver, name, value, site: receiver.setattr(
+        name.value, value, site
+    ),
+}
+
+
+def _native_operation_projector_arity(projector) -> int:
+    """Operand count named by an explicit projector (site is always last)."""
+    import inspect
+
+    return len(inspect.signature(projector).parameters) - 1
+
+
 @dataclass(frozen=True)
 class NativeOperationExitCarrierV1:
     """Deferred native operation whose discharge codomain is an ``ExitSet``.
@@ -257,6 +401,11 @@ class NativeOperationExitCarrierV1:
     are replaced by authenticated caller actuals.  Keeping that codomain here,
     rather than retaining a ``FloorValue``, is what preserves the exceptional
     arm until an enclosing effect boundary consumes it.
+
+    Discharge routes through :data:`_NATIVE_OPERATION_PROJECTORS`: each operator
+    names its Floor signature explicitly so n-ary stores (``setitem``,
+    ``setattr_named``) are first-class, and a missing projector stays
+    undischarged rather than panicking.
     """
 
     demand: NativeOperationDemandV1
@@ -319,7 +468,13 @@ class NativeOperationExitCarrierV1:
         return replace(self, continuations=(*self.continuations, step))
 
     def discharge(self, actuals_by_formal_coordinate):
-        """Evaluate against authenticated actual operands and project exits."""
+        """Evaluate against authenticated actual operands and project exits.
+
+        Coordinate-length and coordinate-identity invariants are owned by
+        :meth:`__post_init__` (#6613).  Missing authenticated evidence, an
+        operator absent from the projector table, and projector arity mismatch
+        remain undischarged — never a construction panic.
+        """
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
@@ -343,25 +498,24 @@ class NativeOperationExitCarrierV1:
                 )
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
 
-        if len(actual_operands) not in {1, 2}:
+        projector = _NATIVE_OPERATION_PROJECTORS.get(self.demand.operator)
+        if projector is None:
             return undischarged(
-                "native operation arity is unavailable until a unary or binary "
-                f"producer is authenticated (arity={len(actual_operands)})"
-            )
-        left = actual_operands[0]
-        operation = getattr(left, self.demand.operator, None)
-        if not callable(operation):
-            return undischarged(
-                "native producer operation unavailable on authenticated actual: "
-                f"{self.demand.operator}"
+                "native operation projector unavailable for operator "
+                f"{self.demand.operator!r}"
             )
 
-        if len(actual_operands) == 1:
-            projected = operation(self.site)
-        elif len(actual_operands) == 2:
-            projected = operation(actual_operands[1], self.site)
-        else:
-            return undischarged("native operation arity is unavailable")
+        expected_arity = _native_operation_projector_arity(projector)
+        if len(actual_operands) != expected_arity:
+            return undischarged(
+                "native operation arity is unavailable for projector "
+                f"{self.demand.operator!r} "
+                f"(arity={len(actual_operands)}, expected={expected_arity})"
+            )
+
+        # Bind by the projector's declared parameter order.  Each lambda names
+        # its Floor signature; this is not a generic method splat.
+        projected = projector(*actual_operands, self.site)
         if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
             effect = projected.value.effect
             if effect.exception_type_coordinate is None or effect.occurrence_id is None:
