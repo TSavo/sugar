@@ -795,6 +795,23 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.gap.panic import construction_panic
+        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+
+        observed = type(self).__name__
+        info = ConstructionGap(
+            owner="delattr",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the attribute-delete floor",
+            fix=f"write more Floor: implement {observed}.delattr",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        construction_panic(info)
+
     def absolute(self, site):
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus

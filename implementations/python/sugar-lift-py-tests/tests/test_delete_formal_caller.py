@@ -479,7 +479,14 @@ def test_deletion_does_not_roll_back_earlier_bindings_on_keyerror() -> None:
 
 
 def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -> None:
-    """Lying mint (receiver/index swapped) must not equal truthful post-state."""
+    """Lying mint (receiver/index swapped) must not equal truthful post-state.
+
+    Swapped discharge puts the index formal in the receiver slot; Floor
+    ``TermValue.delitem`` refuses loudly (ConstructionPanic).  That is a valid
+    discrimination face — the lying mint must not complete the truthful list.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     function, truthful = _delitem_helper()
     truthful = _require_delitem_carrier(truthful)
     site = function.body[0].fragment
@@ -496,10 +503,14 @@ def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -
         key_c.coordinate_cid: TermValue(0),
     }
     truthful_exits = truthful.discharge(actuals)
-    lying_exits = lying.discharge(actuals)
     assert isinstance(truthful_exits.exits[0], Completed)
     truthful_list = _deleted_list(truthful_exits.exits[0])
     assert truthful_list == ListValue((TermValue(1),))
+    try:
+        lying_exits = lying.discharge(actuals)
+    except ConstructionPanic:
+        # Receiver slot received TermValue — Floor refuses delitem. Discrimination holds.
+        return
     lying_face = lying_exits.exits[0]
     if isinstance(lying_face, Completed):
         lying_value = lying_face.value

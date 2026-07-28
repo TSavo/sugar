@@ -385,9 +385,11 @@ def production_native_operation_operators() -> frozenset[str]:
     from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
     from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
 
-    # Store producers pin these operator strings for n-ary discharge.  Keep
-    # them in the production set so a missing projector cannot merge green.
-    contracted_store_operators = frozenset({"setitem", "setattr_named"})
+    # Store/delete producers pin these operator strings for n-ary discharge.
+    # Keep them in the production set so a missing projector cannot merge green.
+    contracted_store_operators = frozenset(
+        {"setitem", "setattr_named", "delitem", "delattr_named"}
+    )
     return (
         _ast_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
@@ -453,6 +455,11 @@ _NATIVE_OPERATION_PROJECTORS = {
     "setattr_named": lambda receiver, name, value, site: receiver.setattr(
         name.value, value, site
     ),
+    # Binary delete protocol (receiver, index|name + site) — store-family twin.
+    # Discharge order: receiver, index — never source-eval order confusion.
+    "delitem": lambda receiver, index, site: receiver.delitem(index, site),
+    # Attribute delete: name arrives as StringValue; unwrap with .value.
+    "delattr_named": lambda receiver, name, site: receiver.delattr(name.value, site),
 }
 
 
