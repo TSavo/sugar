@@ -206,6 +206,55 @@ def test_guard_preserves_carrier_demand_until_authenticated_discharge():
     assert exits.exits[0].guard is not None
 
 
+def test_guarded_exceptional_face_retains_guard():
+    carrier, left, right = _carrier()
+    guarded = carrier.guarded(atomic("test.guard", []))
+    exits = guarded.discharge(
+        {left.coordinate_cid: NoneValue(), right.coordinate_cid: TermValue(2)}
+    )
+    assert isinstance(exits.exits[0], Halted)
+    assert exits.exits[0].guard is not None
+
+
+def test_same_demand_under_complementary_guards_keeps_distinct_carriers():
+    carrier, left, right = _carrier()
+    positive = atomic("test.guard", [])
+    negative = atomic("test.not_guard", [])
+    left_carrier = carrier.guarded(positive)
+    right_carrier = carrier.guarded(negative)
+    assert left_carrier.demand.demand_cid == right_carrier.demand.demand_cid
+    assert left_carrier != right_carrier
+    actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    discharged_left = left_carrier.discharge(actuals)
+    discharged_right = right_carrier.discharge(actuals)
+    assert discharged_left.exits[0].guard == positive
+    assert discharged_right.exits[0].guard == negative
+    assert actuals == {
+        left.coordinate_cid: TermValue(1),
+        right.coordinate_cid: TermValue(2),
+    }
+
+
+def test_complementary_guard_tooth_rejects_same_guard_mutation():
+    carrier, left, right = _carrier()
+    positive = atomic("test.guard", [])
+    negative = atomic("test.not_guard", [])
+    lying = carrier.guarded(positive)
+    actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    assert lying.discharge(actuals).exits[0].guard != negative
+
+
+def test_multiple_guards_are_explicitly_conjoined():
+    carrier, left, right = _carrier()
+    exits = carrier.guarded(atomic("outer", [])).guarded(
+        atomic("inner", [])
+    ).discharge(
+        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    )
+    assert exits.exits[0].guard.kind == "and"
+    assert len(exits.exits[0].guard.operands) == 2
+
+
 def test_nested_carrier_continuation_reuses_original_actual_map():
     outer, left, right = _carrier()
     inner, inner_left, inner_right = _carrier()
