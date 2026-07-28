@@ -507,10 +507,10 @@ class GeneratorConstructionV1:
         truth = getattr(value, "truth", None)
         if truth is None:
             return None
-        try:
-            outcome = truth(self.instance_coordinate)
-        except BaseException:
-            return None
+        # ConstructionPanic is BaseException by design so ordinary Exception
+        # handlers cannot silence it. Do not catch BaseException here — that
+        # would reclassify incomplete floors as undecided suspension gaps.
+        outcome = truth(self.instance_coordinate)
         if not isinstance(outcome, Complete):
             return None
         return outcome.value
@@ -540,10 +540,8 @@ class GeneratorConstructionV1:
             return truth.formula
         to_formula = getattr(truth, "to_formula", None)
         if to_formula is not None:
-            try:
-                return to_formula()
-            except BaseException:
-                return None
+            # Same law as _guard_truth: never catch BaseException / ConstructionPanic.
+            return to_formula()
         return None
 
     def _reduce_value(self, value: object, requested: str):
