@@ -38,6 +38,7 @@ class IfExpSugar(ConstructedTermSugar):
     body: ConstructedTermSugar  # the then-value
     orelse: ConstructedTermSugar  # the else-value
     site: object = dataclass_field(compare=False, default=None)
+    branch_slot: object = None
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.test, owner="IfExpSugar.test")
@@ -86,7 +87,15 @@ class IfExpSugar(ConstructedTermSugar):
         # `.truth`: a predicate test (`5 if a == b else 6`) stands as its formula,
         # a bare value (`5 if c else 6`) emits `py.truthy(c)`. A ground-bool test
         # folds to a literal with no formula and is not lifted yet -- LOUD.
-        formula = predicate_formula(cond_value, self.site)
+        observed_formula = predicate_formula(cond_value, self.site)
+        formula = observed_formula
+        if self.branch_slot is not None:
+            from sugar_lift_py_tests.floor.branch_result_coordinate import (
+                branch_result_guard,
+            )
+
+            if observed_formula not in (false_guard(), true_guard()):
+                formula = branch_result_guard(self.branch_slot, self.site)
         # Ground conditions select one arm before the peer reduces — same law
         # IfSugar owns for statement form. Dual-mode RaisesExc phis
         # (`(T,) if not isinstance(x, tuple) else x`) must collapse to the live
