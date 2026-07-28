@@ -133,7 +133,7 @@ def _distribution(root: Path, source: str, *, exported: str = "make_guard"):
     return importlib.metadata.Distribution.at(metadata)
 
 
-def _tree(root: Path, consumer: str, *, dist):
+def _tree(root: Path, consumer: str, *, dist, artifact_graph_cache=None):
     path = root / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
@@ -146,8 +146,18 @@ def _tree(root: Path, consumer: str, *, dist):
         root=root,
         path=path,
         distribution_index={"arbitrary": dist},
+        artifact_graph_cache=artifact_graph_cache,
     )
     return tree, context, path
+
+
+def _contextmanager_dependency_graphs():
+    """Authenticated stdlib roster consumed by the decorator frame projection."""
+    from sugar_lift_python_source.dependency_artifact import (
+        authenticate_dependency_top_level,
+    )
+
+    return {"contextlib": authenticate_dependency_top_level("contextlib")}
 
 
 def _with_chain(sugar):
@@ -324,6 +334,9 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     assert sys.executable == "/usr/local/bin/python"
     assert platform.python_version() == "3.12.13"
     assert pandas.__file__ == "/usr/local/lib/python3.12/site-packages/pandas/__init__.py"
+    print(f"sys.executable={sys.executable}")
+    print(f"sys.version={sys.version}")
+    print(f"pandas.__file__={pandas.__file__}")
 
     corpus = authenticated_pandas_corpus()
     root = corpus.root.parent
@@ -346,6 +359,9 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     assert len(receivers) == 1, (
         "authenticated pandas option_context use at line 25 must publish exactly "
         "one provider receiver before With construction; publication stopped "
+        "at the current producer contract: pandas/_config/config.py:66:0 "
+        "If._construct_sugar must consume the branch-result slot minted once by "
+        "If.substitute; "
         "upstream, derived refs="
         f"{tuple(type(ref).__name__ for ref in context.source_derived_contract_refs.values())}"
     )
@@ -501,6 +517,7 @@ def test_renamed_source_generator_resources_use_the_same_closed_factory_arm(
         f"with {manager_name}(7) as entered:\n"
         "    observed = entered\n",
         dist=dist,
+        artifact_graph_cache=_contextmanager_dependency_graphs(),
     )
     with_node = next(node for node in tree.nodes() if node.kind == "With")
     receiver = next(iter(context.source_manager_provider_calls))
@@ -565,6 +582,7 @@ def test_renamed_pre_yield_branch_and_cleanup_spellings_share_one_resource_path(
         f"with {manager_name}(7) as entered:\n"
         "    observed = entered\n",
         dist=dist,
+        artifact_graph_cache=_contextmanager_dependency_graphs(),
     )
     with_node = next(node for node in tree.nodes() if node.kind == "With")
     receiver = next(iter(context.source_manager_provider_calls))
@@ -592,6 +610,61 @@ def test_renamed_pre_yield_branch_and_cleanup_spellings_share_one_resource_path(
     ]
     assert resource.enter.native_definition_coordinate == resource.enter_definition
     assert resource.exit.native_definition_coordinate == resource.exit_definition
+
+
+@pytest.mark.parametrize("graph_kind", ("missing", "foreign"))
+def test_renamed_generator_requires_its_authenticated_decorator_graph(
+    tmp_path: Path, graph_kind: str
+):
+    """Missing or cross-wired graph testimony never publishes a resource ref."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ContextManagerResolutionGapV1,
+    )
+    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
+    from sugar_lift_python_source.manager_construction import (
+        ImportValueUseSeatingGap,
+    )
+
+    manager_name = "structural_scope"
+    implementation = (
+        "from contextlib import contextmanager\n\n"
+        "@contextmanager\n"
+        f"def {manager_name}(value):\n"
+        "    yield value\n"
+    )
+    dist = _distribution(tmp_path, implementation, exported=manager_name)
+    graphs = {}
+    if graph_kind == "foreign":
+        graphs["contextlib"] = DependencyArtifactGraph.authenticate(dist)
+        with pytest.raises(
+            ImportValueUseSeatingGap, match="resolution-artifact-module-absent"
+        ):
+            _tree(
+                tmp_path,
+                f"from arbitrary import {manager_name}\n"
+                f"with {manager_name}(7) as entered:\n"
+                "    observed = entered\n",
+                dist=dist,
+                artifact_graph_cache=graphs,
+            )
+        return
+    tree, context, _ = _tree(
+        tmp_path,
+        f"from arbitrary import {manager_name}\n"
+        f"with {manager_name}(7) as entered:\n"
+        "    observed = entered\n",
+        dist=dist,
+        artifact_graph_cache=graphs,
+    )
+
+    assert len(context.source_derived_contract_refs) == 1
+    assert all(
+        isinstance(reference, ContextManagerResolutionGapV1)
+        for reference in context.source_derived_contract_refs.values()
+    )
+    resource = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(resource, GeneratorWithSugar)
 
 
 def test_unauthenticated_generator_manager_stays_on_generator_path(tmp_path: Path):

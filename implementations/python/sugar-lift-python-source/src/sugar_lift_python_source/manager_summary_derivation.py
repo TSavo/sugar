@@ -1291,7 +1291,10 @@ def populate_source_derived_resource_refs(
         )
 
         frame_result = resolve_source_visible_frame(
-            resolved, graph=graph, session=session
+            resolved,
+            graph=graph,
+            dependency_graphs=graphs,
+            session=session,
         )
         if not isinstance(frame_result, ManagerConstructionGapV1):
             frame, generator_target = frame_result
@@ -1316,6 +1319,7 @@ def populate_source_derived_resource_refs(
                     receipt=receipt,
                     session=session,
                     graph=graph,
+                    dependency_graphs=graphs,
                     distribution_index=distribution_index,
                     resolved_cid=resolved.cid,
                 )
@@ -1642,6 +1646,7 @@ def _publish_generator_backed_resource_contract(
     receipt,
     session,
     graph=None,
+    dependency_graphs=None,
     distribution_index=None,
     resolved_cid: str,
 ) -> None:
@@ -1674,6 +1679,7 @@ def _publish_generator_backed_resource_contract(
         generator_target,
         session=session,
         graph=graph,
+        dependency_graphs=dependency_graphs,
         distribution_index=distribution_index,
     )
     if coords is None:
@@ -2300,7 +2306,12 @@ def _mint_yield_face(statement) -> GeneratorYieldFaceV1:
 
 
 def _protocol_coords_from_generator_decorators(
-    generator_target, *, session, graph=None, distribution_index=None
+    generator_target,
+    *,
+    session,
+    graph=None,
+    dependency_graphs=None,
+    distribution_index=None,
 ):
     """Construct enter/exit definition sites from generator decorator testimony."""
     from sugar_source_tree.nodes import FunctionDef
@@ -2316,6 +2327,7 @@ def _protocol_coords_from_generator_decorators(
             decorator,
             session=session,
             graph=graph,
+            dependency_graphs=dependency_graphs,
             distribution_index=distribution_index,
         )
         if decorator_fn is None:
@@ -2335,15 +2347,18 @@ def _protocol_coords_from_generator_decorators(
 
 
 def _construct_decorator_function(
-    decorator, *, session, graph=None, distribution_index=None
+    decorator,
+    *,
+    session,
+    graph=None,
+    dependency_graphs=None,
+    distribution_index=None,
 ):
     """Resolve and construct the decorator callable from typed import testimony."""
     from sugar_source_tree.nodes import FunctionDef, Name
 
     from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
         ResolvedPythonObjectV1,
-        authenticate_dependency_top_level,
         resolve_authenticated_module_export,
     )
     from .manager_construction import (
@@ -2364,14 +2379,9 @@ def _construct_decorator_function(
     if graph is not None:
         graphs.append(graph)
     top_level = module_name.split(".", 1)[0]
-    try:
-        graphs.append(
-            authenticate_dependency_top_level(
-                top_level, distribution_index=distribution_index
-            )
-        )
-    except DependencyArtifactAuthenticationError:
-        pass
+    authenticated_dependency = (dependency_graphs or {}).get(top_level)
+    if authenticated_dependency is not None and authenticated_dependency not in graphs:
+        graphs.append(authenticated_dependency)
     resolved = None
     resolved_graph = None
     for candidate in graphs:
@@ -2391,7 +2401,10 @@ def _construct_decorator_function(
     if resolved is None or resolved_graph is None:
         return None
     frame_result = resolve_source_visible_frame(
-        resolved, graph=resolved_graph, session=session
+        resolved,
+        graph=resolved_graph,
+        dependency_graphs=dependency_graphs,
+        session=session,
     )
     if isinstance(frame_result, ManagerConstructionGapV1):
         return None
