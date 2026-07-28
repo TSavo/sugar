@@ -20,7 +20,7 @@ from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Compare
+from sugar_source_tree.nodes import Compare, Subscript
 from sugar_source_tree.tree import SourceFile
 
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
@@ -49,6 +49,7 @@ CATEGORICAL_EQ_SITE_SHA256 = (
 MULTI_EQ_SITE_SHA256 = (
     "45fafbc8cd4dcc9bfcabd8f807e44e15377d729cfd7cf517c2b7ff72560aa343"
 )
+GETITEM_SITE_SHA256 = "d2940a05aea5aa4c8aea3569fcef114c0564eba844a26a4982263ad3b6c53000"
 
 
 @dataclass(frozen=True)
@@ -340,10 +341,16 @@ def test_ground_decided_equality_still_completes() -> None:
     assert isinstance(outcome.value, FalseBoolLiteralSugar)
 
 
-def test_undecided_symbolic_membership_emits_completed_and_exceptional_edges() -> None:
-    node = _synthetic_compare("1 in container")
+@pytest.mark.parametrize(
+    ("op_kind", "expression"),
+    (("In", "1 in container"), ("NotIn", "1 not in container")),
+)
+def test_membership_law_routes_through_authenticated_contains(
+    op_kind: str, expression: str
+) -> None:
+    node = _synthetic_compare(expression)
     outcome = ComparisonOpSugar(
-        "In",
+        op_kind,
         _ValueSugar(TermValue(1)),
         _ValueSugar(SymbolicValue(make_var("container"))),
         node.fragment,
@@ -590,15 +597,18 @@ def test_undecided_dispatch_partition_keys_are_law_scoped(
     )
 
 
-def test_identity_comparison_never_publishes_a_raise_partition() -> None:
-    """Identity law is completion-only: ``is`` cannot invoke user code."""
+@pytest.mark.parametrize(("op_kind", "negated"), (("Is", False), ("IsNot", True)))
+def test_identity_law_never_publishes_a_raise_partition(
+    op_kind: str, negated: bool
+) -> None:
+    """Identity law is total for both ``is`` and ``is not``."""
     from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Complete, ExitSet
     from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 
     outcome = ComparisonOpSugar(
-        "Is",
+        op_kind,
         _ValueSugar(SymbolicValue(make_var("a"))),
         _ValueSugar(SymbolicValue(make_var("b"))),
         "identity-site",
@@ -606,6 +616,7 @@ def test_identity_comparison_never_publishes_a_raise_partition() -> None:
     assert isinstance(outcome, Complete)
     assert not isinstance(outcome, ExitSet)
     assert isinstance(outcome.value, PredicateValue)
+    assert ("not" in repr(outcome.value.formula)) is negated
 
 
 def test_chained_comparison_composes_pair_ordering_laws() -> None:
@@ -615,6 +626,7 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
     adjacent ComparisonOpSugar pairs). Residual faces are ordered dual-edge
     composition under short-circuit And — not a monomorphic chain panic.
     """
+    from sugar_lift_py_tests.ir import and_, atomic, make_var, not_, or_
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
@@ -625,5 +637,56 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
     assert len(sugar.values) == 2
     outcome = sugar.desugar(None)
     assert isinstance(outcome, ExitSet)
-    assert any(isinstance(face, Halted) for face in outcome.exits)
-    assert any(isinstance(face, Completed) for face in outcome.exits)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(halted) == 1  # normalization merges the same Compare effect
+
+    a, b, c = make_var("a"), make_var("b"), make_var("c")
+    first_raises = atomic("python.lt_dispatch_raises", [a, b])
+    first_true = atomic("py.lt", [a, b])
+    second_raises = atomic("python.lt_dispatch_raises", [b, c])
+    assert halted[0].guard == or_(
+        [
+            first_raises,
+            and_([not_(first_raises), and_([first_true, second_raises])]),
+        ]
+    )
+    assert any(
+        face.guard == and_([not_(first_raises), not_(first_true)])
+        for face in completed
+    )
+
+
+def test_subscript_root_preserves_nested_compare_owned_halt() -> None:
+    """The concrete 128th row keeps the Compare halt through Subscript."""
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    path = _corpus_root() / "tests/series/indexing/test_getitem.py"
+    source = path.read_text(encoding="utf-8")
+    assert hashlib.sha256(source.encode()).hexdigest() == GETITEM_SITE_SHA256
+    tree = SourceFile(
+        (source, str(path), blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    subscript = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Subscript) and node.line_col_span().start_line == 595
+    )
+    comparison = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Compare) and node.line_col_span().start_line == 595
+    )
+
+    outcome = subscript.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    compare_halt = next(
+        face
+        for face in outcome.exits
+        if isinstance(face, Halted)
+        and face.effect.producer_node_owner == "Compare"
+    )
+    assert compare_halt.effect.exception_name is None
+    assert compare_halt.effect.blame == str(comparison.fragment)
