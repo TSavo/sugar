@@ -4269,13 +4269,27 @@ class AugAssign(Statement):
     _child_fields = ("target", "value")
 
     def substitute(self, scope):
-        """`<target> OP= <value>` -- substitute the value; the target is both
-        read and written, but as a node it is a binding site, not substituted.
-        The rebind (target OP value) is threaded by substitution_binding."""
+        """`<target> OP= <value>` -- substitute the value and load-side targets.
+
+        A plain Name target is a binding site: the rebind (target OP value) is
+        threaded by ``substitution_binding`` / the ``operation`` slot. Attribute
+        and Subscript targets are runtime stores, not lexical rebinds — their
+        receivers (and subscript indices) are ordinary load expressions and
+        must substitute so formals become ``FormalRefSugar`` and prior
+        constructions reach the store, matching Assign's store-target law.
+        """
         from .shadow import rewrite
 
-        new_value, d = self._substitute_field(self.value, scope)
-        rewritten = self if not d else rewrite(self, value=new_value)
+        new_value, value_changed = self._substitute_field(self.value, scope)
+        changes = {"value": new_value} if value_changed else {}
+        if isinstance(self.target, (Attribute, Subscript)):
+            new_target = _substituted_store_target(self, self.target, scope)
+            if new_target is not None:
+                changes["target"] = new_target
+            if not changes:
+                return self
+            return rewrite(self, **changes)
+        rewritten = self if not changes else rewrite(self, **changes)
         if not isinstance(rewritten.target, Name):
             return rewritten
         name = rewritten.target.id
@@ -4347,12 +4361,20 @@ class AugAssign(Statement):
                 site=self.fragment,
             )
         if isinstance(self.target, Subscript):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                LegacyAugmentedSubscriptStoreEffectSugar,
+            from sugar_lift_py_tests.sugar.augassign_sugar import (
+                SubscriptAugAssignSugar,
             )
 
-            return LegacyAugmentedSubscriptStoreEffectSugar(
-                index_text=self.target.slice_.fragment.text,
+            # Distinct occurrence sites for get / arithmetic / store.
+            # Receiver+index evaluated once inside SubscriptAugAssignSugar.
+            return SubscriptAugAssignSugar(
+                receiver=self.target.value.sugar(),
+                index=self.target.slice_.sugar(),
+                rhs=self.value.sugar(),
+                op_kind=self.op.kind,
+                get_site=self.target.fragment,
+                op_site=self.value.fragment,
+                set_site=self.fragment,
                 site=self.fragment,
             )
         return super()._construct_sugar()
