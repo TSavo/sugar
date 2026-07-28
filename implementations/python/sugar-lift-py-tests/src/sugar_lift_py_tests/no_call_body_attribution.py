@@ -264,10 +264,12 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
 
 def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
 
     try:
         outcome = probe.evaluator()
+    except UnattributableRefusal:
+        raise
     except SugarNotWritten as refusal:
         return BodyAttribution(
             probe.body_id,
