@@ -4,6 +4,7 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import RaiseValue
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.no_call_body_attribution import (
     CANONICAL_CORPUS_MANIFEST_CID,
     FAMILY_DENOMINATORS,
@@ -33,13 +34,28 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
 
 
 def _raise_value():
-    return Complete(RaiseValue(RaiseEffect(exception_name="TypeError")))
+    return Complete(
+        RaiseValue(
+            RaiseEffect(
+                exception_type_coordinate=str_const("TypeError"),
+                occurrence="pandas/example.py:1:4",
+            )
+        )
+    )
+
+
+def _nameless_raise_value():
+    return Complete(RaiseValue(RaiseEffect()))
 
 
 def _call_owned_raise_value():
     return Complete(
         RaiseValue(
-            RaiseEffect(exception_name="TypeError", producer_node_owner="Call")
+            RaiseEffect(
+                exception_type_coordinate=str_const("TypeError"),
+                occurrence="pandas/example.py:1:4",
+                producer_node_owner="Call",
+            )
         )
     )
 
@@ -74,6 +90,36 @@ def test_truthful_authenticated_body_is_counted_as_an_exceptional_exit() -> None
     assert row.named_refusals == 0
     assert row.construction_panics == 0
     assert report.bodies[0].outcome is AttributionOutcome.AUTHENTICATED_EXIT
+
+
+def test_authenticated_exit_ledger_projects_both_source_coordinates() -> None:
+    report = attribute_body_probes((_probe(ProducerFamily.SUBSCRIPT, _raise_value),))
+
+    assert (
+        "authenticatedExceptionalExit body=pandas/example.py:1:Subscript "
+        f"exceptionTypeCoordinate={str_const('TypeError')!r} "
+        "raiseOccurrence=pandas/example.py:1:4"
+    ) in report.render()
+
+
+def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
+    """Lying twin: a Halted face cannot borrow authenticated identity."""
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.SUBSCRIPT, _nameless_raise_value),)
+    )
+
+    assert (
+        report.by_family[ProducerFamily.SUBSCRIPT].authenticated_exceptional_exits == 1
+    )
+    assert report.loud_failure_count == 1
+    assert (
+        "authenticatedExceptionalExit body=pandas/example.py:1:Subscript "
+        "exceptionTypeCoordinate=None raiseOccurrence=None"
+    ) in report.render()
+    assert (
+        "NAMELESS HALTED FACE body=pandas/example.py:1:Subscript "
+        "missing=exceptionTypeCoordinate,raiseOccurrence"
+    ) in report.render()
 
 
 def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
@@ -169,6 +215,10 @@ def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
         in report.render()
     )
     assert (
+        "FAMILY OUTCOME DISCREPANCY family=BoolOp enrolled=1 "
+        "threeOutcomeTotal=0 unaccounted=1" in report.render()
+    )
+    assert (
         "OUTCOME TOTAL DISCREPANCY enrolled=1 threeOutcomeTotal=0 unaccounted=1"
         in report.render()
     )
@@ -186,7 +236,9 @@ def test_construction_panics_are_rendered_with_site_and_failing_node_owner() -> 
     assert report.construction_panic_count == 1
 
 
-def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing() -> None:
+def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing() -> (
+    None
+):
     """#6540 + #6541: both loud axes survive one report transaction."""
     report = attribute_body_probes(
         (
