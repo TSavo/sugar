@@ -48,10 +48,14 @@ class PrivacyLeakEvidence:
     product_type: type
     relation_type: type
     member_type: type
+    leaf_assertion_type: type
     definitions: tuple[EvidenceSite, ...]
     constructions: tuple[EvidenceSite, ...]
     aliases: tuple[EvidenceSite, ...]
     reexports: tuple[EvidenceSite, ...]
+    wrappers: tuple[EvidenceSite, ...]
+    caches: tuple[EvidenceSite, ...]
+    second_product_doors: tuple[EvidenceSite, ...]
     public_constructors: tuple[EvidenceSite, ...]
     serialization_doors: tuple[EvidenceSite, ...]
     discovered_references: int
@@ -135,14 +139,33 @@ class LawOfOneEvidence:
         assert surfaces.work_entry == owner.owner
 
         privacy = self.privacy
-        assert len(privacy.definitions) == 3
-        assert len(privacy.constructions) == 3
+        assert len(privacy.definitions) == 4
+        assert len(privacy.constructions) == 4
         assert privacy.aliases == ()
         assert privacy.reexports == ()
+        assert privacy.wrappers == ()
+        assert privacy.caches == ()
+        assert privacy.second_product_doors == ()
         assert privacy.public_constructors == ()
         assert privacy.serialization_doors == ()
         assert privacy.discovered_references == privacy.audited_references > 0
-        assert len({privacy.product_type, privacy.relation_type, privacy.member_type}) == 3
+        assert len(
+            {
+                privacy.product_type,
+                privacy.relation_type,
+                privacy.member_type,
+                privacy.leaf_assertion_type,
+            }
+        ) == 4
+        assert privacy.leaf_assertion_type is type(
+            self.zero_work.constructed_product.leaf_assertion_rows[0]
+        )
+        leaf = self.zero_work.constructed_product.leaf_assertion_rows[0]
+        assert leaf.reporting_projection is self.zero_work.reporting_projection
+        assert leaf.construction_event_identity is (
+            self.zero_work.constructed_product.construction_event_receipt
+            .construction_event_identity
+        )
 
         projection = self.projection
         assert projection.callers

@@ -244,6 +244,12 @@ def audit_law_of_one(
         contract_reds.append(
             "R_missing_sourcefile_roll_call_entry=1: SourceFile.closed_roll_call"
         )
+    source_file_leaf_projection = int("leaf_assertion_rows" in SourceFile.__dict__)
+    if source_file_leaf_projection:
+        contract_reds.append(
+            "R_sourcefile_leaf_assertion_projection=1: downstream must consume "
+            "ConstructedModule.leaf_assertion_rows directly"
+        )
     if project_constructed_module is None:
         contract_reds.append(
             "R_missing_projection_definition=1: tree_enumerate.project_constructed_module"
@@ -297,6 +303,7 @@ def audit_law_of_one(
         f"{int(observed_work != Counter({'backend_root': 1, 'materialize': 1, 'seal': 1}))}",
         f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
         f"R_legacy_leaf_name_doors={len(legacy_paths)}",
+        f"R_sourcefile_leaf_assertion_projection={source_file_leaf_projection}",
     )
     if contract_reds:
         raise AssertionError(
@@ -453,17 +460,36 @@ def audit_law_of_one(
         return source_file_entry(path, backend_instance, reporter), reporter
 
     first, reporter = construct(
-        "VALUE = 1\ndef outer():\n    def child():\n        return VALUE\n    return child()\n",
+        "VALUE = 1\n"
+        "def outer():\n"
+        "    def child():\n"
+        "        return VALUE\n"
+        "    assert child() and external()\n",
         "first.py",
     )
+    assert work["constructor"] == 1
+    post_construction_work = work.copy()
     product = first.constructed_module
+    assert product.leaf_assertion_rows, (
+        "assertion-bearing source must testify an authentic leaf assertion "
+        "during the sole SourceFile construction event"
+    )
+    authentic_leaf_assertion = product.leaf_assertion_rows[0]
     receipt = product.construction_event_receipt
+    assert work == post_construction_work, (
+        "constructed product, authentic assertion rows, and receipt must be "
+        "stored projections of the sole SourceFile event"
+    )
     assert sum(value is receipt for _, value in reporter.events) == 1
     truthful_constructor_events = work["constructor"]
     truthful_protocol = tuple(sorted(work.items()))
     work.clear()
     foreign, _ = construct(
-        "VALUE = 2\ndef outer():\n    def child():\n        return VALUE\n    return child()\n",
+        "VALUE = 2\n"
+        "def outer():\n"
+        "    def child():\n"
+        "        return VALUE\n"
+        "    assert child() and foreign_external()\n",
         "foreign.py",
     )
     foreign_constructor_events = work["constructor"]
@@ -471,6 +497,7 @@ def audit_law_of_one(
     foreign_protocol = tuple(sorted(work.items()))
     relation_type = type(product.lexical_call_rows[0])
     member_type = type(product.provider_member_rows[0])
+    leaf_assertion_type = type(authentic_leaf_assertion)
     product_type = type(product)
     assert dict(truthful_protocol)["backend_root"] == 1
     assert dict(foreign_protocol)["backend_root"] == 1
@@ -481,7 +508,12 @@ def audit_law_of_one(
     assert dict(foreign_protocol)["seal"] > 0
 
     type_locations = {}
-    for runtime_type in (product_type, relation_type, member_type):
+    for runtime_type in (
+        product_type,
+        relation_type,
+        member_type,
+        leaf_assertion_type,
+    ):
         type_locations[runtime_type] = (
             Path(inspect.getsourcefile(runtime_type) or "").resolve(),
             inspect.getsourcelines(runtime_type)[1],
@@ -491,6 +523,9 @@ def audit_law_of_one(
     constructions = []
     aliases = []
     reexports = []
+    wrappers = []
+    caches = []
+    second_product_doors = []
     public = []
     serializers = []
     opaque_symbols = {
@@ -510,9 +545,28 @@ def audit_law_of_one(
             aliases.append(site)
         elif binding.kind == "reexport":
             reexports.append(site)
+        if "cache" in binding.name.lower():
+            caches.append(site)
     for symbol in opaque_symbols:
         if not symbol.name.startswith("_"):
             public.append(EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name))
+    product_symbols = {
+        symbol
+        for symbol in opaque_symbols
+        if symbol.path.resolve() == type_locations[product_type][0]
+        and symbol.line == type_locations[product_type][1]
+    }
+    product_edges = tuple(
+        edge for edge in graph.calls if set(edge.targets) & product_symbols
+    )
+    canonical_owner_symbols = set(init_symbols)
+    for edge in product_edges:
+        if edge.caller not in canonical_owner_symbols:
+            site = EvidenceSite(
+                edge.path, edge.line, edge.caller.lexical, edge.caller.name
+            )
+            second_product_doors.append(site)
+            wrappers.append(site)
     serializer_names = {
         "asdict", "dict", "json", "model_dump", "model_dump_json",
         "serialize", "to_dict", "to_json",
@@ -595,8 +649,10 @@ def audit_law_of_one(
             ),
         ),
         privacy=PrivacyLeakEvidence(
-            product_type, relation_type, member_type, tuple(definitions),
+            product_type, relation_type, member_type, leaf_assertion_type,
+            tuple(definitions),
             tuple(constructions), tuple(aliases), tuple(reexports),
+            tuple(wrappers), tuple(caches), tuple(second_product_doors),
             tuple(public), tuple(serializers),
             discovered_opaque_reference_count, audited_opaque_reference_count,
         ),
