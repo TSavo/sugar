@@ -222,28 +222,36 @@ def test_unavailable_native_operation_is_undischarged_not_a_construction_panic()
 
 
 def test_unsupported_native_arity_is_undischarged_not_a_construction_panic():
+    carrier, left, right = _carrier()
+    third = left
+    three = NativeOperationExitCarrierV1.mint(
+        site=_site(),
+        operator="add",
+        operands=carrier.operands + (carrier.operands[0],),
+        coordinates=(left, right, third),
+    )
+    with pytest.raises(SugarNotWritten, match="arity is unavailable"):
+        three.discharge({left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)})
+
+    # The construction invariant remains independently loud for mismatched rows.
+    from dataclasses import replace
+    demand = replace(
+        carrier.demand,
+        operand_coordinate_cids=carrier.demand.operand_coordinate_cids + (left.coordinate_cid,),
+    )
+    with pytest.raises(ConstructionPanic, match="one authenticated coordinate slot"):
+        replace(
+            carrier,
+            demand=demand,
+        )
+
+
+def test_same_length_swapped_coordinate_identities_panic_at_construction():
     from dataclasses import replace
 
     carrier, left, right = _carrier()
-    demand = replace(
-        carrier.demand,
-        operand_terms=carrier.demand.operand_terms + (carrier.demand.operand_terms[0],),
-        operand_coordinate_cids=carrier.demand.operand_coordinate_cids
-        + (left.coordinate_cid,),
-    )
-    malformed = replace(
-        carrier,
-        demand=demand,
-        operands=carrier.operands + (carrier.operands[0],),
-        coordinates=carrier.coordinates + (left,),
-    )
-    with pytest.raises(SugarNotWritten, match="arity is unavailable"):
-        malformed.discharge(
-            {
-                left.coordinate_cid: TermValue(1),
-                right.coordinate_cid: TermValue(2),
-            }
-        )
+    with pytest.raises(ConstructionPanic, match="ordered coordinate identity"):
+        replace(carrier, coordinates=(right, left))
 
 
 def test_swapped_operands_retain_distinct_demand_coordinates():
