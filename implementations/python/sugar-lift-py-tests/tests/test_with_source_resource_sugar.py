@@ -9,13 +9,27 @@ from sugar_lift_py_tests.context_manager_contract import (
     ReturnTruthinessDispositionV1,
     Suppresses,
 )
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
-from sugar_lift_py_tests.floor import BlockValue, ObjectValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    ObjectValue,
+    ReturnValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, not_
 from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+from sugar_lift_py_tests.sugar.resource_coord_sugar import (
+    ExitTracebackRefSugar,
+    ExitTypeRefSugar,
+    ExitValueRefSugar,
+    ManagerRefSugar,
+)
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
     WithSourceResourceSugar,
 )
@@ -53,6 +67,45 @@ class _CompletedProtocol:
         return Complete(self.exit_value)
 
 
+def _protocol_calls():
+    enter_definition = SourceFragmentCoordinateV1(
+        "blake3-512:" + "e" * 128, 1, 0, 1, 1
+    )
+    exit_definition = SourceFragmentCoordinateV1(
+        "blake3-512:" + "x" * 128, 2, 0, 2, 1
+    )
+    enter = MethodCallSugar(
+        receiver=ManagerRefSugar(slot_id="manager-slot", site=None),
+        name="__enter__",
+        args=(),
+        native_definition_coordinate=enter_definition,
+        site=None,
+    )
+    exit_ = MethodCallSugar(
+        receiver=ManagerRefSugar(slot_id="manager-slot", site=None),
+        name="__exit__",
+        args=(
+            ExitTypeRefSugar(face_id="exit-face", site=None),
+            ExitValueRefSugar(face_id="exit-face", site=None),
+            ExitTracebackRefSugar(face_id="exit-face", site=None),
+        ),
+        native_definition_coordinate=exit_definition,
+        site=None,
+    )
+    return enter, exit_, enter_definition, exit_definition
+
+
+def _source_resource(**kwargs):
+    enter, exit_, enter_definition, exit_definition = _protocol_calls()
+    return WithSourceResourceSugar(
+        enter=enter,
+        exit=exit_,
+        enter_definition=enter_definition,
+        exit_definition=exit_definition,
+        **kwargs,
+    )
+
+
 def _truthiness_resource(*, exit_value, body, enter_value=TermValue(2), slot=None):
     summary = SimpleNamespace(
         semantics=SimpleNamespace(
@@ -61,7 +114,7 @@ def _truthiness_resource(*, exit_value, body, enter_value=TermValue(2), slot=Non
     )
     protocol = _CompletedProtocol(enter_value=enter_value, exit_value=exit_value)
     return (
-        WithSourceResourceSugar(
+        _source_resource(
             manager=_FixedSugar(Complete(TermValue(1))),
             protocol=protocol,
             summary=summary,
@@ -81,7 +134,7 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
         semantics=SimpleNamespace(exit=SimpleNamespace(disposition=disposition))
     )
     protocol = _CompletedProtocol()
-    sugar = WithSourceResourceSugar(
+    sugar = _source_resource(
         manager=_FixedSugar(Complete(TermValue(1))),
         protocol=protocol,
         summary=summary,
@@ -170,6 +223,50 @@ def test_source_exit_runs_on_early_return_face():
 
     assert exits
     assert protocol.exit_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("body_outcome", "exit_truth", "surviving_face"),
+    [
+        (
+            Complete(BlockValue((), can_fall_through=True)),
+            TermValue(True),
+            Completed,
+        ),
+        (
+            Complete(
+                BlockValue(
+                    (ReturnValue(TermValue("early")),), can_fall_through=False
+                )
+            ),
+            TermValue(True),
+            Completed,
+        ),
+        (
+            Incomplete(
+                RaiseEffect(
+                    exception_name="ValueError", occurrence="resource.py:8:8"
+                )
+            ),
+            TermValue(False),
+            Halted,
+        ),
+    ],
+    ids=("completed", "returned", "halted"),
+)
+def test_source_exit_runs_over_completed_returned_and_halted_faces(
+    body_outcome, exit_truth, surviving_face
+):
+    """Exit truth is consulted for all faces but changes only an incoming raise."""
+    sugar, protocol = _truthiness_resource(
+        exit_value=exit_truth,
+        body=(_FixedSugar(body_outcome),),
+    )
+
+    exits = sugar.desugar().exits
+
+    assert protocol.exit_calls == 1
+    assert any(isinstance(face, surviving_face) for face in exits)
 
 
 @pytest.mark.parametrize("action", ["break", "continue"])

@@ -11,13 +11,31 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 @dataclass(frozen=True)
 class WithSourceResourceSugar(Sugar):
     manager: Sugar
+    enter: Sugar
+    exit: Sugar
     protocol: object
     summary: object
     body: tuple[Sugar, ...]
     manager_slot_id: str
     enter_slot_id: str | None
     exit_face_id: str
+    enter_definition: object
+    exit_definition: object
     site: object = field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        for call, definition, slot in (
+            (self.enter, self.enter_definition, "context-enter"),
+            (self.exit, self.exit_definition, "context-exit"),
+        ):
+            if not isinstance(call, MethodCallSugar):
+                raise TypeError(f"source resource {slot} must be a MethodCallSugar")
+            if call.native_definition_coordinate != definition:
+                raise ValueError(
+                    f"{slot} call is not authenticated by its definition coordinate"
+                )
 
     @classmethod
     def witnesses(cls):

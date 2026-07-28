@@ -28,7 +28,9 @@ from sugar_lift_py_tests.context_manager_contract import (
     ReturnTruthinessDispositionV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
+    NativeProtocolSlot,
     SourceDerivedContextManagerRefV1,
+    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -38,6 +40,13 @@ from sugar_lift_py_tests.fixture_resource_obligation import (
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+from sugar_lift_py_tests.sugar.resource_coord_sugar import (
+    ExitTracebackRefSugar,
+    ExitTypeRefSugar,
+    ExitValueRefSugar,
+    ManagerRefSugar,
+)
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
@@ -60,6 +69,40 @@ _GUARD_SOURCE = (
     "def make_guard(marker):\n"
     "    return Guard(marker)\n"
 )
+
+
+def _source_resource(**kwargs):
+    manager_slot = kwargs["manager_slot_id"]
+    face = kwargs["exit_face_id"]
+    enter_definition = SourceFragmentCoordinateV1(
+        "blake3-512:" + "e" * 128, 1, 0, 1, 1
+    )
+    exit_definition = SourceFragmentCoordinateV1(
+        "blake3-512:" + "x" * 128, 2, 0, 2, 1
+    )
+    return WithSourceResourceSugar(
+        enter=MethodCallSugar(
+            receiver=ManagerRefSugar(slot_id=manager_slot, site=None),
+            name="__enter__",
+            args=(),
+            native_definition_coordinate=enter_definition,
+            site=None,
+        ),
+        exit=MethodCallSugar(
+            receiver=ManagerRefSugar(slot_id=manager_slot, site=None),
+            name="__exit__",
+            args=(
+                ExitTypeRefSugar(face_id=face, site=None),
+                ExitValueRefSugar(face_id=face, site=None),
+                ExitTracebackRefSugar(face_id=face, site=None),
+            ),
+            native_definition_coordinate=exit_definition,
+            site=None,
+        ),
+        enter_definition=enter_definition,
+        exit_definition=exit_definition,
+        **kwargs,
+    )
 
 
 def _distribution(root: Path, source: str, *, exported: str = "make_guard"):
@@ -102,6 +145,19 @@ def _tree(root: Path, consumer: str, *, dist):
         path=path,
         distribution_index={"arbitrary": dist},
     )
+    # Inject task-2's publication boundary. These coordinates are deliberately
+    # fixture-owned; rebasing the real producer later swaps only this setup.
+    for receiver in context.source_derived_contract_refs:
+        context.contract_refs.native_definitions[
+            (receiver, NativeProtocolSlot.CONTEXT_ENTER)
+        ] = SourceFragmentCoordinateV1(
+            "blake3-512:" + "e" * 128, 1, 0, 1, 1
+        )
+        context.contract_refs.native_definitions[
+            (receiver, NativeProtocolSlot.CONTEXT_EXIT)
+        ] = SourceFragmentCoordinateV1(
+            "blake3-512:" + "x" * 128, 2, 0, 2, 1
+        )
     return tree, context, path
 
 
@@ -388,7 +444,7 @@ def test_failure_entering_inner_assigned_resource_still_exits_outer():
     """
     outer_exit, inner_exit = [], []
     halt = RaiseEffect(exception_name="OSError", occurrence="inner.py:1:0")
-    inner = WithSourceResourceSugar(
+    inner = _source_resource(
         manager=_FixedSugar(Complete(_FloorValue("inner-mgr"))),
         protocol=_ProbeProtocol(enter=Incomplete(halt), exit_probe=inner_exit),
         summary=_never_suppresses_summary(),
@@ -398,7 +454,7 @@ def test_failure_entering_inner_assigned_resource_still_exits_outer():
         exit_face_id="B#exit_face",
         site=None,
     )
-    outer = WithSourceResourceSugar(
+    outer = _source_resource(
         manager=_FixedSugar(Complete(_FloorValue("outer-mgr"))),
         protocol=_ProbeProtocol(
             enter=Complete(_Entered(_FloorValue("entered"))),
@@ -423,7 +479,7 @@ def test_discrimination_outer_exit_is_not_skipped_on_enter_halt():
     """BITE: completion-only exit would leave the outer exit probe empty."""
     outer_exit, inner_exit = [], []
     halt = RaiseEffect(exception_name="OSError", occurrence="inner.py:1:0")
-    inner = WithSourceResourceSugar(
+    inner = _source_resource(
         manager=_FixedSugar(Complete(_FloorValue("inner-mgr"))),
         protocol=_ProbeProtocol(enter=Incomplete(halt), exit_probe=inner_exit),
         summary=_never_suppresses_summary(),
@@ -433,7 +489,7 @@ def test_discrimination_outer_exit_is_not_skipped_on_enter_halt():
         exit_face_id="B#exit_face",
         site=None,
     )
-    outer = WithSourceResourceSugar(
+    outer = _source_resource(
         manager=_FixedSugar(Complete(_FloorValue("outer-mgr"))),
         protocol=_ProbeProtocol(
             enter=Complete(_Entered(_FloorValue("entered"))),
