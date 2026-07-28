@@ -65,15 +65,18 @@ def _typed_construction_row(error) -> dict[str, object] | None:
 
 def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
     """Enumerate one file and construct each function once."""
-    from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
     gaps: list[dict[str, object]] = []
     reporter = CollectingReporter()
     try:
-        # Enumeration protocol: one file identity → one SourceFile → functions.
-        source_file = SourceFile(path_source(str(path)), reporter=reporter)
+        # Enumeration protocol: one authenticated construction door. A bare
+        # SourceFile has no manager-resolution context and paints every With as
+        # RuntimeSelectedContextManager, which is false typed-gap testimony.
+        source_file = open_source_file_for_construction(
+            path, root=path.parent, reporter=reporter
+        )
     except BaseException as error:
         row = _typed_construction_row(error)
         if row is None:
