@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from sugar_lift_py_tests.ir import Term, ctor, str_const
 
@@ -86,7 +87,7 @@ class AuthenticatedProviderExceptionTypeV1:
             )
         if resolved.definition.kind != "class":
             raise ExternalExceptionConstructionGap(
-                f"provider export {module_name}.{source_attribute} resolves to "
+                f"provider export {resolved.module_name}.{source_attribute} resolves to "
                 f"{resolved.definition.kind}, not class source"
             )
         # The source operand and resolved definition must name the same class.
@@ -143,33 +144,94 @@ def _exception_ancestry_names(
     graph: DependencyArtifactGraph, resolved: ResolvedPythonObjectV1
 ) -> tuple[str, ...] | None:
     module = graph.modules.get(resolved.module_name)
-    if module is None or module.source_cid != resolved.source_cid:
-        return None
-    tree = ast.parse(module.source, filename=module.source_seat)
-    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-    leaf = classes.get(resolved.definition.name)
-    if leaf is None or leaf.lineno != resolved.definition.start_line:
+    if module is not None and module.source_cid == resolved.source_cid:
+        tree = ast.parse(module.source, filename=module.source_seat)
+        classes = {
+            node.name: tuple(
+                base.id for base in node.bases if isinstance(base, ast.Name)
+            )
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+            and all(isinstance(base, ast.Name) for base in node.bases)
+        }
+        starts = {
+            node.name: node.lineno
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+    else:
+        recorded = [
+            item for item in graph.files if item.content_cid == resolved.source_cid
+        ]
+        if len(recorded) != 1:
+            return None
+        try:
+            source = recorded[0].content.decode("utf-8")
+        except UnicodeError:
+            return None
+        classes, starts = _source_visible_class_bases(source)
+    leaf_name = resolved.definition.name
+    if (
+        leaf_name not in classes
+        or starts.get(leaf_name) != resolved.definition.start_line
+    ):
         return None
 
     result: list[str] = []
     visiting: set[str] = set()
+    completed: set[str] = set()
+
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        BUILTIN_EXCEPTION_BASES,
+    )
 
     def visit(name: str) -> bool:
+        if name in completed:
+            return True
         if name in visiting:
             return False
         visiting.add(name)
         result.append(name)
-        if name in {"BaseException", "Exception"}:
-            if name == "Exception":
-                result.append("BaseException")
+        if name == "BaseException":
+            visiting.remove(name)
+            completed.add(name)
             return True
-        definition = classes.get(name)
-        if definition is None or len(definition.bases) != 1:
+        bases = classes.get(name)
+        if bases is None:
+            bases = tuple(BUILTIN_EXCEPTION_BASES.get(name, ()))
+        if not bases or not all(visit(base) for base in bases):
             return False
-        base = definition.bases[0]
-        return isinstance(base, ast.Name) and visit(base.id)
+        visiting.remove(name)
+        completed.add(name)
+        return True
 
-    return tuple(result) if visit(leaf.name) else None
+    return tuple(result) if visit(leaf_name) else None
+
+
+_SOURCE_CLASS = re.compile(r"^class\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*:\s*(?:#.*)?$")
+
+
+def _source_visible_class_bases(
+    source: str,
+) -> tuple[dict[str, tuple[str, ...]], dict[str, int]]:
+    """Read plain Python class headers from a larger provider source dialect."""
+    classes: dict[str, tuple[str, ...]] = {}
+    starts: dict[str, int] = {}
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        match = _SOURCE_CLASS.fullmatch(line)
+        if match is None:
+            continue
+        raw_bases = tuple(part.strip() for part in match.group(2).split(","))
+        if not raw_bases or not all(base.isidentifier() for base in raw_bases):
+            continue
+        name = match.group(1)
+        if name in classes:
+            classes.pop(name, None)
+            starts.pop(name, None)
+            continue
+        classes[name] = raw_bases
+        starts[name] = line_number
+    return classes, starts
 
 
 def construct_provider_exception_attribute(

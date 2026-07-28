@@ -1,15 +1,9 @@
-"""A boolean operation `a and b`, `a or b` (n-ary: `a and b and c`).
+"""Python operand-selecting short-circuit operations ``and`` and ``or``.
 
-In a boolean context -- a condition, an assertion -- `a and b` is true exactly
-when both operands are truthy, `a or b` when either is. So the meaning is the
-conjunction / disjunction of the operands' TRUTHINESS: each operand states its
-own `truth` predicate (a comparison stands as itself, a bare value emits
-`py.truthy`), and this combines them with `and_` / `or_`. One predicate results,
-which states as an inv or guards an if exactly like any other predicate.
-
-(Python's `and`/`or` also carry a short-circuit VALUE -- `a and b` evaluates to
-`a` when `a` is falsy, else `b`. That value form is not modeled here; the boolean
-meaning is what a condition or assertion consumes, and it is what this lifts.)
+Each non-final operand is evaluated once and truth-tested once.  Its stopping
+face returns that exact operand; only its continuing face evaluates the next
+operand.  The final operand is returned without truth coercion.  A halted truth
+dispatch halts the sequence before any later operand is evaluated.
 """
 
 from __future__ import annotations
@@ -81,76 +75,87 @@ class BoolOpSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.outcome import Complete, ExitSet, outcome_to_exitset
         from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
-            _and_guards,
-            _or_guards,
             complement_guard,
             factored_operand,
             false_guard,
             partition,
             true_guard,
         )
-        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
-        combine = _and_guards if self.op_kind == "And" else _or_guards
         stop_formula = false_guard() if self.op_kind == "And" else true_guard()
+        continue_formula = true_guard() if self.op_kind == "And" else false_guard()
+
+        def truth_formula(truth_value):
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            if isinstance(truth_value, TrueBoolLiteralSugar):
+                return true_guard()
+            if isinstance(truth_value, FalseBoolLiteralSugar):
+                return false_guard()
+            if isinstance(truth_value, PredicateValue):
+                return truth_value.formula
+
+            from sugar_lift_py_tests.gap.info import GapKind, GapLocus
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="BoolOpSugar.truth_formula",
+                blame=self.site,
+                observed=type(truth_value).__name__,
+                requested="a truth-floor boolean or PredicateValue",
+                fix=(
+                    "make the selected operand's truth floor return its native "
+                    "truth value without re-evaluating the operand"
+                ),
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
 
         def reduce_from(index: int):
             operand = self.values[index]
 
+            # Python returns the final operand; it does not call bool(final).
+            if index == len(self.values) - 1:
+                return factored_operand(operand.desugar(ctx))
+
             def project_truth(value):
                 refuse_undecided_boolean_truth(value, self.site, self.op_kind)
-                return Complete(predicate_formula(value, self.site))
+                return value.truth(self.site).and_then(
+                    lambda truth_value: continue_from(value, truth_formula(truth_value))
+                )
 
-            standing = factored_operand(operand.desugar(ctx)).and_then(project_truth)
-
-            def continue_from(formula):
-                last = index == len(self.values) - 1
-                if last:
-                    return Complete(PredicateValue(formula, self.site))
-
+            def continue_from(value, formula):
                 # A decided stopping face never evaluates the RHS at all.
                 if formula == stop_formula:
-                    return Complete(PredicateValue(stop_formula, self.site))
-                if (self.op_kind == "And" and formula == true_guard()) or (
-                    self.op_kind == "Or" and formula == false_guard()
-                ):
+                    return Complete(value)
+                if formula == continue_formula:
                     return reduce_from(index + 1)
 
-                tail = reduce_from(index + 1)
-                tail_es = outcome_to_exitset(tail)
-                halted = any(not isinstance(edge, Completed) for edge in tail_es.exits)
-
-                # If construction established that every RHS face completes,
-                # its truth formula is available and the ordinary boolean
-                # formula remains a single value.  No exceptional edge is being
-                # hidden in this arm.
-                if not halted and len(tail_es.exits) == 1:
-                    tail_value = tail_es.exits[0].value
-                    return Complete(
-                        PredicateValue(combine(formula, tail_value.formula), self.site)
-                    )
-
-                # Otherwise Python evaluates the tail only on this face.  The
-                # complementary face completes with the short-circuit result;
-                # the RHS halt is conditional, never promoted to unconditional
-                # and never discarded as absent.
+                # An undecided truth result splits the sequence.  Only the
+                # continuing face evaluates the tail; the complement returns
+                # the already-evaluated operand itself.
                 rhs_guard = (
                     formula if self.op_kind == "And" else complement_guard(formula)
                 )
                 rhs_face, stop_face = partition(
                     ("BoolOpSugar", str(self.site), index, self.op_kind)
                 )
-                rhs = tail_es.guarded(rhs_guard, rhs_face)
-                stopped = ExitSet.completed(
-                    PredicateValue(stop_formula, self.site),
-                    complement_guard(rhs_guard),
-                ).guarded(true_guard(), stop_face)
+                rhs = outcome_to_exitset(reduce_from(index + 1)).guarded(
+                    rhs_guard, rhs_face
+                )
+                stopped = ExitSet.completed(value, complement_guard(rhs_guard)).guarded(
+                    true_guard(), stop_face
+                )
                 return rhs.union(stopped)
 
-            return standing.and_then(continue_from)
+            return factored_operand(operand.desugar(ctx)).and_then(project_truth)
 
         return reduce_from(0)

@@ -22,7 +22,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     validate_shared_demand_table,
 )
 from sugar_lift_py_tests.outcome import Complete
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
 
 
 def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
@@ -67,6 +67,16 @@ def _named_refusal():
         observed="source-visible operands do not decide the failure mode",
         requested="authenticated exceptional exit or retained refusal",
         fix="retain this named refusal without inventing an effect",
+    )
+
+
+def _refusal(*, refusal_type=SugarNotWritten, owner: str):
+    raise refusal_type(
+        blame="test_no_call_body_attribution.py:boundary",
+        owner=owner,
+        observed="source-visible construction is unresolved",
+        requested="an attributable outcome at this boundary",
+        fix="carry the typed refusal to the layer that can classify it",
     )
 
 
@@ -142,6 +152,29 @@ def test_declared_typed_gap_is_a_named_refusal_not_a_failure() -> None:
     assert row.construction_panics == 0
     assert row.failures == 0
     assert report.bodies[0].outcome is AttributionOutcome.NAMED_REFUSAL
+
+
+def test_ordinary_refusal_is_attributed_even_with_provider_owner_spelling() -> None:
+    """Lying twin: owner text cannot make an ordinary refusal escape."""
+    body = attribute_body_probe(
+        _probe(
+            ProducerFamily.ATTRIBUTE,
+            lambda: _refusal(owner="provider_exception_type_construction"),
+        )
+    )
+
+    assert body.outcome is AttributionOutcome.NAMED_REFUSAL
+
+
+def test_unattributable_refusal_escapes_regardless_of_owner_spelling() -> None:
+    """Truthful twin: the refusal type, not its owner text, crosses the boundary."""
+    probe = _probe(
+        ProducerFamily.ATTRIBUTE,
+        lambda: _refusal(refusal_type=UnattributableRefusal, owner="unrelated-owner"),
+    )
+
+    with pytest.raises(UnattributableRefusal, match="unrelated-owner"):
+        attribute_body_probe(probe)
 
 
 def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:

@@ -203,7 +203,7 @@ def test_and_false_short_circuits_rhs_effect_truthful_twin() -> None:
         _EffectSugar(ExpectationNotMetEffect("rhs")),
     )
     assert result == Complete(result.value)
-    assert result.value.formula == false_guard()
+    assert isinstance(result.value, FalseBoolLiteralSugar)
 
 
 def test_or_true_short_circuits_rhs_effect_truthful_twin() -> None:
@@ -213,7 +213,7 @@ def test_or_true_short_circuits_rhs_effect_truthful_twin() -> None:
         _EffectSugar(ExpectationNotMetEffect("rhs")),
     )
     assert result == Complete(result.value)
-    assert result.value.formula == true_guard()
+    assert isinstance(result.value, TrueBoolLiteralSugar)
 
 
 @pytest.mark.parametrize(
