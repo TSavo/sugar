@@ -215,6 +215,24 @@ def _resolve_export_uncached(
             module_name,
             exported_name,
         )
+    if binding is not None and binding[0] == "ambiguous":
+        return _gap(
+            "ambiguous-static-export",
+            binding_cid,
+            graph,
+            module_name,
+            exported_name,
+        )
+    # Wildcard-only and other star residues are dynamic — not a static export
+    # of the demanded name (no first-candidate scan of the star module).
+    if binding is not None and binding[0] == "star":
+        return _gap(
+            "dynamic-export",
+            binding_cid,
+            graph,
+            module_name,
+            exported_name,
+        )
     # Module-level ``name = Class()`` / ``name: Class = Class()`` is a static
     # callable-instance binding when Class is a local ClassDef with ``__call__``.
     # The export is the authenticated ``__call__`` body, not a free dynamic
@@ -535,14 +553,21 @@ def export_statement_coverage() -> tuple[list[str], list[str]]:
 def _export_block(statements, name, initial):
     state = initial
     for index, statement in enumerate(statements):
-        if _statement_contains_module_init_raise(statement) and _suite_binds_export(
-            statements[index + 1 :], name
+        rest = statements[index + 1 :]
+        # Suppressible exceptional prefixes only.  A hard-abort raise inside
+        # for/if/try that terminates module init does not make a later
+        # source-visible import/definition dynamic: the success path is the
+        # residual suite.  With/AsyncWith may swallow a raise and still run
+        # later suite statements — that residual must stay dynamic.
+        if (
+            isinstance(statement, (ast.With, ast.AsyncWith))
+            and _statement_contains_module_init_raise(statement)
+            and _suite_binds_export(rest, name)
         ):
-            # A later binding is control-dependent on whether this exceptional
-            # prefix completes.  In particular, a With/AsyncWith exit may
-            # suppress the exception while skipping the remainder of its
-            # suite.  Selecting that later textual binding would authenticate
-            # an unreachable definition.
+            return ("dynamic", statement)
+        # Same suite: bare raise then a later bind is unreachable on the
+        # aborting path; do not authenticate the textual residual as the export.
+        if isinstance(statement, ast.Raise) and _suite_binds_export(rest, name):
             return ("dynamic", statement)
         state = _export_statement(statement, name, state)
     return state
@@ -589,6 +614,12 @@ def _export_statement(statement: ast.stmt, name: str, state):
         return ("definition", statement)
     if isinstance(statement, ast.ImportFrom):
         for alias in statement.names:
+            if alias.name == "*":
+                # Star does not statically bind a demanded name.  It is a
+                # dynamic residue (not static-export-absent, not first-candidate
+                # from the star module).
+                state = ("star", statement)
+                continue
             if (alias.asname or alias.name) == name:
                 state = ("import", (statement, alias))
         return state
@@ -705,6 +736,18 @@ def _join_export_states(states, locus):
     states = tuple(states)
     if states and all(state == states[0] for state in states[1:]):
         return states[0]
+    # Competing source-visible static bindings on different paths are
+    # ambiguous — not a first-candidate pick and not silent dynamic collapse.
+    static_kinds = frozenset({"definition", "import", "alias"})
+    concrete = tuple(state for state in states if state is not None)
+    if (
+        concrete
+        and len(concrete) == len(states)
+        and all(
+            isinstance(state, tuple) and state[0] in static_kinds for state in concrete
+        )
+    ):
+        return ("ambiguous", locus)
     return ("dynamic", locus)
 
 

@@ -449,28 +449,29 @@ def test_contextmanager_decorated_reexport_resolves_as_definition(
     assert result.module_name == "example_pkg.implementation"
 
 
-def test_real_pandas_ensure_clean_export_resolves_without_name_authority() -> None:
-    """Live residual sample: export no longer stops at decorator dynamic-export."""
+def test_real_pandas_source_visible_reexport_resolves_without_name_authority() -> None:
+    """Live residual membrane: hard-abort raises must not poison later re-exports.
+
+    Installed pandas ``__init__`` runs dependency-check raises before source-visible
+    ``ImportFrom`` re-exports.  Production has no pandas spelling or module
+    admission — this is open-boundary residual against the live wheel only.
+    """
     graph = DependencyArtifactGraph.authenticate(
         importlib.metadata.distribution("pandas")
     )
-    # Demand shape matches authenticated import use of the re-export chain.
     import tempfile
     from pathlib import Path as P
 
     root = P(tempfile.mkdtemp())
-    demand = _demand(
-        root,
-        "from pandas._testing import ensure_clean\nensure_clean()\n",
-    )
+    demand = _demand(root, "import pandas as pd\npd.array([1])\n")
     result = resolve_import_binding(demand, graph=graph)
 
     assert isinstance(result, ResolvedPythonObjectV1), getattr(result, "kind", result)
-    assert result.definition.name == "ensure_clean"
+    assert result.definition.name == "array"
     assert result.definition.kind == "function"
-    assert "contexts" in result.module_name
-    # No vendor arm: resolution is content/source, not the spelling ensure_clean
-    # special-cased in Sugar.
+    assert result.module_name != "pandas"
+    assert result.reexport_warrants
+    # No vendor arm: resolution is content/source chain, not a spelling table.
 
 
 def test_real_pytest_reexport_resolves_without_manager_name_recognition(
