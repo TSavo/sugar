@@ -370,6 +370,61 @@ def test_pandas_index_length_equality_stays_source_undecided() -> None:
     )
 
 
+def test_source_decided_membership_in_number_emits_type_error() -> None:
+    """``1 in 2`` is TypeError — numbers are never containers.
+
+    Companion to enrolled membership under pytest.raises: when the container
+    is a decided TermValue, Compare constructs RaiseValue rather than panicking
+    on the contains floor.
+    """
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    twin = "def f():\n    return 1 in 2\n"
+    tree = SourceFile(
+        (twin, "in-number-twin.py", blake3_512_of(twin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(
+        n
+        for n in tree.nodes()
+        if isinstance(n, Compare) and n.line_col_span().start_line == 2
+    )
+    outcome = ComparisonOpSugar(
+        "In",
+        _ValueSugar(TermValue(1)),
+        _ValueSugar(TermValue(2)),
+        node.fragment,
+    ).desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_source_decided_none_greater_than_emits_type_error() -> None:
+    """``None > 1`` is TypeError on every ordering face, not a py.gt emit."""
+    from sugar_lift_py_tests.floor import NoneValue, RaiseValue
+
+    twin = "def f():\n    return None > 1\n"
+    tree = SourceFile(
+        (twin, "none-gt-twin.py", blake3_512_of(twin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(
+        n
+        for n in tree.nodes()
+        if isinstance(n, Compare) and n.line_col_span().start_line == 2
+    )
+    outcome = ComparisonOpSugar(
+        "Gt",
+        _ValueSugar(NoneValue()),
+        _ValueSugar(TermValue(1)),
+        node.fragment,
+    ).desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
 def test_pandas_series_string_ordering_stays_source_undecided() -> None:
     """``obj < "a"``: string right is decided; left Series type is not.
 

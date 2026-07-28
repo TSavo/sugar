@@ -127,22 +127,31 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
 ) -> None:
     """Removing the cap must not have widened the door to non-index counts.
 
-    The typed TypeError exit carries a genuine runtime locus, so this arm needs
-    a real fragment -- not the prose site the folding arms accept.
+    A source-decided non-``__index__`` count is authenticated TypeError
+    RaiseValue on a workspace-relative fragment.
     """
-    from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-    from sugar_lift_python_source.source_oracle import path_source
+    del tmp_path
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.floor import RaiseValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
 
-    source = tmp_path / "sequence_repeat.py"
-    source.write_text("def witness():\n    return [1] * 1.5\n", encoding="utf-8")
-    fragment = next(SourceFile(path_source(str(source))).functions()).fragment
+    source = "def witness():\n    return [1] * 1.5\n"
+    fragment = next(
+        SourceFile(
+            (source, "sequence_repeat.py", blake3_512_of(source.encode())),
+            construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        ).functions()
+    ).fragment
 
     outcome = sequence_type((TermValue(1),)).multiply(TermValue(1.5), fragment)
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
 
 
 # -- discriminating arm: each category rebuilds ITSELF ------------------------

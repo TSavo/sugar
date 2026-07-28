@@ -52,24 +52,55 @@ class NoneValue(FloorValue):
     def less_than(self, other, site):
         # None orders against nothing: any ground comparison is authenticated
         # TypeError. Symbolic falls to super() emit.
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="NoneValue.less_than")
+        return super().less_than(other, site)
+
+    def _unorderable_ground_peer(self, other) -> bool:
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.set_value import SetValue
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-        if type(other) in (
+        return type(other) in (
             NoneValue,
             TermValue,
             StringValue,
             ListValue,
             TupleValue,
             SetValue,
-        ):
+        )
+
+    def less_equal(self, other, site):
+        if self._unorderable_ground_peer(other):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
-            return ground_type_error(site=site, owner="NoneValue.less_than")
-        return super().less_than(other, site)
+            return ground_type_error(site=site, owner="NoneValue.less_equal")
+        return super().less_equal(other, site)
+
+    def greater_than(self, other, site):
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="NoneValue.greater_than")
+        return super().greater_than(other, site)
+
+    def greater_equal(self, other, site):
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="NoneValue.greater_equal")
+        return super().greater_equal(other, site)
+
+    def contains(self, item, site):
+        """``x in None`` is exact TypeError — None is never a container."""
+        del item
+        from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+        return ground_type_error(site=site, owner="NoneValue.contains")
 
     def equals(self, other, site):
         # None stands on the equals floor only against itself. Cross-type is the

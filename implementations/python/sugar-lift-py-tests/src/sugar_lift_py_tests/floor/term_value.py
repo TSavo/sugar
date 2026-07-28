@@ -99,6 +99,20 @@ class TermValue(FloorValue):
 
         return ground_type_error(site=site, owner=owner)
 
+    def _decided_binary_type_error(self, other, site, *, owner: str):
+        """Decided non-numeric right → authenticated TypeError; else super gap.
+
+        After the numeric tower and sequence-repetition arms have run, a
+        source-decided peer that still has no arm is Python's TypeError
+        (``1 + "a"``, ``3 % []``).  Undecided rights stay on the shared
+        third-value law via ``super()``.
+        """
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner=owner)
+        return getattr(super(), owner.rsplit(".", 1)[-1])(other, site)
+
     def less_than(self, other, site):
         # A number stands on the ordering floor: two numbers are ordered or not, and
         # it gives back the True or False literal -- the boolean IS the type.
@@ -234,7 +248,13 @@ class TermValue(FloorValue):
         folded = complex_add(self, other, site)
         if folded is not None:
             return folded
-        return super().add(other, site)
+        from sugar_lift_py_tests.floor.complex_value import ComplexValue
+
+        # Overflow / non-finite complex field results stay loud construction
+        # gaps — not TypeError.
+        if type(other) is ComplexValue:
+            return super().add(other, site)
+        return self._decided_binary_type_error(other, site, owner="TermValue.add")
 
     def subtract(self, other, site):
         # A number stands on the subtraction floor: two numbers subtract to a number.
@@ -256,7 +276,13 @@ class TermValue(FloorValue):
         folded = complex_subtract(self, other, site)
         if folded is not None:
             return folded
-        return super().subtract(other, site)
+        from sugar_lift_py_tests.floor.complex_value import ComplexValue
+
+        if type(other) is ComplexValue:
+            return super().subtract(other, site)
+        return self._decided_binary_type_error(
+            other, site, owner="TermValue.subtract"
+        )
 
     def multiply(self, other, site):
         # A number stands on the multiplication floor: two numbers multiply, and the
@@ -281,14 +307,24 @@ class TermValue(FloorValue):
         if type(other) is OpaqueOpCallsite and other.callee == "len":
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         if type(other) in (ListValue, StringValue, TupleValue):
-            if type(self.value) is int:
+            # int/bool * sequence is repetition; float * sequence is TypeError.
+            if isinstance(self.value, int):
                 return other.multiply(self, site)
+            return self._decided_binary_type_error(
+                other, site, owner="TermValue.multiply"
+            )
         from sugar_lift_py_tests.floor.complex_arithmetic import complex_multiply
 
         folded = complex_multiply(self, other, site)
         if folded is not None:
             return folded
-        return super().multiply(other, site)
+        from sugar_lift_py_tests.floor.complex_value import ComplexValue
+
+        if type(other) is ComplexValue:
+            return super().multiply(other, site)
+        return self._decided_binary_type_error(
+            other, site, owner="TermValue.multiply"
+        )
 
     def power(self, other, site):
         if type(other) is TermValue:
@@ -377,7 +413,7 @@ class TermValue(FloorValue):
 
         if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
-        return super().divide(other, site)
+        return self._decided_binary_type_error(other, site, owner="TermValue.divide")
 
     def modulo(self, other, site):
         # A number stands on the modulo floor: the remainder. A concrete zero
@@ -399,7 +435,7 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.effect import runtime_modulo
 
             return runtime_modulo(self, other, site)
-        return super().modulo(other, site)
+        return self._decided_binary_type_error(other, site, owner="TermValue.modulo")
 
     def floor_divide(self, other, site):
         if type(other) is TermValue:
@@ -419,7 +455,16 @@ class TermValue(FloorValue):
             return SymbolicValue(self.to_term(owner=str(site))).floor_divide(
                 other, site
             )
-        return super().floor_divide(other, site)
+        return self._decided_binary_type_error(
+            other, site, owner="TermValue.floor_divide"
+        )
+
+    def contains(self, item, site):
+        """Numbers are never containers: ``x in 1`` is exact TypeError."""
+        del item
+        from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+        return ground_type_error(site=site, owner="TermValue.contains")
 
     def _bitwise_int_pair(self, other):
         """Python bitwise ops accept int/bool; float is decided TypeError."""
