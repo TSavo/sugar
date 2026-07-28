@@ -791,6 +791,11 @@ def test_production_minted_operators_equal_projector_table_exactly():
     assert "subscript" in projectors
     assert "setitem" in projectors
     assert "setattr_named" in projectors
+    # Store-family delete twins: production set == projector keys (both ways).
+    assert "delitem" in projectors
+    assert "delattr_named" in projectors
+    assert "delitem" in production
+    assert "delattr_named" in production
 
 
 def test_symbolic_formal_subscript_discharges_completed_through_projector():

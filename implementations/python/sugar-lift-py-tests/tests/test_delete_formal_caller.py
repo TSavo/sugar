@@ -12,26 +12,27 @@ Helper alone retains the respective delete demand as an undischarged
 ``NativeOperationExitCarrierV1``. Authenticated callers discharge; mutable
 receivers complete with the element/attribute gone; missing key → named
 KeyError; missing/read-only attribute → named AttributeError — each with
-exact pre-effect state. Missing caller actual stays Undischarged. Deletion
-does not roll back earlier bindings. Swapped-coordinate and
-read-authorizes-delete twins fail.
+exact pre-effect state. Missing caller actual stays Undischarged. Earlier
+bindings survive later delete halts. Swapped-coordinate and
+read-authorizes-delete twins fail (readability never authorizes deletion).
 
-Mint contracts (to match setitem/setattr projectors once producers land):
+Mint contracts (Python protocol signatures; ordered operands + formals):
 
-  operator ``delitem``
+  operator ``delitem``  (~ ``__delitem__(self, key)``)
   operands ``(receiver, index)``  — discharge order
-  projector: ``receiver.delitem(index, site)``
+  projector: ``_project_delitem(receiver, index, site)``
   producer: ``SubscriptDeleteEffectSugar.mint_delitem_carrier``
 
-  operator ``delattr_named``
+  operator ``delattr_named``  (~ ``__delattr__(self, name)``)
   operands ``(receiver, StringValue(name))``
   coordinates ``(receiver.formal, None)``
-  projector: ``receiver.delattr(name.value, site)``
+  projector: ``_project_delattr_named(receiver, name, site)``
   producer: ``AttributeDeleteEffectSugar.mint_delattr_named_carrier``
 
-If the delete producers do not exist, reds name the exact missing methods —
-that is a valid deliverable. Tests only: no carrier/ExitSet, store
-producers/projectors, or parameter-map edits.
+Equality tooth: production-minted operator set == projector-table keys.
+
+Out of scope: Name deletion (``del name`` / DeleteNameSugar) — not delitem,
+not delattr_named.
 """
 
 from __future__ import annotations
@@ -44,6 +45,9 @@ import pytest
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
+    _project_delattr_named,
+    _project_delitem,
+    production_native_operation_operators,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -217,23 +221,81 @@ def test_delattr_producer_method_is_enrolled_or_named_missing() -> None:
 
 
 def test_delitem_projector_is_enrolled_or_named_missing() -> None:
+    """Explicit projector matches Python ``__delitem__(self, key)`` arity."""
     assert "setitem" in _NATIVE_OPERATION_PROJECTORS
     if "delitem" not in _NATIVE_OPERATION_PROJECTORS:
         raise AssertionError(f"missing projector {MISSING_DELITEM_PROJECTOR}")
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["delitem"]).parameters
-    )
+    projector = _NATIVE_OPERATION_PROJECTORS["delitem"]
+    assert projector is _project_delitem
+    parameters = tuple(inspect.signature(projector).parameters)
     assert parameters == ("receiver", "index", "site")
 
 
 def test_delattr_projector_is_enrolled_or_named_missing() -> None:
+    """Explicit ``delattr_named(receiver, name, site)`` projector enrolled."""
     assert "setattr_named" in _NATIVE_OPERATION_PROJECTORS
     if "delattr_named" not in _NATIVE_OPERATION_PROJECTORS:
         raise AssertionError(f"missing projector {MISSING_DELATTR_PROJECTOR}")
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["delattr_named"]).parameters
-    )
+    projector = _NATIVE_OPERATION_PROJECTORS["delattr_named"]
+    assert projector is _project_delattr_named
+    parameters = tuple(inspect.signature(projector).parameters)
     assert parameters == ("receiver", "name", "site")
+
+
+def test_production_minted_operators_equal_projector_keys_including_delete() -> None:
+    """Equality tooth: production set == projector keys (delete twins included)."""
+    production = production_native_operation_operators()
+    projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
+    assert production == projectors, (
+        f"missing_projectors={sorted(production - projectors)} "
+        f"orphan_projectors={sorted(projectors - production)}"
+    )
+    assert {"delitem", "delattr_named"} <= production
+    assert {"delitem", "delattr_named"} <= projectors
+
+
+def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
+    """Mint coordinate order is protocol discharge order, not source-eval order."""
+    _, delitem = _delitem_helper()
+    delitem = _require_delitem_carrier(delitem)
+    assert delitem.demand.operator == "delitem"
+    assert tuple(v.term.name for v in delitem.operands) == ("obj", "key")
+    assert list(inspect.signature(_project_delitem).parameters) == [
+        "receiver",
+        "index",
+        "site",
+    ]
+
+    _, delattr_c = _delattr_helper()
+    delattr_c = _require_delattr_carrier(delattr_c)
+    assert delattr_c.demand.operator == "delattr_named"
+    assert delattr_c.demand.operand_coordinate_cids == (
+        delattr_c.demand.operand_coordinate_cids[0],
+        None,
+    )
+    assert isinstance(delattr_c.operands[1], StringValue)
+    assert list(inspect.signature(_project_delattr_named).parameters) == [
+        "receiver",
+        "name",
+        "site",
+    ]
+
+
+def test_name_deletion_is_out_of_scope_for_delitem_and_delattr_named() -> None:
+    """``del name`` is DeleteNameSugar territory — not delitem/delattr_named."""
+    source = "def helper(x):\n    del x\n"
+    tree = _tree(source, "name_delete_out_of_scope.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    pending = function.sugar().desugar(None)
+    if isinstance(pending, NativeOperationExitCarrierV1):
+        assert pending.demand.operator not in {"delitem", "delattr_named"}, (
+            "Name deletion must not mint delitem/delattr_named"
+        )
+    # Positive: attribute/subscript delete still own those operators.
+    _, item = _delitem_helper()
+    assert _require_delitem_carrier(item).demand.operator == "delitem"
+    _, attr = _delattr_helper()
+    assert _require_delattr_carrier(attr).demand.operator == "delattr_named"
 
 
 # ===========================================================================

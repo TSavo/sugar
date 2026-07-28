@@ -15,14 +15,17 @@ class AttributeDeleteEffectSugar(Sugar):
     1. **Formal receiver** → ``NativeOperationExitCarrierV1`` demand
        ``delattr_named`` with operands
        ``(receiver, StringValue(name))`` and coordinates
-       ``(receiver.formal_coordinate, None)``.  The n-ary projector unwraps
-       the name and calls ``receiver.delattr(name.value, site)``.  Helper
-       alone stays undischarged; an ordinary source caller supplies actuals.
+       ``(receiver.formal_coordinate, None)``.  Explicit projector
+       ``_project_delattr_named(receiver, name, site)`` unwraps the name
+       and calls ``receiver.delattr(name.value, site)`` (Python
+       ``__delattr__``).  Helper alone stays undischarged.
     2. **Decided runtime type** → ``receiver.delattr(attr, site)`` projecting
        ``Completed`` or ``RaiseValue`` exceptional faces through the delete
-       path (never the read path).
+       path (never the read path — readability never authorizes deletion).
     3. **Undecided non-formal** → ``AttributeDeleteRuntimeEffect`` dual faces
        under complementary store-outcome guards.
+
+    Out of scope: Name deletion (``del name`` / DeleteNameSugar).
     """
 
     receiver: Sugar
@@ -112,14 +115,18 @@ class SubscriptDeleteEffectSugar(Sugar):
 
     1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
        ``delitem`` with operands and coordinates in *discharge* order
-       ``(receiver, index)``.  The n-ary projector calls
-       ``receiver.delitem(index, site)``.  Helper alone stays undischarged;
-       an ordinary source caller supplies actuals.
+       ``(receiver, index)``.  Explicit projector
+       ``_project_delitem(receiver, index, site)`` calls
+       ``receiver.delitem(index, site)`` (Python ``__delitem__``).  Helper
+       alone stays undischarged; an ordinary source caller supplies actuals.
     2. **Decided runtime type** → ``receiver.delitem(index, site)`` projecting
        ``Completed`` or ``RaiseValue`` exceptional faces through the delete
-       path (never the load path).
+       path (never the load path).  Earlier bindings survive later delete
+       halts via reducer pre-effect state on the carrier.
     3. **Undecided non-formal** → loud ``SugarNotWritten`` until the
        two-operand formal carrier is attachable.
+
+    Out of scope: Name deletion (``del name`` / DeleteNameSugar).
     """
 
     receiver: Sugar
