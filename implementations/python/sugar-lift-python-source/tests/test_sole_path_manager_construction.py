@@ -1372,15 +1372,13 @@ def test_none_match_branches_before_pattern_projection():
 
 
 def test_uniform_none_match_faces_collapse_to_one_no_message_summary():
-    from types import SimpleNamespace
-
     from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
     from sugar_lift_py_tests.floor import NoneValue
     from sugar_lift_py_tests.ir import _Atomic
     from sugar_lift_py_tests.outcome import Completed, ExitSet
     from sugar_lift_python_source.manager_summary_derivation import (
         _construct_message_pattern_operand,
-        _uniform_message_operand_or_gap,
+        _message_pattern_operand_faces,
     )
 
     projected = _construct_message_pattern_operand(
@@ -1395,19 +1393,13 @@ def test_uniform_none_match_faces_collapse_to_one_no_message_summary():
             AssertionError("None faces cannot construct a regex obligation")
         ),
     )
-    result = _uniform_message_operand_or_gap(
-        projected,
-        protocol_construction_cid="uniform-none-protocol",
-        coordinate=SimpleNamespace(cid="uniform-none-coordinate"),
-    )
+    result = _message_pattern_operand_faces(projected)
 
     assert isinstance(result, NoMessagePatternV1)
 
 
 def test_uniform_pattern_faces_collapse_to_one_pattern_obligation():
     """Truthful twin: non-None faces construct one regex obligation."""
-    from types import SimpleNamespace
-
     from sugar_lift_py_tests.context_manager_contract import (
         OptionalFormalArgumentProjectionV1,
     )
@@ -1416,7 +1408,7 @@ def test_uniform_pattern_faces_collapse_to_one_pattern_obligation():
     from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
     from sugar_lift_python_source.manager_summary_derivation import (
         _construct_message_pattern_operand,
-        _uniform_message_operand_or_gap,
+        _message_pattern_operand_faces,
     )
 
     class PatternCarrier(FloorValue):
@@ -1439,18 +1431,59 @@ def test_uniform_pattern_faces_collapse_to_one_pattern_obligation():
             else (_ for _ in ()).throw(AssertionError(pattern))
         ),
     )
-    result = _uniform_message_operand_or_gap(
-        projected,
-        protocol_construction_cid="uniform-pattern-protocol",
-        coordinate=SimpleNamespace(cid="uniform-pattern-coordinate"),
-    )
+    result = _message_pattern_operand_faces(projected)
 
     assert result == expected
 
 
-def test_non_uniform_message_faces_return_located_derived_summary_gap():
-    from types import SimpleNamespace
+def test_non_uniform_match_faces_emit_both_message_pattern_edges():
+    """Positive: match=None and match=pattern construct as both guarded edges."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+    )
+    from sugar_lift_py_tests.floor import FloorValue, NoneValue, StringValue
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _construct_message_pattern_operand,
+        _message_pattern_operand_faces,
+    )
 
+    class PatternCarrier(FloorValue):
+        def attribute(self, name, site):
+            assert (name, site) == ("pattern", "non-uniform-message-faces")
+            return Complete(StringValue("^needle$"))
+
+    expected = OptionalFormalArgumentProjectionV1(1)
+    projected = _construct_message_pattern_operand(
+        ExitSet(
+            (
+                Completed(_Atomic("none-message-face", ()), NoneValue()),
+                Completed(_Atomic("pattern-message-face", ()), PatternCarrier()),
+            )
+        ),
+        site="non-uniform-message-faces",
+        construct_message_obligation=lambda pattern: (
+            Complete(expected)
+            if pattern == StringValue("^needle$")
+            else (_ for _ in ()).throw(AssertionError(pattern))
+        ),
+    )
+    result = _message_pattern_operand_faces(projected)
+
+    assert isinstance(result, ExitSet)
+    completed = [face for face in result.exits if isinstance(face, Completed)]
+    assert len(completed) == 2
+    values = {face.value for face in completed}
+    assert values == {NoMessagePatternV1(), expected}
+    by_guard = {face.guard.name: face.value for face in completed}
+    assert isinstance(by_guard["none-message-face"], NoMessagePatternV1)
+    assert by_guard["pattern-message-face"] == expected
+
+
+def test_non_uniform_message_faces_do_not_collapse_to_one_operand():
+    """Discrimination: mixed faces are not a single operand and not a gap."""
     from sugar_lift_py_tests.context_manager_contract import (
         NoMessagePatternV1,
         OptionalFormalArgumentProjectionV1,
@@ -1459,11 +1492,10 @@ def test_non_uniform_message_faces_return_located_derived_summary_gap():
     from sugar_lift_py_tests.outcome import Completed, ExitSet
     from sugar_lift_python_source.manager_summary_derivation import (
         DerivedManagerSummaryGapV1,
-        _uniform_message_operand_or_gap,
+        _message_pattern_operand_faces,
     )
 
-    coordinate = SimpleNamespace(cid="non-uniform-formal-coordinate")
-    result = _uniform_message_operand_or_gap(
+    result = _message_pattern_operand_faces(
         ExitSet(
             (
                 Completed(_Atomic("none-message-face", ()), NoMessagePatternV1()),
@@ -1472,17 +1504,136 @@ def test_non_uniform_message_faces_return_located_derived_summary_gap():
                     OptionalFormalArgumentProjectionV1(1),
                 ),
             )
-        ),
-        protocol_construction_cid="non-uniform-protocol-coordinate",
-        coordinate=coordinate,
+        )
     )
 
-    assert isinstance(result, DerivedManagerSummaryGapV1)
-    assert result.kind == "exit-may-halt"
-    assert result.protocol_construction_cid == "non-uniform-protocol-coordinate"
-    assert result.detail == (
-        "non-uniform-message-pattern-faces:non-uniform-formal-coordinate"
+    assert not isinstance(result, DerivedManagerSummaryGapV1)
+    assert not isinstance(result, (NoMessagePatternV1, OptionalFormalArgumentProjectionV1))
+    assert isinstance(result, ExitSet)
+    assert len(result.exits) == 2
+
+
+def test_soft_boundary_emits_both_effect_boundary_faces_for_non_uniform_match():
+    """Soft path: both edges are full EffectBoundarySemantics under face guards."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
     )
+    from sugar_lift_py_tests.floor import FloorValue, NoneValue, ObjectValue, StringValue
+    from sugar_lift_py_tests.floor.object_field import ObjectField
+    from sugar_lift_py_tests.floor.receiver_state_partition_value import (
+        ReceiverStatePartitionValue,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _soft_effect_boundary_from_exception_formals,
+    )
+
+    class ExceptionTypeValue(FloorValue):
+        def exception_type_identity(self):
+            return "python:ValueError"
+
+    class PatternCarrier(FloorValue):
+        def attribute(self, name, site):
+            assert name == "pattern"
+            return Complete(StringValue("^$"))
+
+    none_receiver = ObjectValue(
+        "RaisesCM",
+        (ObjectField("match", NoneValue()),),
+        identity="none-receiver",
+    )
+    pattern_receiver = ObjectValue(
+        "RaisesCM",
+        (ObjectField("match", PatternCarrier()),),
+        identity="pattern-receiver",
+    )
+    behavior = SimpleNamespace(
+        formal_actual_values=(ExceptionTypeValue(), StringValue("^$")),
+        formal_actual_bindings=(
+            SimpleNamespace(coordinate=SimpleNamespace(cid="formal-0")),
+            SimpleNamespace(coordinate=SimpleNamespace(cid="formal-1")),
+        ),
+        receiver_state=ReceiverStatePartitionValue(
+            ExitSet(
+                (
+                    Completed(_Atomic("none-face", ()), none_receiver),
+                    Completed(_Atomic("pattern-face", ()), pattern_receiver),
+                )
+            )
+        ),
+    )
+    result = _soft_effect_boundary_from_exception_formals(
+        behavior,
+        protocol_construction_cid="soft-factored-protocol",
+    )
+
+    assert isinstance(result, ExitSet)
+    completed = [face for face in result.exits if isinstance(face, Completed)]
+    assert len(completed) == 2
+    for face in completed:
+        assert isinstance(face.value, EffectBoundarySemanticsV1)
+    operands = {face.value.message_pattern_operand for face in completed}
+    assert operands == {
+        NoMessagePatternV1(),
+        OptionalFormalArgumentProjectionV1(1),
+    }
+
+
+def test_soft_boundary_uniform_none_match_stays_one_no_message_summary():
+    """Discrimination twin: uniform match=None still seals one NoMessagePattern."""
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        NoMessagePatternV1,
+    )
+    from sugar_lift_py_tests.floor import FloorValue, NoneValue, ObjectValue, StringValue
+    from sugar_lift_py_tests.floor.object_field import ObjectField
+    from sugar_lift_py_tests.floor.receiver_state_partition_value import (
+        ReceiverStatePartitionValue,
+    )
+    from sugar_lift_py_tests.ir import _Atomic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_python_source.manager_summary_derivation import (
+        _soft_effect_boundary_from_exception_formals,
+    )
+
+    class ExceptionTypeValue(FloorValue):
+        def exception_type_identity(self):
+            return "python:ValueError"
+
+    receiver = ObjectValue(
+        "RaisesCM",
+        (ObjectField("match", NoneValue()),),
+        identity="uniform-none-receiver",
+    )
+    behavior = SimpleNamespace(
+        formal_actual_values=(ExceptionTypeValue(), StringValue("^$")),
+        formal_actual_bindings=(
+            SimpleNamespace(coordinate=SimpleNamespace(cid="formal-0")),
+            SimpleNamespace(coordinate=SimpleNamespace(cid="formal-1")),
+        ),
+        receiver_state=ReceiverStatePartitionValue(
+            ExitSet(
+                (
+                    Completed(_Atomic("none-face-a", ()), receiver),
+                    Completed(_Atomic("none-face-b", ()), receiver),
+                )
+            )
+        ),
+    )
+    result = _soft_effect_boundary_from_exception_formals(
+        behavior,
+        protocol_construction_cid="soft-uniform-none-protocol",
+    )
+
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
 
 
 def test_source_derived_resource_ref_selects_projection_only_with_arm(tmp_path):
