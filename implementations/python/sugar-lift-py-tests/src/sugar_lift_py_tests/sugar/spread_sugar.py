@@ -317,11 +317,12 @@ class SpreadCallSugar(Sugar):
             source_body = owner.source_visible_constructor_frame().body
         return CallSiteValue(
             target_name=self.callee_name or "python:call",
-            arg_values=bound,
+            arg_values=bound.actuals,
             parameters=frame.parameters,
             term=term,
             body=source_body,
             site=self.site,
             source_call_frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
+            bound_source_actuals=bound,
         )

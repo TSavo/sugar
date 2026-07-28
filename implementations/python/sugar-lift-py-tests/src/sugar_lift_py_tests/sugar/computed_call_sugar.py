@@ -152,7 +152,7 @@ class ComputedCallSugar(ConstructedTermSugar):
                     fix="construct a typed source frame or keep the call loud",
                 )
             try:
-                positional = frame.bind_actuals(positional, kw_values, ctx)
+                bound_source_actuals = frame.bind_actuals(positional, kw_values, ctx)
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
                     blame=self.site,
@@ -164,7 +164,7 @@ class ComputedCallSugar(ConstructedTermSugar):
             return Complete(
                 CallSiteValue(
                     target_name="py.call",
-                    arg_values=positional,
+                    arg_values=bound_source_actuals.actuals,
                     parameters=frame.parameters,
                     term=term,
                     body=frame.body,
@@ -173,6 +173,7 @@ class ComputedCallSugar(ConstructedTermSugar):
                     formal_coordinate_cids=tuple(
                         item.cid for item in frame.formal_coordinates
                     ),
+                    bound_source_actuals=bound_source_actuals,
                 )
             )
         return Complete(

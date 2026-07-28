@@ -639,12 +639,16 @@ class ObjectValue(FloorValue):
                 )
             target_name = f"{self.class_name}.{name}"
             arg_values = (self, *arguments)
+            bound_source_actuals = None
             selected_frame = required_frame or method.source_call_frame
             if selected_frame is not None:
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
                 try:
-                    arg_values = selected_frame.bind_actuals(arg_values, keywords, ctx)
+                    bound_source_actuals = selected_frame.bind_actuals(
+                        arg_values, keywords, ctx
+                    )
+                    arg_values = bound_source_actuals.actuals
                 except SourceCallBindingGap as exc:
                     return self._floor_gap(
                         owner=owner,
@@ -676,6 +680,7 @@ class ObjectValue(FloorValue):
                 body=method.body,
                 source_call_frame_cid=method.source_call_frame_cid,
                 formal_coordinate_cids=method.formal_coordinate_cids,
+                bound_source_actuals=bound_source_actuals,
             )
             if not any(
                 isinstance(value, (SymbolicValue, CallSiteValue))
