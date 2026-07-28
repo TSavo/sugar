@@ -41,17 +41,61 @@ def _two_ifs() -> tuple[If, If]:
     return branches
 
 
-def test_raw_source_if_names_the_exact_missing_slot_producer() -> None:
+def test_raw_source_if_routes_through_one_condition_owned_slot() -> None:
     branch, _ = _two_ifs()
 
-    with pytest.raises(BackendDefect) as raised:
-        branch.sugar()
+    sugar = branch.sugar()
+    outcome = sugar.desugar(None)
 
-    message = str(raised.value)
-    assert "If._construct_sugar" in message
-    assert "If without a stored branch-result slot" in message
-    assert "consume the slot minted once by If.substitute" in message
-    assert "if-construct-slot.py:1:0" in message
+    slot = branch_result_slot(branch.test)
+    assert sugar.branch_slot == slot
+    assert isinstance(outcome, Complete)
+    authentications = tuple(
+        entry
+        for entry in outcome.value.unconditional_entries
+        if isinstance(entry, BranchResultAuthentication)
+    )
+    assert len(authentications) == 1
+    assert authentications[0].slot == slot
+
+
+def test_renamed_raw_source_if_uses_its_exact_condition_slot() -> None:
+    branch = next(
+        node
+        for node in _tree(
+            "if renamed is sentinel:\n"
+            "    assert renamed is sentinel\n"
+            "else:\n"
+            "    assert renamed is not sentinel\n"
+        ).nodes()
+        if isinstance(node, If)
+    )
+
+    sugar = branch.sugar()
+    outcome = sugar.desugar(None)
+
+    slot = branch_result_slot(branch.test)
+    assert sugar.branch_slot == slot
+    assert isinstance(outcome, Complete)
+    assert outcome.value.guard == branch_result_guard(slot, sugar.site)
+
+
+def test_repeated_raw_source_if_construction_does_not_mint_a_second_slot() -> None:
+    branch, _ = _two_ifs()
+
+    first = branch.sugar()
+    second = branch.sugar()
+    outcome = second.desugar(None)
+
+    assert second is first
+    assert isinstance(outcome, Complete)
+    authentications = tuple(
+        entry
+        for entry in outcome.value.unconditional_entries
+        if isinstance(entry, BranchResultAuthentication)
+    )
+    assert len(authentications) == 1
+    assert authentications[0].slot == branch_result_slot(branch.test)
 
 
 def test_condition_owned_slot_constructs_one_authenticated_guard() -> None:

@@ -142,15 +142,13 @@ def _two_source_ifs() -> tuple[If, If]:
     return branches
 
 
-def test_absent_branch_result_slot_panics_at_the_exact_if_occurrence() -> None:
+def test_raw_source_if_routes_through_its_exact_slot_at_the_if_occurrence() -> None:
     branch, _ = _two_source_ifs()
 
-    with pytest.raises(BackendDefect) as raised:
-        branch.sugar()
+    sugar = branch.sugar()
 
-    message = str(raised.value)
-    assert "If without a stored branch-result slot" in message
-    assert "if-branch-result-slot.py:1:0" in message
+    assert sugar.branch_slot == branch_result_slot(branch.test)
+    assert sugar.site.seal().cid == branch.fragment.seal().cid
 
 
 def test_truthful_stored_slot_constructs_but_slot_swap_panics_at_its_occurrence() -> None:
@@ -171,13 +169,13 @@ def test_truthful_stored_slot_constructs_but_slot_swap_panics_at_its_occurrence(
 def test_duplicated_branch_result_slot_panics_at_the_exact_if_occurrence() -> None:
     branch, _ = _two_source_ifs()
     slot = branch_result_slot(branch.test)
-    duplicated = branch._rewrite_with_slot({}, slot)._rewrite_with_slot({}, slot)
+    rewritten = branch._rewrite_with_slot({}, slot)
 
     with pytest.raises(BackendDefect) as raised:
-        duplicated.sugar()
+        rewritten._rewrite_with_slot({}, slot)
 
     message = str(raised.value)
-    assert "branch-result slot" in message
+    assert "second branch-result slot" in message
     assert "if-branch-result-slot.py:1:0" in message
 
 

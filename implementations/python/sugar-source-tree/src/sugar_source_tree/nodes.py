@@ -5594,6 +5594,18 @@ class If(Statement):
         from .backend import Leaf, materialize
         from .shadow import ShadowNode, rewrite
 
+        try:
+            self.branch_result_slot_id
+        except AttributeError:
+            pass
+        else:
+            backend_defect(
+                blame=self.fragment,
+                owner="If._rewrite_with_slot",
+                observed="If attempted to mint a second branch-result slot",
+                requested="the one slot authenticated for this exact If.test",
+                fix="route the source If through ordinary substitution exactly once",
+            )
         rewritten = rewrite(self, **changed)
         if authenticated_slot is None:
             authenticated_slot = branch_result_slot(rewritten.test)
@@ -5671,13 +5683,10 @@ class If(Statement):
         try:
             slot = BranchResultSlot(self.branch_result_slot_id)
         except AttributeError:
-            backend_defect(
-                blame=self.fragment,
-                owner="If._construct_sugar",
-                observed="If without a stored branch-result slot",
-                requested="consume the slot minted once by If.substitute",
-                fix="route every If through substitution before Sugar construction",
-            )
+            substituted = self.substitute({})
+            if isinstance(substituted, _Splice):
+                substituted = substituted.statements[0]
+            return substituted.sugar()
         try:
             authenticated_slot = BranchResultSlot(
                 self.authenticated_branch_result_slot_id
