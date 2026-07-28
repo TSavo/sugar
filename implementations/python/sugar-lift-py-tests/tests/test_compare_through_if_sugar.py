@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.context_manager_contract import (
+    AuthenticatedRaiseMatcher,
+    EffectBoundaryDisposition,
+)
+from sugar_lift_py_tests.effect import ExpectationNotMetEffect
 from sugar_lift_py_tests.floor import CallSiteValue, GuardedReturn, ReturnValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -48,6 +53,33 @@ def _only_completed(outcome: object) -> Completed:
     completed = outcome.exits[0]
     assert isinstance(completed, Completed)
     return completed
+
+
+def _only_halted(outcome: object) -> Halted:
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    halted = outcome.exits[0]
+    assert isinstance(halted, Halted)
+    return halted
+
+
+def _expected_exception(name: str):
+    """Resolve builtin type identity through the lexical floor, never spelling dispatch."""
+    from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
+
+    return TemporalContext.empty().value_for(name)
+
+
+def _through_assertion_boundary(outcome: ExitSet, expected: str) -> ExitSet:
+    return outcome.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(
+                expected=_expected_exception(expected), message_pattern=None
+            ),
+            unmet=ExpectationNotMetEffect("raise", "compare-through-if.py"),
+        ),
+    )
 
 
 def _returned_term(completed: Completed) -> TermValue:
@@ -95,9 +127,44 @@ def test_completed_predicate_selects_the_correct_branch() -> None:
 def test_exceptional_condition_bypasses_both_bodies() -> None:
     (outcome,) = _call_outcomes("helper(None, 2)\n")
 
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    assert isinstance(outcome.exits[0], Halted)
+    halted = _only_halted(outcome)
+    assert (
+        halted.effect.exception_type_coordinate
+        == _expected_exception("TypeError").exception_type_identity()
+    )
+    assert halted.effect.occurrence_id is not None
+
+
+def test_matching_assertion_boundary_consumes_and_preserves_pre_effect_state() -> None:
+    """Join #6631 + #6627: the formal condition halt reaches its boundary.
+
+    RED until ``caller_parameter_contract.py`` threads the reducer's real
+    pre-effect state into ``NativeOperationResolutionV1.project``.  The
+    assertion boundary correctly refuses a matching halt with ``state=None``;
+    never fabricate that state in this test or in the boundary consumer.
+    """
+    (produced,) = _call_outcomes("helper(None, 2)\n")
+    original = _only_halted(produced)
+    assert original.state is not None, (
+        "caller_parameter_contract.py NativeOperationResolutionV1.project "
+        "omitted the formal ordering halt's real pre-effect state"
+    )
+
+    routed = _through_assertion_boundary(produced, "TypeError")
+
+    completed = _only_completed(routed)
+    assert completed.value is original.state
+
+
+def test_wrong_expected_type_retains_the_same_formal_ordering_halt() -> None:
+    (produced,) = _call_outcomes("helper(None, 2)\n")
+    original = _only_halted(produced)
+
+    routed = _through_assertion_boundary(produced, "ValueError")
+
+    remaining = _only_halted(routed)
+    assert remaining.effect is original.effect
+    assert remaining.state is original.state
 
 
 def test_symbolic_if_branches_keep_complementary_guards() -> None:
