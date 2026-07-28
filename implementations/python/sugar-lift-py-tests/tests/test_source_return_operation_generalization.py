@@ -519,3 +519,30 @@ def test_default_and_explicit_source_return_values_stay_distinct_actuals(
     )
 
     assert _completed_value(outer.sugar().desugar(None)) == TermValue(expected)
+
+
+def test_authenticated_lambda_return_flows_into_binop() -> None:
+    tree, _, _ = _tree(
+        "def consume():\n"
+        "    return (lambda value: value + 1)(2) + 3\n\n"
+        "consume()\n",
+        bind=frozenset({"consume"}),
+    )
+    call = _calls_named(tree, "consume")[0]
+    value = call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="authenticated-lambda-return"
+    )
+
+    assert value == TermValue(6)
+
+
+def test_unauthenticated_lambda_callee_stays_loud() -> None:
+    tree, _, _ = _tree("result = (lambda value: value + 1)(2) + 3\n")
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    with pytest.raises(SugarNotWritten, match=r"SUGAR NOT WRITTEN \[Lambda\.sugar\]"):
+        outer.sugar().desugar(None)
