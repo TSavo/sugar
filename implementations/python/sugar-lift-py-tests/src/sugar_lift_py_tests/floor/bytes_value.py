@@ -88,6 +88,14 @@ class BytesValue(FloorValue):
             exception_name="AttributeError", site=site, owner="BytesValue.setattr"
         )
 
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="BytesValue.delattr"
+        )
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
