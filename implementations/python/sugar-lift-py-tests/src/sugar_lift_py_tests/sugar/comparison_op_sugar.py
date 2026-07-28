@@ -157,6 +157,31 @@ def construct_identity_comparison(left, right, site, *, negated: bool = False):
     return outcome.and_then(lambda predicate: predicate.negate())
 
 
+def defer_formal_native_operation(left, right, site, *, operator: str):
+    """Preserve one formal-bound native operation for caller discharge.
+
+    A formal's runtime type is supplied outside this frame.  Constructing an
+    immediate normal or exceptional face here would therefore invent caller
+    testimony.  The shared carrier records the ordered Floor operation and
+    lets authenticated actual operands select its real ExitSet later.
+    """
+    left_coordinate = getattr(left, "formal_coordinate", None)
+    right_coordinate = getattr(right, "formal_coordinate", None)
+    if left_coordinate is None and right_coordinate is None:
+        return None
+
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    return NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator=operator,
+        operands=(left, right),
+        coordinates=(left_coordinate, right_coordinate),
+    )
+
+
 def _publish_undecided_dispatch_edges(
     left,
     right,
@@ -263,6 +288,11 @@ class ComparisonOpSugar(Sugar):
 
     def _membership(self, container, item):
         """Membership law: container owns containment; undecided dispatch dual-edges."""
+        deferred = defer_formal_native_operation(
+            container, item, self.site, operator="contains"
+        )
+        if deferred is not None:
+            return deferred
         outcome = container.contains(item, self.site)
         return publish_undecided_membership_edges(
             item, container, self.site, self.op_kind, outcome
@@ -271,6 +301,11 @@ class ComparisonOpSugar(Sugar):
     def _ordering(self, left, right):
         """Ordering law: left owns the rich method; undecided dispatch dual-edges."""
         method = COMPARE_METHODS[self.op_kind]
+        deferred = defer_formal_native_operation(
+            left, right, self.site, operator=method
+        )
+        if deferred is not None:
+            return deferred
         return publish_undecided_ordering_edges(
             left,
             right,
@@ -282,6 +317,11 @@ class ComparisonOpSugar(Sugar):
     def _apply(self, left, right):
         if self.op_kind == "NotEq":
             # Equality law: a != b is not (a == b); dual-edge then negate.
+            deferred = defer_formal_native_operation(
+                left, right, self.site, operator="equals"
+            )
+            if deferred is not None:
+                return deferred.and_then(lambda predicate: predicate.negate())
             return publish_undecided_equality_edges(
                 left,
                 right,

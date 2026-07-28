@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -99,8 +99,13 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
 
 def _equals_with_derived_residue(left, right, site, ctx):
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+        defer_formal_native_operation,
         publish_undecided_equality_edges,
     )
+
+    deferred = defer_formal_native_operation(left, right, site, operator="equals")
+    if deferred is not None:
+        return deferred
 
     outcome = left.equals(right, site)
 
