@@ -12,8 +12,9 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
@@ -101,6 +102,32 @@ def _synthetic_compare(expression: str) -> Compare:
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     return next(node for node in tree.nodes() if isinstance(node, Compare))
+
+
+def _formal_coordinate(
+    node: Compare, name: str, ordinal: int
+) -> FormalParameterCoordinateV1:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    span = node.fragment.line_col_span
+    owner = SourceFragmentCoordinateV1(
+        node.fragment.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    return FormalParameterCoordinateV1.mint(
+        owner_source_identity_cid=node.fragment.source_cid,
+        owner_definition_locus=owner,
+        declaration_locus=owner,
+        ordinal=ordinal,
+        parameter_kind="positional-or-keyword",
+        declared_name=name,
+        sort=PrimitiveSort("Value"),
+    )
 
 
 def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
@@ -356,6 +383,185 @@ def test_membership_law_routes_through_authenticated_contains(
         node.fragment,
     ).desugar(None)
     _assert_dual_dispatch(outcome, atom="py.in", blame=str(node.fragment))
+
+
+def test_formal_ordering_survives_until_authenticated_caller_discharge() -> None:
+    """One ordered operation may honestly complete or halt at its callers."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    node = _synthetic_compare("left < container")
+    left_coordinate = _formal_coordinate(node, "left", 0)
+    right_coordinate = _formal_coordinate(node, "container", 1)
+    carrier = ComparisonOpSugar(
+        "Lt",
+        _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
+        _ValueSugar(SymbolicValue(make_var("container"), right_coordinate)),
+        node.fragment,
+    ).desugar(None)
+
+    assert isinstance(carrier, NativeOperationExitCarrierV1)
+    assert carrier.demand.operator == "less_than"
+    assert carrier.demand.operand_coordinate_cids == (
+        left_coordinate.coordinate_cid,
+        right_coordinate.coordinate_cid,
+    )
+
+    completed = carrier.discharge(
+        {
+            left_coordinate.coordinate_cid: TermValue(1),
+            right_coordinate.coordinate_cid: TermValue(2),
+        }
+    )
+    halted = carrier.discharge(
+        {
+            left_coordinate.coordinate_cid: NoneValue(),
+            right_coordinate.coordinate_cid: TermValue(2),
+        }
+    )
+    assert len(completed.exits) == 1
+    assert isinstance(completed.exits[0], Completed)
+    assert len(halted.exits) == 1
+    assert isinstance(halted.exits[0], Halted)
+    assert halted.exits[0].effect.exception_name == "TypeError"
+
+
+def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
+    """A ValueError boundary cannot consume an authenticated TypeError halt."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        AuthenticatedRaiseMatcher,
+        EffectBoundaryDisposition,
+    )
+    from sugar_lift_py_tests.effect.expectation_not_met_effect import (
+        ExpectationNotMetEffect,
+    )
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+    from sugar_lift_py_tests.ir import str_const
+
+    class _ExpectedValueError:
+        identity = ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const("ValueError")],
+        )
+
+        def exception_type_identity(self):
+            return self.identity
+
+    node = _synthetic_compare("left < container")
+    left_coordinate = _formal_coordinate(node, "left", 0)
+    carrier = ComparisonOpSugar(
+        "Lt",
+        _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
+        _ValueSugar(TermValue(2)),
+        node.fragment,
+    ).desugar(None)
+    exits = carrier.discharge({left_coordinate.coordinate_cid: NoneValue()})
+    projected = exits.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(expected=_ExpectedValueError()),
+            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+        ),
+    )
+
+    assert len(projected.exits) == 1
+    assert isinstance(projected.exits[0], Halted)
+    assert projected.exits[0].effect.exception_name == "TypeError"
+
+
+def test_formal_membership_records_authenticated_contains_receiver_order() -> None:
+    """``item in container`` defers ``container.contains(item)`` in that order."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    node = _synthetic_compare("left in container")
+    item_coordinate = _formal_coordinate(node, "left", 0)
+    container_coordinate = _formal_coordinate(node, "container", 1)
+    carrier = ComparisonOpSugar(
+        "In",
+        _ValueSugar(SymbolicValue(make_var("left"), item_coordinate)),
+        _ValueSugar(SymbolicValue(make_var("container"), container_coordinate)),
+        node.fragment,
+    ).desugar(None)
+
+    assert isinstance(carrier, NativeOperationExitCarrierV1)
+    assert carrier.demand.operator == "contains"
+    assert carrier.demand.operand_coordinate_cids == (
+        container_coordinate.coordinate_cid,
+        item_coordinate.coordinate_cid,
+    )
+
+
+def test_formal_equality_keeps_py_eq_solver_work_until_discharge() -> None:
+    """A formal equality is deferred; its authenticated ground result completes."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+
+    node = _synthetic_compare("left == 2")
+    left_coordinate = _formal_coordinate(node, "left", 0)
+    carrier = EqualityOpSugar(
+        _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
+        _ValueSugar(TermValue(2)),
+        node.fragment,
+    ).desugar(None)
+
+    assert isinstance(carrier, NativeOperationExitCarrierV1)
+    assert carrier.demand.operator == "equals"
+    exits = carrier.discharge({left_coordinate.coordinate_cid: TermValue(1)})
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+    assert isinstance(exits.exits[0].value, FalseBoolLiteralSugar)
+
+
+def test_formal_ordering_keeps_swapped_operand_coordinates_distinct() -> None:
+    node = _synthetic_compare("left < container")
+    left_coordinate = _formal_coordinate(node, "left", 0)
+    right_coordinate = _formal_coordinate(node, "container", 1)
+    left = SymbolicValue(make_var("left"), left_coordinate)
+    right = SymbolicValue(make_var("container"), right_coordinate)
+
+    forward = ComparisonOpSugar(
+        "Lt", _ValueSugar(left), _ValueSugar(right), node.fragment
+    ).desugar(None)
+    swapped = ComparisonOpSugar(
+        "Lt", _ValueSugar(right), _ValueSugar(left), node.fragment
+    ).desugar(None)
+
+    assert forward.demand.operand_coordinate_cids == (
+        left_coordinate.coordinate_cid,
+        right_coordinate.coordinate_cid,
+    )
+    assert swapped.demand.operand_coordinate_cids == (
+        right_coordinate.coordinate_cid,
+        left_coordinate.coordinate_cid,
+    )
+    assert forward.demand.demand_cid != swapped.demand.demand_cid
+
+
+def test_formal_identity_remains_total_without_a_native_operation_carrier() -> None:
+    """A formal binding does not make ``is`` acquire a fabricated raise face."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    node = _synthetic_compare("left is container")
+    left_coordinate = _formal_coordinate(node, "left", 0)
+    outcome = ComparisonOpSugar(
+        "Is",
+        _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
+        _ValueSugar(SymbolicValue(make_var("container"))),
+        node.fragment,
+    ).desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
 
 
 def test_identity_never_gains_an_exceptional_dispatch_edge() -> None:
