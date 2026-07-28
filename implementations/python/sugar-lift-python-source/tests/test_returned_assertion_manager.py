@@ -153,8 +153,10 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
         return
 
     # Stage-keyed residual after dual-mode return follow-through. The returned
-    # manager constructed through isinstance/tuple/len field flooring; summary
-    # derivation still stops at the matches() UnaryOp gate on CallSiteValue.
+    # manager constructed through isinstance/tuple/len field flooring, and
+    # ``not self.matches(...)`` digs method bodies instead of refusing the
+    # CallSiteValue at the UnaryOp producer. Summary derivation still has not
+    # sealed EffectBoundary.
     assert isinstance(reference, ContextManagerResolutionGapV1), reference
     assert reference.kind in {
         "exit-may-halt",
@@ -171,11 +173,13 @@ def test_external_error_raised_follows_authenticated_returned_manager() -> None:
     )
     assert "SymbolicValue + CallSiteValue" not in (reference.detail or "")
     assert "comparison_operation_exception_floor" not in (reference.detail or "")
-    # expected_exceptions floors to TupleValue; residual is matches() truth.
-    assert reference.kind == "exit-may-halt"
-    assert "unary_operation_exception_floor:CallSiteValue not" in (
+    assert "unary_operation_exception_floor:CallSiteValue not" not in (
         reference.detail or ""
     )
+    # Current residual is deeper in matches() / method-body truth after the
+    # CallSiteValue UnaryOp gate digs.
+    assert reference.kind == "exit-may-halt"
+    assert reference.detail == "truth:BlockValue"
 
 
 def test_external_error_raised_population_is_the_authenticated_47_with_sites() -> None:
