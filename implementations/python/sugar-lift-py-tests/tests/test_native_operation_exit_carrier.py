@@ -34,7 +34,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
+from sugar_lift_py_tests.ir import PrimitiveSort, atomic, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import (
     Complete,
     Completed,
@@ -192,6 +192,24 @@ def test_same_native_operation_demand_can_complete_for_authenticated_actuals():
     )
 
     assert exits.exits == (Completed(exits.exits[0].guard, TermValue(3)),)
+
+
+def test_guard_preserves_carrier_demand_until_authenticated_discharge():
+    carrier, left, right = _carrier()
+    guarded = carrier.guarded(atomic("test.guard", []))
+    assert isinstance(guarded, NativeOperationExitCarrierV1)
+    assert guarded.demand == carrier.demand
+    exits = guarded.discharge(
+        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    )
+    assert isinstance(exits.exits[0], Completed)
+    assert exits.exits[0].guard is not None
+
+
+def test_guarded_but_undischarged_carrier_cannot_report_completion():
+    carrier, _, _ = _carrier()
+    with pytest.raises(ConstructionPanic, match="native operation"):
+        outcome_to_exitset(carrier.guarded(atomic("test.guard", [])))
 
 
 def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
