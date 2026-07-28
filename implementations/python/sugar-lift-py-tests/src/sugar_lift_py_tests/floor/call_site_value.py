@@ -1122,6 +1122,7 @@ class CallSiteValue(FloorValue):
                 incomplete_outcome.append(outcome)
             return None
         value = complete_value(outcome, owner=owner)
+        value = _project_authenticated_source_return(value)
         if isinstance(value, CallSiteValue):
             return value._dig_floor_or_none(
                 reduce_ctx,
@@ -1439,6 +1440,40 @@ def _force_floor_gap(
         gap_locus=GapLocus.PROJECTION,
     )
     construction_panic(info)
+
+
+def _project_authenticated_source_return(value: FloorValue) -> FloorValue:
+    """Project the sole returned Floor from an authenticated source body.
+
+    A source-call dig has already authenticated and reduced its enrolled body
+    before reaching this function.  Only the body's exact, non-fall-through
+    single-return shape owns a scalar projection.  Multi-path bodies remain a
+    ``BlockValue`` so their guards and alternatives cannot be fabricated away.
+    """
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    if (
+        isinstance(value, BlockValue)
+        and not value.fall_through
+        and not value.can_fall_through
+        and len(value.statements) == 1
+        and isinstance(value.statements[0], ReturnValue)
+        and isinstance(value.statements[0].value, FloorValue)
+    ):
+        return value.statements[0].value
+    if isinstance(value, BlockValue):
+        for statement in value.statements:
+            if (
+                isinstance(statement, GuardedReturn)
+                and statement.guards
+                and all(guard == true_guard() for guard in statement.guards)
+                and isinstance(statement.value, FloorValue)
+            ):
+                return statement.value
+    return value
 
 
 def _ctx_with_curried_args(

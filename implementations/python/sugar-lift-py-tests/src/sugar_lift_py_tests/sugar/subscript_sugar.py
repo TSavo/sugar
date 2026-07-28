@@ -156,7 +156,18 @@ class SubscriptSugar(ConstructedTermSugar):
         )
 
     def _subscript(self, receiver, index, ctx):
-        from sugar_lift_py_tests.floor import ObjectValue
+        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
+
+        if isinstance(receiver, CallSiteValue):
+            projected = receiver._dig_floor_or_none(
+                ctx, owner="SubscriptSugar.receiver"
+            )
+            if projected is not None:
+                receiver = projected
+        if isinstance(index, CallSiteValue):
+            projected = index._dig_floor_or_none(ctx, owner="SubscriptSugar.index")
+            if projected is not None:
+                index = projected
 
         if isinstance(receiver, ObjectValue):
             return receiver.call_method_value(
