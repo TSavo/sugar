@@ -27,6 +27,22 @@ class SliceValue(FloorValue):
             exception_name="TypeError", site=site, owner="SliceValue.delitem"
         )
 
+    def setattr(self, name, value, site):
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="SliceValue.setattr"
+        )
+
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="SliceValue.delattr"
+        )
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
