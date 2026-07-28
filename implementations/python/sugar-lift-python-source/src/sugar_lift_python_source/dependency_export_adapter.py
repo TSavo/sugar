@@ -129,12 +129,50 @@ def _resolve_export_uncached(
             "artifact-module-absent", binding_cid, graph, module_name, exported_name
         )
     tree = parsed_tree(module.source, module.source_seat)
-    binding = _export_block(tree.body, exported_name, None)
+    binding, locus = _export_block_with_locus(tree.body, exported_name, None)
     dynamic_getattr = any(
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name == "__getattr__"
         for node in tree.body
     )
+    # Normal-completion authority for the prefix (statements strictly before
+    # the unique export-binding locus): producer-owned Completed faces only.
+    if locus is not None and not _prefix_has_completed_fallthrough(module, locus):
+        return _gap(
+            "dynamic-export", binding_cid, graph, module_name, exported_name
+        )
+    return _resolve_export_binding(
+        graph,
+        binding_cid,
+        module,
+        module_name,
+        exported_name,
+        binding,
+        tree.body,
+        warrants,
+        seen,
+        key,
+        dynamic_getattr=dynamic_getattr,
+        session=session,
+    )
+
+
+def _resolve_export_binding(
+    graph,
+    binding_cid: str,
+    module,
+    module_name: str,
+    exported_name: str,
+    binding,
+    body: list[ast.stmt],
+    warrants: tuple,
+    seen: frozenset[tuple[str, str]],
+    key: tuple[str, str],
+    *,
+    dynamic_getattr: bool,
+    session,
+) -> PythonObjectResolutionV1:
+    """Follow one export-binding state (definition / import / alias / star)."""
     if binding is not None and binding[0] == "definition":
         definition = _definition(module, binding[1])
         return ResolvedPythonObjectV1(
@@ -198,11 +236,18 @@ def _resolve_export_uncached(
             session=session,
         )
     if binding is not None and binding[0] == "alias":
-        # Static ``public = _private``: both the assignment occurrence and the
-        # RHS name are authenticated.  Same-module alias hop is recorded before
-        # resolving the RHS — never a silent follow.
+        # Follow the binding of the RHS name that *reaches* the assignment —
+        # never the RHS name's final module binding after later reassignment.
         assign_node, name_node = binding[1]
         alias_name = name_node.id
+        hop_key = (module_name, alias_name)
+        if hop_key in seen:
+            return _gap(
+                "reexport-cycle", binding_cid, graph, module_name, exported_name
+            )
+        reaching, _ = _export_block_with_locus(
+            _statements_before(body, assign_node), alias_name, None
+        )
         warrant = ReexportWarrantV1(
             from_module=module_name,
             from_source_cid=module.source_cid,
@@ -212,13 +257,18 @@ def _resolve_export_uncached(
             imported_name=alias_name,
             definition=_alias_coordinate(module, assign_node, exported_name),
         )
-        return resolve_export(
+        return _resolve_export_binding(
             graph,
             binding_cid,
+            module,
             module_name,
-            alias_name,
+            exported_name,
+            reaching,
+            body,
             (*warrants, warrant),
-            seen | {key},
+            seen | {key, hop_key},
+            key,
+            dynamic_getattr=dynamic_getattr,
             session=session,
         )
     if binding is not None and binding[0] == "unsupported":
@@ -237,9 +287,8 @@ def _resolve_export_uncached(
             module_name,
             exported_name,
         )
-    # Star import: only a single source-visible immutable literal ``__all__``
-    # may publish names.  Everything else stays dynamic — no first-candidate
-    # scan of the star module.
+    # Star import: TARGET module's ``__all__`` / public-name rule controls
+    # which names star publishes (Python import semantics), not the importer's.
     if binding is not None and binding[0] == "star":
         return _resolve_star_export(
             graph,
@@ -248,19 +297,14 @@ def _resolve_export_uncached(
             module_name,
             exported_name,
             binding[1],
-            tree.body,
             warrants,
             seen,
             key,
             session=session,
         )
-    # Module-level ``name = Class()`` / ``name: Class = Class()`` is a static
-    # callable-instance binding when Class is a local ClassDef with ``__call__``.
-    # The export is the authenticated ``__call__`` body, not a free dynamic
-    # residual and not a spelling of the binding name.
     if binding is not None and binding[0] == "dynamic":
         call_method = _callable_instance_call_method(
-            tree.body, binding[1], exported_name
+            body, binding[1], exported_name
         )
         if call_method is not None:
             definition = _definition(module, call_method)
@@ -516,18 +560,13 @@ def _resolve_star_export(
     module_name: str,
     exported_name: str,
     star_import: ast.ImportFrom,
-    body: list[ast.stmt],
     warrants: tuple,
     seen: frozenset[tuple[str, str]],
     key: tuple[str, str],
     *,
     session,
 ):
-    published = _literal_all_publication(body)
-    if published is None or exported_name not in published:
-        return _gap(
-            "dynamic-export", binding_cid, graph, module_name, exported_name
-        )
+    """Star publication is the *target* module's ``__all__`` / public-name rule."""
     target_module = _absolute_import(module_name, module.source_seat, star_import)
     if target_module is None:
         return _gap("opaque-source", binding_cid, graph, module_name, exported_name)
@@ -539,6 +578,12 @@ def _resolve_star_export(
             graph,
             target_module,
             exported_name,
+        )
+    target_tree = parsed_tree(target.source, target.source_seat)
+    published = _target_star_published_names(target_tree.body)
+    if exported_name not in published:
+        return _gap(
+            "dynamic-export", binding_cid, graph, module_name, exported_name
         )
     warrant = ReexportWarrantV1(
         from_module=module_name,
@@ -560,9 +605,78 @@ def _resolve_star_export(
     )
 
 
+def _target_star_published_names(body: list[ast.stmt]) -> frozenset[str]:
+    """Names a module publishes under ``from module import *``.
+
+    Prefer a single immutable literal ``__all__``.  Without it, public names
+    (no leading ``_``) that have a source-visible top-level bind.  Computed /
+    competing ``__all__`` yields empty publication (star stays dynamic).
+    """
+    literal = _literal_all_publication(body)
+    if literal is not None:
+        return literal
+    if _has_nonliteral_all(body):
+        return frozenset()
+    public: set[str] = set()
+    for statement in body:
+        for name in _top_level_bound_names(statement):
+            if not name.startswith("_"):
+                public.add(name)
+    return frozenset(public)
+
+
+def _has_nonliteral_all(body: list[ast.stmt]) -> bool:
+    for statement in body:
+        if isinstance(statement, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == "__all__"
+                for target in statement.targets
+            ):
+                return True
+        elif isinstance(statement, ast.AnnAssign):
+            if (
+                isinstance(statement.target, ast.Name)
+                and statement.target.id == "__all__"
+            ):
+                return True
+        elif isinstance(statement, ast.AugAssign):
+            if (
+                isinstance(statement.target, ast.Name)
+                and statement.target.id == "__all__"
+            ):
+                return True
+    return False
+
+
+def _top_level_bound_names(statement: ast.stmt) -> frozenset[str]:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return frozenset({statement.name})
+    if isinstance(statement, ast.ImportFrom):
+        return frozenset(
+            (alias.asname or alias.name)
+            for alias in statement.names
+            if alias.name != "*"
+        )
+    if isinstance(statement, ast.Import):
+        return frozenset(
+            (alias.asname or alias.name.split(".")[0]) for alias in statement.names
+        )
+    if isinstance(statement, ast.Assign):
+        names: set[str] = set()
+        for target in statement.targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+        return frozenset(names)
+    if isinstance(statement, ast.AnnAssign):
+        if isinstance(statement.target, ast.Name):
+            return frozenset({statement.target.id})
+    return frozenset()
+
+
 def _literal_all_publication(body: list[ast.stmt]) -> frozenset[str] | None:
     """Single immutable literal ``__all__`` of string constants, or None."""
     published: frozenset[str] | None = None
+    saw_all = False
     for statement in body:
         binds_all = False
         value: ast.AST | None = None
@@ -596,13 +710,14 @@ def _literal_all_publication(body: list[ast.stmt]) -> frozenset[str] | None:
                 return None
         if not binds_all:
             continue
+        saw_all = True
         names = _literal_string_sequence(value)
         if names is None:
             return None
         if published is not None:
             return None
         published = names
-    return published
+    return published if saw_all else None
 
 
 def _literal_string_sequence(node: ast.AST | None) -> frozenset[str] | None:
@@ -618,6 +733,145 @@ def _literal_string_sequence(node: ast.AST | None) -> frozenset[str] | None:
             return None
         names.add(element.value)
     return frozenset(names)
+
+
+def _statements_before(body: list[ast.stmt], locus: ast.stmt) -> list[ast.stmt]:
+    prefix: list[ast.stmt] = []
+    for statement in body:
+        if statement is locus:
+            break
+        prefix.append(statement)
+    return prefix
+
+
+def _export_block_with_locus(statements, name, initial):
+    """Export transfer with the statement that last bound ``name``.
+
+    Locus is the *innermost* statement that established the bind (e.g. the
+    FunctionDef inside a With body), not the compound wrapper — so prefix
+    fall-through includes the compound suite that must complete to reach it.
+    """
+    state = initial
+    locus = None
+    for statement in statements:
+        prior = state
+        new_state, new_locus = _export_statement_with_locus(statement, name, state)
+        if new_state is not prior:
+            state = new_state
+            locus = new_locus if new_locus is not None else statement
+    return state, locus
+
+
+def _export_statement_with_locus(statement: ast.stmt, name: str, state):
+    """Transfer one statement; return (state, innermost bind locus or None)."""
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        for item in statement.items:
+            if item.optional_vars is not None and _target_binds(
+                item.optional_vars, name
+            ):
+                state = ("dynamic", statement)
+        body_state, body_locus = _export_block_with_locus(statement.body, name, state)
+        return body_state, body_locus
+    if isinstance(statement, ast.If):
+        body_state, body_locus = _export_block_with_locus(statement.body, name, state)
+        else_state, else_locus = _export_block_with_locus(
+            statement.orelse, name, state
+        )
+        joined = _join_export_states((body_state, else_state), statement)
+        if joined is body_state and body_state is not state:
+            return joined, body_locus
+        if joined is else_state and else_state is not state:
+            return joined, else_locus
+        if joined is not state:
+            return joined, statement
+        return joined, None
+    if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+        iterated = state
+        if isinstance(statement, (ast.For, ast.AsyncFor)) and _target_binds(
+            statement.target, name
+        ):
+            iterated = ("dynamic", statement)
+        body_state, body_locus = _export_block_with_locus(
+            statement.body, name, iterated
+        )
+        else_state, else_locus = _export_block_with_locus(
+            statement.orelse, name, body_state
+        )
+        joined = _join_export_states((state, else_state), statement)
+        if joined is not state:
+            locus = else_locus or body_locus or statement
+            return joined, locus
+        return joined, None
+    if isinstance(statement, _TRY_TYPES):
+        # Preserve existing try transfer; locus is the try when state changes.
+        new_state = _export_statement(statement, name, state)
+        return new_state, (statement if new_state is not state else None)
+    if isinstance(statement, ast.Match):
+        new_state = _export_statement(statement, name, state)
+        return new_state, (statement if new_state is not state else None)
+    new_state = _export_statement(statement, name, state)
+    return new_state, (statement if new_state is not state else None)
+
+
+def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
+    """License the binding only when prefix reduction Completed fall-through.
+
+    Spec: authenticated module source/CID → statements strictly before the
+    unique export-binding locus → reduce via the same ``reduce_block_to_exitset``
+    path function bodies use → exactly one unconditional
+    ``Completed(can_fall_through=True)``.  Empty prefix is licensed.  Any
+    unresolved / halted / multi-face / incomplete-sugar prefix is refused.
+    """
+    try:
+        from sugar_lift_py_tests.outcome import Completed, true_guard
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+        from sugar_source_tree.tree import SourceFile
+    except ImportError:
+        return False
+
+    source_file = SourceFile((module.source, module.source_seat, module.source_cid))
+    locus_key = (locus.lineno, locus.col_offset)
+    prefix = []
+    for statement in source_file.root.body:
+        span = statement.line_col_span()
+        key = (span.start_line, span.start_col)
+        if key >= locus_key:
+            break
+        prefix.append(statement)
+    if not prefix:
+        return True
+    try:
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
+
+        sugars = []
+        for statement in prefix:
+            # Module-level def/class *statements* are definitional: bodies are
+            # deferred.  FunctionDef.sugar() builds FunctionUniverseSugar (the
+            # call-universe value), which reduces the body as if it ran at the
+            # def site — wrong for module sequencing.  Import/Pass already use
+            # InertSugar; def/class match that door for fall-through only.
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                sugars.append(InertSugar(site=statement.fragment))
+            else:
+                sugars.append(statement.sugar())
+        exits = reduce_block_to_exitset(tuple(sugars))
+    except SugarNotWritten:
+        return False
+    except Exception:
+        return False
+    if len(exits.exits) != 1:
+        return False
+    face = exits.exits[0]
+    if not isinstance(face, Completed):
+        return False
+    if face.guard != true_guard():
+        return False
+    value = face.value
+    return bool(getattr(value, "can_fall_through", False))
 
 
 def _absolute_import(
@@ -705,18 +959,7 @@ def export_statement_coverage() -> tuple[list[str], list[str]]:
 
 
 def _export_block(statements, name, initial):
-    state = initial
-    for index, statement in enumerate(statements):
-        if _statement_contains_module_init_raise(statement) and _suite_binds_export(
-            statements[index + 1 :], name
-        ):
-            # A later binding is control-dependent on whether this exceptional
-            # prefix completes.  In particular, a With/AsyncWith exit may
-            # suppress the exception while skipping the remainder of its
-            # suite.  Selecting that later textual binding would authenticate
-            # an unreachable definition.
-            return ("dynamic", statement)
-        state = _export_statement(statement, name, state)
+    state, _locus = _export_block_with_locus(statements, name, initial)
     return state
 
 
