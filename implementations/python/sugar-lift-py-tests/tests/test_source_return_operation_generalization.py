@@ -665,20 +665,105 @@ def test_lambda_inside_nested_function_composes_with_source_return_projection() 
     ) == TermValue(6)
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        "def outer():\n    def inner(value):\n        return value + 1\n    return inner(3)\n\nouter()\n",
-        "def inner(value):\n    return value + 10\n\ndef outer():\n    def inner(value):\n        return value + 1\n    return inner(3)\n\nouter()\n",
-        "def outer():\n    def inner(value):\n        return value + 1\n    return inner(3)\n\ndef other():\n    return inner(4)\n\nother()\n",
-    ],
-)
-def test_nested_lookup_lies_cannot_authorize_by_name_or_span(source: str) -> None:
-    tree, _, _ = _tree(source, bind=frozenset({"outer", "inner", "other"}))
-    nested_calls = [
+def _nested_definition_and_call(source: str):
+    tree, context, _ = _tree(
+        source, bind=frozenset({"outer", "inner", "other", "foreign"})
+    )
+    nested = [
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "inner"
+    ]
+    calls = [
         node
         for node in tree.nodes()
         if isinstance(node, Call) and getattr(node.func, "id", None) == "inner"
     ]
-    assert nested_calls
-    assert all(node.unit.source_function_definition_for_call(node) is None for node in nested_calls)
+    return tree, context, nested, calls
+
+
+def test_nested_call_after_definition_resolves_exact_lexical_definition() -> None:
+    _, _, definitions, calls = _nested_definition_and_call(
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3)\n"
+    )
+    assert len(definitions) == len(calls) == 1
+    assert calls[0].unit.source_function_definition_for_call(calls[0]) is definitions[0]
+
+
+def test_nested_definition_shadows_same_name_module_definition() -> None:
+    _, _, definitions, calls = _nested_definition_and_call(
+        "def inner(value):\n"
+        "    return value + 10\n\n"
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3)\n"
+    )
+    assert len(definitions) == 2 and len(calls) == 1
+    nested = max(definitions, key=lambda node: node.line_col_span().start_line)
+    assert calls[0].unit.source_function_definition_for_call(calls[0]) is nested
+
+
+def test_nested_definition_is_not_visible_outside_its_lexical_function() -> None:
+    _, _, _, calls = _nested_definition_and_call(
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3)\n\n"
+        "def other():\n"
+        "    return inner(4)\n"
+    )
+    outside = max(calls, key=lambda node: node.line_col_span().start_line)
+    assert outside.unit.source_function_definition_for_call(outside) is None
+
+
+def test_nested_definition_after_call_does_not_authorize_earlier_call() -> None:
+    _, _, _, calls = _nested_definition_and_call(
+        "def outer():\n"
+        "    result = inner(3)\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return result\n"
+    )
+    assert len(calls) == 1
+    assert calls[0].unit.source_function_definition_for_call(calls[0]) is None
+
+
+@pytest.mark.parametrize("foreign_owner", ("module", "wrong-scope"))
+def test_foreign_same_signature_nested_frame_refuses_loudly(
+    foreign_owner: str,
+) -> None:
+    source = (
+        "def inner(value):\n"
+        "    return value + 10\n\n"
+        "def foreign():\n"
+        "    def inner(value):\n"
+        "        return value + 20\n"
+        "    return inner(1)\n\n"
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3)\n\n"
+        "outer()\n"
+    )
+    tree, context, definitions, calls = _nested_definition_and_call(source)
+    outer_call = max(calls, key=lambda node: node.line_col_span().start_line)
+    module_definition = min(definitions, key=lambda node: node.line_col_span().start_line)
+    wrong_scope_definition = sorted(
+        definitions, key=lambda node: node.line_col_span().start_line
+    )[1]
+    foreign_definition = (
+        module_definition if foreign_owner == "module" else wrong_scope_definition
+    )
+    context.source_call_frames[_coordinate(outer_call)] = (
+        foreign_definition.source_visible_call_frame()
+    )
+    public_call = _calls_named(tree, "outer")[0]
+
+    with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
+        public_call.sugar().desugar(None).value._dig_floor_or_none(
+            None, owner=f"foreign-nested-{foreign_owner}"
+        )
