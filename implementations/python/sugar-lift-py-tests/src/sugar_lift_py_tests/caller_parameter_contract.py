@@ -392,11 +392,15 @@ def production_native_operation_operators() -> frozenset[str]:
     contracted_store_operators = frozenset(
         {"setitem", "setattr_named", "delitem", "delattr_named"}
     )
+    # AugAssign formal path mints i* by dynamic name; pin the full set so
+    # projector absence cannot silent-fallback to ordinary binary.
+    contracted_inplace_operators = frozenset(_INPLACE_NATIVE_OPERATION_PROJECTORS)
     return (
         _ast_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
         | frozenset(COMPARE_METHODS.values())
         | contracted_store_operators
+        | contracted_inplace_operators
     )
 
 
@@ -419,6 +423,89 @@ def _project_delattr_named(receiver, name, site):
     return receiver.delattr(name.value, site)
 
 
+def _project_inplace_then_binary(inplace_name: str, binary_name: str):
+    """Authenticated in-place projection with Floor-authorized binary fallback.
+
+    This is the discharge body for AugAssign formal demands (``iadd``, …).
+    Projector *absence* must never be patched by minting ordinary ``add`` —
+    that is a false green about in-place semantics.  Binary fallback lives
+    **inside** the enrolled i* projector, only after Floor declines i*
+    (no method / non-authorizing face), matching Python's ``__iadd__`` then
+    ``__add__`` law.
+    """
+
+    def project(left, right, site):
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+        inplace = getattr(left, inplace_name, None)
+        if callable(inplace):
+            projected = inplace(right, site)
+            if isinstance(projected, Complete) and isinstance(
+                projected.value, RaiseValue
+            ):
+                return projected
+            if isinstance(projected, Complete):
+                return projected
+            if isinstance(projected, (Incomplete, ExitSet)):
+                return projected
+            # Unknown Outcome / nested carrier face: surface rather than invent add.
+            return projected
+        binary = getattr(left, binary_name, None)
+        if not callable(binary):
+            from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+            from sugar_lift_py_tests.gap.panic import construction_panic
+
+            construction_panic(
+                ConstructionGap(
+                    owner=f"_project_{inplace_name}",
+                    blame=str(site),
+                    observed=(
+                        f"{type(left).__name__} has neither {inplace_name} nor "
+                        f"{binary_name} for authenticated augmented assignment"
+                    ),
+                    requested=(
+                        f"Floor {inplace_name} and/or {binary_name} on this value "
+                        "species"
+                    ),
+                    fix=(
+                        f"implement Floor {inplace_name} (preferred) or "
+                        f"{binary_name} for this species"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                    gap_locus=GapLocus.CONSTRUCTION,
+                )
+            )
+        return binary(right, site)
+
+    project.__name__ = f"_project_{inplace_name}"
+    project.__qualname__ = f"_project_{inplace_name}"
+    project.__doc__ = (
+        f"Authenticated ``{inplace_name}`` then Floor-authorized ``{binary_name}``."
+    )
+    return project
+
+
+# In-place operators minted by AugAssign formal path.  Production set and
+# projector keys must include every name so absence cannot merge green as add.
+_INPLACE_NATIVE_OPERATION_PROJECTORS = {
+    "iadd": _project_inplace_then_binary("iadd", "add"),
+    "isub": _project_inplace_then_binary("isub", "subtract"),
+    "imul": _project_inplace_then_binary("imul", "multiply"),
+    "itruediv": _project_inplace_then_binary("itruediv", "divide"),
+    "ifloordiv": _project_inplace_then_binary("ifloordiv", "floor_divide"),
+    "imod": _project_inplace_then_binary("imod", "modulo"),
+    "ipow": _project_inplace_then_binary("ipow", "power"),
+    "iand": _project_inplace_then_binary("iand", "bitwise_and"),
+    "ior": _project_inplace_then_binary("ior", "bitwise_or"),
+    "ixor": _project_inplace_then_binary("ixor", "bitwise_xor"),
+    "ilshift": _project_inplace_then_binary("ilshift", "left_shift"),
+    "irshift": _project_inplace_then_binary("irshift", "right_shift"),
+    "imatmul": _project_inplace_then_binary("imatmul", "matrix_multiply"),
+}
+
+
 # Explicit projectors for authenticated native operations.
 #
 # Each entry names its own Floor signature.  A generic
@@ -437,6 +524,11 @@ def _project_delattr_named(receiver, name, site):
 #   delitem        → ``receiver.delitem(index, site)``   (__delitem__)
 #   delattr_named  → ``receiver.delattr(name.value, site)`` (__delattr__)
 # Name deletion (``del name`` / DeleteNameSugar) is out of scope here.
+#
+# In-place protocol (AugAssign formal path):
+#   iadd / isub / … → authenticated i* then Floor-authorized ordinary binary
+#   inside the enrolled projector.  Projector absence must never silent-fallback
+#   to minting ``add`` — that is a false green about in-place semantics.
 #
 # Key set must equal :func:`production_native_operation_operators` exactly.
 _NATIVE_OPERATION_PROJECTORS = {
@@ -463,6 +555,8 @@ _NATIVE_OPERATION_PROJECTORS = {
     "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
     "left_shift": lambda left, right, site: left.left_shift(right, site),
     "right_shift": lambda left, right, site: left.right_shift(right, site),
+    # Authenticated in-place (AugAssign); binary fallback is inside each projector.
+    **_INPLACE_NATIVE_OPERATION_PROJECTORS,
     # Equality, ordering, membership (compare / equality sugars).
     "equals": lambda left, right, site: left.equals(right, site),
     "less_than": lambda left, right, site: left.less_than(right, site),

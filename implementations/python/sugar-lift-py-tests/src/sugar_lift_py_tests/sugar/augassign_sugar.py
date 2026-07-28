@@ -67,19 +67,14 @@ def _chain(outcome, step):
 def _augmented_binary(left, right, op_kind: str, site) -> Outcome:
     """In-place when Floor authorizes; otherwise ordinary binary.
 
-    Does **not** invent a shared ``iadd`` native-operation projector.  If a
-    future formal ``iadd`` mint/projector is required for symbolic carriers,
-    bank that red with the exact contract rather than emulating it here.
+    Formal operands mint the **authenticated i*** native-operation demand
+    (``operator='iadd'`` for ``+=``).  Projector absence is an honorable red —
+    never silent-fallback to minting ordinary ``add`` (false green about
+    in-place semantics).  Binary fallback lives only *inside* the enrolled
+    i* projector (Floor declines i* → ordinary binary), matching Python.
 
-    Formal operands mint a native-operation demand **before** Floor conversion
-    can turn a ground left into a bare SymbolicValue (which would erase the
-    authenticated ground arithmetic face after discharge).  Prefer enrolled
-    ``iadd`` (etc.) projectors when present; else the ordinary binary name.
-
-    Floor law (decided, non-formal receivers):
-      1. Prefer ``left.iadd(right, site)`` when present and not Raise/NotImplemented
-      2. Else ``left.add(right, site)`` for ``+`` (and the matching binary for
-         other op kinds via the same names as BinOpSugar)
+    Ground (non-formal) path: Floor ``left.iadd`` when present, else
+    ``left.add`` — same law, no carrier mint.
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -109,12 +104,13 @@ def _augmented_binary(left, right, op_kind: str, site) -> Outcome:
     left_coord = getattr(left, "formal_coordinate", None)
     right_coord = getattr(right, "formal_coordinate", None)
     if left_coord is not None or right_coord is not None:
-        # Formal path: mint demand; discharge supplies actuals to the projector.
-        # Prefer enrolled i* projectors; do not invent iadd here when missing.
-        if inplace_name is not None and inplace_name in _NATIVE_OPERATION_PROJECTORS:
-            operator = inplace_name
-        else:
+        # Formal path: always mint authenticated i* when the op has one.
+        # Projector absence → honorable red.  Never mint ordinary binary as a
+        # stand-in for missing i* (advisor: that fallback is a false green).
+        if inplace_name is None:
             operator = binary_name
+        else:
+            operator = inplace_name
         if operator not in _NATIVE_OPERATION_PROJECTORS:
             from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
             from sugar_lift_py_tests.gap.panic import construction_panic
@@ -124,19 +120,19 @@ def _augmented_binary(left, right, op_kind: str, site) -> Outcome:
                     owner="SubscriptAugAssignSugar._augmented_binary",
                     blame=str(site),
                     observed=(
-                        f"formal AugAssign {op_kind} needs projector "
-                        f"{inplace_name!r} or {binary_name!r}; neither enrolled"
+                        f"formal AugAssign {op_kind} requires enrolled projector "
+                        f"operator={operator!r}; projector is ABSENT"
                     ),
                     requested=(
                         "shared authenticated native-operation projector: "
-                        f"operator={inplace_name!r} with "
-                        f"lambda left, right, site: left.{inplace_name}(right, site) "
-                        f"or operator={binary_name!r} already used by BinOp"
+                        f"operator={operator!r} with signature "
+                        f"(left, right, site) -> Floor {operator} then "
+                        f"authorized {binary_name} only inside that projector"
                     ),
                     fix=(
-                        "enroll the i* / binary projector on "
-                        "_NATIVE_OPERATION_PROJECTORS; do not emulate formal "
-                        "iadd inside AugAssign"
+                        f"enroll {operator!r} on _NATIVE_OPERATION_PROJECTORS "
+                        "(see _project_inplace_then_binary); do not mint "
+                        f"{binary_name!r} as a silent stand-in for missing i*"
                     ),
                     gap_kind=GapKind.FLOOR,
                     gap_locus=GapLocus.CONSTRUCTION,
@@ -178,15 +174,11 @@ def _augmented_binary(left, right, op_kind: str, site) -> Outcome:
                 blame=str(site),
                 observed=f"{type(left).__name__} has no {binary_name} for AugAssign {op_kind}",
                 requested=(
-                    "Floor binary (or authorized i*) for augmented assignment, "
-                    "or a shared authenticated iadd native-operation projector "
-                    "minted as operator='iadd' with projector "
-                    "lambda left, right, site: left.iadd(right, site)"
+                    "Floor binary (or authorized i*) for augmented assignment"
                 ),
                 fix=(
-                    "implement Floor iadd/add for this value species, or enroll "
-                    "a formal iadd producer/projector rather than emulating "
-                    "inside AugAssign"
+                    f"implement Floor {inplace_name or binary_name}/{binary_name} "
+                    "for this value species"
                 ),
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,

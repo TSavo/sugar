@@ -53,12 +53,8 @@ from sugar_source_tree.nodes import AugAssign, FunctionDef, Subscript
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
-MISSING_IADD_PROJECTOR = (
-    "shared authenticated iadd native-operation producer/projector: "
-    "operator='iadd', mint operands (left, right) with formal coordinates, "
-    "projector signature (left, right, site) -> left.iadd(right, site); "
-    "do not emulate formal iadd inside AugAssign"
-)
+# Authenticated iadd is enrolled: binary fallback lives *inside* the projector,
+# never by minting ordinary ``add`` when iadd is absent.
 
 
 def _tree(source: str, name: str = "subscript_augassign.py") -> SourceFile:
@@ -441,21 +437,123 @@ def test_discrimination_unconditional_add_without_iadd_probe_is_detected() -> No
         assert lying_calls == ["iadd"]
 
 
-def test_formal_iadd_projector_absence_is_named_not_emulated() -> None:
-    """Bank red if production needs formal iadd and it is not enrolled."""
-    if "iadd" not in _NATIVE_OPERATION_PROJECTORS:
-        # Not a failure of AugAssign — shared producer/projector hand-off.
-        assert "iadd" not in _NATIVE_OPERATION_PROJECTORS
-        # Contract string must stay greppable for the owner who mints it.
-        assert "operator='iadd'" in MISSING_IADD_PROJECTOR
-        assert "left.iadd(right, site)" in MISSING_IADD_PROJECTOR
-    else:
-        parameters = tuple(
-            __import__("inspect").signature(
-                _NATIVE_OPERATION_PROJECTORS["iadd"]
-            ).parameters
+def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> None:
+    """iadd projector is explicit — never projector-absence silent-fallback to add."""
+    assert "iadd" in _NATIVE_OPERATION_PROJECTORS
+    parameters = tuple(
+        __import__("inspect").signature(_NATIVE_OPERATION_PROJECTORS["iadd"]).parameters
+    )
+    assert parameters == ("left", "right", "site")
+
+
+def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
+    """Formal augassign arithmetic demand is operator='iadd', never bare 'add'."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort, make_var
+
+    _, sugar = _aug_sugar()
+    site = sugar.op_site
+    src = site.source_cid
+    owner_def = SourceFragmentCoordinateV1(src, 1, 0, 1, 10)
+
+    def _coord(name: str, ordinal: int):
+        return FormalParameterCoordinateV1.mint(
+            owner_source_identity_cid=src,
+            owner_definition_locus=owner_def,
+            declaration_locus=SourceFragmentCoordinateV1(
+                src, 1, 10 + ordinal, 1, 12 + ordinal
+            ),
+            ordinal=ordinal,
+            parameter_kind="positional-or-keyword",
+            declared_name=name,
+            sort=PrimitiveSort("Value"),
         )
-        assert parameters == ("left", "right", "site")
+
+    left = SymbolicValue(make_var("cell"), _coord("cell", 0))
+    right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
+    out = _augmented_binary(left, right, "Add", site)
+    assert isinstance(out, NativeOperationExitCarrierV1)
+    assert out.demand.operator == "iadd"
+    with pytest.raises(AssertionError):
+        assert out.demand.operator == "add"
+
+
+def test_discrimination_projector_absence_must_not_mint_add() -> None:
+    """Twin: minting add because iadd is missing is the lying path (false green)."""
+    # Authenticated path mints iadd when formal.
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort, make_var
+
+    _, sugar = _aug_sugar()
+    site = sugar.op_site
+    src = site.source_cid
+    owner_def = SourceFragmentCoordinateV1(src, 1, 0, 1, 10)
+    coord = FormalParameterCoordinateV1.mint(
+        owner_source_identity_cid=src,
+        owner_definition_locus=owner_def,
+        declaration_locus=SourceFragmentCoordinateV1(src, 1, 10, 1, 12),
+        ordinal=0,
+        parameter_kind="positional-or-keyword",
+        declared_name="x",
+        sort=PrimitiveSort("Value"),
+    )
+    left = SymbolicValue(make_var("x"), coord)
+    right = TermValue(1)
+    truthful = _augmented_binary(left, right, "Add", site)
+    assert truthful.demand.operator == "iadd"
+    # Lying path: unconditional add demand
+    lying_operator = "add"
+    with pytest.raises(AssertionError):
+        assert lying_operator == "iadd"
+
+
+def test_iadd_projector_falls_back_to_add_only_when_floor_declines_iadd() -> None:
+    """Inside the enrolled projector: no iadd method → ordinary add (authorized)."""
+    calls: list[str] = []
+
+    @dataclass(frozen=True)
+    class _AddOnly:
+        value: int
+
+        def add(self, other, site):
+            calls.append("add")
+            return Complete(TermValue(self.value + other.value))
+
+    out = _NATIVE_OPERATION_PROJECTORS["iadd"](_AddOnly(1), TermValue(2), "op")
+    assert isinstance(out, Complete)
+    assert out.value == TermValue(3)
+    assert calls == ["add"]
+
+
+def test_iadd_projector_prefers_floor_iadd_when_present() -> None:
+    """Inside the enrolled projector: iadd wins over add."""
+    calls: list[str] = []
+
+    @dataclass(frozen=True)
+    class _Both:
+        value: int
+
+        def iadd(self, other, site):
+            calls.append("iadd")
+            return Complete(TermValue(self.value + other.value))
+
+        def add(self, other, site):
+            calls.append("add")
+            return Complete(TermValue(self.value + other.value))
+
+    out = _NATIVE_OPERATION_PROJECTORS["iadd"](_Both(1), TermValue(2), "op")
+    assert isinstance(out, Complete)
+    assert calls == ["iadd"]
+    with pytest.raises(AssertionError):
+        assert calls == ["add"]
 
 
 # ---------------------------------------------------------------------------
@@ -472,8 +570,8 @@ def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
         pending.discharge({})
 
 
-def test_authenticated_caller_discharges_get_add_setitem_to_updated_list() -> None:
-    """All three formals supplied: get → add → setitem completes [1,2]+10@0 → [11,2]."""
+def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> None:
+    """All three formals: get → iadd → setitem completes [1,2]+10@0 → [11,2]."""
     function, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     coords = {
