@@ -301,6 +301,15 @@ class StringValue(GuardStableValue):
             )
         return self.undecided_subscript(index, site, owner="StringValue.subscript")
 
+    def setitem(self, index, value, site):
+        """Strings are immutable: every subscript store is exact TypeError."""
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="StringValue.setitem"
+        )
+
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.
