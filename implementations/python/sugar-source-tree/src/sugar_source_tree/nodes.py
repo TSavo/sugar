@@ -3747,6 +3747,64 @@ class Assign(Statement):
                 suffix.append(element.id)
         return (tuple(prefix), star.value.id, tuple(suffix))
 
+    def _flat_mixed_unpack_targets(self, target):
+        """Parse flat Name|Attribute|Subscript|*Name into typed unpack targets.
+
+        At most one ``*Name``. Nested / ``*attr`` stay unadmitted. Pure Name
+        leaves return ``None`` (DynamicUnpackAssignSugar owns that path).
+        """
+        if not isinstance(target, (Tuple_, List)):
+            return None
+        star_indices = [
+            index
+            for index, element in enumerate(target.elts)
+            if isinstance(element, Starred)
+        ]
+        if len(star_indices) > 1:
+            return None
+        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+            AttributeUnpackTarget,
+            NameUnpackTarget,
+            StarUnpackTarget,
+            SubscriptUnpackTarget,
+        )
+
+        targets: list[object] = []
+        has_store = False
+        for element in target.elts:
+            if isinstance(element, Name):
+                targets.append(NameUnpackTarget(element.id))
+                continue
+            if isinstance(element, Starred):
+                if not isinstance(element.value, Name):
+                    return None
+                targets.append(StarUnpackTarget(element.value.id))
+                continue
+            if isinstance(element, Attribute):
+                has_store = True
+                targets.append(
+                    AttributeUnpackTarget(
+                        receiver=element.value.sugar(),
+                        attr=element.attr,
+                        site=element.fragment,
+                    )
+                )
+                continue
+            if isinstance(element, Subscript):
+                has_store = True
+                targets.append(
+                    SubscriptUnpackTarget(
+                        receiver=element.value.sugar(),
+                        index=element.slice_.sugar(),
+                        site=element.fragment,
+                    )
+                )
+                continue
+            return None
+        if not has_store:
+            return None
+        return tuple(targets)
+
     def _flat_store_unpack_pairs(self):
         """Flat Name|Attribute|Subscript leaves against a display RHS.
 
@@ -4191,6 +4249,18 @@ class Assign(Statement):
                         star_name=star_name,
                         prefix_names=prefix,
                         suffix_names=suffix,
+                    )
+                # Store leaves (+ optional *Name) against non-display RHS.
+                mixed = self._flat_mixed_unpack_targets(target)
+                if mixed is not None:
+                    from sugar_lift_py_tests.sugar.assign_sugar import (
+                        DynamicUnpackStoreAssignSugar,
+                    )
+
+                    return DynamicUnpackStoreAssignSugar(
+                        value=self.value.sugar(),
+                        targets=mixed,
+                        site=self.fragment,
                     )
             return super()._construct_sugar()
 

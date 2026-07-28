@@ -144,6 +144,100 @@ class _PreconstructedStoreSugar(Sugar):
 
 
 @dataclass(frozen=True)
+class DynamicUnpackStoreAssignSugar(Sugar):
+    """Non-display RHS: flat Name|Attribute|Subscript|*Name unpack (LTR).
+
+    Python: evaluate RHS **once**, UNPACK materializes all members, then each
+    target applies its member **left-to-right**.  A halt on an earlier target
+    leaves later names unbound and later stores unrun; earlier completed
+    rebinds/stores survive on the halted face state.
+
+    Projection is positional (``PositionalUnpackOperation`` →
+    ``UnpackMemberRoster``) — no fabricated synthetic lexical binding keys.
+    Targets are typed variants (``unpack_projection_targets``) owning apply.
+    """
+
+    value: Sugar
+    targets: tuple  # Name|Star|Attribute|Subscript unpack targets, source order
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return typed_red_effect_witness(
+            name="dynamic_unpack_store_star",
+            owner_sugar="DynamicUnpackStoreAssignSugar",
+            source=(
+                "def A(o, xs):\n"
+                "    o.x, *rest = xs\n"
+                "    return rest\n"
+            ),
+            effect_class="SequenceUnpackRuntimeEffect",
+            reason_needle="sequence unpack",
+            blame_needle="at least 1 members",
+            wrong_reason_needle="unpack demands exactly 3 members",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            PositionalUnpackOperation,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+            ApplyUnpackMemberSugar,
+            AttributeUnpackTarget,
+            NameUnpackTarget,
+            StarUnpackTarget,
+            SubscriptUnpackTarget,
+        )
+
+        prefix, suffix, has_star = self._fixed_counts()
+        operation = PositionalUnpackOperation(
+            fixed_prefix=prefix,
+            fixed_suffix=suffix,
+            has_star=has_star,
+            owner=type(self).__name__,
+            blame=self.site,
+        )
+        return self.value.desugar(ctx).and_then(
+            lambda value: operation.submit(value, ctx).and_then(
+                lambda roster: reduce_block_to_exitset(
+                    tuple(
+                        ApplyUnpackMemberSugar(target, member, self.site)
+                        for target, member in zip(
+                            self.targets, roster.members, strict=True
+                        )
+                    ),
+                    ctx,
+                )
+            )
+        )
+
+    def _fixed_counts(self) -> tuple[int, int, bool]:
+        from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+            StarUnpackTarget,
+        )
+
+        prefix = 0
+        suffix = 0
+        has_star = False
+        seen_star = False
+        for target in self.targets:
+            if isinstance(target, StarUnpackTarget):
+                if has_star:
+                    raise AssertionError("at most one star unpack target")
+                has_star = True
+                seen_star = True
+                continue
+            if seen_star:
+                suffix += 1
+            else:
+                prefix += 1
+        return prefix, suffix, has_star
+
+
+@dataclass(frozen=True)
 class UnpackStoreAssignSugar(Sugar):
     """Flat display unpack with Attribute/Subscript store leaves (and optional Names).
 
