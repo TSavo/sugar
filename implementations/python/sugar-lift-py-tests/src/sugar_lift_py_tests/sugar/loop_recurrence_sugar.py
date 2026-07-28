@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import atomic, ctor, not_, or_, str_const
 from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class LoopBindingRefSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class LoopRecurrenceSugar(Sugar):
+class LoopRecurrenceSugar(ConstructedTermSugar):
     target_cid: str
     loop_construction_cid: str
     binding_coordinate_cids: tuple[str, ...]
@@ -51,7 +51,6 @@ class LoopRecurrenceSugar(Sugar):
 
     def to_term(self, *, owner: str):
         """Project the authenticated loop construction as one canonical term."""
-        del owner
         from sugar_lift_py_tests.loop_construction import (
             LoopWireError,
             decode_loop_construction_v1,
@@ -79,6 +78,7 @@ class LoopRecurrenceSugar(Sugar):
             (
                 str_const(self.target_cid),
                 str_const(self.loop_construction_cid),
+                self.occurrence_term(owner=owner),
                 ctor(
                     "python:loop-binding-coordinates",
                     tuple(str_const(cid) for cid in self.binding_coordinate_cids),

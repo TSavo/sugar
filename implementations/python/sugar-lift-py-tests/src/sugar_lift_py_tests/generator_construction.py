@@ -8,16 +8,32 @@ from sugar_lift_python_source.canonical import cid_of_json
 
 from .effect import Effect, require_effect
 from .outcome import ExitSet
+from .sugar.sugar_base import ConstructedTermSugar
+
+
+def _require_constructed_term(value: object, *, owner: str) -> None:
+    if not isinstance(value, ConstructedTermSugar):
+        raise TypeError(
+            f"{owner} requires ConstructedTermSugar, got {type(value).__name__}"
+        )
 
 
 @dataclass(frozen=True)
 class YieldStepV1:
-    value: object
+    value: ConstructedTermSugar | None
+
+    def __post_init__(self) -> None:
+        if self.value is not None:
+            _require_constructed_term(self.value, owner="YieldStepV1.value")
 
 
 @dataclass(frozen=True)
 class ReturnStepV1:
-    value: object | None = None
+    value: ConstructedTermSugar | None = None
+
+    def __post_init__(self) -> None:
+        if self.value is not None:
+            _require_constructed_term(self.value, owner="ReturnStepV1.value")
 
 
 @dataclass(frozen=True)
@@ -88,13 +104,20 @@ class AssignStepV1:
     """
 
     name: str
-    value: object
+    value: ConstructedTermSugar
     fragment_cid: str
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(self.value, owner="AssignStepV1.value")
 
 
 @dataclass(frozen=True)
 class FinallyStepV1:
-    statements: tuple[object, ...]
+    statements: tuple[ConstructedTermSugar, ...]
+
+    def __post_init__(self) -> None:
+        for statement in self.statements:
+            _require_constructed_term(statement, owner="FinallyStepV1.statements")
 
 
 @dataclass(frozen=True)
@@ -118,10 +141,13 @@ class IfStepV1:
     honest opaque one.
     """
 
-    guard: object
+    guard: ConstructedTermSugar
     then_steps: tuple
     else_steps: tuple
     fragment_cid: str
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(self.guard, owner="IfStepV1.guard")
 
 
 @dataclass(frozen=True)
@@ -201,13 +227,12 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "constructedValueTestimonyCid": testimony.cid,
             "entry": value.wire(),
         }
-    to_term = getattr(value, "to_term", None)
-    if callable(to_term):
+    if isinstance(value, ConstructedTermSugar):
         from sugar_lift_py_tests.ir import _term_content_cid
 
         return {
             "kind": "term-cid",
-            "contentCid": _term_content_cid(to_term(owner=owner)),
+            "contentCid": _term_content_cid(value.to_term(owner=owner)),
         }
     # IR Terms are already content-addressable without a FloorValue wrapper.
     from sugar_lift_py_tests.ir import (

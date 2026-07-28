@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
@@ -117,7 +117,7 @@ class ListSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class TupleSugar(Sugar):
+class TupleSugar(ConstructedTermSugar):
     elements: tuple
     site: object = dataclass_field(compare=False)
 
@@ -129,6 +129,21 @@ class TupleSugar(Sugar):
             body="len((z, z))",
             truthful="2",
             lying="3",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:tuple-construction",
+            (
+                self.occurrence_term(owner=owner),
+                ctor(
+                    "python:tuple-elements",
+                    tuple(element.to_term(owner=owner) for element in self.elements),
+                ),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
+from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _boolop_wrapped_pair
 
 _BOOL_OPERATOR_COORDINATE = {
@@ -58,7 +59,7 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
 
 
 @dataclass(frozen=True)
-class BoolOpSugar(Sugar):
+class BoolOpSugar(ConstructedTermSugar):
     op_kind: str  # "And" | "Or"
     values: tuple  # the operand sugars, in source order (>= 2)
     site: object = dataclass_field(compare=False)
@@ -72,6 +73,33 @@ class BoolOpSugar(Sugar):
             owner_sugar="BoolOpSugar",
             truthful="(1 == 1) and (2 == 2)",
             lying="(1 == 1) and (2 == 3)",
+        )
+
+    def to_term(self, *, owner: str) -> Term:
+        """Project the authenticated operator and ordered operands canonically."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        if self.op_kind not in _BOOL_OPERATOR_COORDINATE:
+            raise ValueError(
+                f"{owner} requires an authenticated BoolOp operator, got {self.op_kind!r}"
+            )
+        if len(self.values) < 2:
+            raise ValueError(f"{owner} requires at least two BoolOp operands")
+
+        operands = [value.to_term(owner=owner) for value in self.values]
+
+        return ctor(
+            "python:bool-op-construction",
+            (
+                str_const(_BOOL_OPERATOR_COORDINATE[self.op_kind]),
+                self.occurrence_term(owner=owner),
+                ctor(
+                    "python:bool-op-operands",
+                    tuple(operands),
+                    symbol_kind="coordinate",
+                ),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

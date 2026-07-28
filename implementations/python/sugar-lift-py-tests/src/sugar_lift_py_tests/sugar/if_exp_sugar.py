@@ -21,13 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
 
 @dataclass(frozen=True)
-class IfExpSugar(Sugar):
+class IfExpSugar(ConstructedTermSugar):
     """`<body> if <test> else <orelse>`, constructed by `IfExp.sugar()` with the
     test's and both arms' sugars already built."""
 
@@ -46,6 +46,20 @@ class IfExpSugar(Sugar):
             body="10 if z == 1 else 20",
             truthful="10",
             lying="11",
+        )
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(
+            "python:if-expression-construction",
+            (
+                self.occurrence_term(owner=owner),
+                self.test.to_term(owner=owner),
+                self.body.to_term(owner=owner),
+                self.orelse.to_term(owner=owner),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

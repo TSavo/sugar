@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
 
+from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 
 
 @dataclass(frozen=True)
-class EqualityOpSugar(Sugar):
+class EqualityOpSugar(ConstructedTermSugar):
     """The `==` operator. One of the comparison family (`!=`, `<`, ... are their own
     sugars, their own types -- no operator field to switch on). It reduces both sides
     and asks the left whether it equals the right: the left stands on the equals floor
@@ -24,6 +25,40 @@ class EqualityOpSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return ()
+
+    def to_term(self, *, owner: str) -> Term:
+        """Project the fixed equality operator and ordered operands canonically."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        operands = [
+            self.left.to_term(owner=owner),
+            self.right.to_term(owner=owner),
+        ]
+        coordinate = self.left_coordinate
+        if coordinate is None:
+            refinement = ctor("python:no-refinement-coordinate", ())
+        else:
+            cid = coordinate.cid
+            refinement = ctor(
+                "python:refinement-coordinate",
+                (str_const(cid),),
+                symbol_kind="coordinate",
+            )
+
+        return ctor(
+            "python:equality-op-construction",
+            (
+                str_const("equals"),
+                self.occurrence_term(owner=owner),
+                refinement,
+                ctor(
+                    "python:equality-op-operands",
+                    tuple(operands),
+                    symbol_kind="coordinate",
+                ),
+            ),
+            symbol_kind="coordinate",
+        )
 
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce both sides; the left, standing on the equals floor, answers

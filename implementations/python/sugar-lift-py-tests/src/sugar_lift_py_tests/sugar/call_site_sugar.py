@@ -5,12 +5,13 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.ir import Term
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 @dataclass(frozen=True)
-class CallSiteSugar(Sugar):
+class CallSiteSugar(ConstructedTermSugar):
     """`<name>(<args>)` -> a call-site coordinate: THE DIG CUE.
 
     Reduce each argument, then stand as a CallSiteValue whose term is the bridge
@@ -54,6 +55,55 @@ class CallSiteSugar(Sugar):
             owner_sugar="CallSiteSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        )
+
+    def to_term(self, *, owner: str) -> Term:
+        """Project authenticated callee, arguments, authority, and occurrence."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        occurrence = self.occurrence_term(owner=owner)
+        if self.source_call_frame is not None:
+            callee = ctor(
+                "python:source-callee",
+                (str_const(self.source_call_frame.frame_cid),),
+                symbol_kind="coordinate",
+            )
+        else:
+            # The exact call occurrence is the available callee authority for
+            # builtin/opaque calls; never elevate the target spelling.
+            callee = ctor(
+                "python:occurrence-callee", (occurrence,), symbol_kind="coordinate"
+            )
+        definition_authority = []
+        if self.exception_type_coordinate is not None:
+            definition_authority.append(
+                str_const(self.exception_type_coordinate.cid)
+            )
+        definition_authority.extend(
+            str_const(cid) for cid in self.formal_coordinate_cids
+        )
+        positional = tuple(argument.to_term(owner=owner) for argument in self.args)
+        keywords = tuple(
+            ctor(
+                "python:keyword-argument",
+                (str_const(name), argument.to_term(owner=owner)),
+            )
+            for name, argument in self.keywords
+        )
+        return ctor(
+            "python:call-construction",
+            (
+                occurrence,
+                callee,
+                ctor("python:positional-arguments", positional),
+                ctor("python:keyword-arguments", keywords),
+                ctor(
+                    "python:definition-authority",
+                    tuple(definition_authority),
+                    symbol_kind="coordinate",
+                ),
+            ),
+            symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
