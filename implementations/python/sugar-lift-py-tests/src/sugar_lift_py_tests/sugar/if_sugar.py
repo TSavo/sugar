@@ -127,6 +127,18 @@ class IfSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        cond = self.test.desugar(ctx)
+        if isinstance(cond, NativeOperationExitCarrierV1):
+            return cond.and_then(lambda value: self._desugar_condition(value, ctx))
+        if not isinstance(cond, Complete):
+            return cond
+        return self._desugar_condition(cond.value, ctx)
+
+    def _desugar_condition(self, condition, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultAuthentication,
             branch_result_guard,
@@ -144,17 +156,14 @@ class IfSugar(Sugar):
         # b`) stands as its own formula, a bare value (`if c`) emits the Python
         # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
         # with no formula and is not lifted yet -- LOUD, never guard by nothing.
-        cond = self.test.desugar(ctx)
-        if not isinstance(cond, Complete):
-            return cond
         # Condition expression itself raised: the if never selects a branch.
         # Do not demand truth of RaiseValue (that was force-floor:truth:RaiseValue).
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Incomplete
 
-        if isinstance(cond.value, RaiseValue):
-            return Incomplete(cond.value.effect)
-        observed_formula = predicate_formula(cond.value, self.site)
+        if isinstance(condition, RaiseValue):
+            return Incomplete(condition.effect)
+        observed_formula = predicate_formula(condition, self.site)
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
         formula = (

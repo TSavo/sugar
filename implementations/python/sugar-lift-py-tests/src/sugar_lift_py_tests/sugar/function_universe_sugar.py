@@ -282,9 +282,16 @@ def reduce_block_to_exitset(
                 else:
                     linear = Complete(value)
                     contribution = linear.contribution()
-                    continues = linear.follow().continues
-                    nested_fall_through = ()
-                    nested_transforms = ()
+                    follow = linear.follow()
+                    continues = follow.continues
+                    nested_fall_through = (
+                        ()
+                        if follow.continuation_guard is None
+                        else (follow.continuation_guard,)
+                    )
+                    nested_transforms = (
+                        () if follow.transform is None else (follow.transform,)
+                    )
                     next_context = _extend_receiver_store_scope(
                         linear.value, active_ctx
                     )
