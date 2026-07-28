@@ -173,11 +173,27 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
-                    after = face.and_source_resource_exit(
-                        exit_es,
-                        disposition=self.disposition,
-                        site=self.site,
+                    from sugar_lift_py_tests.context_manager_contract import (
+                        NeverSuppressesDispositionV1,
+                        ReturnTruthinessDispositionV1,
                     )
+                    from sugar_lift_py_tests.effect import RaiseEffect
+
+                    if (
+                        isinstance(self.disposition, ReturnTruthinessDispositionV1)
+                        and isinstance(body_exit, Halted)
+                        and isinstance(body_exit.effect, RaiseEffect)
+                    ):
+                        after = face.and_exit_truthiness(exit_es, site=self.site)
+                    else:
+                        disposition = (
+                            NeverSuppressesDispositionV1()
+                            if isinstance(
+                                self.disposition, ReturnTruthinessDispositionV1
+                            )
+                            else self.disposition
+                        )
+                        after = face.and_exit(exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )

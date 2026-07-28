@@ -116,7 +116,9 @@ class PartitionFace:
     """
 
 
-def partition_family(owner: object, sides: tuple) -> tuple[PartitionFace, ...]:
+def partition_family(
+    owner: object, sides: tuple
+) -> tuple[PartitionFace, ...]:
     """Mint an EXHAUSTIVE family of faces over ONE authenticated origin (#6356).
 
     ``partition`` covers a two-way split. A producer that decides among n
@@ -263,7 +265,9 @@ def _merge_faces(
     left_sides = _sides_by_partition(left)
     right_sides = _sides_by_partition(right)
     shared = left_sides.keys() & right_sides.keys()
-    return frozenset(face for face in (left | right) if face.partition in shared)
+    return frozenset(
+        face for face in (left | right) if face.partition in shared
+    )
 
 
 def _faces_exclusive(
@@ -535,9 +539,7 @@ class ExitSet(Generic[T]):
     def union(self, other: "ExitSet[T]") -> "ExitSet[T]":
         return ExitSet((*self.exits, *other.exits)).normalize()
 
-    def guarded(
-        self, guard: Formula, face: PartitionFace | None = None
-    ) -> "ExitSet[T]":
+    def guarded(self, guard: Formula, face: PartitionFace | None = None) -> "ExitSet[T]":
         """Restrict every exit to one branch of an enclosing partition.
 
         ``face`` is the caller's testimony that ``guard`` is one named side of a
@@ -562,7 +564,9 @@ class ExitSet(Generic[T]):
             if isinstance(exit_, Completed):
                 exits.append(Completed(combined, exit_.value, faces, owed))
             else:
-                exits.append(Halted(combined, exit_.effect, exit_.state, faces, owed))
+                exits.append(
+                    Halted(combined, exit_.effect, exit_.state, faces, owed)
+                )
         return ExitSet(tuple(exits)).normalize()
 
     def with_partition_face(self, partition_id: str, face: int) -> "ExitSet[T]":
@@ -854,7 +858,9 @@ class ExitSet(Generic[T]):
                     exits.append(Completed(guard, following.value, faces, owed))
                 else:
                     exits.append(
-                        Halted(guard, following.effect, following.state, faces, owed)
+                        Halted(
+                            guard, following.effect, following.state, faces, owed
+                        )
                     )
         return ExitSet(tuple(exits)).normalize()
 
@@ -899,14 +905,18 @@ class ExitSet(Generic[T]):
                     incoming.pending_contracts, clean.pending_contracts
                 )
                 if isinstance(clean, Halted):
-                    exits.append(Halted(guard, clean.effect, clean.state, faces, owed))
+                    exits.append(
+                        Halted(guard, clean.effect, clean.state, faces, owed)
+                    )
                     continue
                 if restores(clean.value):
                     if isinstance(incoming, Completed):
                         exits.append(Completed(guard, incoming.value, faces, owed))
                     else:
                         exits.append(
-                            Halted(guard, incoming.effect, incoming.state, faces, owed)
+                            Halted(
+                                guard, incoming.effect, incoming.state, faces, owed
+                            )
                         )
                 else:
                     # Terminal cleanup completion supersedes (return in finally).
@@ -1030,6 +1040,7 @@ class ExitSet(Generic[T]):
                 _place(exits, guard, verdict, carried, faces, owed)
         return ExitSet(tuple(exits)).normalize()
 
+
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
         """Run a source-constructed ``__exit__`` and retain both truth faces.
 
@@ -1090,42 +1101,6 @@ class ExitSet(Generic[T]):
                 )
         return ExitSet(tuple(exits)).normalize()
 
-    def and_source_resource_exit(
-        self,
-        exit_es: "ExitSet[object]",
-        *,
-        disposition: object,
-        site: object,
-    ) -> "ExitSet[object]":
-        """Run one source-testified resource exit over one body face.
-
-        A truthy ``__exit__`` result can suppress only a raised exception.
-        Completion and control transfers are not exceptions, so they use the
-        ordinary never-suppresses route.  An undecided truth predicate remains
-        the complementary completed/halted partition minted by
-        :meth:`and_exit_truthiness`.
-        """
-        from sugar_lift_py_tests.context_manager_contract import (
-            NeverSuppressesDispositionV1,
-            ReturnTruthinessDispositionV1,
-        )
-        from sugar_lift_py_tests.effect import RaiseEffect
-
-        incoming = self.exits
-        if (
-            isinstance(disposition, ReturnTruthinessDispositionV1)
-            and len(incoming) == 1
-            and isinstance(incoming[0], Halted)
-            and isinstance(incoming[0].effect, RaiseEffect)
-        ):
-            return self.and_exit_truthiness(exit_es, site=site)
-        routed = (
-            NeverSuppressesDispositionV1()
-            if isinstance(disposition, ReturnTruthinessDispositionV1)
-            else disposition
-        )
-        return self.and_exit(exit_es, disposition=routed)
-
     def collapse(self):
         """Return the old linear Outcome only for one unconditional exit.
 
@@ -1159,7 +1134,9 @@ class ExitSet(Generic[T]):
                 # ExitSet whenever no linear shape denotes it.
                 return normalized
             return Complete(exit_.value)
-        return Incomplete(exit_.effect, pending_contracts=exit_.pending_contracts)
+        return Incomplete(
+            exit_.effect, pending_contracts=exit_.pending_contracts
+        )
 
 
 def sole_completed_outcome(outcome):

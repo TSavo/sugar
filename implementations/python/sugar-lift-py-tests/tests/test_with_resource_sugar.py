@@ -288,10 +288,8 @@ def test_falsy_source_exit_preserves_the_exact_original_halt():
     effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:4:2")
     state = ObjectValue("native-resource", (), identity="before-raise")
     incoming = Halted(true_guard(), effect, state)
-    routed = ExitSet((incoming,)).and_source_resource_exit(
-        ExitSet.completed(TermValue(False)),
-        disposition=ReturnTruthinessDispositionV1(),
-        site="exit-site",
+    routed = ExitSet((incoming,)).and_exit_truthiness(
+        ExitSet.completed(TermValue(False)), site="exit-site"
     )
     assert len(routed.exits) == 1
     surviving = routed.exits[0]
@@ -305,10 +303,8 @@ def test_truthy_source_exit_suppresses_the_original_raise():
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:5:2")
-    routed = ExitSet((Halted(true_guard(), effect),)).and_source_resource_exit(
-        ExitSet.completed(TermValue(True)),
-        disposition=ReturnTruthinessDispositionV1(),
-        site="exit-site",
+    routed = ExitSet((Halted(true_guard(), effect),)).and_exit_truthiness(
+        ExitSet.completed(TermValue(True)), site="exit-site"
     )
     assert all(not isinstance(face, Halted) for face in routed.exits)
 
@@ -318,10 +314,8 @@ def test_undecided_source_exit_keeps_both_faces_factored():
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     effect = RaiseEffect(exception_name="ValueError", occurrence="body.py:6:2")
-    routed = ExitSet((Halted(true_guard(), effect),)).and_source_resource_exit(
-        ExitSet.completed(SymbolicValue(make_var("exit_result"))),
-        disposition=ReturnTruthinessDispositionV1(),
-        site="exit-site",
+    routed = ExitSet((Halted(true_guard(), effect),)).and_exit_truthiness(
+        ExitSet.completed(SymbolicValue(make_var("exit_result"))), site="exit-site"
     )
     assert {type(face) for face in routed.exits} == {Completed, Halted}
     halted = next(face for face in routed.exits if isinstance(face, Halted))
