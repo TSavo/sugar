@@ -156,6 +156,47 @@ class SourceDerivedContextManagerRefV1:
 
 
 @dataclass(frozen=True)
+class FactoredSourceDerivedContextManagerRefV1:
+    """Source-derived EffectBoundary with factored message-pattern faces.
+
+    Undecided ``match`` stays partitioned as guarded alternatives:
+
+    - ``match=None`` → ``NoMessagePatternV1``
+    - ``match=pattern`` → pattern obligation
+
+    ``boundary_faces`` is an ``ExitSet`` of ``EffectBoundarySemanticsV1`` under
+    face guards. Faces are never recombined into one sealed summary CID and
+    never collapsed into a generic ``no-derived-contract`` gap.
+    """
+
+    use_site: SourceFragmentCoordinateV1
+    protocol_construction_cid: str
+    enter_testimony_cid: str
+    exit_testimony_cid: str
+    boundary_faces: object
+    import_signature: ImportSignatureV2
+    protocol: object = field(compare=False, repr=False)
+
+    def _first_boundary_semantics(self):
+        from sugar_lift_py_tests.outcome import Completed
+
+        for face in self.boundary_faces.exits:
+            if isinstance(face, Completed):
+                return face.value
+        raise ValueError("factored boundary has no completed EffectBoundary face")
+
+    @property
+    def shared_expected_type_operand(self):
+        """Expected-type operand shared by every message-pattern face."""
+        return self._first_boundary_semantics().expected_type_operand
+
+    @property
+    def shared_binding(self):
+        """Binding declaration shared by every message-pattern face."""
+        return self._first_boundary_semantics().binding
+
+
+@dataclass(frozen=True)
 class ResolvedContractRefsV1:
     catalog_cid: str
     table_cid: str
