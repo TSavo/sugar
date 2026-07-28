@@ -161,15 +161,33 @@ def test_open_name_without_native_definition_stays_typed_loud():
     tree = _source_with_resolution(
         (source, "native-resource-gap.py", _cid("q")),
         _truthiness_resolved,
-        native_definitions=lambda use_site: {
-            (use_site, NativeProtocolSlot.CONTEXT_ENTER): SourceFragmentCoordinateV1(
-                _cid("e"), 10, 4, 11, 20
-            )
-        },
+        native_definitions=lambda use_site: {},
     )
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     with pytest.raises(SugarNotWritten, match="authenticated source definition"):
         boundary.desugar()
+
+
+def test_open_gap_is_the_builtin_authority_discrimination_arm():
+    """The real C builtin asks the door; it is not admitted by spelling."""
+    source = "def f(path):\n    with open(path) as resource:\n        return resource\n"
+    tree = _source_with_resolution(
+        (source, "builtin-open-gap.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=lambda use_site: {},
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    receiver = boundary.receiver_coordinate
+    enter_gap = boundary.contract_refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_ENTER
+    )
+    exit_gap = boundary.contract_refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_EXIT
+    )
+    assert enter_gap.slot is NativeProtocolSlot.CONTEXT_ENTER
+    assert exit_gap.slot is NativeProtocolSlot.CONTEXT_EXIT
+    assert enter_gap.reason.startswith("authenticated source definition")
+    assert exit_gap.reason.startswith("authenticated source definition")
 
 
 def _function_sugar(source_identity, resolution):

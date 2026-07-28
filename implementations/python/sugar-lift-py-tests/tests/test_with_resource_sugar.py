@@ -233,6 +233,22 @@ def test_missing_native_exit_definition_stays_typed_loud_after_body_reduction():
     assert events == ["require-context-enter", 1, "require-context-exit"]
 
 
+def test_source_defined_coordinate_and_builtin_gap_are_distinct_door_outcomes():
+    """Discrimination twin: source testimony resolves; C-builtin testimony gaps."""
+    receiver = SourceFragmentCoordinateV1("blake3-512:" + "z" * 128, 7, 0, 7, 5)
+    source_refs = _ObservedNativeDefinitions()
+    source_sugar = _resource(contract_refs=source_refs, receiver_coordinate=receiver)
+    source_sugar.desugar()
+    assert source_refs.events == ["require-context-enter", "require-context-exit"]
+
+    builtin_refs = _ObservedNativeDefinitions(
+        missing=(NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT)
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        _resource(contract_refs=builtin_refs, receiver_coordinate=receiver).desugar()
+    assert builtin_refs.events == ["require-context-enter"]
+
+
 def test_manager_expression_evaluated_exactly_once():
     seen = []
     sugar = _resource(
