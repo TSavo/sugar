@@ -153,21 +153,24 @@ def test_real_caller_runtime_actuals_raise_but_do_not_supply_floor_testimony() -
     assert assert_invalid_comparison(left, right, box) is None
 
 
-def test_existing_floor_cannot_authenticate_this_pandas_ordering_exception() -> None:
-    """Finding (b): this pair needs return-type testimony the Floor lacks.
+def test_opaque_floor_cannot_authenticate_this_pandas_ordering_exception() -> None:
+    """An opaque call remains undecided after source-return projection exists.
 
     The caller's left actual is the result of ``tm.box_expected``.  Until that
     call result authenticates a pandas datetime-array Floor value, substitution
-    yields ``CallSiteValue``.  Its inherited generic ordering law can state a
-    ``py.lt`` atom but cannot mint an exception identity.  Consequently this
-    operation must remain undischarged; neither the helper's ``pytest.raises``
-    expectation nor pandas-specific spelling may fill the missing coordinate.
+    yields ``CallSiteValue``.  Authenticated bodies now project their returned
+    Floor before ordering, but a body-less call cannot mint an exception
+    identity.  Neither the helper boundary nor pandas spelling may fill it.
     """
     pair = _pair()
 
     assert ast.unparse(pair.operation) == "left < right"
-    assert "less_than" not in CallSiteValue.__dict__
-    assert CallSiteValue.less_than is FloorValue.less_than
+    assert CallSiteValue.less_than is not FloorValue.less_than
+    assert CallSiteValue(
+        "opaque", (), (), __import__("sugar_lift_py_tests.ir", fromlist=["ctor"]).ctor(
+            "call:opaque", []
+        ), None
+    )._dig_floor_or_none(None, owner="opaque compare twin") is None
 
 
 def test_lying_caller_coordinate_is_rejected_before_it_can_be_evidence() -> None:

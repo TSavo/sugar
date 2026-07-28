@@ -170,11 +170,12 @@ def _returned_term(completed: Completed) -> TermValue:
         assert value is not None
         returns = tuple(
             entry
-            for entry in value.statements
+            for entry in getattr(value, "statements", ())
             if isinstance(entry, (ReturnValue, GuardedReturn))
         )
-        assert len(returns) == 1
-        value = returns[0]
+        if returns:
+            assert len(returns) == 1
+            value = returns[0]
     if isinstance(value, GuardedReturn):
         value = value.value
     if isinstance(value, ReturnValue):

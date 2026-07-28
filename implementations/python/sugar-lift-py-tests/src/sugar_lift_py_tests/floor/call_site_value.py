@@ -408,6 +408,27 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def less_than(self, other, site):
+        return self._ordering_through_source_return(other, site, "less_than")
+
+    def less_equal(self, other, site):
+        return self._ordering_through_source_return(other, site, "less_equal")
+
+    def greater_than(self, other, site):
+        return self._ordering_through_source_return(other, site, "greater_than")
+
+    def greater_equal(self, other, site):
+        return self._ordering_through_source_return(other, site, "greater_equal")
+
+    def _ordering_through_source_return(self, other, site, method_name: str):
+        """Dispatch ordering on an authenticated returned Floor when available."""
+        dug = self._dig_floor_or_none(
+            None, owner=f"CallSiteValue.{method_name} source return"
+        )
+        if dug is not None and dug is not self:
+            return getattr(dug, method_name)(other, site)
+        return getattr(super(), method_name)(other, site)
+
     def subscript(self, index, site):
         return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
 
@@ -1453,12 +1474,14 @@ def _project_authenticated_source_return(value: FloorValue) -> FloorValue:
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.return_value import ReturnValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
+    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
     if (
         isinstance(value, BlockValue)
-        and not value.fall_through
-        and not value.can_fall_through
+        and (
+            not value.fall_through
+            or all(guard == false_guard() for guard in value.fall_through)
+        )
         and len(value.statements) == 1
         and isinstance(value.statements[0], ReturnValue)
         and isinstance(value.statements[0].value, FloorValue)
