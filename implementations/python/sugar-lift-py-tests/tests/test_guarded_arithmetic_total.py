@@ -42,9 +42,31 @@ def test_guarded_arithmetic_preserves_undecided_arms_as_dual_edge_partitions(
     assert halted
     assert completed
     assert all(
-        isinstance(face.effect, RaiseEffect) and face.effect.producer_node_owner == "BinOp"
+        isinstance(face.effect, RaiseEffect)
+        and face.effect.producer_node_owner == "BinOp"
         for face in halted
     )
+
+
+def test_guarded_right_operand_preserves_both_dispatch_faces_on_each_branch() -> None:
+    """The reflected guarded join conserves the same two producer faces."""
+    guard = atomic("choose-right", [])
+    right = GuardedValue(
+        guard,
+        SymbolicValue(make_var("right_true")),
+        SymbolicValue(make_var("right_false")),
+    )
+
+    outcome = SymbolicValue(make_var("left")).subtract(right, "t.py:2")
+
+    assert isinstance(outcome, ExitSet)
+    assert {type(exit_).__name__ for exit_ in outcome.exits} == {
+        "Completed",
+        "Halted",
+    }
+    rendered = str(outcome)
+    assert "right_true" in rendered
+    assert "right_false" in rendered
 
 
 def test_guarded_unary_minus_preserves_an_undecided_arm_as_a_named_refusal() -> None:

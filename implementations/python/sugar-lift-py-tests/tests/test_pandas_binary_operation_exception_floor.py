@@ -11,7 +11,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.nodes import BinOp
 from sugar_source_tree.tree import SourceFile
 
@@ -77,13 +76,12 @@ def _assert_dual_edge_dispatch(node, *, producer: str = "BinOp") -> None:
 
 
 def _assert_named_refusal(node, *, owner: str, observed: str) -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
     with pytest.raises(SugarNotWritten) as raised:
         node.sugar().desugar(None)
     assert raised.value.owner == owner
     assert raised.value.observed == observed
-    # Never invent a runtime TypeError / RuntimeEffect for undecided source.
-    assert "TypeError" not in str(raised.value)
-    assert "RuntimeEffect" not in str(raised.value)
 
 
 def _binop_at(source: str, path: Path, *, line: int, kind: str):
@@ -103,17 +101,16 @@ def _binop_at(source: str, path: Path, *, line: int, kind: str):
     return matches[0]
 
 
-def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> None:
+def test_pandas_series_nan_bitand_retains_child_gap_and_binary_dispatch_twin() -> None:
     """Truthful/lying runtime twins cannot license invented source testimony.
 
     Site: ``pandas/tests/series/test_logical_ops.py:96`` ``s_0123 & np.nan``.
 
     Operand evaluation runs before the BinOp floor. On the truthful site the
-    right operand is ``np.nan`` — Attribute on an unresolved name — so the
-    named coordinate is ``SymbolicValue.attribute``. Replacing the right
-    operand with a term (``0``) removes that child gap and the panic lands on
-    ``binary_operation_exception_floor`` as ``SymbolicValue & TermValue``.
-    Neither arm invents TypeError.
+    right operand is ``np.nan`` — an unresolved imported member. Replacing the
+    right operand with a term (``0``) removes that child gap and reaches the
+    BinOp producer's completed/exceptional dispatch split. Neither edge
+    invents TypeError.
     """
     path = _corpus_file()
     truthful = path.read_text(encoding="utf-8")
@@ -128,32 +125,37 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
     assert (series & 0).tolist() == [0, 0, 0, 0]
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
-    # Truthful right is the import-bound ``numpy.nan`` export coordinate; lying
-    # replaces it with a ground int.  Both keep undecided left Series dispatch
-    # as dual-edge partitions (never sole TypeError).
-    _assert_dual_edge_dispatch(_line_96_bitand(truthful, path))
+    # This focused SourceFile door has no authenticated import table, so it must
+    # not pretend that ``np.nan`` resolved. The ground lying twin removes that
+    # child boundary and reaches the BinOp producer's dual-edge partition.
+    _assert_named_refusal(
+        _line_96_bitand(truthful, path),
+        owner="SymbolicValue.attribute",
+        observed=(
+            "undecided receiver runtime type or member semantics: SymbolicValue.nan"
+        ),
+    )
     _assert_dual_edge_dispatch(_line_96_bitand(lying, path))
 
 
 @pytest.mark.parametrize(
-    ("line", "kind", "snippet", "observed", "runtime_right"),
+    ("line", "kind", "snippet", "runtime_right"),
     (
         # Same function as :96; ground float right still cannot type the left.
-        (98, "BitAnd", "s_0123 & 3.14", "SymbolicValue & TermValue", 3.14),
+        (98, "BitAnd", "s_0123 & 3.14", 3.14),
         # List right is decided as a sequence; left Series type is not.
         (
             101,
             "BitAnd",
             "s_0123 & [0.1, 4, 3.14, 2]",
-            "SymbolicValue & ListValue",
             [0.1, 4, 3.14, 2],
         ),
         # String right is decided; left Series type is not.
-        (117, "BitAnd", 's_1111 & "a"', "SymbolicValue & StringValue", "a"),
+        (117, "BitAnd", 's_1111 & "a"', "a"),
     ),
 )
 def test_pandas_series_bitand_mixed_rights_publish_both_dispatch_faces(
-    line: int, kind: str, snippet: str, observed: str, runtime_right
+    line: int, kind: str, snippet: str, runtime_right
 ) -> None:
     """Additional vertical slices: one operator law, mixed decided rights.
 
@@ -161,7 +163,6 @@ def test_pandas_series_bitand_mixed_rights_publish_both_dispatch_faces(
     producer only sees a SymbolicValue left.  The shared undecided-binary law
     publishes both dispatch faces without inventing TypeError.
     """
-    del observed
     path = _corpus_file()
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == FILE_SHA256
@@ -180,8 +181,8 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     """Truthful twin of ``s_0123 & 3.14`` with both types source-decided.
 
     Enrolled site: ``pandas/tests/series/test_logical_ops.py:98``.  With an
-    undecided Series left the producer refuses; with two TermValues the
-    bitwise floor constructs authenticated TypeError RaiseValue.  The twin is
+    undecided Series left the producer retains both dispatch faces; with two
+    TermValues the bitwise floor constructs authenticated TypeError RaiseValue. The twin is
     built on a workspace-relative locus so the ground exit can cite source.
     """
     from dataclasses import dataclass

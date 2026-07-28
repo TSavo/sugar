@@ -292,48 +292,48 @@ class SymbolicValue(FloorValue):
         if type(other) is ListValue:
             return other.multiply(self, site)
 
-        return self._runtime_binary_refusal(other, site, "*")
+        return self._runtime_binary_dispatch(other, site, "*")
 
     def power(self, other, site):
-        return self._runtime_binary_refusal(other, site, "**")
+        return self._runtime_binary_dispatch(other, site, "**")
 
     def add(self, other, site):
-        return self._runtime_binary_refusal(other, site, "+")
+        return self._runtime_binary_dispatch(other, site, "+")
 
     def subtract(self, other, site):
-        return self._runtime_binary_refusal(other, site, "-")
+        return self._runtime_binary_dispatch(other, site, "-")
 
     def divide(self, other, site):
-        return self._arithmetic_refusal(other, site, "/")
+        return self._arithmetic_dispatch(other, site, "/")
 
     def floor_divide(self, other, site):
-        return self._arithmetic_refusal(other, site, "//")
+        return self._arithmetic_dispatch(other, site, "//")
 
     def modulo(self, other, site):
-        return self._arithmetic_refusal(other, site, "%")
+        return self._arithmetic_dispatch(other, site, "%")
 
-    def _arithmetic_refusal(self, other, site, operator):
-        return self._runtime_binary_refusal(other, site, operator)
+    def _arithmetic_dispatch(self, other, site, operator):
+        return self._runtime_binary_dispatch(other, site, operator)
 
     def right_shift(self, other, site):
-        return self._runtime_binary_refusal(other, site, ">>")
+        return self._runtime_binary_dispatch(other, site, ">>")
 
     def bitwise_and(self, other, site):
-        return self._runtime_bitwise_refusal(other, site, "&")
+        return self._runtime_bitwise_dispatch(other, site, "&")
 
     def bitwise_xor(self, other, site):
-        return self._runtime_bitwise_refusal(other, site, "^")
+        return self._runtime_bitwise_dispatch(other, site, "^")
 
     def bitwise_or(self, other, site):
-        return self._runtime_bitwise_refusal(other, site, "|")
+        return self._runtime_bitwise_dispatch(other, site, "|")
 
     def left_shift(self, other, site):
-        return self._runtime_bitwise_refusal(other, site, "<<")
+        return self._runtime_bitwise_dispatch(other, site, "<<")
 
-    def _runtime_bitwise_refusal(self, other, site, operator):
-        return self._runtime_binary_refusal(other, site, operator)
+    def _runtime_bitwise_dispatch(self, other, site, operator):
+        return self._runtime_binary_dispatch(other, site, operator)
 
-    def _runtime_binary_refusal(self, other, site, operator):
+    def _runtime_binary_dispatch(self, other, site, operator):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 
         owner = next(
@@ -343,9 +343,45 @@ class SymbolicValue(FloorValue):
         )
         if isinstance(other, GuardedValue):
             return other.map_from_left(owner, self, site)
-        refused = self._undecided_binary_law(other, site, operator)
-        if refused is not None:
-            return refused
+        denotes_other = getattr(other, "denotes_value", None)
+        if callable(denotes_other) and denotes_other():
+            from sugar_lift_py_tests.effect import RaiseEffect
+            from sugar_lift_py_tests.ir import atomic, ctor, str_const
+            from sugar_lift_py_tests.outcome import ExitSet
+            from sugar_lift_py_tests.outcome.exit_set import (
+                Completed,
+                Halted,
+                complement_guard,
+                partition,
+            )
+
+            left_term = self.to_term(owner=f"{operator} left operand")
+            right_term = other.to_term(owner=f"{operator} right operand")
+            dispatch_raises = atomic(
+                "python.binary_dispatch_raises",
+                [str_const(operator), left_term, right_term],
+            )
+            halted_face, completed_face = partition(
+                ("binary-native-dispatch", str(site), operator)
+            )
+            return ExitSet(
+                (
+                    Halted(
+                        dispatch_raises,
+                        RaiseEffect(
+                            blame=str(site),
+                            occurrence=str(site),
+                            producer_node_owner="BinOp",
+                        ),
+                        faces=frozenset({halted_face}),
+                    ),
+                    Completed(
+                        complement_guard(dispatch_raises),
+                        SymbolicValue(ctor(operator, [left_term, right_term])),
+                        frozenset({completed_face}),
+                    ),
+                )
+            ).normalize()
         return self._binary_floor_gap(
             other,
             site,
@@ -354,7 +390,7 @@ class SymbolicValue(FloorValue):
         )
 
     def matrix_multiply(self, other, site):
-        return self._runtime_bitwise_refusal(other, site, "@")
+        return self._runtime_bitwise_dispatch(other, site, "@")
 
     def unary_plus(self, site):
         # The term does not state a runtime type, so it cannot decide whether
