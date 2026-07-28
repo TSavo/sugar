@@ -51,13 +51,16 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
+    BytesValue,
     DictValue,
     ListValue,
     ObjectField,
     ObjectMethodValue,
     ObjectValue,
+    SliceValue,
     StringValue,
     TermValue,
+    TupleValue,
 )
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
@@ -649,6 +652,58 @@ def _floor_site():
     """Genuine fragment locus for Floor delitem (not a string blame)."""
     function, _ = _delitem_helper()
     return function.body[0].fragment
+
+
+@dataclass(frozen=True)
+class _FloorSugar(Sugar):
+    value: object
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(self.value)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+
+@pytest.mark.parametrize(
+    ("receiver", "owner"),
+    (
+        (StringValue("abc"), "StringValue.delitem"),
+        (BytesValue(b"abc"), "BytesValue.delitem"),
+        (TupleValue((TermValue(1),)), "TupleValue.delitem"),
+    ),
+)
+def test_immutable_slice_delete_has_exact_typeerror_occurrence(receiver, owner):
+    site = _floor_site()
+    outcome = SubscriptDeleteEffectSugar(
+        _FloorSugar(receiver),
+        _FloorSugar(SliceValue(TermValue(0), TermValue(1), None)),
+        site,
+    ).desugar(None)
+    assert type(outcome).__name__ == "Incomplete"
+    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.effect.producer_node_owner == owner
+    assert outcome.effect.occurrence_id == str(site)
+
+
+@pytest.mark.parametrize(
+    "receiver",
+    (
+        StringValue("abc"),
+        BytesValue(b"abc"),
+        TupleValue((TermValue(1),)),
+    ),
+)
+def test_immutable_slice_delete_cannot_fabricate_mutated_receiver(receiver):
+    site = _floor_site()
+    outcome = SubscriptDeleteEffectSugar(
+        _FloorSugar(receiver),
+        _FloorSugar(SliceValue(TermValue(0), TermValue(1), None)),
+        site,
+    ).desugar(None)
+    assert not isinstance(outcome, Complete)
 
 
 def test_floor_list_delitem_completes_with_element_gone() -> None:

@@ -373,6 +373,15 @@ class TupleValue(FloorValue):
             exception_name="TypeError", site=site, owner="TupleValue.setitem"
         )
 
+    def delitem(self, index, site):
+        """Tuples are immutable: every subscript delete is exact TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleValue.delitem"
+        )
+
     def setattr(self, name, value, site):
         """Tuples have no ``__dict__``; attribute store is AttributeError."""
         del name, value
