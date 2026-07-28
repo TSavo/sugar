@@ -112,6 +112,17 @@ class SugarNotWritten(SourceTreePanic):
     _LABEL = "SUGAR NOT WRITTEN"
 
 
+class UnattributableRefusal(SugarNotWritten):
+    """A construction refusal that this attribution boundary cannot classify.
+
+    Unlike an ordinary ``SugarNotWritten``, consuming this refusal as a
+    completed attribution would hide a prerequisite owned by an outer layer.
+    Callers discriminate on this type, never on the mutable diagnostic owner.
+    """
+
+    _LABEL = "UNATTRIBUTABLE REFUSAL"
+
+
 class OpaqueSourceCallResolutionGap(SugarNotWritten):
     """A reached source-call obligation whose target stayed unresolved."""
 

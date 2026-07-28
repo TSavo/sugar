@@ -201,9 +201,7 @@ class AttributionReport:
                     f"namedRefusal body={body.body_id} coordinate={body.detail}"
                 )
             elif body.outcome is AttributionOutcome.UNDISCHARGED:
-                lines.append(
-                    f"undischarged body={body.body_id} reason={body.detail}"
-                )
+                lines.append(f"undischarged body={body.body_id} reason={body.detail}")
             elif body.outcome is AttributionOutcome.CONSTRUCTION_PANIC:
                 lines.append(
                     f"constructionPanic body={body.body_id} "
@@ -257,10 +255,12 @@ def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
 
 def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
 
     try:
         outcome = probe.evaluator()
+    except UnattributableRefusal:
+        raise
     except SugarNotWritten as refusal:
         return BodyAttribution(
             probe.body_id,
@@ -281,8 +281,7 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
         unnamed = tuple(
             effect
             for effect in exceptional_effects
-            if effect.exception_type_coordinate is None
-            or effect.occurrence_id is None
+            if effect.exception_type_coordinate is None or effect.occurrence_id is None
         )
         if unnamed:
             return BodyAttribution(
@@ -337,8 +336,7 @@ def summarize_attribution_outcomes(
             for body in materialized
         ),
         undischarged=sum(
-            body.outcome is AttributionOutcome.UNDISCHARGED
-            for body in materialized
+            body.outcome is AttributionOutcome.UNDISCHARGED for body in materialized
         ),
     )
 
@@ -391,8 +389,7 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
                 for body in selected
             ),
             undischarged=sum(
-                body.outcome is AttributionOutcome.UNDISCHARGED
-                for body in selected
+                body.outcome is AttributionOutcome.UNDISCHARGED for body in selected
             ),
         )
     return AttributionReport(

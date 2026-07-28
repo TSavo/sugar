@@ -804,7 +804,7 @@ def populate_source_derived_resource_refs(
                         class_value=class_value,
                     ).desugar(actual_ctx)
             if isinstance(node, Attribute):
-                from sugar_source_tree.panic import SugarNotWritten
+                from sugar_source_tree.panic import UnattributableRefusal
 
                 from .external_exception_construction import (
                     ExternalExceptionConstructionGap,
@@ -821,7 +821,7 @@ def populate_source_derived_resource_refs(
                         distribution_index=distribution_index,
                     )
                 except ExternalExceptionConstructionGap as exc:
-                    raise SugarNotWritten(
+                    raise UnattributableRefusal(
                         owner="provider_exception_type_construction",
                         blame=node.fragment,
                         observed=str(exc),
