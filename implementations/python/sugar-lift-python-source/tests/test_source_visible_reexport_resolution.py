@@ -163,12 +163,14 @@ def test_tampered_binding_source_cid_refuses(tmp_path: Path) -> None:
 
 
 def test_competing_definitions_stay_ambiguous(tmp_path: Path) -> None:
+    """Unresolved guard with two static defs — no first-candidate; hand-off gap."""
     dist = _dist(
         tmp_path,
         name="amb-pkg",
         files={
             "amb_pkg/__init__.py": (
-                "if True:\n"
+                "flag = True\n"
+                "if flag:\n"
                 "    def build(value):\n"
                 "        return value\n"
                 "else:\n"
@@ -184,6 +186,55 @@ def test_competing_definitions_stay_ambiguous(tmp_path: Path) -> None:
     )
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "ambiguous-static-export"
+
+
+def test_truthful_constant_guard_selects_reexport_branch(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="truth-pkg",
+        files={
+            "truth_pkg/__init__.py": (
+                "if True:\n"
+                "    from truth_pkg.implementation import build\n"
+                "else:\n"
+                "    def build(value):\n"
+                "        return None\n"
+            ),
+            "truth_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import truth_pkg\ntruth_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "truth_pkg.implementation"
+    assert result.definition.name == "build"
+
+
+def test_lying_constant_guard_selects_else_branch(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="lie-pkg",
+        files={
+            "lie_pkg/__init__.py": (
+                "if False:\n"
+                "    def build(value):\n"
+                "        return None\n"
+                "else:\n"
+                "    from lie_pkg.implementation import build\n"
+            ),
+            "lie_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import lie_pkg\nlie_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "lie_pkg.implementation"
 
 
 def test_getattr_served_export_stays_dynamic(tmp_path: Path) -> None:
@@ -222,6 +273,74 @@ def test_wildcard_only_export_stays_dynamic(tmp_path: Path) -> None:
     graph = DependencyArtifactGraph.authenticate(dist)
     result = resolve_import_binding(
         _call_demand(tmp_path, "import star_pkg\nstar_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_literal_all_publishes_star_export(tmp_path: Path) -> None:
+    """Single immutable literal ``__all__`` may publish a star-imported name."""
+    dist = _dist(
+        tmp_path,
+        name="all-pkg",
+        files={
+            "all_pkg/__init__.py": (
+                "from all_pkg.implementation import *\n"
+                '__all__ = ["build"]\n'
+            ),
+            "all_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import all_pkg\nall_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.name == "build"
+    assert result.module_name == "all_pkg.implementation"
+    assert len(result.reexport_warrants) == 1
+    assert result.reexport_warrants[0].exported_name == "build"
+
+
+def test_literal_all_absent_name_stays_dynamic(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="miss-pkg",
+        files={
+            "miss_pkg/__init__.py": (
+                "from miss_pkg.implementation import *\n"
+                '__all__ = ["other"]\n'
+            ),
+            "miss_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import miss_pkg\nmiss_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_computed_all_stays_dynamic(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="comp-all-pkg",
+        files={
+            "comp_all_pkg/__init__.py": (
+                "from comp_all_pkg.implementation import *\n"
+                'names = ["build"]\n'
+                "__all__ = names\n"
+            ),
+            "comp_all_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import comp_all_pkg\ncomp_all_pkg.build(1)\n"),
         graph=graph,
     )
     assert isinstance(result, PythonObjectResolutionGapV1)
@@ -342,6 +461,103 @@ def test_authenticated_normal_fallthrough_positive(tmp_path: Path) -> None:
     assert result.definition.name == "build"
     assert result.module_name == "ok_pkg.implementation"
     assert len(result.reexport_warrants) == 1
+
+
+def test_static_alias_reexport_authenticates_both_occurrences(tmp_path: Path) -> None:
+    """``import as _f`` then ``f = _f`` — both occurrences appear in warrant chain."""
+    dist = _dist(
+        tmp_path,
+        name="alias-pkg",
+        files={
+            "alias_pkg/__init__.py": (
+                "from alias_pkg.implementation import build as _build\n"
+                "build = _build\n"
+            ),
+            "alias_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import alias_pkg\nalias_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.definition.name == "build"
+    assert result.module_name == "alias_pkg.implementation"
+    assert len(result.reexport_warrants) == 2
+    alias_w, import_w = result.reexport_warrants
+    assert alias_w.definition.kind == "alias"
+    assert alias_w.exported_name == "build"
+    assert alias_w.imported_name == "_build"
+    assert alias_w.from_module == alias_w.to_module == "alias_pkg"
+    assert import_w.definition.kind == "import"
+    assert import_w.from_module == "alias_pkg"
+    assert import_w.to_module == "alias_pkg.implementation"
+
+
+def test_static_alias_reassignment_stays_dynamic(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="re-pkg",
+        files={
+            "re_pkg/__init__.py": (
+                "from re_pkg.implementation import build as _build\n"
+                "build = _build\n"
+                "build = None\n"
+            ),
+            "re_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import re_pkg\nre_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_static_alias_cycle_stays_gapped(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="cyc-pkg",
+        files={
+            "cyc_pkg/__init__.py": (
+                "from cyc_pkg.implementation import build as _build\n"
+                "build = _build\n"
+                "_build = build\n"
+            ),
+            "cyc_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import cyc_pkg\ncyc_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind in {"reexport-cycle", "dynamic-export"}
+
+
+def test_computed_alias_stays_dynamic(tmp_path: Path) -> None:
+    dist = _dist(
+        tmp_path,
+        name="cmp-pkg",
+        files={
+            "cmp_pkg/__init__.py": (
+                "from cmp_pkg.implementation import build as _build\n"
+                "build = _build if True else _build\n"
+            ),
+            "cmp_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import cmp_pkg\ncmp_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
 
 
 def test_with_suppressible_raise_still_refuses_unreachable_export(
