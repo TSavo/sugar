@@ -2414,6 +2414,7 @@ class FunctionDef(Statement):
         if not self._owns_yield(body):
             return None
         from sugar_lift_py_tests.generator_construction import (
+            AssignStepV1,
             FinallyStepV1,
             IfStepV1,
             InertStepV1,
@@ -2487,6 +2488,36 @@ class FunctionDef(Statement):
                 # predicate the rest of this producer reads -- never a judgement
                 # that a statement "looks harmless".
                 steps.append(InertStepV1(statement.kind))
+            elif (
+                isinstance(statement, Assign)
+                and not self._owns_yield((statement,))
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], Name)
+            ):
+                # Pre-yield simple name assignment on the live generator machine
+                # (config-set / filter-push / temp-state save). Multi-target and
+                # non-Name stores stay Opaque until named.
+                steps.append(
+                    AssignStepV1(
+                        statement.targets[0].id,
+                        statement.value.sugar(),
+                        statement.fragment.seal().cid,
+                    )
+                )
+            elif (
+                isinstance(statement, AnnAssign)
+                and not self._owns_yield((statement,))
+                and isinstance(statement.target, Name)
+                and statement.value is not None
+            ):
+                # Peer of simple Assign: annotated name bind without suspension.
+                steps.append(
+                    AssignStepV1(
+                        statement.target.id,
+                        statement.value.sugar(),
+                        statement.fragment.seal().cid,
+                    )
+                )
             elif isinstance(statement, If) and self._owns_yield((statement,)):
                 # A BRANCH IS A TWO-FACE PARTITION and this producer owns it.
                 # Admitted only when BOTH branches are wholly nameable: a

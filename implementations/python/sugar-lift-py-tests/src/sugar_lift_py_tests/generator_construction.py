@@ -78,6 +78,21 @@ class InertStepV1:
 
 
 @dataclass(frozen=True)
+class AssignStepV1:
+    """Simple name assignment executed on the live generator machine.
+
+    Pre-yield setup (``prior = None``, ``filters = [action]``, ``saved = state``)
+    must run before the first yield — not gap as opaque. No suspension: the RHS
+    is reduced and the name is bound into ``binding_state``, then the machine
+    advances. Multi-target / non-Name stores stay OpaqueStepV1 until named.
+    """
+
+    name: str
+    value: object
+    fragment_cid: str
+
+
+@dataclass(frozen=True)
 class FinallyStepV1:
     statements: tuple[object, ...]
 
@@ -108,7 +123,13 @@ class IfStepV1:
 
 
 GeneratorStepV1 = (
-    YieldStepV1 | ReturnStepV1 | OpaqueStepV1 | InertStepV1 | FinallyStepV1 | IfStepV1
+    YieldStepV1
+    | ReturnStepV1
+    | OpaqueStepV1
+    | InertStepV1
+    | AssignStepV1
+    | FinallyStepV1
+    | IfStepV1
 )
 
 
@@ -121,6 +142,13 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "kind": "resume-binding",
             "resumeCoordinate": value.resume_coordinate,
             "value": _generator_value_testimony(value.resume_value, owner=owner),
+        }
+    if isinstance(value, GeneratorAssignBindingV1):
+        return {
+            "kind": "assign-binding",
+            "name": value.name,
+            "fragmentCid": value.fragment_cid,
+            "value": _generator_value_testimony(value.value, owner=owner),
         }
     # Sealed BindingEntryV1: require producer-minted ConstructedValueTestimonyV1.
     # Consumer never fabricates testimony; unsealed entries refuse here.
@@ -194,6 +222,13 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
         }
     if isinstance(step, InertStepV1):
         return {"kind": "inert", "observed": step.observed}
+    if isinstance(step, AssignStepV1):
+        return {
+            "kind": "assign",
+            "name": step.name,
+            "fragmentCid": step.fragment_cid,
+            "value": _generator_value_testimony(step.value, owner=owner),
+        }
     if isinstance(step, FinallyStepV1):
         return {
             "kind": "finally",
@@ -223,6 +258,15 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
 class ResumeBindingV1:
     resume_coordinate: str
     resume_value: object
+
+
+@dataclass(frozen=True)
+class GeneratorAssignBindingV1:
+    """One name bound by an executed AssignStepV1 on the live machine."""
+
+    name: str
+    value: object
+    fragment_cid: str
 
 
 @dataclass(frozen=True)
@@ -385,6 +429,18 @@ class GeneratorConstructionV1:
             # the machine report its first real blocker instead of the first
             # statement it happens to meet.
             machine = replace(self, cursor=self.cursor + 1)
+            return machine._transition(requested)
+        if isinstance(step, AssignStepV1):
+            # Pre-yield (and peer) simple name assignment on the live machine.
+            value = self._reduce_value(step.value, requested)
+            if isinstance(value, GeneratorTransitionGapV1):
+                return value
+            binding = GeneratorAssignBindingV1(step.name, value, step.fragment_cid)
+            machine = replace(
+                self,
+                cursor=self.cursor + 1,
+                binding_state=(*self.binding_state, binding),
+            )
             return machine._transition(requested)
         if isinstance(step, FinallyStepV1):
             cleanup = self._reduce_finally(step)
