@@ -99,25 +99,30 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
 
 def _equals_with_derived_residue(left, right, site, ctx):
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        refuse_undecided_comparison,
+        publish_undecided_comparison_edges,
     )
 
-    refuse_undecided_comparison(left, right, site, "Eq")
     outcome = left.equals(right, site)
 
     from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue
     from sugar_lift_py_tests.outcome import Complete
 
-    if not isinstance(left, CallSiteValue):
-        return outcome
-    residue = left.derived_equality_residue(ctx)
-    if residue is None or not (
-        isinstance(outcome, Complete) and isinstance(outcome.value, PredicateValue)
-    ):
-        return outcome
-    return Complete(
-        replace(
-            outcome.value,
-            derived_formulas=(*outcome.value.derived_formulas, residue),
-        )
+    if isinstance(left, CallSiteValue):
+        residue = left.derived_equality_residue(ctx)
+        if residue is not None and (
+            isinstance(outcome, Complete)
+            and isinstance(outcome.value, PredicateValue)
+        ):
+            outcome = Complete(
+                replace(
+                    outcome.value,
+                    derived_formulas=(*outcome.value.derived_formulas, residue),
+                )
+            )
+    return publish_undecided_comparison_edges(
+        left,
+        right,
+        site,
+        "Eq",
+        outcome,
     )

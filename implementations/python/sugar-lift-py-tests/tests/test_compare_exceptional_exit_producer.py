@@ -13,7 +13,6 @@ import pytest
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
@@ -94,16 +93,46 @@ def _compare_at(path: Path, source: str, *, line: int) -> Compare:
     return matches[0]
 
 
-def _assert_named_compare_panic(node, *, observed: str) -> None:
-    with pytest.raises(ConstructionPanic) as raised:
-        node.sugar().desugar(None)
-    info = raised.value.info
-    assert info.owner == "comparison_operation_exception_floor"
-    assert info.observed == observed
-    assert "source-visible native comparison testimony" in info.requested
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
-    assert "RuntimeEffect" not in str(info)
+def _synthetic_compare(expression: str) -> Compare:
+    source = f"def f(left, container):\n    return {expression}\n"
+    tree = SourceFile(
+        (source, "compare-dual-edge.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    return next(node for node in tree.nodes() if isinstance(node, Compare))
+
+
+def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
+    from sugar_lift_py_tests.floor import PredicateValue
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, complement_guard
+
+    assert isinstance(outcome, ExitSet)
+    completed = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    halted = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+    assert isinstance(completed.value, PredicateValue)
+
+    def atom_names(formula) -> set[str]:
+        name = getattr(formula, "name", None)
+        if isinstance(name, str):
+            return {name}
+        return {
+            nested
+            for operand in getattr(formula, "operands", ())
+            for nested in atom_names(operand)
+        }
+
+    assert atom in atom_names(completed.value.formula)
+    assert halted.effect.exception_name is None
+    assert halted.effect.blame == blame
+    assert halted.effect.producer_node_owner == "Compare"
+    assert completed.guard == complement_guard(halted.guard)
+
+
+def _assert_compare_dual(node, *, atom: str) -> None:
+    _assert_dual_dispatch(
+        node.sugar().desugar(None), atom=atom, blame=str(node.fragment)
+    )
 
 
 def test_launcher_authenticates_content_manifest_not_path_shape() -> None:
@@ -169,16 +198,13 @@ def test_shared_table_authenticates_the_exact_compare_site(tmp_path: Path) -> No
     assert len(rows) == 1
 
 
-def test_pandas_col_membership_refuses_to_invent_type_error() -> None:
+def test_pandas_col_membership_retains_both_source_visible_faces() -> None:
     path = _corpus_root() / "tests/test_col.py"
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == COL_SITE_SHA256
     assert blake3_512_of(source.encode()) == COL_SOURCE_CID
 
-    _assert_named_compare_panic(
-        _compare_at(path, source, line=365),
-        observed="TermValue in CallSiteValue",
-    )
+    _assert_compare_dual(_compare_at(path, source, line=365), atom="py.in")
 
 
 def test_literal_container_lying_twin_does_not_inherit_the_refusal() -> None:
@@ -227,73 +253,77 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
         )
     )
 
+    expression_by_kind = {
+        "Lt": "left < 1",
+        "NotEq": "left != 1",
+        "In": "1 in container",
+        "NotIn": "1 not in container",
+        "Eq": "left == 1",
+    }
+    site = _synthetic_compare(expression_by_kind[op_kind]).fragment
     sugar = (
-        EqualityOpSugar(left, right, "compare-site")
+        EqualityOpSugar(left, right, site)
         if op_kind == "Eq"
-        else ComparisonOpSugar(op_kind, left, right, "compare-site")
+        else ComparisonOpSugar(op_kind, left, right, site)
     )
-    with pytest.raises(ConstructionPanic) as raised:
-        sugar.desugar(None)
+    _assert_dual_dispatch(
+        sugar.desugar(None),
+        atom={
+            "Lt": "py.lt",
+            "NotEq": "py.eq",
+            "Eq": "py.eq",
+            "In": "py.in",
+            "NotIn": "py.in",
+        }[op_kind],
+        blame=str(site),
+    )
 
-    assert raised.value.info.owner == "comparison_operation_exception_floor"
-    assert "TypeError" not in str(raised.value.info)
 
-
-@pytest.mark.parametrize("op_kind", ["Lt", "Gt", "LtE", "GtE"])
-def test_undecided_symbolic_operands_refuse_invented_ordering(
-    op_kind: str,
+@pytest.mark.parametrize(
+    ("op_kind", "operator", "atom"),
+    (
+        ("Lt", "<", "py.lt"),
+        ("Gt", ">", "py.gt"),
+        ("LtE", "<=", "py.le"),
+        ("GtE", ">=", "py.ge"),
+    ),
+)
+def test_undecided_symbolic_ordering_emits_completed_and_exceptional_edges(
+    op_kind: str, operator: str, atom: str
 ) -> None:
-    """``left < right`` cannot invent ``py.lt`` when operand types are undecided."""
+    """Ordering keeps its solver atom and the native dispatch halt together."""
+    node = _synthetic_compare(f"left {operator} 1")
     left = _ValueSugar(SymbolicValue(make_var("left")))
-    right = _ValueSugar(SymbolicValue(make_var("right")))
-    with pytest.raises(ConstructionPanic) as raised:
-        ComparisonOpSugar(op_kind, left, right, "compare-site").desugar(None)
-
-    info = raised.value.info
-    assert info.owner == "comparison_operation_exception_floor"
-    operator = {"Lt": "<", "Gt": ">", "LtE": "<=", "GtE": ">="}[op_kind]
-    assert info.observed == f"SymbolicValue {operator} SymbolicValue"
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
+    right = _ValueSugar(TermValue(1))
+    outcome = ComparisonOpSugar(op_kind, left, right, node.fragment).desugar(None)
+    _assert_dual_dispatch(outcome, atom=atom, blame=str(node.fragment))
 
 
-def test_undecided_symbolic_equality_refuses_invented_py_eq() -> None:
-    """``left == right`` cannot invent ``py.eq`` when both operand types are undecided.
-
-    Misaligned pandas Index/Series/DataFrame/Categorical equality raises
-    ValueError/TypeError at runtime. Emitting a total solver coordinate
-    invents completion under ``pytest.raises``; inventing the exception
-    invents an identity. Both stay refused until types are source-decided.
-    """
-    left = _ValueSugar(SymbolicValue(make_var("left")))
-    right = _ValueSugar(SymbolicValue(make_var("right")))
-    with pytest.raises(ConstructionPanic) as raised:
-        EqualityOpSugar(left, right, "compare-site").desugar(None)
-
-    info = raised.value.info
-    assert info.owner == "comparison_operation_exception_floor"
-    assert info.observed == "SymbolicValue == SymbolicValue"
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
-    assert "ValueError" not in str(info)
-
-
-def test_symbolic_equality_with_ground_remains_solver_owned() -> None:
-    """Symbolic/ground equality stays a total ``py.eq`` coordinate."""
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-
+def test_symbolic_equality_keeps_solver_atom_and_exceptional_edge() -> None:
+    """The landed ``py.eq`` atom survives beside possible native ``__eq__`` halt."""
+    node = _synthetic_compare("left == 1")
     outcome = EqualityOpSugar(
         _ValueSugar(SymbolicValue(make_var("left"))),
         _ValueSugar(TermValue(1)),
-        "compare-site",
+        node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
+    _assert_dual_dispatch(outcome, atom="py.eq", blame=str(node.fragment))
+
+
+def test_two_symbolic_equality_operands_keep_both_dispatch_faces() -> None:
+    """Two undecided operands neither fabricate totality nor refuse dispatch."""
+    node = _synthetic_compare("left == container")
+    outcome = EqualityOpSugar(
+        _ValueSugar(SymbolicValue(make_var("left"))),
+        _ValueSugar(SymbolicValue(make_var("right"))),
+        node.fragment,
+    ).desugar(None)
+    _assert_dual_dispatch(outcome, atom="py.eq", blame=str(node.fragment))
 
 
 def test_ground_decided_equality_still_completes() -> None:
-    """Lying twin: two decided ground scalars are not an undecided third value."""
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    """Lying twin: two decided scalars do not gain a dispatch split."""
+    from sugar_lift_py_tests.floor import PredicateValue
 
     outcome = EqualityOpSugar(
         _ValueSugar(TermValue(1)),
@@ -304,19 +334,27 @@ def test_ground_decided_equality_still_completes() -> None:
     assert isinstance(outcome.value, PredicateValue)
 
 
-def test_undecided_symbolic_membership_refuses_invented_py_in() -> None:
-    with pytest.raises(ConstructionPanic) as raised:
-        ComparisonOpSugar(
-            "In",
-            _ValueSugar(TermValue(1)),
-            _ValueSugar(SymbolicValue(make_var("container"))),
-            "compare-site",
-        ).desugar(None)
+def test_undecided_symbolic_membership_emits_completed_and_exceptional_edges() -> None:
+    node = _synthetic_compare("1 in container")
+    outcome = ComparisonOpSugar(
+        "In",
+        _ValueSugar(TermValue(1)),
+        _ValueSugar(SymbolicValue(make_var("container"))),
+        node.fragment,
+    ).desugar(None)
+    _assert_dual_dispatch(outcome, atom="py.in", blame=str(node.fragment))
 
-    info = raised.value.info
-    assert info.owner == "comparison_operation_exception_floor"
-    assert info.observed == "TermValue in SymbolicValue"
-    assert "TypeError" not in str(info)
+
+def test_identity_never_gains_an_exceptional_dispatch_edge() -> None:
+    """LYING TWIN: ``is`` is total and must not inherit rich-operation edges."""
+    node = _synthetic_compare("left is 1")
+    outcome = ComparisonOpSugar(
+        "Is",
+        _ValueSugar(SymbolicValue(make_var("left"))),
+        _ValueSugar(TermValue(1)),
+        node.fragment,
+    ).desugar(None)
+    assert isinstance(outcome, Complete)
 
 
 def test_ground_decided_membership_still_completes() -> None:
@@ -333,50 +371,22 @@ def test_ground_decided_membership_still_completes() -> None:
     assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
 
-def test_pandas_categorical_equality_stays_source_undecided() -> None:
-    """``c1 == c2`` under TypeError: both Categorical types are source-undecided.
-
-    Site: ``pandas/tests/arrays/categorical/test_operators.py:335``. Emitting
-    ``py.eq`` invented the residual silent Complete; refuse without minting
-    TypeError.
-    """
+def test_pandas_categorical_equality_retains_both_dispatch_faces() -> None:
     path = _corpus_root() / "tests/arrays/categorical/test_operators.py"
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == CATEGORICAL_EQ_SITE_SHA256
     assert source.count("c1 == c2") >= 1
-
-    from pandas import Categorical
-
-    c1 = Categorical(["a", "b"], categories=["a", "b"], ordered=False)
-    c2 = Categorical(["a", "c"], categories=["c", "a"], ordered=False)
-    with pytest.raises(TypeError, match="Categoricals can only be compared"):
-        c1 == c2  # noqa: B015
-
-    _assert_named_compare_panic(
-        _compare_at(path, source, line=335),
-        observed="SymbolicValue == SymbolicValue",
-    )
+    _assert_compare_dual(_compare_at(path, source, line=335), atom="py.eq")
 
 
-def test_pandas_index_length_equality_stays_source_undecided() -> None:
-    """``index_a == index_b`` under ValueError: length mismatch is not ``py.eq``."""
+def test_pandas_index_length_equality_retains_both_dispatch_faces() -> None:
     path = _corpus_root() / "tests/indexes/multi/test_equivalence.py"
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == MULTI_EQ_SITE_SHA256
-
-    _assert_named_compare_panic(
-        _compare_at(path, source, line=43),
-        observed="SymbolicValue == SymbolicValue",
-    )
+    _assert_compare_dual(_compare_at(path, source, line=43), atom="py.eq")
 
 
 def test_source_decided_membership_in_number_emits_type_error() -> None:
-    """``1 in 2`` is TypeError — numbers are never containers.
-
-    Companion to enrolled membership under pytest.raises: when the container
-    is a decided TermValue, Compare constructs RaiseValue rather than panicking
-    on the contains floor.
-    """
     from sugar_lift_py_tests.floor import RaiseValue
 
     twin = "def f():\n    return 1 in 2\n"
@@ -401,7 +411,6 @@ def test_source_decided_membership_in_number_emits_type_error() -> None:
 
 
 def test_source_decided_none_greater_than_emits_type_error() -> None:
-    """``None > 1`` is TypeError on every ordering face, not a py.gt emit."""
     from sugar_lift_py_tests.floor import NoneValue, RaiseValue
 
     twin = "def f():\n    return None > 1\n"
@@ -425,7 +434,7 @@ def test_source_decided_none_greater_than_emits_type_error() -> None:
     assert outcome.value.effect.exception_name == "TypeError"
 
 
-def test_pandas_series_string_ordering_stays_source_undecided() -> None:
+def test_pandas_series_string_ordering_retains_both_faces() -> None:
     """``obj < "a"``: string right is decided; left Series type is not.
 
     Site: ``pandas/tests/arithmetic/test_numeric.py:146`` under
@@ -443,10 +452,7 @@ def test_pandas_series_string_ordering_stays_source_undecided() -> None:
     with pytest.raises(TypeError, match="Invalid comparison"):
         series < "a"  # noqa: B015
 
-    _assert_named_compare_panic(
-        _compare_at(path, source, line=146),
-        observed="SymbolicValue < StringValue",
-    )
+    _assert_compare_dual(_compare_at(path, source, line=146), atom="py.lt")
 
 
 def test_source_decided_number_string_ordering_emits_type_error() -> None:
@@ -501,7 +507,7 @@ def test_source_decided_number_string_ordering_emits_type_error() -> None:
         (158, ">=", "SymbolicValue >= SymbolicValue"),
     ),
 )
-def test_pandas_left_right_ordering_faces_stay_source_undecided(
+def test_pandas_left_right_ordering_faces_retain_both_edges(
     line: int, op: str, observed: str
 ) -> None:
     """``left < right`` family in arithmetic/common.py: both sides undecided.
@@ -512,8 +518,8 @@ def test_pandas_left_right_ordering_faces_stay_source_undecided(
     path = _corpus_root() / "tests/arithmetic/common.py"
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == COMMON_SITE_SHA256
-    _assert_named_compare_panic(
+    _assert_compare_dual(
         _compare_at(path, source, line=line),
-        observed=observed,
+        atom={"<": "py.lt", "<=": "py.le", ">": "py.gt", ">=": "py.ge"}[op],
     )
-    del op  # documented in parametrize for human readers of the tooth list
+    del observed  # documents the source operand pair beside each coordinate

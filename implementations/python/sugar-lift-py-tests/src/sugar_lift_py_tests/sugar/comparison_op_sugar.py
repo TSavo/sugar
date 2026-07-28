@@ -32,85 +32,92 @@ COMPARE_METHODS: dict[str, str] = {
 # operand: `x in xs` is `xs.contains(x)`).
 COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot", "In", "NotIn"}
 
-_OPERATOR_COORDINATE = {
-    "Eq": "==",
-    "NotEq": "!=",
-    "Lt": "<",
-    "LtE": "<=",
-    "Gt": ">",
-    "GtE": ">=",
-    "In": "in",
-    "NotIn": "not in",
+_DISPATCH_RAISE_COORDINATE = {
+    "Eq": "python.eq_dispatch_raises",
+    "NotEq": "python.eq_dispatch_raises",
+    "Lt": "python.lt_dispatch_raises",
+    "LtE": "python.le_dispatch_raises",
+    "Gt": "python.gt_dispatch_raises",
+    "GtE": "python.ge_dispatch_raises",
+    "In": "python.contains_dispatch_raises",
+    "NotIn": "python.contains_dispatch_raises",
 }
 
 
-def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
-    """Keep undecided native comparison/containment/equality dispatch loud.
+def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome):
+    """Retain both native-dispatch faces when operand types are undecided.
 
-    Ordering and membership are not total over undecided runtime types:
+    Ordering, membership, and equality are not total over undecided runtime types:
     Python may select a rich method that completes or raises (``Series`` vs
     ``str`` raises ``TypeError``; unknown containers may raise from
     ``__contains__``). Emitting ``py.lt`` / ``py.in`` invents completion;
     inventing ``TypeError`` invents an exception identity. Both stay refused
     until native operand types are source-authenticated — the same producer
-    law BinOp already owns.
+    law BinOp/BoolOp already own.
 
-    Equality keeps a narrower carve-out: ``==`` / ``!=`` remain total solver
-    ``py.eq`` coordinates when at least one operand's runtime type is decided
-    (symbolic/ground and ground/ground pairs). They refuse when **both**
-    operand types are undecided — misaligned Index/Series/DataFrame/Categorical
-    equality raises at runtime, and inventing ``py.eq`` under ``pytest.raises``
-    is the residual silent Complete. Unexecuted ``CallSiteValue`` equality also
-    stays refused: the call result's ``__eq__`` body is itself a third value.
+    Equality is total only after both native operand types are decided.  An
+    undecided value may dispatch ``__eq__`` / ``__ne__`` that completes or
+    raises.  The producer owns that two-way split: the completed face retains
+    the operator's solver atom and the halted face retains a source-cited raise
+    occurrence whose exception identity remains undecided.  Identity is not
+    routed here because Python ``is`` / ``is not`` cannot invoke user code.
     """
     denotes_left = getattr(left, "denotes_value", None)
     denotes_right = getattr(right, "denotes_value", None)
     if not callable(denotes_left) or not callable(denotes_right):
-        return
+        return outcome
     if not (denotes_left() and denotes_right()):
-        return
+        return outcome
 
     decided_left = getattr(left, "runtime_type_is_decided", None)
     decided_right = getattr(right, "runtime_type_is_decided", None)
     if not callable(decided_left) or not callable(decided_right):
-        return
+        return outcome
+    if decided_left() and decided_right():
+        return outcome
 
-    if op_kind in {"Eq", "NotEq"}:
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-
-        # Solver-owned arm: at least one decided type, and neither side is an
-        # unexecuted call result whose __eq__ body is itself undecided.
-        if (
-            (decided_left() or decided_right())
-            and not isinstance(left, CallSiteValue)
-            and not isinstance(right, CallSiteValue)
-        ):
-            return
-    else:
-        if decided_left() and decided_right():
-            return
-
-    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    operator = _OPERATOR_COORDINATE[op_kind]
-    construction_panic_gap(
-        owner="comparison_operation_exception_floor",
-        blame=site,
-        observed=(f"{type(left).__name__} {operator} {type(right).__name__}"),
-        requested=(
-            "source-visible native comparison testimony selecting completion "
-            "or an authenticated exceptional exit"
-        ),
-        fix=(
-            "preserve the undecided third value at the Compare producer; "
-            "resolve native operand types and their comparison/containment "
-            "bodies from source, or retain this named refusal without "
-            "inventing an exception identity"
-        ),
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
+    from sugar_lift_py_tests.floor import PredicateValue
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        Halted,
+        complement_guard,
+        partition,
     )
+
+    if not isinstance(outcome, Complete) or not isinstance(
+        outcome.value, PredicateValue
+    ):
+        return outcome
+
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.ir import atomic
+
+    dispatch_raises = atomic(
+        _DISPATCH_RAISE_COORDINATE[op_kind],
+        [
+            left.to_term(owner=f"{op_kind} left operand"),
+            right.to_term(owner=f"{op_kind} right operand"),
+        ],
+    )
+    halted_face, completed_face = partition(
+        ("comparison-native-dispatch", str(site), op_kind)
+    )
+    effect = RaiseEffect(
+        blame=str(site),
+        occurrence=str(site),
+        producer_node_owner="Compare",
+    )
+    return ExitSet(
+        (
+            Halted(dispatch_raises, effect, faces=frozenset({halted_face})),
+            Completed(
+                complement_guard(dispatch_raises),
+                outcome.value,
+                frozenset({completed_face}),
+            ),
+        )
+    ).normalize()
 
 
 @dataclass(frozen=True)
@@ -145,15 +152,21 @@ class ComparisonOpSugar(Sugar):
         inventing ``TypeError`` invents an exit. Keep that undecided dispatch
         loud at the Compare producer.
         """
-        refuse_undecided_comparison(item, container, self.site, self.op_kind)
-        return container.contains(item, self.site)
+        outcome = container.contains(item, self.site)
+        return publish_undecided_comparison_edges(
+            item, container, self.site, self.op_kind, outcome
+        )
 
     def _apply(self, left, right):
-        if self.op_kind not in {"Is", "IsNot", "In", "NotIn"}:
-            refuse_undecided_comparison(left, right, self.site, self.op_kind)
         if self.op_kind == "NotEq":
             # a != b is not (a == b): stand on the equals floor, negate.
-            return left.equals(right, self.site).and_then(
+            return publish_undecided_comparison_edges(
+                left,
+                right,
+                self.site,
+                self.op_kind,
+                left.equals(right, self.site),
+            ).and_then(
                 lambda predicate: predicate.negate()
             )
         if self.op_kind == "Is":
@@ -173,4 +186,10 @@ class ComparisonOpSugar(Sugar):
                 lambda predicate: predicate.negate()
             )
         method = COMPARE_METHODS[self.op_kind]
-        return getattr(left, method)(right, self.site)
+        return publish_undecided_comparison_edges(
+            left,
+            right,
+            self.site,
+            self.op_kind,
+            getattr(left, method)(right, self.site),
+        )
