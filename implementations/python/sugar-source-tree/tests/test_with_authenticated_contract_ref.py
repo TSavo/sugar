@@ -27,6 +27,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ContextManagerResolutionGapV1,
+    NativeDefinitionCoordinateGapV1,
     ImportSignatureV2,
     NativeProtocolSlot,
     ResolvedContractRefsV1,
@@ -81,6 +82,41 @@ def _source_with_resolution(source_identity, resolution, *, native_definitions=N
         source_identity,
         construction_context=TreeConstructionContextV1(table),
     )
+
+
+class _RecordingRefs:
+    """Construction-table wrapper proving the one producer door is traversed."""
+
+    def __init__(self, table, definitions):
+        self.table = table
+        self.definitions = definitions
+        self.calls = []
+
+    def require(self, use_site):
+        return self.table.require(use_site)
+
+    def require_native_definition(self, receiver, slot):
+        self.calls.append((receiver, slot))
+        return self.definitions[(receiver, slot)]
+
+
+def _source_with_recording_refs(source_identity, resolution, definitions):
+    first = SourceFile(source_identity)
+    with_node = next(
+        node for node in first.nodes() if node.kind in {"With", "AsyncWith"}
+    )
+    use_site = _coordinate(with_node.items[0].context_expr)
+    table = ResolvedContractRefsV1(
+        catalog_cid=_cid("c"),
+        table_cid=_cid("t"),
+        by_use_site=MappingProxyType({use_site: resolution(use_site)}),
+    )
+    recording = _RecordingRefs(table, definitions)
+    source = SourceFile(
+        source_identity,
+        construction_context=TreeConstructionContextV1(recording),
+    )
+    return source, recording, use_site
 
 
 def _resolved(use_site) -> ContextManagerContractRefV1:
@@ -190,6 +226,74 @@ def test_open_gap_is_the_builtin_authority_discrimination_arm():
     assert exit_gap.slot is NativeProtocolSlot.CONTEXT_EXIT
     assert enter_gap.reason.startswith("authenticated source definition")
     assert exit_gap.reason.startswith("authenticated source definition")
+
+
+def test_recording_door_source_defined_calls_enter_then_exit_and_desugars():
+    source = (
+        "from pandas import option_context\n"
+        "def f():\n"
+        "    with option_context('display.max_rows', 10) as resource:\n"
+        "        return resource\n"
+    )
+    source_file = SourceFile((source, "recording-source-defined.py", _cid("q")))
+    use_site = _coordinate(
+        next(node for node in source_file.nodes() if node.kind == "With")
+        .items[0]
+        .context_expr
+    )
+    enter = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    exit_ = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    definitions = {
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER): enter,
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT): exit_,
+    }
+    source, recording, _ = _source_with_recording_refs(
+        (source, "recording-source-defined.py", _cid("q")),
+        _truthiness_resolved,
+        definitions,
+    )
+    sugar = next(node for node in source.nodes() if node.kind == "With").sugar()
+    assert recording.calls == [
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER),
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert sugar.enter_definition == enter
+    assert sugar.exit_definition == exit_
+    assert sugar.enter.native_definition_coordinate == enter
+    assert sugar.exit.native_definition_coordinate == exit_
+    assert sugar.desugar() is not None
+
+
+def test_recording_door_builtin_open_calls_both_slots_then_stays_loud():
+    source = "def f(path):\n    with open(path) as resource:\n        return resource\n"
+    source_file = SourceFile((source, "recording-open.py", _cid("q")))
+    use_site = _coordinate(
+        next(node for node in source_file.nodes() if node.kind == "With")
+        .items[0]
+        .context_expr
+    )
+    definitions = {
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER): NativeDefinitionCoordinateGapV1(
+            use_site,
+            NativeProtocolSlot.CONTEXT_ENTER,
+            "authenticated source definition coordinate is not enrolled",
+        ),
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT): NativeDefinitionCoordinateGapV1(
+            use_site,
+            NativeProtocolSlot.CONTEXT_EXIT,
+            "authenticated source definition coordinate is not enrolled",
+        ),
+    }
+    source, recording, _ = _source_with_recording_refs(
+        (source, "recording-open.py", _cid("q")),
+        _truthiness_resolved,
+        definitions,
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        next(node for node in source.nodes() if node.kind == "With").sugar()
+    assert len(recording.calls) == 2
+    assert recording.calls[0][1] is NativeProtocolSlot.CONTEXT_ENTER
+    assert recording.calls[1][1] is NativeProtocolSlot.CONTEXT_EXIT
 
 
 def test_source_defined_coordinate_and_builtin_gap_are_distinct_door_outcomes():
