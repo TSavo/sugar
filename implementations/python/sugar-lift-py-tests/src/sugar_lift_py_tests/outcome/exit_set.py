@@ -1274,6 +1274,7 @@ def outcome_to_exitset(outcome) -> ExitSet:
     # back through `collapse` returns the carrier.
     from sugar_lift_py_tests.caller_parameter_contract import (
         ContractConditionalConstructionV1,
+        NativeOperationExitCarrierV1,
     )
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -1288,6 +1289,21 @@ def outcome_to_exitset(outcome) -> ExitSet:
                 ),
             )
         ).normalize()
+
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        construction_panic_gap(
+            owner="outcome_to_exitset",
+            blame=outcome.demand.source_node,
+            observed="undischarged native operation demand",
+            requested=(
+                "an ExitSet projected from authenticated caller actual operands"
+            ),
+            fix=(
+                "retain the carrier through caller discharge; do not treat the "
+                "absence of a halted edge as normal completion"
+            ),
+            gap_kind=GapKind.FLOOR,
+        )
 
     construction_panic_gap(
         owner="outcome_to_exitset",
