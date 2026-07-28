@@ -163,6 +163,15 @@ def _assert_compare_dual(node, *, atom: str) -> None:
     )
 
 
+def _builtin_exception_identity(name: str):
+    from sugar_lift_py_tests.ir import str_const
+
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const(name)],
+    )
+
+
 def test_launcher_authenticates_content_manifest_not_path_shape() -> None:
     corpus = authenticated_pandas_corpus()
     assert corpus.manifest_cid == MANIFEST_CID
@@ -425,7 +434,10 @@ def test_formal_ordering_survives_until_authenticated_caller_discharge() -> None
     assert isinstance(completed.exits[0], Completed)
     assert len(halted.exits) == 1
     assert isinstance(halted.exits[0], Halted)
-    assert halted.exits[0].effect.exception_name == "TypeError"
+    assert halted.exits[0].effect.exception_name is None
+    assert halted.exits[
+        0
+    ].effect.exception_type_coordinate == _builtin_exception_identity("TypeError")
 
 
 def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
@@ -439,13 +451,9 @@ def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
     )
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import Halted
-    from sugar_lift_py_tests.ir import str_const
 
     class _ExpectedValueError:
-        identity = ctor(
-            "python:exception_type_identity",
-            [str_const("builtins"), str_const("ValueError")],
-        )
+        identity = _builtin_exception_identity("ValueError")
 
         def exception_type_identity(self):
             return self.identity
@@ -469,7 +477,10 @@ def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
 
     assert len(projected.exits) == 1
     assert isinstance(projected.exits[0], Halted)
-    assert projected.exits[0].effect.exception_name == "TypeError"
+    assert projected.exits[0].effect.exception_name is None
+    assert projected.exits[
+        0
+    ].effect.exception_type_coordinate == _builtin_exception_identity("TypeError")
 
 
 def test_formal_membership_records_authenticated_contains_receiver_order() -> None:
@@ -785,9 +796,7 @@ def test_undecided_dispatch_partition_keys_are_law_scoped(
             node.fragment,
         ).desugar(None)
     else:
-        outcome = ComparisonOpSugar(
-            op_kind, left, right, node.fragment
-        ).desugar(None)
+        outcome = ComparisonOpSugar(op_kind, left, right, node.fragment).desugar(None)
 
     _assert_dual_dispatch(outcome, atom=atom, blame=str(node.fragment))
     expected_prefix = f"compare.{law_name}.dispatch"
@@ -858,8 +867,7 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
         ]
     )
     assert any(
-        face.guard == and_([not_(first_raises), not_(first_true)])
-        for face in completed
+        face.guard == and_([not_(first_raises), not_(first_true)]) for face in completed
     )
 
 
@@ -891,8 +899,7 @@ def test_subscript_root_preserves_nested_compare_owned_halt() -> None:
     compare_halt = next(
         face
         for face in outcome.exits
-        if isinstance(face, Halted)
-        and face.effect.producer_node_owner == "Compare"
+        if isinstance(face, Halted) and face.effect.producer_node_owner == "Compare"
     )
     assert compare_halt.effect.exception_name is None
     assert compare_halt.effect.blame == str(comparison.fragment)
