@@ -671,6 +671,15 @@ class TermValue(FloorValue):
             exception_name="AttributeError", site=site, owner="TermValue.setattr"
         )
 
+    def delattr(self, name, site):
+        """``del (1).x`` raises AttributeError — delete, not read."""
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="TermValue.delattr"
+        )
+
     def subscript(self, index, site):
         """Numbers are never subscriptable: exact ground TypeError."""
         del index
