@@ -26,6 +26,11 @@ class ReceiverFieldStoreValue(FloorValue):
 
         if not isinstance(self.receiver, ObjectValue):
             return ctx
+        # Root mint is Floor-owned when the reducer has no ambient context yet.
+        if ctx is None:
+            from sugar_lift_py_tests.context import ReduceContext
+
+            ctx = ReduceContext.root(owner="ReceiverFieldStoreValue")
         updated = self.receiver.with_field_store(self.attr, self.value)
         temporal = ctx.temporal
         matched = False

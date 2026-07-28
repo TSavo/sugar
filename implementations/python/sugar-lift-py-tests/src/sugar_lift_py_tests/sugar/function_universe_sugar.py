@@ -44,43 +44,15 @@ class _ReducedBlock:
 
 
 def _extend_receiver_store_scope(value, ctx):
-    """Thread statement-owned temporal rebinds into the tail context.
+    """Thread statement-owned rebinds: Floor ``extend_scope`` only.
 
-    Owns every FloorValue that implements ``extend_scope`` for real effect —
-    ``ReceiverFieldStoreValue``, ``ScopeRebind`` / ``ScopeRebinds``, etc.
-    Default FloorValue.extend_scope is identity, so ordinary values are free.
-    When the reducer has no context yet and a rebind needs one, mint a root
-    ReduceContext so Name AugAssign / unpack rebinds can thread without a
-    second ambient door.
-
-    Unwrap ``Complete`` only — never ``FloorValue.value`` (ScopeRebind's payload
-    field is also named ``value`` and must not be mistaken for an Outcome).
+    The reducer does not probe capability, ladder rebind kinds, or mint root
+    contexts.  Default FloorValue.extend_scope is identity; Floors that rebind
+    (ScopeRebind, ReceiverFieldStoreValue, …) own their own root-context mint
+    when ``ctx`` is absent.  ``value`` is an Outcome (Complete/Incomplete) or a
+    FloorValue — both expose Floor-owned ``extend_scope``.
     """
-    from sugar_lift_py_tests.outcome import Complete
-
-    candidate = value.value if isinstance(value, Complete) else value
-    extend = getattr(candidate, "extend_scope", None)
-    if extend is None:
-        return ctx
-    # Identity default: skip minting a root for values that do not rebind.
-    from sugar_lift_py_tests.floor.floor_value import FloorValue
-    from sugar_lift_py_tests.floor.receiver_field_store_value import (
-        ReceiverFieldStoreValue,
-    )
-    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
-
-    if not isinstance(
-        candidate, (ReceiverFieldStoreValue, ScopeRebind, ScopeRebinds)
-    ):
-        # Still honor any other FloorValue that overrode extend_scope.
-        if type(candidate).extend_scope is FloorValue.extend_scope:
-            return ctx
-    active = ctx
-    if active is None:
-        from sugar_lift_py_tests.context import ReduceContext
-
-        active = ReduceContext.root(owner="reduce_block_to_exitset")
-    return extend(active)
+    return value.extend_scope(ctx)
 
 
 def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
@@ -331,9 +303,7 @@ def reduce_block_to_exitset(
                     nested_transforms = (
                         () if follow.transform is None else (follow.transform,)
                     )
-                    next_context = _extend_receiver_store_scope(
-                        linear.value, active_ctx
-                    )
+                    next_context = _extend_receiver_store_scope(linear, active_ctx)
                 for transform in reversed(state.transforms):
                     contribution = transform(contribution)
                 entries = (*state.entries, *contribution)
