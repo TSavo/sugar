@@ -1261,8 +1261,16 @@ class CallSiteValue(FloorValue):
 
             return Complete(self)
 
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.effect import RaiseEffect
         from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        def call_owned(effect):
+            if isinstance(effect, RaiseEffect):
+                return replace(effect, producer_node_owner="Call")
+            return effect
 
         outcome = self.reduce_source_outcome(ctx)
         if isinstance(outcome, Complete):
@@ -1280,7 +1288,7 @@ class CallSiteValue(FloorValue):
                     if isinstance(exit_, Completed)
                     else Halted(
                         exit_.guard,
-                        exit_.effect,
+                        call_owned(exit_.effect),
                         exit_.state,
                         exit_.faces,
                         exit_.pending_contracts,

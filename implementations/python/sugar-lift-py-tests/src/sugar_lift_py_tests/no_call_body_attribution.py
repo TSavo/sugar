@@ -82,6 +82,13 @@ class BodyAttribution:
 
 
 @dataclass(frozen=True)
+class AttributionDiscrepancy:
+    body_id: str
+    family: ProducerFamily | str
+    detail: str
+
+
+@dataclass(frozen=True)
 class FamilyAttribution:
     family: ProducerFamily
     enrolled: int
@@ -106,10 +113,28 @@ class AttributionOutcomeSummary:
 @dataclass(frozen=True)
 class AttributionReport:
     bodies: tuple[BodyAttribution, ...]
+    discrepancies: tuple[AttributionDiscrepancy, ...]
     by_family: Mapping[ProducerFamily, FamilyAttribution]
 
     def rows(self) -> tuple[FamilyAttribution, ...]:
         return tuple(self.by_family[family] for family in ProducerFamily)
+
+    @property
+    def construction_panic_count(self) -> int:
+        return sum(row.construction_panics for row in self.rows())
+
+    @property
+    def outcome_total(self) -> int:
+        return sum(
+            row.authenticated_exceptional_exits
+            + row.named_refusals
+            + row.construction_panics
+            for row in self.rows()
+        )
+
+    @property
+    def loud_failure_count(self) -> int:
+        return self.construction_panic_count + len(self.discrepancies)
 
     def render(self) -> str:
         lines = []
@@ -125,26 +150,55 @@ class AttributionReport:
                     )
                 )
             )
+        for body in self.bodies:
+            if body.outcome is AttributionOutcome.NAMED_REFUSAL:
+                lines.append(
+                    f"namedRefusal body={body.body_id} coordinate={body.detail}"
+                )
+            elif body.outcome is AttributionOutcome.CONSTRUCTION_PANIC:
+                lines.append(
+                    f"constructionPanic body={body.body_id} "
+                    f"node={getattr(body.family, 'value', body.family)} "
+                    f"owner={body.detail}"
+                )
+        for discrepancy in self.discrepancies:
+            lines.append(
+                f"unaccounted body={discrepancy.body_id} "
+                f"node={getattr(discrepancy.family, 'value', discrepancy.family)} "
+                f"detail={discrepancy.detail}"
+            )
+        enrolled = sum(row.enrolled for row in self.rows())
+        if self.outcome_total != enrolled:
+            lines.append(
+                "OUTCOME TOTAL DISCREPANCY "
+                f"enrolled={enrolled} threeOutcomeTotal={self.outcome_total} "
+                f"unaccounted={len(self.discrepancies)}"
+            )
         return "\n".join(lines)
 
 
-def _exceptional_exit_present(outcome: object) -> bool:
+def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     if isinstance(outcome, Incomplete):
-        return isinstance(outcome.effect, RaiseEffect)
+        return (outcome.effect,) if isinstance(outcome.effect, RaiseEffect) else ()
     if isinstance(outcome, Complete):
         value = outcome.value
-        return isinstance(value, RaiseValue) and isinstance(value.effect, RaiseEffect)
-    if isinstance(outcome, ExitSet):
-        return any(
-            isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
-            for face in outcome.exits
+        return (
+            (value.effect,)
+            if isinstance(value, RaiseValue) and isinstance(value.effect, RaiseEffect)
+            else ()
         )
-    return False
+    if isinstance(outcome, ExitSet):
+        return tuple(
+            face.effect
+            for face in outcome.exits
+            if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+        )
+    return ()
 
 
 def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
@@ -168,12 +222,23 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             panic.info.owner,
         )
 
-    if _exceptional_exit_present(outcome):
+    exceptional_effects = _exceptional_exit_effects(outcome)
+    if exceptional_effects:
+        owners = {
+            effect.producer_node_owner
+            for effect in exceptional_effects
+            if effect.producer_node_owner is not None
+        }
+        detail = (
+            next(iter(owners))
+            if len(owners) == 1
+            else getattr(probe.family, "value", str(probe.family))
+        )
         return BodyAttribution(
             probe.body_id,
             probe.family,
             AttributionOutcome.AUTHENTICATED_EXIT,
-            type(outcome).__name__,
+            detail,
         )
     raise AttributionInvariantError(
         f"{probe.body_id} "
@@ -204,13 +269,23 @@ def summarize_attribution_outcomes(
 
 
 def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
-    bodies = tuple(attribute_body_probe(probe) for probe in probes)
+    materialized = tuple(probes)
+    bodies = []
+    discrepancies = []
+    for probe in materialized:
+        try:
+            bodies.append(attribute_body_probe(probe))
+        except AttributionInvariantError as error:
+            discrepancies.append(
+                AttributionDiscrepancy(probe.body_id, probe.family, str(error))
+            )
+    attributed = tuple(bodies)
     rows = {}
     for family in ProducerFamily:
-        selected = tuple(body for body in bodies if body.family is family)
+        selected = tuple(body for body in attributed if body.family is family)
         rows[family] = FamilyAttribution(
             family=family,
-            enrolled=len(selected),
+            enrolled=sum(probe.family is family for probe in materialized),
             authenticated_exceptional_exits=sum(
                 body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
                 for body in selected
@@ -223,7 +298,11 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
                 for body in selected
             ),
         )
-    return AttributionReport(bodies=bodies, by_family=rows)
+    return AttributionReport(
+        bodies=attributed,
+        discrepancies=tuple(discrepancies),
+        by_family=rows,
+    )
 
 
 def validate_shared_demand_table(payload: dict, *, expected_content_key: str) -> dict:

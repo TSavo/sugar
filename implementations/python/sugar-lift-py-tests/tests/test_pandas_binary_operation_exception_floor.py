@@ -11,6 +11,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.nodes import BinOp
 from sugar_source_tree.tree import SourceFile
 
@@ -72,6 +73,16 @@ def _assert_named_panic(
     assert "RuntimeEffect" not in str(info)
 
 
+def _assert_named_refusal(node, *, owner: str, observed: str) -> None:
+    with pytest.raises(SugarNotWritten) as raised:
+        node.sugar().desugar(None)
+    assert raised.value.owner == owner
+    assert raised.value.observed == observed
+    # Never invent a runtime TypeError / RuntimeEffect for undecided source.
+    assert "TypeError" not in str(raised.value)
+    assert "RuntimeEffect" not in str(raised.value)
+
+
 def _binop_at(source: str, path: Path, *, line: int, kind: str):
     source_cid = blake3_512_of(source.encode("utf-8"))
     tree = SourceFile(
@@ -114,14 +125,11 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
     assert (series & 0).tolist() == [0, 0, 0, 0]
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
-    _assert_named_panic(
+    _assert_named_refusal(
         _line_96_bitand(truthful, path),
         owner="SymbolicValue.attribute",
         observed=(
             "undecided receiver runtime type or member semantics: SymbolicValue.nan"
-        ),
-        requested_contains=(
-            "source-authenticated attribute success or exceptional exit"
         ),
     )
     _assert_named_panic(

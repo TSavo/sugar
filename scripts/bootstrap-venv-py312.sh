@@ -68,22 +68,12 @@ if [[ "${BOOTSTRAP_CHECK_ONLY:-0}" == "1" ]]; then
 fi
 
 venv_dir="${VENV_DIR:-$repo_root/.venv-py312}"
-echo "Creating $venv_dir from $py312 (3.12.13)"
-"$py312" -m venv "$venv_dir"
-"$venv_dir/bin/python" -m pip install -U pip setuptools wheel
 
-# Editable Sugar packages always come from THIS checkout.
-"$venv_dir/bin/python" -m pip install \
-  -e "$repo_root/implementations/python/sugar-source-tree" \
-  -e "$repo_root/implementations/python/sugar-lift-python-source" \
-  -e "$repo_root/implementations/python/sugar-lift-py-tests[test]" \
-  "pytest==9.1.1"
-
-# AFTER the editable install: float was measured when extras resolved pandas
-# 3.0.5 while ledgers key to 3.0.3. Re-pin exactly, then verify load path.
-"$venv_dir/bin/python" -m pip install "numpy==2.5.1" "pandas==3.0.3"
-
-"$venv_dir/bin/python" - <<'PY'
+# The post-install discrimination, hoisted into one function. Used by BOTH the
+# reuse fast path and the full run, so reuse can never authenticate an
+# environment the full run would reject.
+verify_pins() {
+  "$1/bin/python" - <<'PY'
 """Post-install discrimination: version AND load path inside this venv."""
 from __future__ import annotations
 
@@ -107,6 +97,51 @@ print("pandas", pandas.__version__, pathlib.Path(pandas.__file__).resolve())
 print("pytest", md.version("pytest"))
 print("PINS_OK")
 PY
+}
+
+# SERIALIZE. Twelve agents bootstrapping at once drove a shared workstation to
+# load 200 and raced two pip installs onto one site-packages. mkdir is atomic;
+# the loser waits instead of corrupting the winner's install.
+lock_dir="$venv_dir.lock"
+lock_waited=0
+lock_timeout="${BOOTSTRAP_LOCK_TIMEOUT:-1800}"
+while ! mkdir "$lock_dir" 2>/dev/null; do
+  if (( lock_waited == 0 )); then
+    echo "bootstrap-venv-py312: another bootstrap holds $lock_dir; waiting" >&2
+  fi
+  if (( lock_waited >= lock_timeout )); then
+    die "timed out after ${lock_timeout}s waiting for $lock_dir (if no bootstrap is running: rmdir $lock_dir)"
+  fi
+  sleep 5
+  lock_waited=$(( lock_waited + 5 ))
+done
+trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+
+# Already authenticated? Then there is nothing to do. Recreating the venv and
+# reinstalling numpy+pandas on every invocation is what made this heavy.
+if [[ -x "$venv_dir/bin/python" ]] && verify_pins "$venv_dir" 2>/dev/null; then
+  echo
+  echo "$venv_dir already authenticates the declared pins; reusing it."
+  echo "Use:  $venv_dir/bin/python -m pytest …"
+  exit 0
+fi
+
+echo "Creating $venv_dir from $py312 (3.12.13)"
+"$py312" -m venv "$venv_dir"
+"$venv_dir/bin/python" -m pip install -U pip setuptools wheel
+
+# Editable Sugar packages always come from THIS checkout.
+"$venv_dir/bin/python" -m pip install \
+  -e "$repo_root/implementations/python/sugar-source-tree" \
+  -e "$repo_root/implementations/python/sugar-lift-python-source" \
+  -e "$repo_root/implementations/python/sugar-lift-py-tests[test]" \
+  "pytest==9.1.1"
+
+# AFTER the editable install: float was measured when extras resolved pandas
+# 3.0.5 while ledgers key to 3.0.3. Re-pin exactly, then verify load path.
+"$venv_dir/bin/python" -m pip install "numpy==2.5.1" "pandas==3.0.3"
+
+verify_pins "$venv_dir"
 
 echo
 echo "Use:  $venv_dir/bin/python -m pytest …"

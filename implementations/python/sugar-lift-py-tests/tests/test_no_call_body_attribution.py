@@ -36,6 +36,14 @@ def _raise_value():
     return Complete(RaiseValue(RaiseEffect(exception_name="TypeError")))
 
 
+def _call_owned_raise_value():
+    return Complete(
+        RaiseValue(
+            RaiseEffect(exception_name="TypeError", producer_node_owner="Call")
+        )
+    )
+
+
 def _named_refusal():
     raise SugarNotWritten(
         owner="native-producer",
@@ -94,6 +102,27 @@ def test_shared_outcome_summary_keeps_refusals_separate_from_panics() -> None:
     assert summary.construction_panics == 1
 
 
+def test_report_names_every_refusal_coordinate_and_panic_node_owner() -> None:
+    report = attribute_body_probes(
+        (
+            _probe(ProducerFamily.BINOP, _named_refusal),
+            _probe(ProducerFamily.SUBSCRIPT, _construction_panic),
+        )
+    )
+
+    rendered = report.render()
+
+    assert (
+        "namedRefusal body=pandas/example.py:1:BinOp "
+        "coordinate=native-producer" in rendered
+    )
+    assert (
+        "constructionPanic body=pandas/example.py:1:Subscript "
+        "node=Subscript owner=producer-construction" in rendered
+    )
+    assert report.construction_panic_count == 1
+
+
 def test_report_keeps_all_six_families_separate() -> None:
     probes = tuple(_probe(family, _named_refusal) for family in ProducerFamily)
     report = attribute_body_probes(probes)
@@ -111,7 +140,7 @@ def test_report_keeps_all_six_families_separate() -> None:
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
-def test_escaped_construction_panic_remains_a_separate_loud_axis() -> None:
+def test_construction_panic_remains_a_separate_loud_axis() -> None:
     report = attribute_body_probes(
         (_probe(ProducerFamily.ATTRIBUTE, _construction_panic),)
     )
@@ -123,11 +152,99 @@ def test_escaped_construction_panic_remains_a_separate_loud_axis() -> None:
     assert report.bodies[0].outcome is AttributionOutcome.CONSTRUCTION_PANIC
 
 
-def test_silent_completion_is_not_a_fourth_outcome() -> None:
-    with pytest.raises(AttributionInvariantError, match="completed without"):
-        attribute_body_probes(
-            (_probe(ProducerFamily.BOOLOP, lambda: Complete(object())),)
+def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.BOOLOP, lambda: Complete(object())),)
+    )
+
+    assert report.by_family[ProducerFamily.BOOLOP].enrolled == 1
+    assert report.outcome_total == 0
+    assert report.loud_failure_count == 1
+    assert len(report.discrepancies) == 1
+    assert "completed without" in report.discrepancies[0].detail
+    assert (
+        "OUTCOME TOTAL DISCREPANCY enrolled=1 threeOutcomeTotal=0 unaccounted=1"
+        in report.render()
+    )
+
+
+def test_construction_panics_are_rendered_with_site_and_failing_node_owner() -> None:
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.SUBSCRIPT, _construction_panic),)
+    )
+
+    assert (
+        "constructionPanic body=pandas/example.py:1:Subscript "
+        "node=Subscript owner=producer-construction"
+    ) in report.render()
+    assert report.construction_panic_count == 1
+
+
+def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing() -> None:
+    """#6540 + #6541: both loud axes survive one report transaction."""
+    report = attribute_body_probes(
+        (
+            _probe(ProducerFamily.SUBSCRIPT, _construction_panic),
+            _probe(ProducerFamily.BOOLOP, lambda: Complete(object())),
         )
+    )
+
+    assert len(report.bodies) == 1
+    assert len(report.discrepancies) == 1
+    assert report.construction_panic_count == 1
+    assert report.outcome_total == 1
+    assert report.loud_failure_count == 2
+    assert "constructionPanic body=pandas/example.py:1:Subscript" in report.render()
+    assert (
+        "OUTCOME TOTAL DISCREPANCY enrolled=2 threeOutcomeTotal=1 unaccounted=1"
+        in report.render()
+    )
+
+
+def test_receiver_call_panic_is_owned_by_call_before_subscript_is_reached() -> None:
+    """Lying twin: root shape cannot steal a failure from its receiver Call."""
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+
+    class RaisingCall:
+        def desugar(self, ctx=None):
+            construction_panic_gap(
+                owner="Call",
+                blame="pandas/example.py:1:receiver",
+                observed="receiver call raised before returning a value",
+                requested="a completed receiver before Subscript evaluation",
+                fix="attribute this failing edge to Call",
+            )
+
+    class UnreachedIndex:
+        def desugar(self, ctx=None):
+            raise AssertionError("Subscript index was evaluated after receiver halt")
+
+    expression = SubscriptSugar(
+        receiver=RaisingCall(), index=UnreachedIndex(), site="pandas/example.py:1"
+    )
+    body = attribute_body_probe(
+        BodyProbe(
+            body_id="pandas/example.py:1:Subscript",
+            family=ProducerFamily.SUBSCRIPT,
+            evaluator=expression.desugar,
+        )
+    )
+
+    assert body.family is ProducerFamily.SUBSCRIPT
+    assert body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
+    assert body.detail == "Call"
+
+
+def test_receiver_call_exceptional_exit_is_not_claimed_by_root_subscript() -> None:
+    report = attribute_body_probes(
+        (_probe(ProducerFamily.SUBSCRIPT, _call_owned_raise_value),)
+    )
+
+    body = report.bodies[0]
+    assert body.family is ProducerFamily.SUBSCRIPT
+    assert body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
+    assert body.detail == "Call"
 
 
 def _table_payload() -> dict:
@@ -233,6 +350,11 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     assert [(probe.family, probe.body_id) for probe in binop_only] == [
         (ProducerFamily.BINOP, "binop_body.py:3:BinOp")
     ]
+
+
+def test_population_selection_never_reads_manager_target_symbol() -> None:
+    """All resolved managers enroll; manager spelling grants no membership."""
+    assert "targetSymbol" not in discover_no_call_body_probes.__code__.co_consts
 
 
 def test_discovery_projects_one_family_without_constructing_peer_sources(

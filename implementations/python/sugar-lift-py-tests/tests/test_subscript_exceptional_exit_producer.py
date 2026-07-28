@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 from pathlib import Path
 
@@ -48,10 +49,54 @@ SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
 MANIFEST_CID = CANONICAL_CORPUS_MANIFEST_CID
 MANIFEST_SHA256 = CANONICAL_CORPUS_MANIFEST_SHA256
 
+REJECTED_VENDOR_FILTER_SEEDS = (
+    (
+        "tests/indexes/multi/test_sorting.py",
+        147,
+        'dfm.loc[1, "z"]',
+        "assert_produces_warning",
+    ),
+    (
+        "tests/indexing/multiindex/test_multiindex.py",
+        29,
+        'df.loc[1, "z"]',
+        "assert_produces_warning",
+    ),
+    (
+        "tests/indexing/multiindex/test_multiindex.py",
+        33,
+        "df.loc[0,]",
+        "assert_produces_warning",
+    ),
+    (
+        "tests/series/accessors/test_list_accessor.py",
+        101,
+        "ser.list[1:None:0]",
+        "external_error_raised",
+    ),
+    (
+        "tests/series/accessors/test_list_accessor.py",
+        133,
+        "ser.list[-1]",
+        "external_error_raised",
+    ),
+    (
+        "tests/series/accessors/test_list_accessor.py",
+        135,
+        "ser.list[5]",
+        "external_error_raised",
+    ),
+)
+
 
 @pytest.fixture(scope="module")
-def authenticated_site():
-    corpus = authenticated_pandas_corpus()
+def authenticated_corpus():
+    return authenticated_pandas_corpus()
+
+
+@pytest.fixture(scope="module")
+def authenticated_site(authenticated_corpus):
+    corpus = authenticated_corpus
     assert corpus.manifest_cid == MANIFEST_CID
     site = corpus.root / "tests/test_multilevel.py"
     assert hashlib.sha256(site.read_bytes()).hexdigest() == SITE_SHA256
@@ -121,6 +166,53 @@ def test_historical_path_shape_digest_is_refused_as_corpus_identity() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "relative_path,line,expected_expression,expected_manager",
+    REJECTED_VENDOR_FILTER_SEEDS,
+)
+def test_non_vendor_subscript_seed_is_real_and_has_no_call_descendant(
+    authenticated_corpus,
+    relative_path,
+    line,
+    expected_expression,
+    expected_manager,
+) -> None:
+    corpus = authenticated_corpus
+    source = (corpus.root / relative_path).read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=relative_path)
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.With, ast.AsyncWith))
+        and len(node.body) == 1
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Subscript)
+        and node.body[0].value.lineno == line
+    ]
+
+    assert len(matches) == 1
+    expression = matches[0].body[0].value
+    assert ast.dump(expression, include_attributes=False) == ast.dump(
+        ast.parse(expected_expression, mode="eval").body,
+        include_attributes=False,
+    )
+    assert not any(isinstance(node, ast.Call) for node in ast.walk(expression))
+    assert any(
+        isinstance(item.context_expr, ast.Call)
+        and (
+            (
+                isinstance(item.context_expr.func, ast.Name)
+                and item.context_expr.func.id == expected_manager
+            )
+            or (
+                isinstance(item.context_expr.func, ast.Attribute)
+                and item.context_expr.func.attr == expected_manager
+            )
+        )
+        for item in matches[0].items
+    )
+
+
 def test_authenticated_subscript_family_owns_no_construction_panics(
     tmp_path,
 ) -> None:
@@ -128,7 +220,12 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
     repo_root = Path(__file__).resolve().parents[4]
     payload = pull_shared_demand_table(repo_root, tmp_path / "python-demand-table.json")
     inventory = require_expected_denominators(
-        discover_no_call_body_probes(payload, corpus.root)
+        discover_no_call_body_probes(
+            payload,
+            corpus.root,
+            families=frozenset({ProducerFamily.SUBSCRIPT}),
+        ),
+        families=frozenset({ProducerFamily.SUBSCRIPT}),
     )
     probes = tuple(
         probe for probe in inventory if probe.family is ProducerFamily.SUBSCRIPT
@@ -140,22 +237,33 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
         for body in report.bodies
         if body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
     )
-    subscript_owned_panics = tuple(
-        gap
-        for gap in reattributed_gaps
-        if gap.detail == "subscript" or gap.detail.endswith(".subscript")
-    )
+    required_non_vendor_sites = {
+        "tests/indexes/multi/test_sorting.py:147:Subscript",
+        "tests/indexing/multiindex/test_multiindex.py:29:Subscript",
+        "tests/indexing/multiindex/test_multiindex.py:33:Subscript",
+        "tests/series/accessors/test_list_accessor.py:101:Subscript",
+        "tests/series/accessors/test_list_accessor.py:133:Subscript",
+        "tests/series/accessors/test_list_accessor.py:135:Subscript",
+    }
 
     print(row, flush=True)
-    print(f"subscriptReattributedTypedGaps={len(reattributed_gaps)}", flush=True)
+    print(f"subscriptConstructionPanics={len(reattributed_gaps)}", flush=True)
     for gap in reattributed_gaps:
         print(
-            f"subscriptReattribution site={gap.body_id} owner={gap.detail}",
+            f"constructionPanic site={gap.body_id} owner={gap.detail}",
             flush=True,
         )
 
     assert row.enrolled == FAMILY_DENOMINATORS[ProducerFamily.SUBSCRIPT]
-    assert not subscript_owned_panics, subscript_owned_panics
+    assert {probe.body_id for probe in probes} >= required_non_vendor_sites
+    assert (
+        row.authenticated_exceptional_exits
+        + row.named_refusals
+        + row.construction_panics
+        == 392
+    )
+    assert report.discrepancies == ()
+    assert not reattributed_gaps, reattributed_gaps
 
 
 def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> None:
