@@ -1235,7 +1235,28 @@ def _resolve_source_visible_frame_uncached(
                 if nested is None:
                     nested = external_frames.get(call.func.id)
                 if nested is not None:
-                    _install_source_call_frame(context, call, nested)
+                    from sugar_lift_py_tests.source_call_resolution import (
+                        SourceCallPreconstructionGapV1,
+                    )
+
+                    try:
+                        nested.bind_node_actuals(
+                            call.args,
+                            tuple(
+                                (keyword.arg, keyword.value)
+                                for keyword in call.keywords
+                                if keyword.arg is not None
+                            ),
+                        )
+                    except SourceCallBindingGap as exc:
+                        coordinate = _call_coordinate(call)
+                        context.source_call_resolutions[coordinate] = (
+                            SourceCallPreconstructionGapV1(
+                                "call-binding", coordinate, str(exc)
+                            )
+                        )
+                    else:
+                        _install_source_call_frame(context, call, nested)
             frames[function.name] = function.source_visible_call_frame()
             pending.remove(function)
             progressed = True

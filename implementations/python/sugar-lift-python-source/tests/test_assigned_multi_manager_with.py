@@ -30,7 +30,9 @@ def _pandas_root() -> Path:
         PANDAS_MANIFEST_CID,
         1421,
     )
-    return corpus.root
+    # Construction loci use the distribution-recorded seat, which is rooted at
+    # site-packages even though corpus identity is over the pandas package root.
+    return corpus.root.parent
 
 
 def _real_tree():
@@ -112,18 +114,37 @@ def test_projection_is_a_transaction_and_does_not_mutate_the_source_tree() -> No
     assert [item.context_expr.kind for item in site.items] == ["Name", "Name"]
 
 
-def test_pandas_303_assigned_manager_keeps_provider_refusal_loud() -> None:
-    """Projection reaches the provider but never invents a resource value."""
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
+def test_pandas_303_assigned_managers_construct_at_both_binding_calls() -> None:
+    """Each bare item follows its assignment to an authenticated generator frame."""
     tree = _real_tree()
     root = _pandas_root()
-    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
-        populate_source_derived_resource_refs(
-            tree,
-            root=root,
-            path=root / "pandas/tests/io/formats/test_ipython_compat.py",
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=root / "pandas/tests/io/formats/test_ipython_compat.py",
+    )
+
+    context = tree.root.unit.construction_context
+    assert context is not None
+    projected = _projected_manager_call_uses(tree)
+    binding_coordinates = sorted(
+        (
+            call.line_col_span().start_line,
+            next(
+                coordinate
+                for coordinate in context.source_call_frames
+                if coordinate.start_line == call.line_col_span().start_line
+                and coordinate.start_col == call.line_col_span().start_col
+            ),
         )
+        for coordinate, call, _exit_face in projected.values()
+        if coordinate.start_line == 32
+    )
+    assert [line for line, _coordinate in binding_coordinates] == [21, 30]
+    assert all(
+        context.source_call_frames[coordinate].generator_steps is not None
+        for _line, coordinate in binding_coordinates
+    )
 
 
 def test_undecided_rebinding_does_not_invent_a_second_manager_call(
@@ -154,3 +175,58 @@ def test_undecided_rebinding_does_not_invent_a_second_manager_call(
         if coordinate.start_line == 5
     ]
     assert rows == [(5, 9, 2)]
+
+
+def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) -> None:
+    """Lying twin: names cannot authorize managers independently of bindings."""
+    source = tmp_path / "lying.py"
+    source.write_text(
+        "def exercise(opt_value, latex_value):\n"
+        "    opt = opt_value\n"
+        "    with_latex = latex_value\n"
+        "    with opt, with_latex:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    tree = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
+
+    projected = _projected_manager_call_uses(tree)
+    assert [
+        coordinate
+        for coordinate, _call, _exit_face in projected.values()
+        if coordinate.start_line == 4
+    ] == []
+
+
+def test_bare_name_resolution_path_contains_no_vendor_name_literals() -> None:
+    """The structural resolver cannot admit this site by manager spelling."""
+    import ast
+    import inspect
+    import textwrap
+
+    import sugar_lift_python_source.manager_construction as construction
+    import sugar_lift_python_source.manager_summary_derivation as derivation
+
+    module = ast.parse(
+        textwrap.dedent(inspect.getsource(construction))
+        + textwrap.dedent(inspect.getsource(derivation))
+    )
+    literals = {
+        node.value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert literals.isdisjoint(
+        {
+            "opt",
+            "with_latex",
+            "option_context",
+            "pytest.raises",
+            "external_error_raised",
+        }
+    )
