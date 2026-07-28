@@ -126,6 +126,9 @@ class CallSiteValue(FloorValue):
     )
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+    bound_native_actuals_by_coordinate: dict[str, FloorValue] | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
@@ -1295,6 +1298,12 @@ class CallSiteValue(FloorValue):
 
         if isinstance(outcome, Complete):
             return Complete(self)
+        from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+        if isinstance(outcome, NativeOperationExitCarrierV1):
+            actuals = self.bound_native_actuals_by_coordinate
+            if actuals is None:
+                return outcome
+            outcome = outcome.discharge(actuals)
         exits = outcome_to_exitset(outcome)
         return ExitSet(
             tuple(

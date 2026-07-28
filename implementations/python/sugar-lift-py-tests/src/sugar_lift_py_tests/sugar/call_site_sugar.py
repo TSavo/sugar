@@ -338,6 +338,11 @@ class CallSiteSugar(ConstructedTermSugar):
                 if self.source_call_frame is not None
                 else ()
             ),
+            bound_native_actuals_by_coordinate=(
+                None
+                if native_operation_actuals is None
+                else native_operation_actuals.by_formal_coordinate
+            ),
         )
         if native_operation_actuals is not None:
             pending = self.source_call_frame.pending_native_operation.discharge(
