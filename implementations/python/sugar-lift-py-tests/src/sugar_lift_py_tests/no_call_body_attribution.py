@@ -54,6 +54,7 @@ FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
 
 class AttributionOutcome(str, Enum):
     AUTHENTICATED_EXIT = "authenticated-exceptional-exit"
+    UNDISCHARGED = "undischarged"
     NAMED_REFUSAL = "named-refusal"
     CONSTRUCTION_PANIC = "construction-panic"
 
@@ -102,6 +103,7 @@ class FamilyAttribution:
     authenticated_exceptional_exits: int
     named_refusals: int
     construction_panics: int
+    undischarged: int = 0
 
     @property
     def failures(self) -> int:
@@ -114,6 +116,7 @@ class FamilyAttribution:
             self.authenticated_exceptional_exits
             + self.named_refusals
             + self.construction_panics
+            + self.undischarged
         )
 
 
@@ -123,6 +126,7 @@ class AttributionOutcomeSummary:
     authenticated_exceptional_exits: int
     named_refusals: int
     construction_panics: int
+    undischarged: int = 0
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,7 @@ class AttributionReport:
             row.authenticated_exceptional_exits
             + row.named_refusals
             + row.construction_panics
+            + row.undischarged
             for row in self.rows()
         )
 
@@ -167,6 +172,7 @@ class AttributionReport:
                         f"family={row.family.value}",
                         f"enrolled={row.enrolled}",
                         f"authenticatedExceptionalExit={row.authenticated_exceptional_exits}",
+                        f"undischarged={row.undischarged}",
                         f"namedRefusal={row.named_refusals}",
                         f"constructionPanic={row.construction_panics}",
                     )
@@ -176,7 +182,7 @@ class AttributionReport:
                 lines.append(
                     "FAMILY OUTCOME DISCREPANCY "
                     f"family={row.family.value} enrolled={row.enrolled} "
-                    f"threeOutcomeTotal={row.outcome_total} "
+                    f"outcomeTotal={row.outcome_total} "
                     f"unaccounted={row.enrolled - row.outcome_total}"
                 )
         for body in self.bodies:
@@ -193,6 +199,10 @@ class AttributionReport:
             elif body.outcome is AttributionOutcome.NAMED_REFUSAL:
                 lines.append(
                     f"namedRefusal body={body.body_id} coordinate={body.detail}"
+                )
+            elif body.outcome is AttributionOutcome.UNDISCHARGED:
+                lines.append(
+                    f"undischarged body={body.body_id} reason={body.detail}"
                 )
             elif body.outcome is AttributionOutcome.CONSTRUCTION_PANIC:
                 lines.append(
@@ -215,7 +225,7 @@ class AttributionReport:
         if self.outcome_total != enrolled:
             lines.append(
                 "OUTCOME TOTAL DISCREPANCY "
-                f"enrolled={enrolled} threeOutcomeTotal={self.outcome_total} "
+                f"enrolled={enrolled} outcomeTotal={self.outcome_total} "
                 f"unaccounted={len(self.discrepancies)}"
             )
         return "\n".join(lines)
@@ -268,6 +278,19 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
 
     exceptional_effects = _exceptional_exit_effects(outcome)
     if exceptional_effects:
+        unnamed = tuple(
+            effect
+            for effect in exceptional_effects
+            if effect.exception_type_coordinate is None
+            or effect.occurrence_id is None
+        )
+        if unnamed:
+            return BodyAttribution(
+                probe.body_id,
+                probe.family,
+                AttributionOutcome.UNDISCHARGED,
+                "native-operation exception identity unproven",
+            )
         owners = {
             effect.producer_node_owner
             for effect in exceptional_effects
@@ -311,6 +334,10 @@ def summarize_attribution_outcomes(
         ),
         construction_panics=sum(
             body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
+            for body in materialized
+        ),
+        undischarged=sum(
+            body.outcome is AttributionOutcome.UNDISCHARGED
             for body in materialized
         ),
     )
@@ -361,6 +388,10 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
             ),
             construction_panics=sum(
                 body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
+                for body in selected
+            ),
+            undischarged=sum(
+                body.outcome is AttributionOutcome.UNDISCHARGED
                 for body in selected
             ),
         )
