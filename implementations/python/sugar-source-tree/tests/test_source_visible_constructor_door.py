@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -335,3 +337,56 @@ def test_census_door_refuses_both_yield_constructors_with_no_call_site() -> None
             assert refusal.owner == owner
         else:
             raise AssertionError(f"{owner} must refuse under the census door")
+
+
+def test_exception_subclass_without_init_accepts_message_actuals() -> None:
+    """Truthful twin: inherited BaseException law is ``(*args)``.
+
+    ``raise OptionError(msg)`` is ordinary Python. An empty constructor frame
+    refused the message as SourceCallBindingGap and blocked every manager whose
+    helpers only mentioned those raises (pandas option_context).
+    """
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedOptionError(AttributeError, KeyError):\n"
+        "    pass\n\n"
+        "def helper(pat):\n"
+        "    raise RenamedOptionError(f'no such key {pat!r}')\n",
+        context=context,
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    frame = class_node.source_visible_constructor_frame()
+    assert frame.parameters == ("args",)
+    assert frame.parameter_kinds == ("vararg",)
+
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    context.source_call_frames[_coordinate(call)] = frame
+    bound = frame.bind_node_actuals(call.args, ())
+    assert bound.runtime_entries  # message consumed by *args
+    # Constructing the raise expression must not raise SourceCallBindingGap.
+    try:
+        call.sugar()
+    except SourceCallBindingGap as exc:  # pragma: no cover - regression guard
+        raise AssertionError(f"exception construction refused: {exc}") from exc
+
+
+def test_plain_class_without_init_still_refuses_constructor_actuals() -> None:
+    """Lying twin: non-exception classes keep object.__init__ (zero formals)."""
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class RenamedPlain:\n"
+        "    pass\n\n"
+        "RenamedPlain(1)\n",
+        context=context,
+    )
+    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
+    frame = class_node.source_visible_constructor_frame()
+    assert frame.parameters == ()
+    assert frame.parameter_kinds == ()
+    call = next(node for node in source.nodes() if isinstance(node, Call))
+    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
+        frame.bind_node_actuals(call.args, ())
