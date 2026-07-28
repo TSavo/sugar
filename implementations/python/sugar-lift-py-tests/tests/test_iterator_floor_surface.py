@@ -19,6 +19,7 @@ import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import project_iter, project_next
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.floor.iterator_value import (
     ListIteratorValue,
     NextResult,
@@ -87,10 +88,14 @@ def test_list_next_yields_value_and_advanced_iterator() -> None:
 
 def test_list_next_exhausts_with_named_stop_iteration() -> None:
     it = ListIteratorValue((TermValue(1),), index=1)
-    outcome = _next_op().submit(it, None)
+    outcome = _next_op(owner="project_next").submit(it, None)
     assert isinstance(outcome, Incomplete), outcome
     assert isinstance(outcome.effect, RaiseEffect)
     assert outcome.effect.exception_name == "StopIteration"
+    # Operation occurrence identity — owner + blame, not a foreign boundary.
+    assert outcome.effect.producer_node_owner == "project_next"
+    assert outcome.effect.occurrence == SITE or outcome.effect.occurrence_id == SITE
+    assert outcome.effect.occurrence_id is not None
 
 
 def test_tuple_next_walks_then_stops() -> None:
@@ -198,4 +203,132 @@ def test_full_list_walk_via_projectors() -> None:
     stop = project_next(cursor, SITE)
     assert isinstance(stop, Incomplete)
     assert stop.effect.exception_name == "StopIteration"
+    assert stop.effect.producer_node_owner == "project_next"
     assert seen == [TermValue(1), TermValue(2), TermValue(3)]
+
+
+# ---------------------------------------------------------------------------
+# Discrimination twins: renamed / wrong-definition / wrong-occurrence / cross-wired
+# ---------------------------------------------------------------------------
+
+
+def test_renamed_method_is_not_the_iterator_surface() -> None:
+    """A Floor that only answers a renamed method is not ``iter_with``."""
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _RenamedOnly(TermValue):
+        def iterate_with(self, operation, ctx):  # renamed — not the surface
+            del operation, ctx
+            return Complete(ListIteratorValue((), index=0))
+
+    receiver = _RenamedOnly(0)
+    assert hasattr(receiver, "iterate_with")
+    # Surface method is still the FloorValue gap (inherited), not the rename.
+    assert receiver.iter_with is FloorValue.iter_with or callable(
+        getattr(receiver, "iter_with", None)
+    )
+    with pytest.raises(ConstructionPanic) as caught:
+        _iter_op().submit(receiver, None)
+    assert "iter_with" in str(caught.value)
+    # Lying twin: claiming the rename satisfied iter would green incorrectly.
+    with pytest.raises(ConstructionPanic):
+        IteratorOperation(owner="renamed", blame=SITE).submit(receiver, None)
+
+
+def test_wrong_definition_stop_is_not_type_error() -> None:
+    """Exhaustion must not be redefinable as TypeError or empty Complete."""
+    outcome = project_next(ListIteratorValue((), index=0), SITE)
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect.exception_name == "StopIteration"
+    with pytest.raises(AssertionError):
+        assert outcome.effect.exception_name == "TypeError"
+    with pytest.raises(AssertionError):
+        assert isinstance(outcome, Complete)
+
+
+def test_wrong_occurrence_stop_is_not_truthful() -> None:
+    """Same exception name under a foreign occurrence is not the operation exit."""
+    from dataclasses import replace
+
+    truthful = project_next(ListIteratorValue((), index=0), SITE)
+    assert isinstance(truthful, Incomplete)
+    effect = truthful.effect
+    assert effect.exception_name == "StopIteration"
+    foreign = replace(
+        effect,
+        occurrence="pytest.raises:foreign-boundary",
+        producer_node_owner="pytest.raises",
+    )
+    assert foreign.exception_name == effect.exception_name
+    assert foreign.occurrence != effect.occurrence
+    assert foreign.producer_node_owner != effect.producer_node_owner
+    assert foreign != effect
+    with pytest.raises(AssertionError):
+        assert foreign == effect
+    with pytest.raises(AssertionError):
+        assert foreign.producer_node_owner == "project_next"
+
+
+def test_cross_wired_list_iterator_is_not_tuple_iterator() -> None:
+    """List and tuple iterators are distinct authenticated Floors."""
+    members = (TermValue(1), TermValue(2))
+    list_it = project_iter(ListValue(members), SITE).value
+    tuple_it = project_iter(TupleValue(members), SITE).value
+    assert isinstance(list_it, ListIteratorValue)
+    assert isinstance(tuple_it, TupleIteratorValue)
+    assert list_it != tuple_it
+    with pytest.raises(AssertionError):
+        assert list_it == tuple_it
+    # Cross-wiring next results: list walk advanced is still ListIteratorValue.
+    step = project_next(list_it, SITE)
+    assert isinstance(step.value.advanced, ListIteratorValue)
+    assert not isinstance(step.value.advanced, TupleIteratorValue)
+
+
+def test_cross_wired_iter_and_next_methods_are_distinct() -> None:
+    """``iter_with`` and ``next_with`` are different doors — not interchangeable."""
+    assert IteratorOperation.method_name == "iter_with"
+    assert NextOperation.method_name == "next_with"
+    assert IteratorOperation.method_name != NextOperation.method_name
+    # List answers iter, not next.
+    assert isinstance(project_iter(ListValue((TermValue(1),)), SITE), Complete)
+    with pytest.raises(ConstructionPanic):
+        project_next(ListValue((TermValue(1),)), SITE)
+    # Exhausted iterator answers next (StopIteration), not a fresh iter value.
+    stop = project_next(ListIteratorValue((), index=0), SITE)
+    assert isinstance(stop, Incomplete)
+    with pytest.raises(ConstructionPanic):
+        project_iter(ListIteratorValue((), index=0), SITE)
+
+
+# ---------------------------------------------------------------------------
+# Production projector equality stays exact (no silent iter/next enrollment)
+# ---------------------------------------------------------------------------
+
+
+def test_production_native_operator_projector_equality_stays_exact() -> None:
+    """Named project_iter/project_next must not break the closed enrollment tooth.
+
+    Until a sugar mints ``iter``/``next`` onto the carrier, those names stay
+    outside ``_NATIVE_OPERATION_PROJECTORS`` and the production set.  Accidental
+    enrollment would desync the equality tooth other formal callers pin.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        _NATIVE_OPERATION_PROJECTORS,
+        production_native_operation_operators,
+    )
+
+    production = production_native_operation_operators()
+    projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
+    assert production == projectors
+    assert "iter" not in projectors
+    assert "next" not in projectors
+    # Named projectors exist for the Floor edge, but are not table keys.
+    assert callable(project_iter)
+    assert callable(project_next)
+    assert "project_iter" not in projectors
+    assert "project_next" not in projectors
+    with pytest.raises(AssertionError):
+        # Lying twin: pretend iter is production-minted.
+        assert "iter" in production
