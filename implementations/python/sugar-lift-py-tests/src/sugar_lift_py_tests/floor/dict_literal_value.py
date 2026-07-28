@@ -34,6 +34,26 @@ class DictLiteralValue(FloorValue):
 
     entries: tuple[tuple[Term, Term], ...]
 
+    def setattr(self, name, value, site):
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="DictLiteralValue.setattr",
+        )
+
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="DictLiteralValue.delattr",
+        )
+
     def contribution(self):
         # Typed non-FOL support carrier: absorbed in a block record.
         return ()
