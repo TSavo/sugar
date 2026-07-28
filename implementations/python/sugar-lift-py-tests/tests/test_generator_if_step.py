@@ -42,7 +42,6 @@ import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     GeneratorTerminationV1,
@@ -55,6 +54,8 @@ from sugar_lift_py_tests.generator_construction import (
 )
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
@@ -155,7 +156,10 @@ def test_pre_yield_if_with_raise_stays_opaque_and_loud() -> None:
 
 def test_a_ground_true_guard_splices_the_then_branch() -> None:
     step = IfStepV1(
-        TrueBoolLiteralSugar(site="s"), (YieldStepV1(TermValue(1)),), (), "frag"
+        TrueBoolLiteralSugar(site="s"),
+        (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
+        (),
+        "frag",
     )
 
     assert isinstance(_machine((step, ReturnStepV1())).resume(), YieldEffect)
@@ -163,7 +167,10 @@ def test_a_ground_true_guard_splices_the_then_branch() -> None:
 
 def test_a_ground_false_guard_splices_the_else_branch() -> None:
     step = IfStepV1(
-        FalseBoolLiteralSugar(site="s"), (YieldStepV1(TermValue(1)),), (), "frag"
+        FalseBoolLiteralSugar(site="s"),
+        (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
+        (),
+        "frag",
     )
 
     assert isinstance(_machine((step, ReturnStepV1())).resume(), GeneratorTerminationV1)
@@ -187,11 +194,12 @@ def test_a_branch_with_k_suspensions_stays_one_arm(branch_suspensions) -> None:
     ever reports the branch count instead of 1, sequencing has gone exponential
     and the defect surfaces as a corpus timeout days later, never in a twin.
     """
-    branch = tuple(YieldStepV1(TermValue(n)) for n in range(branch_suspensions))
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import atomic
+    branch = tuple(
+        YieldStepV1(IntLiteralSugar(n, site=f"yield:{n}"))
+        for n in range(branch_suspensions)
+    )
 
-    step = IfStepV1(PredicateValue(atomic("c", ()), "s"), branch, (), "frag")
+    step = IfStepV1(NameSugar("c", site="s"), branch, (), "frag")
     outcome = _machine((step, ReturnStepV1())).resume()
 
     assert len(_completed(outcome)) == 1
@@ -199,13 +207,10 @@ def test_a_branch_with_k_suspensions_stays_one_arm(branch_suspensions) -> None:
 
 def test_sequential_branches_stay_one_arm() -> None:
     """k branches in sequence would be 2 ** k unfactored."""
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import atomic
-
     steps = tuple(
         IfStepV1(
-            PredicateValue(atomic(f"c{n}", ()), "s"),
-            (YieldStepV1(TermValue(n)),),
+            NameSugar(f"c{n}", site=f"guard:{n}"),
+            (YieldStepV1(IntLiteralSugar(n, site=f"yield:{n}")),),
             (),
             f"frag{n}",
         )
