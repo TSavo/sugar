@@ -546,3 +546,83 @@ def test_unauthenticated_lambda_callee_stays_loud() -> None:
 
     with pytest.raises(SugarNotWritten, match=r"SUGAR NOT WRITTEN \[Lambda\.sugar\]"):
         outer.sugar().desugar(None)
+
+
+def test_nested_function_source_return_projects_into_outer_caller() -> None:
+    tree, _, _ = _tree(
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3) + 2\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+    value = call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="nested-function-return"
+    )
+
+    assert value == TermValue(6)
+
+
+def test_nested_function_closure_capture_stays_loud_without_binding_testimony() -> None:
+    tree, _, _ = _tree(
+        "def outer():\n"
+        "    offset = 2\n"
+        "    def inner(value):\n"
+        "        return value + offset\n"
+        "    return inner(3)\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+
+    with pytest.raises((SugarNotWritten, ConstructionPanic)):
+        call.sugar().desugar(None).value._dig_floor_or_none(
+            None, owner="nested-closure-refusal"
+        )
+
+
+def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
+    tree, context, functions = _tree(
+        "def inner(value):\n"
+        "    return value + 10\n\n"
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3)\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+    nested = [node for node in tree.nodes() if isinstance(node, FunctionDef) and node.name == "inner"]
+    assert len(nested) == 2
+    # Deliberately seat the outer same-name frame at the nested call: the
+    # authenticated coordinate must reject this cross-wired testimony.
+    nested_call = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call) and getattr(node.func, "id", None) == "inner"
+    )
+    context.source_call_frames[_coordinate(nested_call)] = nested[0].source_visible_call_frame()
+
+    with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
+        call.sugar().desugar(None).value._dig_floor_or_none(
+            None, owner="nested-shadow-cross-wire"
+        )
+
+
+def test_lambda_inside_nested_function_composes_with_source_return_projection() -> None:
+    tree, _, _ = _tree(
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return (lambda item: item + 1)(value)\n"
+        "    return inner(3) + 2\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+
+    assert call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="nested-lambda-return"
+    ) == TermValue(6)
