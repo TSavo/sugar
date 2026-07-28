@@ -27,6 +27,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     PositionalOrKeywordV1,
     ProtocolResourceSemanticsV1,
     RaiseEffectKindV1,
+    ReturnTruthinessDispositionV1,
     SuppressesModeV1,
     VariadicKeywordV1,
     VariadicPositionalV1,
@@ -154,16 +155,14 @@ def derive_manager_summary(
         return DerivedManagerSummaryGapV1(
             "exit-may-halt", protocol.protocol_construction_cid, "__exit__ ExitSet"
         )
-    for face in exit_.exits:
-        if not _exact_never_suppresses(face.value):
-            return DerivedManagerSummaryGapV1(
-                "opaque-exit-truthiness",
-                protocol.protocol_construction_cid,
-                type(face.value).__name__,
-            )
+    disposition = (
+        NeverSuppressesDispositionV1()
+        if all(_exact_never_suppresses(face.value) for face in exit_.exits)
+        else ReturnTruthinessDispositionV1()
+    )
     semantics = ProtocolResourceSemanticsV1(
         EnterResultContractV1(PrimitiveSort("Value")),
-        ExitContractV1(NeverSuppressesDispositionV1()),
+        ExitContractV1(disposition),
     )
     signature = _signature_for_behavior(behavior, semantics)
     return _sealed_summary(protocol, semantics, signature)
