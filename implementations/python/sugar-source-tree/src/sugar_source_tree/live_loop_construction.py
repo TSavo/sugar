@@ -426,31 +426,37 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         successor_cid = binder["binderTransformCid"]
         records.extend((binder, iterator, operation))
     else:
-        test_transform = _record(
-            {
-                "kind": "loop-test-transform",
-                "schemaVersion": "1",
-                "targetCid": target_cid,
-                "inputStateCid": pre_state["stateCid"],
-                "testValueConstructionCid": loop.test.fragment.seal().cid,
-                "trueGuardFormulaCid": _formula_cid(true_guard),
-                "falseGuardFormulaCid": _formula_cid(exhaustion_guard),
-                "haltedFaceCids": [],
-            },
-            "testTransformCid",
-        )
+        def while_test_transform(input_state_cid):
+            return _record(
+                {
+                    "kind": "loop-test-transform",
+                    "schemaVersion": "1",
+                    "targetCid": target_cid,
+                    "inputStateCid": input_state_cid,
+                    "testValueConstructionCid": loop.test.fragment.seal().cid,
+                    "trueGuardFormulaCid": _formula_cid(true_guard),
+                    "falseGuardFormulaCid": _formula_cid(exhaustion_guard),
+                    "haltedFaceCids": [],
+                },
+                "testTransformCid",
+            )
+
+        initial_test_transform = while_test_transform(pre_state["stateCid"])
+        recurrence_test_transform = while_test_transform(body_face["stateCid"])
         operation = _record(
             {
                 "kind": "while-operation",
                 "schemaVersion": "1",
                 "targetCid": target_cid,
                 "nativeLoopTermCid": cid_of_json({"native": "python:while"}),
-                "testTransformCid": test_transform["testTransformCid"],
+                "testTransformCid": initial_test_transform["testTransformCid"],
             },
             "operationCid",
         )
-        successor_cid = test_transform["testTransformCid"]
-        records.extend((test_transform, operation))
+        successor_cid = recurrence_test_transform["testTransformCid"]
+        records.extend(
+            (initial_test_transform, recurrence_test_transform, operation)
+        )
 
     body = _record(
         {

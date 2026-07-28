@@ -621,7 +621,11 @@ def decode_loop_construction_v1(graph: Any) -> LoopConstructionV1:
         record(operation.raw["binderTransformCid"], "loop-binder-transform")
         record(operation.raw["iteratorTestimonyCid"], "loop-iterator-testimony")
     else:
-        record(operation.raw["testTransformCid"], "loop-test-transform")
+        initial_test = record(
+            operation.raw["testTransformCid"], "loop-test-transform"
+        )
+        if initial_test.raw["inputStateCid"] != pre_state.state_cid:
+            raise LoopWireError("initial test input state mismatch")
 
     completed = []
     completed_by_cid = {}
@@ -644,7 +648,12 @@ def decode_loop_construction_v1(graph: Any) -> LoopConstructionV1:
         input_face = completed_by_cid.get(latch.raw["inputCompletedFaceCid"])
         if input_face is None or input_face.completion_kind != "BodyFallthrough":
             raise LoopWireError("latch input must be BodyFallthrough")
-        record(latch.raw["successorTransformCid"])
+        successor = record(latch.raw["successorTransformCid"])
+        if latch.raw["operationKind"] == "WhileTest":
+            if successor.kind != "loop-test-transform":
+                raise LoopWireError("while latch successor must be loop-test-transform")
+            if successor.raw["inputStateCid"] != latch.raw["inputStateCid"]:
+                raise LoopWireError("recurrence test input state mismatch")
 
     for cid in root["continueLatchObligationCids"]:
         latch = record(cid, "loop-continue-latch-obligation")
