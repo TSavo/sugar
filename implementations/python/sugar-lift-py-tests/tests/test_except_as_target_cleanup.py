@@ -9,6 +9,12 @@ Laws:
 - post-try / finally / else read of ``as e`` → NameError (binding deleted)
 - inside handler: return e / raise from e observe the routed effect
 - unrelated pre-try and in-handler assignments survive after cleanup
+- **edge teeth (advisor #6725):**
+  (1) handler return + finally read(e): NameError supersedes the incoming return
+  (2) handler halt + finally read(e): NameError, handler exception as authenticated
+      context
+  (3) pre-handler and handler-created bindings survive on Returned and Halted
+      cleanup edges
 
 Does not touch ExitSet algebra, carrier, or assertion/resource routing.
 """
@@ -204,3 +210,124 @@ def test_post_try_e_deleted_while_handler_y_survives():
         name="survive_y.py",
     )
     assert _return_value(survived).value == 1
+
+
+# ---------------------------------------------------------------------------
+# Edge teeth (advisor #6725): return/halt + finally cleanup faces
+# ---------------------------------------------------------------------------
+
+
+def test_handler_return_plus_finally_read_e_nameerror_supersedes_return():
+    """(1) Handler return + finally: read(e) deleted; NameError beats return 99.
+
+    The incoming Returned face is not the terminal exit — finally's NameError
+    from reading the cleared as-target supersedes it.
+    """
+    outcome = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as e:\n"
+        "        return 99\n"
+        "    finally:\n"
+        "        return e\n",
+        name="ret_finally_e.py",
+    )
+    # Not Complete(return 99) — NameError is the terminal face.
+    assert not isinstance(outcome, Complete), outcome
+    effect = _name_error(outcome, name="e")
+    # No return 99 surviving as the primary outcome.
+    assert getattr(effect, "exception_name", None) == "NameError"
+
+
+def test_handler_halt_plus_finally_read_e_keeps_handler_exception_as_context():
+    """(2) Handler halt + finally: read(e) deleted; handler raise is context.
+
+    Finally NameError for ``e`` supersedes the handler RuntimeError as primary,
+    but retains RuntimeError as authenticated ``context_effect`` (Python
+    ``__context__`` when finally raises after an in-flight exception).
+    """
+    outcome = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as e:\n"
+        "        raise RuntimeError('handler')\n"
+        "    finally:\n"
+        "        return e\n",
+        name="halt_finally_e.py",
+    )
+    assert isinstance(outcome, Incomplete), outcome
+    effect = outcome.effect
+    assert type(effect).__name__ == "NameErrorEffect", type(effect)
+    assert getattr(effect, "name", None) == "e"
+    # Handler exception retained as authenticated implicit context — not lost.
+    assert isinstance(effect.context_effect, RaiseEffect), effect.context_effect
+    assert effect.context_effect.exception_name == "RuntimeError"
+    # Primary is NameError for e, not the handler RuntimeError alone.
+    assert effect.exception_name == "NameError"
+    assert effect.context_effect.occurrence is not None
+
+
+def test_bindings_survive_on_returned_cleanup_edge():
+    """(3a) Pre-handler and handler-created bindings survive Returned + finally."""
+    # Pre-handler binding on Returned cleanup edge (finally after return).
+    pre = _desugar(
+        "def f():\n"
+        "    pre = 1\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as e:\n"
+        "        mid = 2\n"
+        "        return 0\n"
+        "    finally:\n"
+        "        return pre\n",
+        name="ret_cleanup_pre.py",
+    )
+    assert _return_value(pre).value == 1
+
+    # Handler-created binding on Returned cleanup edge.
+    mid = _desugar(
+        "def f():\n"
+        "    pre = 1\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as e:\n"
+        "        mid = 2\n"
+        "        return 0\n"
+        "    finally:\n"
+        "        return mid\n",
+        name="ret_cleanup_mid.py",
+    )
+    assert _return_value(mid).value == 2
+
+
+def test_bindings_survive_on_halted_cleanup_edge():
+    """(3b) Pre-handler and handler-created bindings survive Halted + finally."""
+    pre = _desugar(
+        "def f():\n"
+        "    pre = 1\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as e:\n"
+        "        mid = 2\n"
+        "        raise RuntimeError('handler')\n"
+        "    finally:\n"
+        "        return pre\n",
+        name="halt_cleanup_pre.py",
+    )
+    assert _return_value(pre).value == 1
+
+    mid = _desugar(
+        "def f():\n"
+        "    pre = 1\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as e:\n"
+        "        mid = 2\n"
+        "        raise RuntimeError('handler')\n"
+        "    finally:\n"
+        "        return mid\n",
+        name="halt_cleanup_mid.py",
+    )
+    assert _return_value(mid).value == 2
