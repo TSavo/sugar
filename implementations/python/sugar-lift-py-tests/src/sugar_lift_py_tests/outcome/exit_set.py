@@ -86,6 +86,81 @@ class ExitSetFactoringGap(ValueError):
         return classify_factoring_gap(self.left, self.right)
 
 
+class _HaltLineageProducerMissingV1(TypeError):
+    """Typed refusal while Halted producer testimony is not yet migrated."""
+
+    def __init__(self, *, owner: str, effect: object, context: object, occurrence: object):
+        super().__init__("Halted lineage producer testimony is missing")
+        self.owner = owner
+        self.effect = effect
+        self.context = context
+        self.occurrence = occurrence
+
+
+class _HaltLineageRefusalV1(TypeError):
+    """Typed refusal for forged or reconstructed Halted lineage."""
+
+    def __init__(self, *, owner: str, reason: str, effect: object, context: object, receipt: object):
+        super().__init__(reason)
+        self.owner = owner
+        self.reason = reason
+        self.effect = effect
+        self.context = context
+        self.receipt = receipt
+
+
+def _legacy_halted_refusal(owner, effect, context):
+    raise _HaltLineageProducerMissingV1(
+        owner=owner, effect=effect, context=context, occurrence=effect
+    )
+
+
+def _build_halt_owner():
+    class Capability: __slots__ = ()
+    capability = Capability()
+    class Receipt:
+        __slots__ = ("owner", "source", "effect", "context", "occurrence", "_cap")
+        def __init__(self, cap, owner, source, effect, context, occurrence):
+            if cap is not capability: raise TypeError("private capability required")
+            object.__setattr__(self, "owner", owner); object.__setattr__(self, "source", source)
+            object.__setattr__(self, "effect", effect); object.__setattr__(self, "context", context)
+            object.__setattr__(self, "occurrence", occurrence); object.__setattr__(self, "_cap", cap)
+        def __setattr__(self, *_): raise TypeError("immutable receipt")
+    class PairedHalted(Halted):
+        __slots__ = ("receipt",)
+    class NonRaiseHalted(Halted):
+        __slots__ = ("receipt",)
+    def paired(owner, source, effect, context, occurrence, guard, faces, pending_contracts):
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+        effect = require_effect(effect)
+        if type(effect) not in (RaiseEffect, GroupedRaiseEffect) or effect.occurrence_id is not occurrence:
+            raise TypeError("paired Halted requires authenticated RaiseEffect occurrence")
+        receipt = Receipt(capability, owner, source, effect, context, occurrence)
+        face = object.__new__(PairedHalted)
+        object.__setattr__(face, "guard", guard); object.__setattr__(face, "effect", effect)
+        object.__setattr__(face, "state", context); object.__setattr__(face, "faces", faces)
+        object.__setattr__(face, "pending_contracts", pending_contracts); object.__setattr__(face, "receipt", receipt)
+        return face
+    def nonraise(owner, source, effect, context, occurrence, guard, faces, pending_contracts):
+        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+        effect = require_effect(effect)
+        if type(effect) is not LoopControlEffect or effect.occurrence_cid is not occurrence:
+            raise TypeError("nonraise Halted requires authenticated LoopControlEffect occurrence")
+        receipt = Receipt(capability, owner, source, effect, context, occurrence)
+        face = object.__new__(NonRaiseHalted)
+        object.__setattr__(face, "guard", guard); object.__setattr__(face, "effect", effect)
+        object.__setattr__(face, "state", context); object.__setattr__(face, "faces", faces)
+        object.__setattr__(face, "pending_contracts", pending_contracts); object.__setattr__(face, "receipt", receipt)
+        return face
+    def read(face):
+        if type(face) is PairedHalted or type(face) is NonRaiseHalted: return face.receipt
+        raise _HaltLineageProducerMissingV1(owner="_read_halt_lineage", effect=face.effect, context=face.state, occurrence=face.effect.occurrence_id)
+    return paired, nonraise, read
+
+
+
+
 @dataclass(frozen=True)
 class PartitionFace:
     """Testimony that this exit lies on ONE named side of a producer's split.
@@ -503,6 +578,11 @@ class Halted:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
+        _legacy_halted_refusal("Halted", self.effect, self.state)
+
+
+_construct_halted_from_lineage, _construct_nonraise_halted, _read_halt_lineage = _build_halt_owner()
+del _build_halt_owner
 
 
 Exit = Completed[T] | Halted
@@ -522,7 +602,7 @@ class ExitSet(Generic[T]):
     def halted(
         cls, effect: Effect, guard: Formula | None = None, state=None
     ) -> "ExitSet[T]":
-        return cls((Halted(guard or true_guard(), effect, state),)).normalize()
+        _legacy_halted_refusal("ExitSet.halted", effect, state)
 
     @classmethod
     def conditional_halt(cls, guard: Formula, effect: Effect, state: T) -> "ExitSet[T]":
