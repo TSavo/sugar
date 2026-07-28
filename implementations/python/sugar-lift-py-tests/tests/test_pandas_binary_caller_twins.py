@@ -269,8 +269,8 @@ def test_lying_nested_default_caller_coordinate_is_rejected() -> None:
         _nested_default_pair(source=lying)
 
 
-def test_real_nested_default_binop_callers_reach_completed_outcomes() -> None:
-    """RED until nested carrier continuations receive the original actual map."""
+def test_real_nested_default_binop_callers_name_only_binary_carrier_residuals() -> None:
+    """Frames exist; only the nested BinOp dispatch carriers remain undecided."""
     source, _ = _nested_default_pair()
     tree = SourceFile(
         (
@@ -289,12 +289,22 @@ def test_real_nested_default_binop_callers_reach_completed_outcomes() -> None:
     outcomes = tuple(call.sugar().desugar(None) for call in calls)
 
     assert len(outcomes) == 3
-    assert all(
-        isinstance(outcome, ExitSet)
-        and len(outcome.exits) == 1
-        and isinstance(outcome.exits[0], Completed)
-        for outcome in outcomes
-    )
+    for outcome in outcomes:
+        assert isinstance(outcome, ExitSet)
+        completed = tuple(
+            exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)
+        )
+        halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+        assert len(completed) == 1
+        assert isinstance(completed[0].value, CallSiteValue)
+        assert completed[0].value.source_call_frame_cid is not None
+        assert len(halted) == 2
+        assert all(
+            "python.binary_dispatch_raises" in repr(exit_.guard)
+            and exit_.effect.producer_node_owner == "Call"
+            and exit_.effect.exception_type_coordinate is None
+            for exit_ in halted
+        )
 
 
 def test_runtime_truth_names_the_candidate_exception_without_licensing_floor() -> None:
