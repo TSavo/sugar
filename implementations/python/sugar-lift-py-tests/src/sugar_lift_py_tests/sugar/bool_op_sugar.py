@@ -127,9 +127,26 @@ class BoolOpSugar(Sugar):
                 return factored_operand(operand.desugar(ctx))
 
             def project_truth(value):
-                refuse_undecided_boolean_truth(value, self.site, self.op_kind)
-                return value.truth(self.site).and_then(
-                    lambda truth_value: continue_from(value, truth_formula(truth_value))
+                formal_coordinate = getattr(value, "formal_coordinate", None)
+                if formal_coordinate is not None:
+                    from sugar_lift_py_tests.caller_parameter_contract import (
+                        NativeOperationExitCarrierV1,
+                    )
+
+                    tested = NativeOperationExitCarrierV1.mint(
+                        site=self.site,
+                        operator="boolop_truth",
+                        operands=(value,),
+                        coordinates=(formal_coordinate,),
+                    )
+                else:
+                    refuse_undecided_boolean_truth(value, self.site, self.op_kind)
+                    tested = value.boolop_truth(self.site)
+
+                return tested.and_then(
+                    lambda selection: continue_from(
+                        selection.operand, truth_formula(selection.truth_value)
+                    )
                 )
 
             def continue_from(value, formula):

@@ -281,7 +281,10 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
     BoolOp, so the producer cannot mint ValueError — only the named refusal.
     """
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
     from sugar_lift_py_tests.context_manager_resolution import (
+        NativeDefinitionCoordinateGapV1,
+        NativeProtocolSlot,
         TreeConstructionContextV1,
     )
     from sugar_lift_python_source.canonical import blake3_512_of
@@ -307,9 +310,10 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
     with pytest.raises(ValueError, match="ambiguous"):
         obj1 or obj2
 
+    construction_context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
         (source, str(path), source_cid),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        construction_context=construction_context,
     )
     for line, operator in ((152, "and"), (154, "or")):
         matches = tuple(
@@ -318,6 +322,12 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
             if isinstance(node, BoolOp) and node.line_col_span().start_line == line
         )
         assert len(matches) == 1
+        receiver = source_coordinate(matches[0].values[0].fragment)
+        definition = construction_context.contract_refs.require_native_definition(
+            receiver, NativeProtocolSlot.TRUTH
+        )
+        assert isinstance(definition, NativeDefinitionCoordinateGapV1)
+        assert definition.reason.startswith("authenticated source definition")
         with pytest.raises(SugarNotWritten) as raised:
             matches[0].sugar().desugar(None)
         refusal = raised.value
