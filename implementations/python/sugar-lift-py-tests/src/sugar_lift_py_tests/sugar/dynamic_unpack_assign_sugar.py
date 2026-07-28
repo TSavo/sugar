@@ -10,7 +10,8 @@ from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
 @dataclass(frozen=True)
 class DynamicUnpackAssignSugar(Sugar):
-    """``<name>, <name>, ... = <rhs>`` where the RHS is NOT a display.
+    """``<name>, <name>, ... = <rhs>`` (optionally with one ``*star``) where
+    the RHS is NOT a display.
 
     The tree cannot pair targets with members here (``Assign._destructured_binding``
     zips displays only), so ``substitution_binding`` threads nothing and the
@@ -22,14 +23,16 @@ class DynamicUnpackAssignSugar(Sugar):
     is submitted through the floor's ``project_sequence_with`` port, and the
     value decides:
 
-    - authenticated finite members (tuple/array literal): the arity is
-      lift-time decidable, so each name binds to the member ALREADY IN HAND and
-      rides forward as a ``ScopeRebinds`` support entry -- the same scope
-      threading a mutation uses, no second door;
+    - authenticated finite members (tuple/array/list): the arity is lift-time
+      decidable, so each name binds to the member ALREADY IN HAND (star binds a
+      ``ListValue`` of the middle in source order) and rides forward as a
+      ``ScopeRebinds`` support entry -- the same scope threading a mutation
+      uses, no second door;
     - runtime cardinality (symbolic / object / opaque coordinate): the count
       belongs to ``__iter__`` at runtime, so the arity demand is retained as a
       typed ``SequenceUnpackRuntimeEffect``. Nothing binds on that arm, exactly
-      as CPython binds nothing when ``UNPACK_SEQUENCE`` raises;
+      as CPython binds nothing when ``UNPACK_SEQUENCE`` / ``UNPACK_EX`` raises.
+      Starred opaque patterns keep this law: never complete, never invent a tail;
     - anything else: a loud floor construction gap.
 
     No arm assumes the count matched, and no arm invents a member. The RHS's own
@@ -39,6 +42,9 @@ class DynamicUnpackAssignSugar(Sugar):
     target_names: tuple[str, ...]
     value: Sugar
     site: object = dataclass_field(compare=False)
+    star_name: str | None = None
+    prefix_names: tuple[str, ...] = ()
+    suffix_names: tuple[str, ...] = ()
 
     @classmethod
     def witnesses(cls):
@@ -55,11 +61,21 @@ class DynamicUnpackAssignSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.operations import SequenceProjectionOperation
 
-        operation = SequenceProjectionOperation(
-            target_names=self.target_names,
-            owner=type(self).__name__,
-            blame=self.site,
-        )
+        if self.star_name is None:
+            operation = SequenceProjectionOperation(
+                target_names=self.target_names,
+                owner=type(self).__name__,
+                blame=self.site,
+            )
+        else:
+            operation = SequenceProjectionOperation(
+                target_names=(*self.prefix_names, *self.suffix_names),
+                owner=type(self).__name__,
+                blame=self.site,
+                star_name=self.star_name,
+                prefix_names=self.prefix_names,
+                suffix_names=self.suffix_names,
+            )
         # Python evaluates the right-hand side before it unpacks anything.
         return self.value.desugar(ctx).and_then(
             lambda value: operation.submit(value, ctx)

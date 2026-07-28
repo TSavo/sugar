@@ -3692,6 +3692,38 @@ class Assign(Statement):
             pairs.extend(zip(target.elts[-suffix:], value.elts[-suffix:]))
         return pairs
 
+    def _flat_starred_name_parts(self, target):
+        """Parse a flat ``Name | *Name`` target into (prefix, star_name, suffix).
+
+        Used for non-display RHS dynamic unpack. Nested stars, non-Name leaves,
+        or more than one star stay unadmitted (``None``).
+        """
+        if not isinstance(target, (Tuple_, List)):
+            return None
+        star_indices = [
+            index
+            for index, element in enumerate(target.elts)
+            if isinstance(element, Starred)
+        ]
+        if len(star_indices) != 1:
+            return None
+        star_index = star_indices[0]
+        star = target.elts[star_index]
+        if not isinstance(star.value, Name):
+            return None
+        prefix: list[str] = []
+        suffix: list[str] = []
+        for index, element in enumerate(target.elts):
+            if index == star_index:
+                continue
+            if not isinstance(element, Name):
+                return None
+            if index < star_index:
+                prefix.append(element.id)
+            else:
+                suffix.append(element.id)
+        return (tuple(prefix), star.value.id, tuple(suffix))
+
     def _flat_store_unpack_pairs(self):
         """Flat Name|Attribute|Subscript leaves against a display RHS.
 
@@ -4111,20 +4143,32 @@ class Assign(Statement):
                     site=self.fragment,
                 )
             target = self.targets[0]
-            if (
-                not isinstance(self.value, (Tuple_, List))
-                and target.elts
-                and all(isinstance(item, Name) for item in target.elts)
-            ):
+            if not isinstance(self.value, (Tuple_, List)) and target.elts:
                 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
                     DynamicUnpackAssignSugar,
                 )
 
-                return DynamicUnpackAssignSugar(
-                    tuple(item.id for item in target.elts),
-                    self.value.sugar(),
-                    self.fragment,
-                )
+                # Exact-arity: every leaf is a plain Name.
+                if all(isinstance(item, Name) for item in target.elts):
+                    return DynamicUnpackAssignSugar(
+                        tuple(item.id for item in target.elts),
+                        self.value.sugar(),
+                        self.fragment,
+                    )
+                # Starred: at most one *Name among flat Name leaves. Opaque /
+                # runtime-selected RHS keeps the typed unpack obligation via
+                # SequenceProjectionOperation (never a fabricated completion).
+                star_parts = self._flat_starred_name_parts(target)
+                if star_parts is not None:
+                    prefix, star_name, suffix = star_parts
+                    return DynamicUnpackAssignSugar(
+                        target_names=(*prefix, *suffix),
+                        value=self.value.sugar(),
+                        site=self.fragment,
+                        star_name=star_name,
+                        prefix_names=prefix,
+                        suffix_names=suffix,
+                    )
             return super()._construct_sugar()
 
         if len(self.targets) > 1 and all(isinstance(t, Name) for t in self.targets):

@@ -142,13 +142,29 @@ def test_reduced_rhs_is_the_unpacked_term(tmp_path: Path) -> None:
 
 
 def test_rhs_expression_is_reduced_not_quoted(tmp_path: Path) -> None:
-    attribute = _obligation(tmp_path, ATTRIBUTE_RHS, "attr_rhs")
-    other = _obligation(tmp_path, OTHER_ATTRIBUTE_RHS, "attr_rhs_other")
-    # The reduced attribute coordinate rides in the obligation ...
-    assert "shape" in attribute[2]
-    # ... and a different attribute is a different obligation.
-    assert attribute[2] != other[2]
-    assert "shape" not in other[2]
+    """Formal attribute RHS reduces before unpack (post attribute_named carrier).
+
+    ``a, b = o.shape`` desugars the attribute first; when ``o`` is a formal the
+    reduced face is an undischarged ``attribute_named`` demand that names the
+    attribute.  A different attribute is a different demand.  The unpack
+    obligation rides after discharge — never a quoted spelling of the source.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    shape_out = _outcome(tmp_path, ATTRIBUTE_RHS, "attr_rhs")
+    size_out = _outcome(tmp_path, OTHER_ATTRIBUTE_RHS, "attr_rhs_other")
+    assert isinstance(shape_out, NativeOperationExitCarrierV1)
+    assert isinstance(size_out, NativeOperationExitCarrierV1)
+    assert shape_out.demand.operator == "attribute_named"
+    assert size_out.demand.operator == "attribute_named"
+    shape_term = str(shape_out.demand.candidate)
+    size_term = str(size_out.demand.candidate)
+    assert "shape" in shape_term
+    assert shape_term != size_term
+    assert "shape" not in size_term
+    assert "size" in size_term
 
 
 # ---------------------------------------------------------------------------
