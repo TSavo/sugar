@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
@@ -98,7 +97,7 @@ class BoundFormalActualV1:
 
 
 @dataclass(frozen=True, eq=False)
-class BoundSourceCallActualsV1(Sequence):
+class BoundSourceCallActualsV1:
     """One binder result with its authenticated coordinate testimony."""
 
     actuals: tuple
@@ -114,15 +113,6 @@ class BoundSourceCallActualsV1(Sequence):
             raise SourceCallBindingGap("bound actual coordinate arity mismatch")
         _reauthenticate_binding_coordinates(self.formal_coordinates)
         _reauthenticate_native_coordinates(self.native_formal_coordinates)
-
-    def __len__(self) -> int:
-        return len(self.actuals)
-
-    def __getitem__(self, index):
-        return self.actuals[index]
-
-    def __iter__(self) -> Iterator:
-        return iter(self.actuals)
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, BoundSourceCallActualsV1):
