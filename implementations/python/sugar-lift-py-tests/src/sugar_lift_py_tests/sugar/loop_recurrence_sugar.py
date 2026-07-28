@@ -132,7 +132,7 @@ class LoopRecurrenceSugar(Sugar):
                     )
                 )
             elif isinstance(outcome, Incomplete):
-                exits.append(Halted(face.guard, outcome.effect, recurrence))
+                exits.append(Halted(face.guard, outcome.effect, face.state))
             else:
                 # The face reduced to something richer than one return value or
                 # one effect: a return whose expression PARTITIONS (`return
@@ -151,7 +151,7 @@ class LoopRecurrenceSugar(Sugar):
                 pending, plain = pending_demand(outcome, face.guard)
                 for exit_ in outcome_to_exitset(plain).guarded(face.guard).exits:
                     if isinstance(exit_, Halted):
-                        exits.append(Halted(exit_.guard, exit_.effect, recurrence))
+                        exits.append(Halted(exit_.guard, exit_.effect, face.state))
                     else:
                         entries = (exit_.value,) if pending is None else (
                             pending,
