@@ -50,7 +50,26 @@ class Operator:
 
 
 class BinaryOperator(Operator):
-    """Operators of BinOp / AugAssign."""
+    """Operators of BinOp / AugAssign.
+
+    ``inplace_operator`` is the native-operation carrier name AugAssign mints
+    for formal ``OP=`` (e.g. ``iadd`` for ``+=``).  Declared on the operator
+    class so production's enrolled set is derived from constructors — never
+    from the projector table (circular equality tooth).
+
+    ``project_inplace`` is operator-owned double dispatch into the established
+    Floor edge ``inplace_binary_operator_with`` (not a second iadd protocol).
+    """
+
+    inplace_operator: str = ""
+
+    def project_inplace(self, left, right, site):
+        """Surface operator → Floor ``inplace_binary_operator_with`` + NotImplemented law."""
+        from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+            discharge_inplace,
+        )
+
+        return discharge_inplace(left, right, site, surface=self.symbol)
 
 
 class UnaryOperator(Operator):
@@ -66,55 +85,87 @@ class ComparisonOperator(Operator):
 
 
 class Add(BinaryOperator):
-    kind, symbol = "Add", "+"
+    kind, symbol, inplace_operator = "Add", "+", "iadd"
 
 
 class Sub(BinaryOperator):
-    kind, symbol = "Sub", "-"
+    kind, symbol, inplace_operator = "Sub", "-", "isub"
 
 
 class Mult(BinaryOperator):
-    kind, symbol = "Mult", "*"
+    kind, symbol, inplace_operator = "Mult", "*", "imul"
 
 
 class MatMult(BinaryOperator):
-    kind, symbol = "MatMult", "@"
+    kind, symbol, inplace_operator = "MatMult", "@", "imatmul"
 
 
 class Div(BinaryOperator):
-    kind, symbol = "Div", "/"
+    kind, symbol, inplace_operator = "Div", "/", "itruediv"
 
 
 class Mod(BinaryOperator):
-    kind, symbol = "Mod", "%"
+    kind, symbol, inplace_operator = "Mod", "%", "imod"
 
 
 class Pow(BinaryOperator):
-    kind, symbol = "Pow", "**"
+    kind, symbol, inplace_operator = "Pow", "**", "ipow"
 
 
 class LShift(BinaryOperator):
-    kind, symbol = "LShift", "<<"
+    kind, symbol, inplace_operator = "LShift", "<<", "ilshift"
 
 
 class RShift(BinaryOperator):
-    kind, symbol = "RShift", ">>"
+    kind, symbol, inplace_operator = "RShift", ">>", "irshift"
 
 
 class BitOr(BinaryOperator):
-    kind, symbol = "BitOr", "|"
+    kind, symbol, inplace_operator = "BitOr", "|", "ior"
 
 
 class BitXor(BinaryOperator):
-    kind, symbol = "BitXor", "^"
+    kind, symbol, inplace_operator = "BitXor", "^", "ixor"
 
 
 class BitAnd(BinaryOperator):
-    kind, symbol = "BitAnd", "&"
+    kind, symbol, inplace_operator = "BitAnd", "&", "iand"
 
 
 class FloorDiv(BinaryOperator):
-    kind, symbol = "FloorDiv", "//"
+    kind, symbol, inplace_operator = "FloorDiv", "//", "ifloordiv"
+
+
+# BinaryOperator classes AugAssign may host — production mint set source.
+AUGASSIGN_BINARY_OPERATOR_CLASSES: tuple[type[BinaryOperator], ...] = (
+    Add,
+    Sub,
+    Mult,
+    MatMult,
+    Div,
+    Mod,
+    Pow,
+    LShift,
+    RShift,
+    BitOr,
+    BitXor,
+    BitAnd,
+    FloorDiv,
+)
+
+
+def production_augassign_inplace_operators() -> frozenset[str]:
+    """Inplace carrier names AugAssign production may mint.
+
+    Derived **only** from BinaryOperator class attributes — independent of
+    any projector table.  Equality tooth: this set must equal the i* keys
+    enrolled on the projector side.
+    """
+    return frozenset(
+        cls.inplace_operator
+        for cls in AUGASSIGN_BINARY_OPERATOR_CLASSES
+        if cls.inplace_operator
+    )
 
 
 class UAdd(UnaryOperator):

@@ -392,11 +392,17 @@ def production_native_operation_operators() -> frozenset[str]:
     contracted_store_operators = frozenset(
         {"setitem", "setattr_named", "delitem", "delattr_named"}
     )
+    # AugAssign production mint set — from BinaryOperator class attributes,
+    # NEVER from the projector table (circular equality tooth).
+    from sugar_source_tree.operators import production_augassign_inplace_operators
+
+    contracted_inplace_operators = production_augassign_inplace_operators()
     return (
         _ast_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
         | frozenset(COMPARE_METHODS.values())
         | contracted_store_operators
+        | contracted_inplace_operators
     )
 
 
@@ -419,6 +425,131 @@ def _project_delattr_named(receiver, name, site):
     return receiver.delattr(name.value, site)
 
 
+def project_iadd(left, right, site):
+    """Discharge ``iadd`` via established ``inplace_binary_operator_with`` edge."""
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="+")
+
+
+def project_isub(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="-")
+
+
+def project_imul(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="*")
+
+
+def project_itruediv(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="/")
+
+
+def project_ifloordiv(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="//")
+
+
+def project_imod(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="%")
+
+
+def project_ipow(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="**")
+
+
+def project_iand(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="&")
+
+
+def project_ior(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="|")
+
+
+def project_ixor(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="^")
+
+
+def project_ilshift(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="<<")
+
+
+def project_irshift(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface=">>")
+
+
+def project_imatmul(left, right, site):
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="@")
+
+
+# Enrolled i* projectors — keys must equal production_augassign_inplace_operators().
+# Selection is operator-owned (BinaryOperator.project_inplace); this table is
+# discharge enrollment only — not a kind ladder.
+_INPLACE_NATIVE_OPERATION_PROJECTORS = {
+    "iadd": project_iadd,
+    "isub": project_isub,
+    "imul": project_imul,
+    "itruediv": project_itruediv,
+    "ifloordiv": project_ifloordiv,
+    "imod": project_imod,
+    "ipow": project_ipow,
+    "iand": project_iand,
+    "ior": project_ior,
+    "ixor": project_ixor,
+    "ilshift": project_ilshift,
+    "irshift": project_irshift,
+    "imatmul": project_imatmul,
+}
+
+
 # Explicit projectors for authenticated native operations.
 #
 # Each entry names its own Floor signature.  A generic
@@ -437,6 +568,12 @@ def _project_delattr_named(receiver, name, site):
 #   delitem        → ``receiver.delitem(index, site)``   (__delitem__)
 #   delattr_named  → ``receiver.delattr(name.value, site)`` (__delattr__)
 # Name deletion (``del name`` / DeleteNameSugar) is out of scope here.
+#
+# In-place protocol (AugAssign formal path):
+#   explicit project_iadd / project_isub / … each call Floor methods directly.
+#   Production mint names come from BinaryOperator.inplace_operator (independent
+#   equality tooth).  Projector absence must never silent-fallback to minting
+#   ordinary ``add``.
 #
 # Key set must equal :func:`production_native_operation_operators` exactly.
 _NATIVE_OPERATION_PROJECTORS = {
@@ -463,6 +600,8 @@ _NATIVE_OPERATION_PROJECTORS = {
     "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
     "left_shift": lambda left, right, site: left.left_shift(right, site),
     "right_shift": lambda left, right, site: left.right_shift(right, site),
+    # Authenticated in-place (AugAssign); binary fallback is inside each projector.
+    **_INPLACE_NATIVE_OPERATION_PROJECTORS,
     # Equality, ordering, membership (compare / equality sugars).
     "equals": lambda left, right, site: left.equals(right, site),
     "less_than": lambda left, right, site: left.less_than(right, site),

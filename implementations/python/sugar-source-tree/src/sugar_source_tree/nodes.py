@@ -4269,13 +4269,50 @@ class AugAssign(Statement):
     _child_fields = ("target", "value")
 
     def substitute(self, scope):
-        """`<target> OP= <value>` -- substitute the value; the target is both
-        read and written, but as a node it is a binding site, not substituted.
-        The rebind (target OP value) is threaded by substitution_binding."""
-        from .shadow import rewrite
+        """`<target> OP= <value>` -- substitute the value and load-side targets.
 
-        new_value, d = self._substitute_field(self.value, scope)
-        rewritten = self if not d else rewrite(self, value=new_value)
+        A plain Name target is a binding site: the rebind (target OP value) is
+        threaded by ``substitution_binding`` / the ``operation`` slot.
+
+        Subscript targets are runtime stores — receivers and indices are load
+        expressions and must substitute so formals become ``FormalRefSugar``
+        (same door as Assign).  The operator occurrence is minted from the
+        **pre-substitute** target/value structure and carried as
+        ``operator_site`` so formal declaration spans cannot steal it.
+        Attribute targets stay value-only until Attribute AugAssign production.
+        """
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of, rewrite
+
+        # Structural operator site before any rewrite (Compare-style gap).
+        pre_sub_operator_site = None
+        if isinstance(self.target, Subscript):
+            pre_sub_operator_site = getattr(self, "operator_site", None)
+            if pre_sub_operator_site is None:
+                pre_sub_operator_site = self._mint_operator_site_from_structure()
+
+        new_value, value_changed = self._substitute_field(self.value, scope)
+        changes = {"value": new_value} if value_changed else {}
+        if isinstance(self.target, Subscript):
+            new_target = _substituted_store_target(self, self.target, scope)
+            if new_target is not None:
+                changes["target"] = new_target
+            rewritten = self if not changes else rewrite(self, **changes)
+            # Always carry pre-sub operator_site through substitute.
+            desc = rewritten.ref.describe()
+            return materialize(
+                self.unit,
+                ShadowNode(
+                    desc.kind,
+                    desc.raw_span or rewritten.span,
+                    (
+                        *desc.slots,
+                        ("operator_site", Leaf(pre_sub_operator_site)),
+                    ),
+                ),
+                self.reporter,
+            )
+        rewritten = self if not changes else rewrite(self, **changes)
         if not isinstance(rewritten.target, Name):
             return rewritten
         name = rewritten.target.id
@@ -4285,9 +4322,6 @@ class AugAssign(Statement):
             make_read=rewritten.target._make_binding_read,
         )
         operation = rewritten._make_binop(old_read, rewritten.op, rewritten.value)
-        from .backend import Child, materialize
-        from .shadow import ShadowNode, _handle_of
-
         desc = rewritten.ref.describe()
         return materialize(
             self.unit,
@@ -4297,6 +4331,52 @@ class AugAssign(Statement):
                 (*desc.slots, ("operation", Child(_handle_of(operation)))),
             ),
             self.reporter,
+        )
+
+    def _mint_operator_site_from_structure(self):
+        """Authenticated operator occurrence: gap between target and RHS spans.
+
+        Same law as ``Compare._comparison_leg_site``: the operator token lives
+        in the non-empty source interval between adjacent structural children.
+        ``self.op`` testifies which operator occupies the gap — no text scan
+        that could match a same-spelling string literal in the target
+        (``obj['+='] += rhs``).
+        """
+        from sugar_source_tree.panic import SugarNotWritten
+        from .fragment import SourceFragment
+        from .spans import Span
+
+        target = self.target
+        value = self.value
+
+        def reject():
+            raise SugarNotWritten(
+                blame=self.fragment,
+                owner="AugAssign._mint_operator_site_from_structure",
+                observed=(target.span, value.span, self.span),
+                requested=(
+                    "the source-authenticated operator interval between the "
+                    "AugAssign target and its RHS (pre-substitute structure)"
+                ),
+                fix=(
+                    "mint operator_site from target/value spans before "
+                    "substitute and carry it forward; never text-scan for +="
+                ),
+            )
+
+        if not (
+            self.span.start <= target.span.start < target.span.end
+            and target.span.end < value.span.start
+            and value.span.end <= self.span.end
+        ):
+            reject()
+        gap = Span(target.span.end, value.span.start)
+        if not gap.slice(self.unit.source).strip():
+            reject()
+        return SourceFragment(
+            unit=self.unit,
+            span=gap,
+            node=self,
         )
 
     def substitution_binding(self, scope):
@@ -4347,12 +4427,24 @@ class AugAssign(Statement):
                 site=self.fragment,
             )
         if isinstance(self.target, Subscript):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                LegacyAugmentedSubscriptStoreEffectSugar,
+            from sugar_lift_py_tests.sugar.augassign_sugar import (
+                SubscriptAugAssignSugar,
             )
 
-            return LegacyAugmentedSubscriptStoreEffectSugar(
-                index_text=self.target.slice_.fragment.text,
+            # op_site: carried pre-substitute structure, or mint now if no sub.
+            op_site = getattr(self, "operator_site", None)
+            if op_site is None:
+                op_site = self._mint_operator_site_from_structure()
+            # Operator-owned double dispatch — not a caller isinstance ladder.
+            return SubscriptAugAssignSugar(
+                receiver=self.target.value.sugar(),
+                index=self.target.slice_.sugar(),
+                rhs=self.value.sugar(),
+                operator=type(self.op).inplace_operator,
+                operation=self.op.project_inplace,
+                get_site=self.target.fragment,
+                op_site=op_site,
+                set_site=self.fragment,
                 site=self.fragment,
             )
         return super()._construct_sugar()

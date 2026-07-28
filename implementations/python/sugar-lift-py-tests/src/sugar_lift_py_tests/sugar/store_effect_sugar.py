@@ -255,32 +255,3 @@ class SubscriptStoreEffectSugar(Sugar):
             operands=(receiver, index, value),
             coordinates=coordinates,
         )
-
-
-@dataclass(frozen=True)
-class LegacyAugmentedSubscriptStoreEffectSugar(Sugar):
-    """Preserve AugAssign without pretending its raw RHS is the stored value."""
-
-    index_text: str
-    site: object = dataclass_field(compare=False)
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        from sugar_lift_py_tests.effect import (
-            SubscriptStoreRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.ir import make_var
-
-        operand = make_var(f"store_target[{self.index_text}]")
-        return Incomplete(
-            SubscriptStoreRuntimeEffect(
-                "augmented subscript assignment runtime boundary: subscript store "
-                f"target `[{self.index_text}]`; index={self.index_text} site={self.site}",
-                **runtime_effect_evidence("py.setitem", operand, self.site),
-            )
-        )
