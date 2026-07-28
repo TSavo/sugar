@@ -339,8 +339,12 @@ def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
         exit_face_id=f"{slot}#exit_face",
         body=body if body is not None else (),
         disposition=NeverSuppresses(),
-        contract_refs=_NativeDefinitions(),
-        receiver_coordinate=receiver,
+        enter_definition=SourceFragmentCoordinateV1(
+            "blake3-512:" + "e" * 128, 1, 0, 1, 1
+        ),
+        exit_definition=SourceFragmentCoordinateV1(
+            "blake3-512:" + "x" * 128, 2, 0, 2, 1
+        ),
         site=None,
     )
 

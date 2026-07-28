@@ -38,15 +38,27 @@ class WithResourceSugar(Sugar):
     contract_ref: object | None = None
     context_manager_edge: object | None = None
     enter_slot_id: str | None = None
-    contract_refs: object | None = None
-    receiver_coordinate: object | None = None
+    enter_definition: object | None = None
+    exit_definition: object | None = None
     site: object = dataclass_field(compare=False, default=None)
 
     def __post_init__(self) -> None:
-        if self.contract_refs is None or self.receiver_coordinate is None:
+        if self.enter_definition is None or self.exit_definition is None:
             raise ValueError(
-                "WithResourceSugar requires the authenticated native-definition door"
+                "WithResourceSugar requires authenticated enter and exit definition coordinates"
             )
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        for call, definition, slot in (
+            (self.enter, self.enter_definition, "context-enter"),
+            (self.exit, self.exit_definition, "context-exit"),
+        ):
+            if isinstance(call, MethodCallSugar) and (
+                call.native_definition_coordinate != definition
+            ):
+                raise ValueError(
+                    f"{slot} call is not authenticated by its definition coordinate"
+                )
 
     @classmethod
     def witnesses(cls):
@@ -83,13 +95,6 @@ class WithResourceSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationResolutionV1,
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            NativeDefinitionCoordinateGapV1,
-            NativeProtocolSlot,
-        )
         from sugar_lift_py_tests.floor import EnteredManagerStateValue
         from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
@@ -118,13 +123,6 @@ class WithResourceSugar(Sugar):
                 parts.append(ExitSet((mgr_exit,)))
                 continue
 
-            enter_definition = self.contract_refs.require_native_definition(
-                self.receiver_coordinate, NativeProtocolSlot.CONTEXT_ENTER
-            )
-            if isinstance(enter_definition, NativeDefinitionCoordinateGapV1):
-                NativeOperationResolutionV1.undischarged(
-                    enter_definition.reason
-                ).project(source_node=self.receiver_coordinate)
             mgr_facts = ()
             if hasattr(mgr_exit.value, "to_term"):
                 mgr_facts = ManagerBinding(
@@ -166,14 +164,6 @@ class WithResourceSugar(Sugar):
                 body_es = promote_raise_halts(
                     reduce_block_to_exitset(self.body)
                 ).guarded(face_guard)
-
-                exit_definition = self.contract_refs.require_native_definition(
-                    self.receiver_coordinate, NativeProtocolSlot.CONTEXT_EXIT
-                )
-                if isinstance(exit_definition, NativeDefinitionCoordinateGapV1):
-                    NativeOperationResolutionV1.undischarged(
-                        exit_definition.reason
-                    ).project(source_node=self.receiver_coordinate)
 
                 # Parametric exit: materialize once, fan over every body face.
                 exit_es = sugar_outcome_to_exitset(self.exit.desugar())

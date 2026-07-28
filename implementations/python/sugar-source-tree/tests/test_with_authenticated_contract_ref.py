@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from types import MappingProxyType
+from dataclasses import replace
+import inspect
 
 import pytest
 
@@ -144,13 +146,12 @@ def test_native_resource_requires_both_authenticated_definition_coordinates():
     )
     boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     assert isinstance(boundary, WithResourceSugar)
-    assert boundary.receiver_coordinate == boundary.contract_ref.use_site
-    assert boundary.contract_refs.require_native_definition(
-        boundary.receiver_coordinate, NativeProtocolSlot.CONTEXT_ENTER
-    ) == SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
-    assert boundary.contract_refs.require_native_definition(
-        boundary.receiver_coordinate, NativeProtocolSlot.CONTEXT_EXIT
-    ) == SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    enter_definition = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
+    exit_definition = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
+    assert boundary.enter_definition == enter_definition
+    assert boundary.exit_definition == exit_definition
+    assert boundary.enter.native_definition_coordinate == enter_definition
+    assert boundary.exit.native_definition_coordinate == exit_definition
     assert boundary.enter_slot_id is not None
     assert boundary.enter_slot_id.startswith(boundary.manager_slot_id)
 
@@ -163,9 +164,8 @@ def test_open_name_without_native_definition_stays_typed_loud():
         _truthiness_resolved,
         native_definitions=lambda use_site: {},
     )
-    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
     with pytest.raises(SugarNotWritten, match="authenticated source definition"):
-        boundary.desugar()
+        next(node for node in tree.nodes() if node.kind == "With").sugar()
 
 
 def test_open_gap_is_the_builtin_authority_discrimination_arm():
@@ -176,18 +176,62 @@ def test_open_gap_is_the_builtin_authority_discrimination_arm():
         _truthiness_resolved,
         native_definitions=lambda use_site: {},
     )
-    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
-    receiver = boundary.receiver_coordinate
-    enter_gap = boundary.contract_refs.require_native_definition(
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    receiver = _coordinate(with_node.items[0].context_expr)
+    refs = with_node.unit.construction_context.contract_refs
+    enter_gap = refs.require_native_definition(
         receiver, NativeProtocolSlot.CONTEXT_ENTER
     )
-    exit_gap = boundary.contract_refs.require_native_definition(
-        receiver, NativeProtocolSlot.CONTEXT_EXIT
-    )
+    exit_gap = refs.require_native_definition(receiver, NativeProtocolSlot.CONTEXT_EXIT)
     assert enter_gap.slot is NativeProtocolSlot.CONTEXT_ENTER
     assert exit_gap.slot is NativeProtocolSlot.CONTEXT_EXIT
     assert enter_gap.reason.startswith("authenticated source definition")
     assert exit_gap.reason.startswith("authenticated source definition")
+
+
+@pytest.mark.parametrize(
+    "missing_slot", [NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT]
+)
+def test_missing_one_native_definition_is_typed_loud(missing_slot):
+    source = (
+        "def f(path):\n    with acquire(path) as resource:\n        return resource\n"
+    )
+
+    def definitions(use_site):
+        values = _native_protocol_definitions(use_site)
+        values.pop((use_site, missing_slot))
+        return values
+
+    tree = _source_with_resolution(
+        (source, "missing-one-native-definition.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=definitions,
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        next(node for node in tree.nodes() if node.kind == "With").sugar()
+
+
+def test_swapped_definition_coordinates_are_rejected_by_authenticated_calls():
+    source = (
+        "def f(path):\n    with acquire(path) as resource:\n        return resource\n"
+    )
+    tree = _source_with_resolution(
+        (source, "swapped-native-definition.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=_native_protocol_definitions,
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    with pytest.raises(ValueError, match="not authenticated"):
+        replace(
+            boundary,
+            enter_definition=boundary.exit_definition,
+            exit_definition=boundary.enter_definition,
+        )
+
+
+def test_resource_desugar_has_no_second_native_definition_lookup():
+    source = inspect.getsource(WithResourceSugar.desugar)
+    assert "require_native_definition" not in source
 
 
 def _function_sugar(source_identity, resolution):

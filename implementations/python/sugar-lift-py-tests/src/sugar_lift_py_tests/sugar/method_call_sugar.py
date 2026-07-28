@@ -34,6 +34,7 @@ class MethodCallSugar(Sugar):
     # exception-class path, the resulting CallSiteValue carries that identity.
     exception_type_coordinate: object = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
+    native_definition_coordinate: object = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):

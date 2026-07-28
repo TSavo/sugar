@@ -14,10 +14,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     RuntimeSelected,
 )
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
-from sugar_lift_py_tests.context_manager_resolution import (
-    NativeDefinitionCoordinateGapV1,
-    NativeProtocolSlot,
-)
 from sugar_lift_py_tests.effect import LoopControlEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ObjectValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -43,7 +39,6 @@ from sugar_lift_py_tests.sugar.resource_coord_sugar import (
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-from sugar_source_tree.panic import SugarNotWritten
 
 
 def test_authenticated_pandas_303_builtin_open_resource_coordinate():
@@ -82,25 +77,6 @@ class _FixedSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return ()
-
-
-class _ObservedNativeDefinitions:
-    def __init__(self, events=None, *, missing=()):
-        self.events = events if events is not None else []
-        self.missing = frozenset(missing)
-
-    def require_native_definition(self, receiver, slot):
-        self.events.append(f"require-{slot.value}")
-        if slot in self.missing:
-            return NativeDefinitionCoordinateGapV1(
-                receiver=receiver,
-                slot=slot,
-                reason="authenticated source definition coordinate is not enrolled",
-            )
-        line = 1 if slot is NativeProtocolSlot.CONTEXT_ENTER else 2
-        return SourceFragmentCoordinateV1(
-            "blake3-512:" + slot.value[0] * 128, line, 0, line, 1
-        )
 
 
 class _Pass(_FixedSugar):
@@ -152,8 +128,6 @@ def _resource(
     exit_face_id="X",
     enter_slot_id=None,
     exit_probe=None,
-    contract_refs=None,
-    receiver_coordinate=None,
 ):
     exit_sugar = exit
     if exit_sugar is None:
@@ -175,6 +149,16 @@ def _resource(
 
             exit_sugar = _ProbeExit()
 
+    from dataclasses import replace
+    from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+    enter_definition = SourceFragmentCoordinateV1("blake3-512:" + "e" * 128, 1, 0, 1, 1)
+    exit_definition = SourceFragmentCoordinateV1("blake3-512:" + "x" * 128, 2, 0, 2, 1)
+    if isinstance(enter, MethodCallSugar):
+        enter = replace(enter, native_definition_coordinate=enter_definition)
+    if isinstance(exit_sugar, MethodCallSugar):
+        exit_sugar = replace(exit_sugar, native_definition_coordinate=exit_definition)
+
     return WithResourceSugar(
         manager=manager
         or _FixedSugar(Complete(ObjectValue("native-resource", (), identity="mgr"))),
@@ -185,68 +169,10 @@ def _resource(
         body=body if body is not None else (_Pass(),),
         disposition=disposition or NeverSuppresses(),
         enter_slot_id=enter_slot_id,
-        contract_refs=contract_refs or _ObservedNativeDefinitions(),
-        receiver_coordinate=receiver_coordinate
-        or SourceFragmentCoordinateV1("blake3-512:" + "r" * 128, 1, 0, 1, 1),
+        enter_definition=enter_definition,
+        exit_definition=exit_definition,
         site=None,
     )
-
-
-def test_native_resource_flow_opens_enter_then_body_then_exit_definition():
-    events = []
-    refs = _ObservedNativeDefinitions(events)
-    sugar = _resource(
-        manager=_FixedSugar(
-            Complete(ObjectValue("native-resource", (), identity="mgr")),
-            probe=events,
-        ),
-        enter=_FixedSugar(Complete(_FloorValue("entered")), probe=events),
-        body=(_FixedSugar(Complete(BlockValue((), True)), probe=events),),
-        exit=_FixedSugar(Complete(TermValue(0)), probe=events),
-        contract_refs=refs,
-        disposition=ReturnTruthinessDispositionV1(),
-    )
-    sugar.desugar()
-    assert events == [
-        1,
-        "require-context-enter",
-        1,
-        1,
-        "require-context-exit",
-        1,
-    ]
-
-
-def test_missing_native_exit_definition_stays_typed_loud_after_body_reduction():
-    events = []
-    refs = _ObservedNativeDefinitions(
-        events, missing=(NativeProtocolSlot.CONTEXT_EXIT,)
-    )
-    with pytest.raises(
-        SugarNotWritten,
-        match="authenticated source definition coordinate is not enrolled",
-    ):
-        _resource(
-            body=(_FixedSugar(Complete(BlockValue((), True)), probe=events),),
-            contract_refs=refs,
-        ).desugar()
-    assert events == ["require-context-enter", 1, "require-context-exit"]
-
-
-def test_source_defined_coordinate_and_builtin_gap_are_distinct_door_outcomes():
-    """Discrimination twin: source testimony resolves; C-builtin testimony gaps."""
-    receiver = SourceFragmentCoordinateV1("blake3-512:" + "z" * 128, 7, 0, 7, 5)
-    source_refs = _ObservedNativeDefinitions()
-    source_sugar = _resource(contract_refs=source_refs, receiver_coordinate=receiver)
-    source_sugar.desugar()
-    assert source_refs.events == ["require-context-enter", "require-context-exit"]
-
-    builtin_refs = _ObservedNativeDefinitions(
-        missing=(NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT)
-    )
-    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
-        _resource(contract_refs=builtin_refs, receiver_coordinate=receiver).desugar()
-    assert builtin_refs.events == ["require-context-enter"]
 
 
 def test_manager_expression_evaluated_exactly_once():
