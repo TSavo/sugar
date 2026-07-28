@@ -10,18 +10,26 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import (
-    ContractConditionalConstructionV1,
     NativeOperationExitCarrierV1,
+)
+from sugar_lift_py_tests.context_manager_contract import (
+    AuthenticatedRaiseMatcher,
+    EffectBoundaryDisposition,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.effect.expectation_not_met_effect import (
+    ExpectationNotMetEffect,
+)
+from sugar_lift_py_tests.floor import ListValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
-from sugar_lift_py_tests.ir import PrimitiveSort, make_var
+from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Subscript
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
@@ -222,15 +230,12 @@ def _formal_coordinate(
     )
 
 
-def test_synthetic_formals_name_the_missing_getitem_carrier_door() -> None:
-    """Synthetic boundary: current ``SymbolicValue.subscript`` is not resumable.
-
-    The real pandas absence is established above.  This synthetic arm names
-    the missing general capability precisely: formal ``obj[key]`` must mint a
-    ``NativeOperationExitCarrierV1`` for ``subscript`` whose operation locus
-    survives caller discharge.  Today it mints the older value-only
-    conditional, so no exceptional ExitSet edge can reach the assertion.
-    """
+def _synthetic_carrier() -> tuple[
+    NativeOperationExitCarrierV1,
+    FormalParameterCoordinateV1,
+    FormalParameterCoordinateV1,
+]:
+    """Construct the producer-only helper form; pandas absence is tested above."""
     source = "def helper(obj, key):\n    return obj[key]\n"
     tree = SourceFile(
         (source, "synthetic-subscript-helper.py", blake3_512_of(source.encode())),
@@ -239,10 +244,155 @@ def test_synthetic_formals_name_the_missing_getitem_carrier_door() -> None:
     node = next(item for item in tree.nodes() if isinstance(item, Subscript))
     obj_coordinate = _formal_coordinate(node.fragment, "obj", 0)
     key_coordinate = _formal_coordinate(node.fragment, "key", 1)
-
     outcome = SymbolicValue(make_var("obj"), obj_coordinate).subscript(
         SymbolicValue(make_var("key"), key_coordinate), node.fragment
     )
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    return outcome, obj_coordinate, key_coordinate
 
-    assert isinstance(outcome, ContractConditionalConstructionV1)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+
+def test_synthetic_formals_mint_the_getitem_carrier_door() -> None:
+    """Synthetic boundary: formal ``obj[key]`` is resumable at a real caller.
+
+    The real pandas absence is established above.  This synthetic arm names
+    the general capability precisely: formal ``obj[key]`` mints a
+    ``NativeOperationExitCarrierV1`` for ``subscript`` whose operation locus
+    survives caller discharge.
+    """
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+
+    assert carrier.demand.operator == "subscript"
+    assert carrier.demand.operand_coordinate_cids == (
+        obj_coordinate.coordinate_cid,
+        key_coordinate.coordinate_cid,
+    )
+
+
+def test_swapped_receiver_and_index_retain_distinct_ordered_coordinates() -> None:
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+    swapped = SymbolicValue(make_var("key"), key_coordinate).subscript(
+        SymbolicValue(make_var("obj"), obj_coordinate), carrier.site
+    )
+
+    assert isinstance(swapped, NativeOperationExitCarrierV1)
+    assert swapped.demand.operand_coordinate_cids == (
+        key_coordinate.coordinate_cid,
+        obj_coordinate.coordinate_cid,
+    )
+    assert swapped.demand.demand_cid != carrier.demand.demand_cid
+
+
+def test_coordinate_free_subscript_retains_existing_named_symbolic_refusal() -> None:
+    carrier, _, _ = _synthetic_carrier()
+
+    with pytest.raises(SugarNotWritten) as raised:
+        SymbolicValue(make_var("obj")).subscript(
+            SymbolicValue(make_var("key")), carrier.site
+        )
+
+    assert raised.value.owner == "SymbolicValue.subscript"
+    assert "undecided receiver runtime type" in raised.value.observed
+
+
+def test_helper_alone_stays_named_undischarged() -> None:
+    carrier, _, _ = _synthetic_carrier()
+
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        carrier.discharge({})
+
+
+def test_caller_actuals_can_complete_the_original_subscript() -> None:
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+
+    exits = carrier.discharge(
+        {
+            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            key_coordinate.coordinate_cid: TermValue(0),
+        }
+    )
+
+    assert exits.exits == (Completed(exits.exits[0].guard, TermValue(7)),)
+
+
+def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> None:
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+
+    exits = carrier.discharge(
+        {
+            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            key_coordinate.coordinate_cid: TermValue(1),
+        }
+    )
+
+    assert len(exits.exits) == 1
+    halted = exits.exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate is not None
+    assert halted.effect.occurrence == str(carrier.demand.source_node.wire())
+
+
+class _Expected:
+    def __init__(self, name: str):
+        self.identity = ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(name)],
+        )
+
+    def exception_type_identity(self):
+        return self.identity
+
+
+def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() -> None:
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+    exits = carrier.discharge(
+        {
+            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            key_coordinate.coordinate_cid: TermValue(1),
+        }
+    )
+
+    routed = exits.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
+            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+        ),
+    )
+
+    assert len(routed.exits) == 1
+    assert isinstance(routed.exits[0], Halted)
+    assert routed.exits[0].effect.occurrence == str(carrier.demand.source_node.wire())
+    assert (
+        routed.exits[0].effect.exception_type_coordinate
+        != _Expected("ValueError").identity
+    )
+
+
+def test_undecided_caller_receiver_stays_loud() -> None:
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+
+    with pytest.raises(SugarNotWritten) as raised:
+        carrier.discharge(
+            {
+                obj_coordinate.coordinate_cid: SymbolicValue(make_var("actual_obj")),
+                key_coordinate.coordinate_cid: TermValue(0),
+            }
+        )
+
+    assert raised.value.owner == "SymbolicValue.subscript"
+    assert "undecided receiver runtime type" in raised.value.observed
+
+
+def test_undecided_caller_key_stays_loud() -> None:
+    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+
+    with pytest.raises(SugarNotWritten) as raised:
+        carrier.discharge(
+            {
+                obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+                key_coordinate.coordinate_cid: SymbolicValue(make_var("actual_key")),
+            }
+        )
+
+    assert raised.value.owner == "ListValue.subscript"
+    assert "undecided" in raised.value.observed

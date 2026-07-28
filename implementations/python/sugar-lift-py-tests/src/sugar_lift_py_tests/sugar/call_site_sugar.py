@@ -120,6 +120,7 @@ class CallSiteSugar(Sugar):
             return self._collect_bridged(positional)
         source_body = None
         source_frame_cid = None
+        native_operation_actuals = None
         if self.source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
             from sugar_source_tree.panic import SugarNotWritten
@@ -135,9 +136,17 @@ class CallSiteSugar(Sugar):
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
-                positional = self.source_call_frame.bind_actuals(
-                    positional, kw_values, ctx
-                )
+                if self.source_call_frame.pending_native_operation is None:
+                    positional = self.source_call_frame.bind_actuals(
+                        positional, kw_values, ctx
+                    )
+                else:
+                    native_operation_actuals = (
+                        self.source_call_frame.bind_native_operation_actuals(
+                            positional, kw_values, ctx
+                        )
+                    )
+                    positional = native_operation_actuals.actuals
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
@@ -214,24 +223,13 @@ class CallSiteSugar(Sugar):
                 else ()
             ),
         )
+        if native_operation_actuals is not None:
+            pending = self.source_call_frame.pending_native_operation.discharge(
+                native_operation_actuals.by_formal_coordinate
+            )
+            return callsite.project_producer_outcome(pending)
         if self.formal_function_sugar is not None:
-            if len(self.formal_coordinate_cids) != len(positional):
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed="formal projection arity mismatch",
-                    requested="one authenticated caller actual per formal coordinate",
-                    fix="bind the exact source signature or keep the call loud",
-                )
             pending = self.formal_function_sugar.desugar(ctx)
-            from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-
-            if isinstance(pending, NativeOperationExitCarrierV1):
-                pending = pending.discharge(
-                    dict(zip(self.formal_coordinate_cids, positional, strict=True))
-                )
             return callsite.project_producer_outcome(pending)
         return callsite.producer_outcome(ctx)
 

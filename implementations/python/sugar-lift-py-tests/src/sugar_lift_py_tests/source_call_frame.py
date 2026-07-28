@@ -10,6 +10,14 @@ from .context_manager_resolution import SourceFragmentCoordinateV1
 
 
 @dataclass(frozen=True)
+class BoundNativeOperationActualsV1:
+    """The one Python binder's ordered result, indexed by formal coordinate."""
+
+    actuals: tuple
+    by_formal_coordinate: dict[str, object]
+
+
+@dataclass(frozen=True)
 class SourceVisibleCallFrameV1:
     """A body constructed by FunctionDef through the ordinary tree door."""
 
@@ -25,6 +33,8 @@ class SourceVisibleCallFrameV1:
     default_fragment_cids: tuple[str | None, ...]
     body: object = field(compare=False)
     owner: object = field(compare=False, repr=False)
+    native_operation_formal_coordinates: tuple = field(default=(), compare=False)
+    pending_native_operation: object | None = field(default=None, compare=False)
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
@@ -69,9 +79,7 @@ class SourceVisibleCallFrameV1:
                     )
                 for entry_key, entry_value in value.entries:
                     if type(entry_key) is not StringValue:
-                        raise SourceCallBindingGap(
-                            "non-string keyword expansion key"
-                        )
+                        raise SourceCallBindingGap("non-string keyword expansion key")
                     if entry_key.value in named:
                         raise SourceCallBindingGap(
                             "duplicate keyword actual from expansion"
@@ -126,6 +134,31 @@ class SourceVisibleCallFrameV1:
         if remaining or named:
             raise SourceCallBindingGap("unconsumed call actual")
         return tuple(bound)
+
+    def bind_native_operation_actuals(
+        self, positional: tuple, keywords: tuple, ctx=None
+    ) -> BoundNativeOperationActualsV1:
+        """Bind once, then key that exact result by formal coordinates."""
+        bound = self.bind_actuals(positional, keywords, ctx)
+        return BoundNativeOperationActualsV1(
+            actuals=bound,
+            by_formal_coordinate={
+                coordinate.coordinate_cid: actual
+                for coordinate, actual in zip(
+                    self.native_operation_formal_coordinates,
+                    bound,
+                    strict=True,
+                )
+            },
+        )
+
+    def with_native_operation_projection(self, formal_coordinates, pending):
+        """Seat one already-constructed formal operation on this call frame."""
+        return replace(
+            self,
+            native_operation_formal_coordinates=tuple(formal_coordinates),
+            pending_native_operation=pending,
+        )
 
     def bind_node_actuals(
         self,

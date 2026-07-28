@@ -274,6 +274,8 @@ _NATIVE_OPERATION_PROJECTORS = {
     "attribute_named": lambda receiver, name, site: receiver.attribute_named(
         name, site
     ),
+    # Formal subscript load (#6611): receiver[index] — binary, not the store.
+    "subscript": lambda receiver, index, site: receiver.subscript(index, site),
     "add": lambda left, right, site: left.add(right, site),
     "subtract": lambda left, right, site: left.subtract(right, site),
     "multiply": lambda left, right, site: left.multiply(right, site),
@@ -336,6 +338,39 @@ class NativeOperationExitCarrierV1:
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
 
+    def __post_init__(self):
+        operand_count = len(self.operands)
+        coordinate_count = len(self.coordinates)
+        demand_count = len(self.demand.operand_coordinate_cids)
+        if len({operand_count, coordinate_count, demand_count}) != 1:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(operand_count, coordinate_count, demand_count),
+                requested="one authenticated coordinate slot per ordered operand",
+                fix="rebuild the carrier with aligned operands and coordinates",
+                gap_kind=GapKind.FLOOR,
+            )
+        stored_cids = tuple(
+            None if coordinate is None else coordinate.coordinate_cid
+            for coordinate in self.coordinates
+        )
+        if stored_cids != self.demand.operand_coordinate_cids:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(stored_cids, self.demand.operand_coordinate_cids),
+                requested="stored coordinates authenticating to the demand CID tuple",
+                fix="preserve ordered coordinate identity when constructing the carrier",
+                gap_kind=GapKind.FLOOR,
+            )
+
     @classmethod
     def mint(cls, *, site, operator, operands, coordinates):
         operands = tuple(operands)
@@ -357,44 +392,20 @@ class NativeOperationExitCarrierV1:
         return replace(self, continuations=(*self.continuations, step))
 
     def discharge(self, actuals_by_formal_coordinate):
-        """Evaluate against authenticated actual operands and project exits."""
+        """Evaluate against authenticated actual operands and project exits.
+
+        Coordinate-length and coordinate-identity invariants are owned by
+        :meth:`__post_init__` (#6613).  Missing authenticated evidence, an
+        operator absent from the projector table, and projector arity mismatch
+        remain undischarged — never a construction panic.
+        """
         from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.gap.info import GapKind
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
         def undischarged(reason):
             return NativeOperationResolutionV1.undischarged(reason).project(
                 source_node=self.demand.source_node
-            )
-
-        # Internal invariant: mint and later mutation must keep the three
-        # parallel sequences aligned.  A length disagreement is our bug, not
-        # missing caller evidence — it stays a construction panic.
-        if not (
-            len(self.operands)
-            == len(self.coordinates)
-            == len(self.demand.operand_coordinate_cids)
-        ):
-            construction_panic_gap(
-                owner="NativeOperationExitCarrierV1.discharge",
-                blame=self.demand.source_node,
-                observed=(
-                    "native operation carrier operands/coordinates/"
-                    "operand_coordinate_cids lengths disagree "
-                    f"({len(self.operands)}, {len(self.coordinates)}, "
-                    f"{len(self.demand.operand_coordinate_cids)})"
-                ),
-                requested=(
-                    "aligned operands, coordinates, and formal coordinate cids"
-                ),
-                fix=(
-                    "fix the carrier mint or mutation that broke the length "
-                    "invariant; missing authenticated evidence is undischarged, "
-                    "not a panic"
-                ),
-                gap_kind=GapKind.FLOOR,
             )
 
         actual_operands = []

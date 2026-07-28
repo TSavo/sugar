@@ -8182,10 +8182,17 @@ class Call(Expression):
             function_definition = self.unit.source_function_definition_for_call(self)
             if function_definition is not None:
                 formal_function_sugar = function_definition.sugar()
+                formal_coordinates = function_definition.formal_coordinates()
                 formal_coordinate_cids = tuple(
-                    coordinate.coordinate_cid
-                    for coordinate in function_definition.formal_coordinates()
+                    coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
+                pending = formal_function_sugar.desugar(None)
+                from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+                if isinstance(pending, NativeOperationExitCarrierV1):
+                    source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
+                        formal_coordinates, pending
+                    )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None

@@ -234,26 +234,39 @@ def test_unavailable_native_operation_is_undischarged_not_a_construction_panic()
 
 
 def test_unsupported_native_arity_is_undischarged_not_a_construction_panic():
+    # Three aligned operand/coordinate slots is a valid carrier shape (n-ary
+    # stores use it).  Operator "add" has no ternary projector, so discharge
+    # stays undischarged — not a construction panic.
     carrier, left, right = _carrier()
+    third = left
+    three = NativeOperationExitCarrierV1.mint(
+        site=_site(),
+        operator="add",
+        operands=carrier.operands + (carrier.operands[0],),
+        coordinates=(left, right, third),
+    )
+    with pytest.raises(SugarNotWritten, match="arity is unavailable"):
+        three.discharge(
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        )
+
+    # Length mismatch is independently loud at construction (#6613).
     demand = replace(
         carrier.demand,
-        operand_terms=carrier.demand.operand_terms + (carrier.demand.operand_terms[0],),
         operand_coordinate_cids=carrier.demand.operand_coordinate_cids
         + (left.coordinate_cid,),
     )
-    malformed = replace(
-        carrier,
-        demand=demand,
-        operands=carrier.operands + (carrier.operands[0],),
-        coordinates=carrier.coordinates + (left,),
-    )
-    with pytest.raises(SugarNotWritten, match="arity is unavailable"):
-        malformed.discharge(
-            {
-                left.coordinate_cid: TermValue(1),
-                right.coordinate_cid: TermValue(2),
-            }
+    with pytest.raises(ConstructionPanic, match="one authenticated coordinate slot"):
+        replace(
+            carrier,
+            demand=demand,
         )
+
+
+def test_same_length_swapped_coordinate_identities_panic_at_construction():
+    carrier, left, right = _carrier()
+    with pytest.raises(ConstructionPanic, match="ordered coordinate identity"):
+        replace(carrier, coordinates=(right, left))
 
 
 def test_swapped_operands_retain_distinct_demand_coordinates():
@@ -640,15 +653,12 @@ def test_lying_operator_absent_from_projector_table_is_undischarged_not_panic():
 
 
 def test_mismatched_operand_coordinate_lengths_still_construction_panic():
-    """Internal length disagreement remains a loud panic, not undischarged."""
-    carrier, left, right = _carrier()
-    # Break only the carrier.coordinates axis; demand cids stay binary.
-    malformed = replace(carrier, coordinates=(left,))
+    """Internal length disagreement remains a loud panic, not undischarged.
 
-    with pytest.raises(ConstructionPanic, match="lengths disagree"):
-        malformed.discharge(
-            {
-                left.coordinate_cid: TermValue(1),
-                right.coordinate_cid: TermValue(2),
-            }
-        )
+    #6613 owns this invariant at ``__post_init__``: replace constructs a new
+    carrier and panics before discharge can run.  Missing authenticated
+    evidence is a different axis and stays undischarged.
+    """
+    carrier, left, _right = _carrier()
+    with pytest.raises(ConstructionPanic, match="one authenticated coordinate slot"):
+        replace(carrier, coordinates=(left,))
