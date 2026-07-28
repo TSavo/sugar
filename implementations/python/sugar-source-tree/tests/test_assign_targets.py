@@ -175,14 +175,43 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     # assertion is correspondingly stronger.
     from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
 
-    function = _fn("def A(p):\n    a, b = p\n    return a\n")
+    from sugar_lift_py_tests.ir import num
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, true_guard
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    function = _fn(
+        "def A(p, receiver):\n"
+        "    a, b = p\n"
+        "    receiver.after = 1\n"
+        "    later = 2\n"
+        "    return later\n"
+    )
     sugar = function.sugar()
 
     out = sugar.desugar()
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
-    assert "exactly 2 members" in out.effect.reason
-    assert "(a, b)" in out.effect.reason
+    assert isinstance(out, ExitSet)
+    assert len(out.exits) == 1
+    (halted,) = out.exits
+    assert isinstance(halted, Halted)
+    assert not any(isinstance(exit_, Completed) for exit_ in out.exits)
+    assert halted.guard == true_guard()
+    assert halted.state == _ReducedBlock((), True, ())
+
+    effect = halted.effect
+    assert isinstance(effect, SequenceUnpackRuntimeEffect)
+    assert "exactly 2 members" in effect.reason
+    assert "(a, b)" in effect.reason
+    assert effect.witness.operation == effect.runtime_operand.term
+    assert effect.witness.operation.name == "python:unpack.destructure"
+    assert effect.witness.operation.args[1] == num(2)
+    assert effect.witness.site.line == 2
+    assert effect.witness.site.col == 4
+
+    # The exact pre-effect state is still empty: neither unpack target bound,
+    # and the later attribute store / name binding never executed.
+    assert halted.state.entries == ()
+    assert halted.state.fall_through == ()
+    assert halted.state.transforms == ()
 
 
 def test_display_rhs_arity_mismatch_is_still_a_refusal_not_an_effect():
