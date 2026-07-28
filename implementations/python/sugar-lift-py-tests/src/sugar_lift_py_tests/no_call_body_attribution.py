@@ -177,23 +177,28 @@ class AttributionReport:
         return "\n".join(lines)
 
 
-def _exceptional_exit_present(outcome: object) -> bool:
+def _exceptional_exit_effects(outcome: object) -> tuple[object, ...]:
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     if isinstance(outcome, Incomplete):
-        return isinstance(outcome.effect, RaiseEffect)
+        return (outcome.effect,) if isinstance(outcome.effect, RaiseEffect) else ()
     if isinstance(outcome, Complete):
         value = outcome.value
-        return isinstance(value, RaiseValue) and isinstance(value.effect, RaiseEffect)
-    if isinstance(outcome, ExitSet):
-        return any(
-            isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
-            for face in outcome.exits
+        return (
+            (value.effect,)
+            if isinstance(value, RaiseValue) and isinstance(value.effect, RaiseEffect)
+            else ()
         )
-    return False
+    if isinstance(outcome, ExitSet):
+        return tuple(
+            face.effect
+            for face in outcome.exits
+            if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+        )
+    return ()
 
 
 def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
@@ -217,12 +222,23 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             panic.info.owner,
         )
 
-    if _exceptional_exit_present(outcome):
+    exceptional_effects = _exceptional_exit_effects(outcome)
+    if exceptional_effects:
+        owners = {
+            effect.producer_node_owner
+            for effect in exceptional_effects
+            if effect.producer_node_owner is not None
+        }
+        detail = (
+            next(iter(owners))
+            if len(owners) == 1
+            else getattr(probe.family, "value", str(probe.family))
+        )
         return BodyAttribution(
             probe.body_id,
             probe.family,
             AttributionOutcome.AUTHENTICATED_EXIT,
-            type(outcome).__name__,
+            detail,
         )
     raise AttributionInvariantError(
         f"{probe.body_id} "
