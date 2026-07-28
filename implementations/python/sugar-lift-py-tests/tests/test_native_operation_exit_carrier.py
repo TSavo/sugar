@@ -224,12 +224,24 @@ def test_same_demand_under_complementary_guards_keeps_distinct_carriers():
     right_carrier = carrier.guarded(negative)
     assert left_carrier.demand.demand_cid == right_carrier.demand.demand_cid
     assert left_carrier != right_carrier
-    assert left_carrier.discharge(
-        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
-    ).exits[0].guard is not None
-    assert right_carrier.discharge(
-        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
-    ).exits[0].guard is not None
+    actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    discharged_left = left_carrier.discharge(actuals)
+    discharged_right = right_carrier.discharge(actuals)
+    assert discharged_left.exits[0].guard == positive
+    assert discharged_right.exits[0].guard == negative
+    assert actuals == {
+        left.coordinate_cid: TermValue(1),
+        right.coordinate_cid: TermValue(2),
+    }
+
+
+def test_complementary_guard_tooth_rejects_same_guard_mutation():
+    carrier, left, right = _carrier()
+    positive = atomic("test.guard", [])
+    negative = atomic("test.not_guard", [])
+    lying = carrier.guarded(positive)
+    actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+    assert lying.discharge(actuals).exits[0].guard != negative
 
 
 def test_multiple_guards_are_explicitly_conjoined():
