@@ -21,6 +21,7 @@ MANIFEST_CID = (
 )
 HELPER_PATH = "tests/arithmetic/common.py"
 CALLER_PATH = "tests/arithmetic/test_timedelta64.py"
+KEYWORD_CALLER_PATH = "tests/arithmetic/test_datetime64.py"
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,37 @@ def _actuals():
     return tm.box_expected(tdser, pd.array), "a"
 
 
+def _keyword_call(*, caller_source: str | None = None) -> ast.Call:
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.file_count, corpus.manifest_cid) == (
+        "3.0.3",
+        1421,
+        MANIFEST_CID,
+    )
+    source = (
+        (corpus.root / KEYWORD_CALLER_PATH).read_text(encoding="utf-8")
+        if caller_source is None
+        else caller_source
+    )
+    caller = _function(ast.parse(source), "test_dt64arr_addsub_time_objects_raises")
+    calls = tuple(
+        node
+        for node in ast.walk(caller)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "assert_invalid_addsub_type"
+        and any(keyword.arg == "msg" for keyword in node.keywords)
+    )
+    assert len(calls) == 1
+    call = calls[0]
+    assert call.lineno == 1221
+    assert tuple(ast.unparse(arg) for arg in call.args) == ("obj1", "obj2")
+    assert tuple((item.arg, ast.unparse(item.value)) for item in call.keywords) == (
+        ("msg", "msg"),
+    )
+    return call
+
+
 def test_helper_alone_has_only_formals_so_exception_identity_is_undischarged() -> None:
     """The helper occurrence authenticates an operation, never caller actuals."""
     pair = _pair()
@@ -134,6 +166,29 @@ def test_helper_alone_has_only_formals_so_exception_identity_is_undischarged() -
         isinstance(operand, ast.Name)
         for operand in (pair.operation.left, pair.operation.right)
     )
+
+
+def test_real_omitted_and_keyword_helper_call_coordinates_are_pinned() -> None:
+    default_pair = _pair()
+    keyword_call = _keyword_call()
+
+    assert default_pair.call.lineno == 1172
+    assert not default_pair.call.keywords
+    assert keyword_call.lineno == 1221
+    assert keyword_call.keywords[0].arg == "msg"
+
+
+def test_lying_keyword_caller_coordinate_is_rejected() -> None:
+    corpus = authenticated_pandas_corpus()
+    caller = (corpus.root / KEYWORD_CALLER_PATH).read_text(encoding="utf-8")
+    lying = caller.replace(
+        "assert_invalid_addsub_type(obj1, obj2, msg=msg)",
+        "assert_invalid_addsub_type(obj1, obj2, expected=msg)",
+        1,
+    )
+
+    with pytest.raises(AssertionError):
+        _keyword_call(caller_source=lying)
 
 
 def test_runtime_truth_names_the_candidate_exception_without_licensing_floor() -> None:
