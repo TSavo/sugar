@@ -127,6 +127,24 @@ class DictValue(FloorValue):
 
         return getattr_coordinate(self, name, owner="DictValue.attribute")
 
+    def setattr(self, name, value, site):
+        """Dicts have no instance ``__dict__``; store is AttributeError."""
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="DictValue.setattr"
+        )
+
+    def delattr(self, name, site):
+        """Dicts have no instance ``__dict__``; delete is AttributeError."""
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="DictValue.delattr"
+        )
+
     def to_term(self, *, owner: str):
         # Project as python:dict of entry pairs (layout-preserving coordinate).
         from sugar_lift_py_tests.ir import ctor
