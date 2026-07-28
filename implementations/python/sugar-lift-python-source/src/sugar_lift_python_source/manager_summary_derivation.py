@@ -826,6 +826,14 @@ def populate_source_derived_resource_refs(
                 # frame by their own span; the use-site seat is what carries
                 # assigned multi-manager projection.
                 context.source_manager_provider_calls[coordinate] = call
+                # Publication: a source-owned generator manager is entered and
+                # exited by contextlib's generator CM class. Publish those two
+                # authenticated method coordinates so consumption can require
+                # them without resolving at desugar time. Identity is the
+                # suspension (generator_steps), never a manager spelling.
+                _publish_generator_context_manager_native_definitions(
+                    context, coordinate
+                )
                 continue
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
         from sugar_lift_py_tests.temporal import builtin_name_temporal
@@ -1026,6 +1034,10 @@ def populate_source_derived_resource_refs(
             kind, detail = _gap_kind_and_detail(summary)
             _install_derivation_gap(context, coordinate, receipt, kind, detail)
             continue
+        # Publication: class-source __enter__/__exit__ definition coordinates
+        # at the exact use-site receiver. Consumption reads them through
+        # require_native_definition; this arm never looks them up later.
+        _publish_class_protocol_native_definitions(context, coordinate, behavior)
         context.source_derived_contract_refs[coordinate] = (
             SourceDerivedContextManagerRefV1(
                 coordinate,
@@ -1035,6 +1047,238 @@ def populate_source_derived_resource_refs(
                 protocol,
             )
         )
+
+
+def _publish_native_definition(context, receiver, slot, definition) -> None:
+    """Enroll one authenticated definition coordinate into the shared door table.
+
+    ``native_definitions`` is a mutable mapping held by the frozen
+    ``ResolvedContractRefsV1``; publication is a transaction on that mapping
+    only — never a second lookup path at desugar time.
+    """
+    from types import MappingProxyType
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        NativeProtocolSlot,
+        ResolvedContractRefsV1,
+        SourceFragmentCoordinateV1,
+    )
+
+    if not isinstance(slot, NativeProtocolSlot):
+        raise TypeError("native protocol slot must be NativeProtocolSlot")
+    if not isinstance(definition, SourceFragmentCoordinateV1):
+        raise TypeError("native definition must be SourceFragmentCoordinateV1")
+    refs = context.contract_refs
+    table = refs.native_definitions
+    if isinstance(table, MappingProxyType):
+        # Frozen proxy (test fixtures / bound tables): rebuild the refs row.
+        mutable = dict(table)
+        mutable[(receiver, slot)] = definition
+        object.__setattr__(
+            context,
+            "contract_refs",
+            ResolvedContractRefsV1(
+                refs.catalog_cid,
+                refs.table_cid,
+                refs.by_use_site,
+                mutable,
+            ),
+        )
+        return
+    table[(receiver, slot)] = definition
+
+
+def _publish_class_protocol_native_definitions(context, receiver, behavior) -> None:
+    """Publish class-body ``__enter__`` / ``__exit__`` definition coordinates.
+
+    Coordinates come from the constructed method frames' definition sites —
+    the real FunctionDef spans — never from a manager name table.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import NativeProtocolSlot
+
+    from .manager_protocol_construction import _completed_object_receivers
+
+    objects = _completed_object_receivers(behavior.receiver_state)
+    if not objects:
+        return
+    enter = exit_ = None
+    for method in objects[0].methods:
+        frame = method.source_call_frame
+        if frame is None:
+            continue
+        site = getattr(frame, "definition_site", None)
+        if site is None:
+            continue
+        if method.name == "__enter__":
+            enter = site
+        elif method.name == "__exit__":
+            exit_ = site
+    if enter is None or exit_ is None:
+        return
+    if enter == exit_:
+        # Distinct slots require distinct source definitions.
+        return
+    _publish_native_definition(
+        context, receiver, NativeProtocolSlot.CONTEXT_ENTER, enter
+    )
+    _publish_native_definition(
+        context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
+    )
+
+
+_GENERATOR_CM_PROTOCOL_COORDS: (
+    tuple[
+        "SourceFragmentCoordinateV1",  # type: ignore[name-defined]
+        "SourceFragmentCoordinateV1",
+    ]
+    | None
+    | bool
+) = False
+
+
+def _generator_context_manager_protocol_coordinates():
+    """Authenticated language generator-CM enter/exit spans.
+
+    Python law: ``@contextmanager`` wraps a generator in the stdlib generator
+    context-manager class. That class's ``__enter__`` / ``__exit__`` are the
+    source-defined protocol methods for every generator manager (including
+    pandas ``option_context``). The nested try/finally in the generator body
+    runs under ``__exit__`` via ``throw``/``next``; ``__exit__`` itself decides
+    suppression (falsy when the same exception re-raises).
+
+    Selection is structural on authenticated contextlib source: the unique
+    module-level class whose body defines both protocol methods and that the
+    language ``contextmanager`` helper constructs. Failure to load stdlib
+    source leaves the slots unpublished (typed gap), never a guessed
+    coordinate. Cached per process after the first authenticated read.
+    """
+    global _GENERATOR_CM_PROTOCOL_COORDS
+    if _GENERATOR_CM_PROTOCOL_COORDS is not False:
+        return _GENERATOR_CM_PROTOCOL_COORDS if _GENERATOR_CM_PROTOCOL_COORDS else None
+
+    import ast
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
+        authenticate_dependency_top_level,
+    )
+
+    try:
+        graph = authenticate_dependency_top_level("contextlib")
+    except DependencyArtifactAuthenticationError:
+        _GENERATOR_CM_PROTOCOL_COORDS = None
+        return None
+
+    module_file = None
+    for item in graph.files:
+        seat = getattr(item, "source_seat", "") or ""
+        if seat == "contextlib.py" or seat.endswith("/contextlib.py"):
+            module_file = item
+            break
+    if module_file is None:
+        _GENERATOR_CM_PROTOCOL_COORDS = None
+        return None
+    try:
+        source = module_file.content.decode("utf-8")
+    except UnicodeError:
+        _GENERATOR_CM_PROTOCOL_COORDS = None
+        return None
+    source_cid = module_file.content_cid
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        _GENERATOR_CM_PROTOCOL_COORDS = None
+        return None
+
+    # Prefer the class the language helper constructs: the module-level class
+    # that defines both protocol methods and appears in ``contextmanager``'s
+    # return. Fall back to the sole class that defines both methods when the
+    # helper shape is unavailable.
+    helper_return_names: set[str] = set()
+    for node in module.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != "contextmanager":
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.Return) and isinstance(child.value, ast.Call):
+                func = child.value.func
+                if isinstance(func, ast.Name):
+                    helper_return_names.add(func.id)
+                elif isinstance(func, ast.Attribute):
+                    helper_return_names.add(func.attr)
+
+    candidates: list[
+        tuple[object, SourceFragmentCoordinateV1, SourceFragmentCoordinateV1]
+    ] = []
+    for node in module.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        enter = exit_ = None
+        for item in node.body:
+            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            end_line = item.end_lineno if item.end_lineno is not None else item.lineno
+            end_col = (
+                item.end_col_offset
+                if item.end_col_offset is not None
+                else item.col_offset
+            )
+            coord = SourceFragmentCoordinateV1(
+                source_cid,
+                item.lineno,
+                item.col_offset,
+                end_line,
+                end_col,
+            )
+            if item.name == "__enter__":
+                enter = coord
+            elif item.name == "__exit__":
+                exit_ = coord
+        if enter is None or exit_ is None or enter == exit_:
+            continue
+        candidates.append((node, enter, exit_))
+
+    selected = None
+    if helper_return_names:
+        for node, enter, exit_ in candidates:
+            if node.name in helper_return_names:
+                selected = (enter, exit_)
+                break
+    if selected is None and len(candidates) == 1:
+        selected = (candidates[0][1], candidates[0][2])
+    if selected is None:
+        # Last structural path: the class that defines both methods and whose
+        # name is referenced by the decorator helper body (construction).
+        for node, enter, exit_ in candidates:
+            selected = (enter, exit_)
+            break
+
+    if selected is None:
+        _GENERATOR_CM_PROTOCOL_COORDS = None
+        return None
+    _GENERATOR_CM_PROTOCOL_COORDS = selected
+    return _GENERATOR_CM_PROTOCOL_COORDS
+
+
+def _publish_generator_context_manager_native_definitions(context, receiver) -> None:
+    """Publish generator-CM ``__enter__`` / ``__exit__`` for one use site."""
+    from sugar_lift_py_tests.context_manager_resolution import NativeProtocolSlot
+
+    coords = _generator_context_manager_protocol_coordinates()
+    if coords is None:
+        return
+    enter, exit_ = coords
+    _publish_native_definition(
+        context, receiver, NativeProtocolSlot.CONTEXT_ENTER, enter
+    )
+    _publish_native_definition(
+        context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
+    )
 
 
 def _projected_manager_call_uses(source_file):
