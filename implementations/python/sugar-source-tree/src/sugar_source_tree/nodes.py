@@ -472,7 +472,13 @@ class SourceUnit:
             return None
         return table.get(span)
 
-    def bind_typed_module(self, module: "Module") -> None:
+    def bind_typed_module(
+        self,
+        module: "Module",
+        *,
+        constructed_nodes: Tuple[object, ...] | None = None,
+        function_nodes: Tuple[object, ...] | None = None,
+    ) -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
         object.__setattr__(self, "typed_module", module)
         bindings = {}
@@ -484,16 +490,15 @@ class SourceUnit:
             "module_direct_bindings",
             {name: tuple(items) for name, items in bindings.items()},
         )
-        constructed_nodes = tuple(module.walk())
-        object.__setattr__(
-            self,
-            "function_nodes",
-            tuple(
-                node
-                for node in constructed_nodes
-                if isinstance(node, (FunctionDef, AsyncFunctionDef))
-            ),
-        )
+        if constructed_nodes is None or function_nodes is None:
+            raise BackendDefect(
+                blame=module.fragment,
+                owner="SourceUnit.bind_typed_module",
+                observed="module producer roster absent",
+                requested="the node and function rosters from Backend.materialize_module",
+                fix="route SourceFile through the sole backend module producer",
+            )
+        object.__setattr__(self, "function_nodes", function_nodes)
         patterns = {}
         patterns_by_target = {}
         constructed_count = 0

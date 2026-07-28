@@ -51,6 +51,7 @@ from .nodes import (
     resolve_kind,
 )
 from .operators import Operator
+from .panic import BackendDefect, backend_defect
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
 
@@ -199,6 +200,96 @@ class OpsLeaf:
 Slot = Child | MaybeChild | Children | Leaf | OpLeaf | OpsLeaf
 
 
+class _BackendLeafAssertionRowV1:
+    """One physical Call beneath an Assert, minted by module construction."""
+
+    __slots__ = (
+        "source_cid",
+        "constructed_module_identity",
+        "backend_fingerprint",
+        "construction_event_identity",
+        "filename",
+        "function_occurrence",
+        "function_locus",
+        "assert_occurrence",
+        "assert_locus",
+        "call_occurrence",
+        "call_locus",
+        "translated_atom_identity",
+        "translated_atom_value",
+        "translated_term_identity",
+        "translated_term_value",
+    )
+
+    def __init__(self, **_copied_fields: object) -> None:
+        raise BackendDefect(
+            blame=self,
+            owner="Backend.materialize_module",
+            observed="direct leaf assertion relation construction",
+            requested="the sealed relation minted by the sole module construction event",
+            fix="consume ConstructedModule.leaf_assertion_rows",
+        )
+
+
+class _BackendConstructionEventReceiptV1:
+    """Closed receipt for the testimony emitted by one module construction."""
+
+    __slots__ = (
+        "construction_event_identity",
+        "closed_roll_call",
+        "provider_member_rows",
+        "leaf_assertion_rows",
+        "registered_occurrences",
+        "source_cid",
+        "constructed_module_identity",
+        "root_identity",
+        "backend_fingerprint",
+    )
+
+    def __init__(self, **_copied_fields: object) -> None:
+        raise BackendDefect(
+            blame=self,
+            owner="Backend.materialize_module",
+            observed="direct construction event receipt construction",
+            requested="the sealed construction event receipt",
+            fix="consume ConstructedModule.construction_event_receipt",
+        )
+
+
+class _ConstructedModuleV1:
+    """The private, atomic result of the sole backend module construction."""
+
+    __slots__ = (
+        "backend_fingerprint",
+        "source_cid",
+        "constructed_module_identity",
+        "root",
+        "closed_roll_call",
+        "function_nodes",
+        "lexical_call_rows",
+        "provider_member_rows",
+        "leaf_assertion_rows",
+        "construction_event_receipt",
+        "reporting_projection",
+    )
+
+    def __init__(self, **_copied_fields: object) -> None:
+        raise BackendDefect(
+            blame=self,
+            owner="Backend.materialize_module",
+            observed="direct constructed module construction",
+            requested="the sealed constructed module preimage",
+            fix="call Backend.materialize_module through SourceFile",
+        )
+
+
+def _seat_private(instance: object, **fields: object) -> object:
+    """Seat owner-minted fields without exposing a caller construction door."""
+    for name, value in fields.items():
+        object.__setattr__(instance, name, value)
+    return instance
+
+
 class BackendCouldNotParse(Exception):
     """The backend could not parse the source unit: not valid input for it.
 
@@ -289,6 +380,11 @@ class Backend:
 
     name: str = ""
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if "materialize_module" in cls.__dict__:
+            raise TypeError("final Backend.materialize_module")
+
     def fingerprint(self) -> str:
         """The identity of THIS backend at the version that determines its
         output. The node stream a backend produces is a function of its
@@ -302,3 +398,125 @@ class Backend:
 
     def root(self, unit: SourceUnit) -> BackendNode:
         raise NotImplementedError
+
+    def materialize_module(
+        self,
+        unit: SourceUnit,
+        reporter: AuditReporter = NULL_REPORTER,
+    ) -> _ConstructedModuleV1:
+        """Construct and close one module product in one eager traversal."""
+        from .nodes import Assert, AsyncFunctionDef, Call, FunctionDef, Module
+
+        backend_root = self.root(unit)
+        root = materialize(unit, backend_root, reporter)
+        if not isinstance(root, Module):
+            backend_defect(
+                blame=root.fragment,
+                owner="Backend.materialize_module",
+                observed=f"backend root constructed as {type(root).__name__}",
+                requested="a Module at the root",
+                fix="the backend must hand up a module root",
+            )
+            raise AssertionError("unreachable")
+
+        # This is the sole completed traversal.  Every roster below is a
+        # projection of these exact constructed node objects, never a reread.
+        constructed_nodes_list: list[Node] = []
+        parent_positions: list[int | None] = []
+        stack: list[tuple[Node, int | None]] = [(root, None)]
+        while stack:
+            node, parent_position = stack.pop()
+            position = len(constructed_nodes_list)
+            constructed_nodes_list.append(node)
+            parent_positions.append(parent_position)
+            stack.extend(
+                (child, position)
+                for _, _, child in reversed(tuple(node.children()))
+            )
+        constructed_nodes = tuple(constructed_nodes_list)
+        function_nodes = tuple(
+            node
+            for node in constructed_nodes
+            if isinstance(node, (FunctionDef, AsyncFunctionDef))
+        )
+        unit.bind_typed_module(
+            root,
+            constructed_nodes=constructed_nodes,
+            function_nodes=function_nodes,
+        )
+        event_identity = object()
+        module_identity = (unit.source_cid, self.fingerprint())
+        leaf_rows = []
+        for call_position, call in enumerate(constructed_nodes):
+            if not isinstance(call, Call):
+                continue
+            ancestor_position = parent_positions[call_position]
+            owning_assert = None
+            owning_function = None
+            while ancestor_position is not None:
+                ancestor = constructed_nodes[ancestor_position]
+                if owning_assert is None and isinstance(ancestor, Assert):
+                    owning_assert = ancestor
+                if isinstance(ancestor, (FunctionDef, AsyncFunctionDef)):
+                    owning_function = ancestor
+                    break
+                ancestor_position = parent_positions[ancestor_position]
+            if owning_assert is None:
+                continue
+            row = object.__new__(_BackendLeafAssertionRowV1)
+            _seat_private(
+                row,
+                source_cid=unit.source_cid,
+                constructed_module_identity=module_identity,
+                backend_fingerprint=self.fingerprint(),
+                construction_event_identity=event_identity,
+                filename=unit.filename,
+                function_occurrence=owning_function,
+                function_locus=(None if owning_function is None else owning_function.line_col_span()),
+                assert_occurrence=owning_assert,
+                assert_locus=owning_assert.line_col_span(),
+                call_occurrence=call,
+                call_locus=call.line_col_span(),
+                translated_atom_identity=owning_assert,
+                translated_atom_value=owning_assert,
+                translated_term_identity=call,
+                translated_term_value=call,
+            )
+            leaf_rows.append(row)
+        leaf_assertion_rows = tuple(leaf_rows)
+
+        # The existing reporter object is the constructor-bound roll.  Closing
+        # it here is an identity projection; downstream conversion is owned by
+        # the reporting lane.
+        closed_roll_call = reporter
+        registered = tuple(getattr(reporter, "registered", ()))
+        receipt = object.__new__(_BackendConstructionEventReceiptV1)
+        _seat_private(
+            receipt,
+            construction_event_identity=event_identity,
+            closed_roll_call=closed_roll_call,
+            provider_member_rows=(),
+            leaf_assertion_rows=leaf_assertion_rows,
+            registered_occurrences=registered,
+            source_cid=unit.source_cid,
+            constructed_module_identity=module_identity,
+            root_identity=module_identity,
+            backend_fingerprint=self.fingerprint(),
+        )
+        reporter.present_construction(root, receipt)
+        product = object.__new__(_ConstructedModuleV1)
+        _seat_private(
+            product,
+            backend_fingerprint=self.fingerprint(),
+            source_cid=unit.source_cid,
+            constructed_module_identity=module_identity,
+            root=root,
+            closed_roll_call=closed_roll_call,
+            function_nodes=function_nodes,
+            lexical_call_rows=(),
+            provider_member_rows=(),
+            leaf_assertion_rows=leaf_assertion_rows,
+            construction_event_receipt=receipt,
+            reporting_projection=reporter,
+        )
+        return product
