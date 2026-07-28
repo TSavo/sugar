@@ -128,7 +128,13 @@ class SymbolGraph:
         return ".".join((*package, *suffix))
 
     def _resolve_imports_to_fixed_point(self) -> None:
-        exports: dict[str, dict[str, set[Symbol]]] = {name: {} for name in self.modules}
+        exports: dict[str, dict[str, set[Symbol]]] = {
+            name: {
+                binding: set(values)
+                for binding, values in self._exports.get(name, {}).items()
+            }
+            for name in self.modules
+        }
         for qualified, symbol in self.definitions.items():
             if symbol.name != "<module>" and not symbol.lexical:
                 exports[symbol.module].setdefault(symbol.name, set()).add(symbol)
@@ -296,7 +302,11 @@ class SymbolGraph:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 symbol = self._node_symbols[node]
                 self._bind(owner, node, node.name, {symbol}, "definition", env)
-                inherited = self._exports[owner.module] if owner in self._class_symbols else env
+                inherited = (
+                    self._exports[owner.module]
+                    if owner.name == "<module>" or owner in self._class_symbols
+                    else env
+                )
                 child_env = {name: set(values) for name, values in inherited.items()}
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for name in self._declared_locals(node.body):
@@ -311,9 +321,37 @@ class SymbolGraph:
                         and decorator.id == "classmethod"
                         for decorator in node.decorator_list
                     )
+                    positional = (*node.args.posonlyargs, *node.args.args)
+                    default_values: dict[str, set[Symbol]] = {}
+                    positional_defaults = (
+                        zip(
+                            positional[-len(node.args.defaults):],
+                            node.args.defaults,
+                        )
+                        if node.args.defaults
+                        else ()
+                    )
+                    for arg, default in positional_defaults:
+                        self._walk_expr(default, owner, env)
+                        default_values[arg.arg] = self._resolve_expr(default, env)
+                    for arg, default in zip(
+                        node.args.kwonlyargs,
+                        node.args.kw_defaults,
+                    ):
+                        if default is not None:
+                            self._walk_expr(default, owner, env)
+                            default_values[arg.arg] = self._resolve_expr(default, env)
                     for index, arg in enumerate(args):
-                        values = {owner} if classmethod and index == 0 else set()
-                        kind = "classmethod" if values else "parameter"
+                        values = set(default_values.get(arg.arg, ()))
+                        if classmethod and index == 0:
+                            values.add(owner)
+                        kind = (
+                            "classmethod"
+                            if classmethod and index == 0
+                            else "default-parameter"
+                            if values
+                            else "parameter"
+                        )
                         self._bind(symbol, arg, arg.arg, values, kind, child_env)
                 self._walk_body(node.body, symbol, child_env)
                 continue
@@ -438,25 +476,36 @@ class SymbolGraph:
         # factories.  Iterate to a fixed point, publishing only the final
         # graph so intermediate passes cannot inflate denominators.
         previous: dict[Symbol, set[Symbol]] = {}
+        previous_exports: dict[str, dict[str, set[Symbol]]] = {}
         while True:
+            self._return_producers = {
+                symbol: set(values) for symbol, values in previous.items()
+            }
+            self._resolve_imports_to_fixed_point()
             self.calls = []
             self.bindings = []
             self.reads = []
             self.discovery_errors = []
-            self._return_producers = {
-                symbol: set(values) for symbol, values in previous.items()
-            }
+            walked_exports: dict[str, dict[str, set[Symbol]]] = {}
             for module, (_, tree) in self.modules.items():
                 root = self._module_symbols[module]
-                self._walk_body(tree.body, root, self._exports[module])
+                walked_exports[module] = self._walk_body(tree.body, root, {})
             current = {
                 symbol: set(values)
                 for symbol, values in self._return_producers.items()
             }
-            if current == previous:
+            exports_stable = walked_exports == previous_exports
+            self._exports = walked_exports
+            if current == previous and exports_stable:
                 self.calls = list(dict.fromkeys(self.calls))
                 self.bindings = list(dict.fromkeys(self.bindings))
                 self.reads = list(dict.fromkeys(self.reads))
                 self.discovery_errors = list(dict.fromkeys(self.discovery_errors))
                 break
             previous = current
+            previous_exports = {
+                module: {
+                    name: set(values) for name, values in exports.items()
+                }
+                for module, exports in walked_exports.items()
+            }

@@ -197,6 +197,9 @@ def audit_law_of_one(
         original_root = backend_type.root
         original_materialize = tree_module.materialize
         original_init = SourceFile.__init__
+        original_backend_materialize = getattr(
+            backend_type, "materialize_module", None
+        )
         entered_init = False
 
         def observed_init(self, *args, **kwargs):
@@ -208,18 +211,31 @@ def audit_law_of_one(
         def observed_root(self, *args, **kwargs):
             if not entered_init:
                 premature_work.append("backend_root")
-            observed_work["backend_root"] += 1
+            observed_work["legacy_backend_root"] += 1
             return original_root(self, *args, **kwargs)
 
         def observed_materialize(*args, **kwargs):
             if not entered_init:
                 premature_work.append("materialize")
-            observed_work["materialize"] += 1
+            observed_work["legacy_materialize"] += 1
             return original_materialize(*args, **kwargs)
+
+        def observed_backend_materialize(self, *args, **kwargs):
+            if not entered_init:
+                premature_work.append("backend_materialize_module")
+            observed_work["backend_materialize_module"] += 1
+            assert original_backend_materialize is not None
+            return original_backend_materialize(self, *args, **kwargs)
 
         observation_patch.setattr(SourceFile, "__init__", observed_init)
         observation_patch.setattr(backend_type, "root", observed_root)
         observation_patch.setattr(tree_module, "materialize", observed_materialize)
+        if original_backend_materialize is not None:
+            observation_patch.setattr(
+                backend_type,
+                "materialize_module",
+                observed_backend_materialize,
+            )
         observed_reporter = CollectingReporter()
         source_file_entry(
             observation_path, backend_instance, observed_reporter
@@ -227,12 +243,31 @@ def audit_law_of_one(
         construction_snapshot = observed_work.copy()
 
     expected_entry_work = Counter(
-        {"constructor": 1, "backend_root": 1, "materialize": 1}
+        {"constructor": 1, "backend_materialize_module": 1}
     )
-    if construction_snapshot != expected_entry_work or premature_work:
+    legacy_entry_work = {
+        name: count
+        for name, count in construction_snapshot.items()
+        if name.startswith("legacy_")
+    }
+    backend_event_measured = original_backend_materialize is not None
+    if not backend_event_measured:
         contract_reds.append(
-            "R_sourcefile_entry_work_mismatch=1: "
-            f"work={dict(construction_snapshot)} premature={premature_work}"
+            "R_backend_materialize_event_unmeasured=1: canonical owner unavailable"
+        )
+    if premature_work:
+        contract_reds.append(
+            "R_from_path_premature_work=1: " + ", ".join(premature_work)
+        )
+    if legacy_entry_work:
+        contract_reds.append(
+            "R_legacy_sourcefile_work_events="
+            f"{sum(legacy_entry_work.values())}: {legacy_entry_work}"
+        )
+    if backend_event_measured and construction_snapshot != expected_entry_work:
+        contract_reds.append(
+            "R_backend_materialize_event_mismatch=1: "
+            f"work={dict(construction_snapshot)}"
         )
     if "constructed_module" not in SourceFile.__dict__:
         contract_reds.append(
@@ -382,6 +417,8 @@ def audit_law_of_one(
         contract_reds.extend((
             "R_protocol_closure_dormant=1: constructed product unavailable",
             "R_privacy_roster_dormant=1: constructed product unavailable",
+            "R_reference_denominator_unmeasured=1: producer roster unavailable",
+            "R_capability_denominator_unmeasured=1: producer roster unavailable",
             "R_projection_alias_closure_dormant=1: projection unavailable",
             "R_cross_product_refusal_dormant=1: projection unavailable",
         ))
@@ -398,8 +435,12 @@ def audit_law_of_one(
         f"R_sourcefile_work_owner_definition_gap={abs(1 - len(init_symbols))}",
         f"R_from_path_constructor_edge_gap={abs(1 - len(from_path_construction_edges))}",
         f"R_from_path_work_edges={len(forbidden_from_path_edges)}",
-        "R_sourcefile_entry_work_mismatch="
-        f"{int(construction_snapshot != expected_entry_work or bool(premature_work))}",
+        f"R_from_path_premature_work={int(bool(premature_work))}",
+        f"R_legacy_sourcefile_work_events={sum(legacy_entry_work.values())}",
+        "R_backend_materialize_event_unmeasured="
+        f"{int(not backend_event_measured)}",
+        "R_backend_materialize_event_mismatch="
+        f"{int(backend_event_measured and construction_snapshot != expected_entry_work)}",
         f"R_backend_materialize_owner_gap={int(len(backend_door_symbols) != 1)}",
         f"R_legacy_materialize_wrappers={len(legacy_materialize_wrappers)}",
         f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
@@ -409,6 +450,10 @@ def audit_law_of_one(
         "R_protocol_closure_dormant="
         f"{int('constructed_module' not in SourceFile.__dict__)}",
         "R_privacy_roster_dormant="
+        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        "R_reference_denominator_unmeasured="
+        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        "R_capability_denominator_unmeasured="
         f"{int('constructed_module' not in SourceFile.__dict__)}",
         "R_projection_closure_dormant="
         f"{int(project_constructed_module is None)}",
@@ -463,6 +508,10 @@ def audit_law_of_one(
         EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
         for edge in relevant_dynamic
         if edge.caller in projection_semantic_owners
+        or any(
+            set(producers) & set(projection_symbols)
+            for producers in edge.argument_producers
+        )
     )
     overrides = []
     for source_file_type in subclasses(SourceFile):
@@ -535,6 +584,9 @@ def audit_law_of_one(
             continue
         def counted_sugar(self, *args, __method=method, **kwargs):
             work["sugar"] += 1
+            work[
+                f"sugar-operation:{__method.__module__}.{__method.__qualname__}"
+            ] += 1
             return __method(self, *args, **kwargs)
         monkeypatch.setattr(cls, "sugar", counted_sugar)
 
@@ -612,7 +664,7 @@ def audit_law_of_one(
     truthful_constructor_events = work["constructor"]
     truthful_protocol = tuple(sorted(work.items()))
     work.clear()
-    foreign, _ = construct(
+    foreign, foreign_reporter = construct(
         "VALUE = 2\n"
         "def outer():\n"
         "    def child():\n"
@@ -638,8 +690,34 @@ def audit_law_of_one(
     assert dict(foreign_protocol)["enumeration"] == 1
     assert dict(truthful_protocol)["seal"] == 1
     assert dict(foreign_protocol)["seal"] == 1
-    assert any(name.startswith("reporter:") for name, _ in truthful_protocol)
-    assert any(name.startswith("reporter:") for name, _ in foreign_protocol)
+    truthful_reporter_counts = Counter(name for name, _ in reporter.events)
+    foreign_reporter_counts = Counter(name for name, _ in foreign_reporter.events)
+    assert truthful_reporter_counts == Counter({
+        name.removeprefix("reporter:"): count
+        for name, count in truthful_protocol
+        if name.startswith("reporter:")
+    })
+    assert foreign_reporter_counts == Counter({
+        name.removeprefix("reporter:"): count
+        for name, count in foreign_protocol
+        if name.startswith("reporter:")
+    })
+    assert sum(
+        count for name, count in truthful_protocol
+        if name.startswith("enumeration-operation:")
+    ) == dict(truthful_protocol)["enumeration"]
+    assert sum(
+        count for name, count in foreign_protocol
+        if name.startswith("enumeration-operation:")
+    ) == dict(foreign_protocol)["enumeration"]
+    assert sum(
+        count for name, count in truthful_protocol
+        if name.startswith("sugar-operation:")
+    ) == dict(truthful_protocol)["sugar"]
+    assert sum(
+        count for name, count in foreign_protocol
+        if name.startswith("sugar-operation:")
+    ) == dict(foreign_protocol)["sugar"]
 
     assert is_dataclass(product), "constructed product must expose closed fields"
 
@@ -730,7 +808,7 @@ def audit_law_of_one(
     function_owners = {
         binding.owner
         for binding in graph.bindings
-        if binding.kind in {"parameter", "classmethod"}
+        if binding.kind in {"parameter", "default-parameter", "classmethod"}
     }
     opaque_bindings = tuple(
         binding
@@ -803,20 +881,58 @@ def audit_law_of_one(
         if len(edge.argument_producers) != 1
         or not (set(edge.argument_producers[0]) & product_symbols)
     )
-    for operation in (copy.copy, copy.deepcopy, pickle.dumps):
+    def pickle_round_trip(value: object) -> object:
+        return pickle.loads(pickle.dumps(value))
+
+    for operation in (copy.copy, copy.deepcopy, pickle_round_trip):
         try:
-            operation(product)
+            copied = operation(product)
         except Exception:
             continue
+        assert type(copied) is product_type
         serializers.append(
             EvidenceSite(Path(__file__).resolve(), inspect.currentframe().f_lineno, (), operation.__qualname__)
         )
-    discovered_opaque_reference_count = (
-        len(opaque_symbols) + len(opaque_edges) + len(opaque_bindings)
+    opaque_reads = tuple(
+        read for read in graph.reads if set(read.producers) & opaque_symbols
     )
-    audited_opaque_reference_count = (
-        len(definitions) + len(constructions) + len(opaque_bindings)
+
+    def ordered_sites(sites: set[EvidenceSite]) -> tuple[EvidenceSite, ...]:
+        return tuple(sorted(
+            sites,
+            key=lambda site: (
+                str(site.path), site.line, site.lexical_owner, site.symbol
+            ),
+        ))
+
+    producer_relation_roster = ordered_sites({
+        EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
+        for symbol in producer_roster
+    })
+    observed_relation_roster = ordered_sites({
+        EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
+        for symbol in producer_roster
+        if any(
+            symbol.path.resolve() == location[0]
+            and symbol.line == location[1]
+            for location in type_locations.values()
+        )
+    })
+    unobserved_relation_roster = tuple(
+        site for site in producer_relation_roster
+        if site not in set(observed_relation_roster)
     )
+
+    discovered_reference_sites = ordered_sites({
+        *(EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
+          for symbol in opaque_symbols),
+        *(EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
+          for edge in opaque_edges),
+        *(EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.name)
+          for binding in opaque_bindings),
+        *(EvidenceSite(read.path, read.line, read.owner.lexical, read.name)
+          for read in opaque_reads),
+    })
     audited_closed_types = tuple(
         runtime_type
         for runtime_type in discovered_closed_types
@@ -845,6 +961,69 @@ def audit_law_of_one(
         f"{runtime_type.__module__}.{runtime_type.__qualname__}"
         for runtime_type in unaudited_closed_types
     )
+    audited_opaque_symbols = {
+        symbol
+        for symbol in opaque_symbols
+        if any(
+            symbol.path.resolve() == type_locations[runtime_type][0]
+            and symbol.line == type_locations[runtime_type][1]
+            for runtime_type in audited_closed_types
+        )
+    }
+    audited_reference_sites = ordered_sites({
+        *(EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
+          for symbol in audited_opaque_symbols),
+        *(EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
+          for edge in opaque_edges
+          if set(edge.targets) & audited_opaque_symbols),
+        *(EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.name)
+          for binding in opaque_bindings
+          if set(binding.targets) & audited_opaque_symbols),
+        *(EvidenceSite(read.path, read.line, read.owner.lexical, read.name)
+          for read in opaque_reads
+          if set(read.producers) & audited_opaque_symbols),
+    })
+    unaudited_reference_sites = tuple(
+        site for site in discovered_reference_sites
+        if site not in set(audited_reference_sites)
+    )
+    discovered_capabilities = ordered_sites({
+        *(EvidenceSite(edge.path, edge.line, edge.caller.lexical, "construct")
+          for edge in opaque_edges),
+        *(EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.kind)
+          for binding in opaque_bindings),
+        *(EvidenceSite(read.path, read.line, read.owner.lexical, "read")
+          for read in opaque_reads),
+    })
+    audited_capabilities = ordered_sites({
+        *(EvidenceSite(edge.path, edge.line, edge.caller.lexical, "construct")
+          for edge in opaque_edges
+          if set(edge.targets) & audited_opaque_symbols),
+        *(EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.kind)
+          for binding in opaque_bindings
+          if set(binding.targets) & audited_opaque_symbols),
+        *(EvidenceSite(read.path, read.line, read.owner.lexical, "read")
+          for read in opaque_reads
+          if set(read.producers) & audited_opaque_symbols),
+    })
+    unaudited_capabilities = tuple(
+        site for site in discovered_capabilities
+        if site not in set(audited_capabilities)
+    )
+    errors.extend(
+        f"unaudited closed reference: {site.path}:{site.line}:{site.symbol}"
+        for site in unaudited_reference_sites
+    )
+    errors.extend(
+        f"unaudited closed capability: {site.path}:{site.line}:{site.symbol}"
+        for site in unaudited_capabilities
+    )
+    errors.extend(
+        f"unobserved producer-owned relation: {site.path}:{site.line}:{site.symbol}"
+        for site in unobserved_relation_roster
+    )
+    discovered_opaque_reference_count = len(discovered_reference_sites)
+    audited_opaque_reference_count = len(audited_reference_sites)
 
     work.clear()
     before_events = tuple(reporter.events)
@@ -902,6 +1081,12 @@ def audit_law_of_one(
             tuple(wrappers), tuple(caches), tuple(second_product_doors),
             tuple(public), tuple(serializers),
             discovered_opaque_reference_count, audited_opaque_reference_count,
+            discovered_reference_sites, audited_reference_sites,
+            unaudited_reference_sites,
+            discovered_capabilities, audited_capabilities,
+            unaudited_capabilities,
+            producer_relation_roster, observed_relation_roster,
+            unobserved_relation_roster,
             discovered_closed_types, audited_closed_types,
             unaudited_closed_types,
             product_relation_types, receipt_relation_types,

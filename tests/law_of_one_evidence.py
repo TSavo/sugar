@@ -60,6 +60,15 @@ class PrivacyLeakEvidence:
     serialization_doors: tuple[EvidenceSite, ...]
     discovered_references: int
     audited_references: int
+    discovered_reference_sites: tuple[EvidenceSite, ...]
+    audited_reference_sites: tuple[EvidenceSite, ...]
+    unaudited_reference_sites: tuple[EvidenceSite, ...]
+    discovered_capabilities: tuple[EvidenceSite, ...]
+    audited_capabilities: tuple[EvidenceSite, ...]
+    unaudited_capabilities: tuple[EvidenceSite, ...]
+    producer_relation_roster: tuple[EvidenceSite, ...]
+    observed_relation_roster: tuple[EvidenceSite, ...]
+    unobserved_relation_roster: tuple[EvidenceSite, ...]
     discovered_closed_types: tuple[type, ...]
     audited_closed_types: tuple[type, ...]
     unaudited_closed_types: tuple[type, ...]
@@ -166,6 +175,12 @@ class LawOfOneEvidence:
         assert privacy.public_constructors == ()
         assert privacy.serialization_doors == ()
         assert privacy.discovered_references == privacy.audited_references > 0
+        assert privacy.discovered_reference_sites == privacy.audited_reference_sites
+        assert privacy.unaudited_reference_sites == ()
+        assert privacy.discovered_capabilities == privacy.audited_capabilities
+        assert privacy.unaudited_capabilities == ()
+        assert privacy.producer_relation_roster == privacy.observed_relation_roster
+        assert privacy.unobserved_relation_roster == ()
         assert {
             privacy.product_type,
             privacy.relation_type,
