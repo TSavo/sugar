@@ -241,3 +241,124 @@ def test_multi_name_nonlocal_route_enrolls_all_declared() -> None:
     assert scoped.nonlocal_names == frozenset({"a", "b"})
     # Undeclared peer not enrolled.
     assert "c" not in scoped.nonlocal_names
+
+
+# ---------------------------------------------------------------------------
+# Strengthened twins / production construction (tests-first, no floor_value)
+# ---------------------------------------------------------------------------
+
+
+def test_nonlocal_route_is_support_contribution() -> None:
+    """NonlocalRoute contributes nothing to the block record (scope only)."""
+    assert NonlocalRoute(("shared",)).contribution() == ()
+
+
+def test_reject_fires_only_for_enrolled_name_twin() -> None:
+    """Same ctx: enrolled ``shared`` panics on store; undeclared ``local`` does not."""
+    ctx = _root("twin-reject")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("shared", TermValue(1)))
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("local", TermValue(2)))
+    ctx = NonlocalRoute(("shared",)).extend_scope(ctx)
+    with pytest.raises(ConstructionPanic, match="NonlocalRoute|enclosing-frame"):
+        reject_unconstructed_nonlocal_store(ctx, "shared")
+    # Peer not enrolled — no panic, no invent of nonlocal membership.
+    reject_unconstructed_nonlocal_store(ctx, "local")
+    assert "local" not in ctx.nonlocal_names
+    assert "shared" in ctx.nonlocal_names
+
+
+def test_lying_multi_name_enroll_is_not_wrong_set() -> None:
+    """Enrolling (a, b) must not be interchangeable with {a, c}."""
+    ctx = _root("lie-set")
+    for n in ("a", "b", "c"):
+        ctx = ctx.with_temporal(ctx.temporal.bind_value(n, TermValue(0)))
+    scoped = NonlocalRoute(("a", "b")).extend_scope(ctx)
+    assert scoped.nonlocal_names == frozenset({"a", "b"})
+    assert scoped.nonlocal_names != frozenset({"a", "c"})
+    assert "c" not in scoped.nonlocal_names
+
+
+def test_source_global_then_assign_statement_kinds() -> None:
+    """Source ``global x; x = 1; return x``: Global is InertSugar; Assign separate."""
+    source = "def f():\n    global x\n    x = 1\n    return x\n"
+    function = next(
+        n
+        for n in _tree(source).nodes()
+        if isinstance(n, FunctionDef) and n.name == "f"
+    )
+    sugar = function.sugar()
+    kinds = [type(s).__name__ for s in sugar.statements]
+    assert "InertSugar" in kinds, kinds
+    assert "AssignSugar" in kinds or any("Assign" in k for k in kinds), kinds
+    global_node = next(n for n in _tree(source).nodes() if isinstance(n, Global))
+    assert isinstance(global_node.sugar(), InertSugar)
+    assert global_node.names == ("x",)
+
+
+def test_source_multi_global_names_inert() -> None:
+    """``global a, b`` constructs InertSugar with both names; no global_names invent."""
+    source = "def f():\n    global a, b\n    return 0\n"
+    node = next(n for n in _tree(source).nodes() if isinstance(n, Global))
+    assert node.names == ("a", "b")
+    assert isinstance(node.sugar(), InertSugar)
+    assert _root("multi-g").global_names == frozenset()
+
+
+def test_nonlocal_route_then_read_via_reduce_block() -> None:
+    """Meaning door: NonlocalSugar enroll + later Name read sees captured bind.
+
+    Threads through reduce_block extend_scope (NonlocalRoute), not a spelling
+    table. No floor_value.py change.
+    """
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.floor import ReturnValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+
+    ctx = _root("reduce-nl")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("shared", TermValue(7)))
+    exits = reduce_block_to_exitset(
+        (
+            NonlocalSugar(names=("shared",), site=SITE),
+            ReturnSugar(_name("shared"), site=SITE),
+        ),
+        ctx,
+    )
+    assert isinstance(exits, ExitSet)
+    completed = [e for e in exits.exits if isinstance(e, Completed)]
+    assert len(completed) == 1, exits.exits
+    rets = [
+        e
+        for e in completed[0].value.entries
+        if isinstance(e, ReturnValue)
+    ]
+    assert rets and rets[0].value == TermValue(7), completed[0].value.entries
+    # nonlocal_names enrolled on continuing context when present
+    cont = completed[0].value.context
+    if cont is not None:
+        assert "shared" in cont.nonlocal_names
+
+
+def test_store_after_nonlocal_enroll_still_refuses_without_rebind_producer() -> None:
+    """After reduce enroll, BoundVar store still ConstructionPanic (honest refusal)."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    ctx = _root("store-after")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("shared", TermValue(1)))
+    exits = reduce_block_to_exitset(
+        (NonlocalSugar(names=("shared",), site=SITE),),
+        ctx,
+    )
+    assert isinstance(exits, ExitSet)
+    completed = [e for e in exits.exits if isinstance(e, Completed)]
+    assert len(completed) == 1
+    enrolled = completed[0].value.context
+    assert enrolled is not None
+    assert "shared" in enrolled.nonlocal_names
+    with pytest.raises(ConstructionPanic, match="NonlocalRoute|enclosing-frame"):
+        BoundVar(name="shared", source=_int(9), scope=enrolled).extend_scope(enrolled)
