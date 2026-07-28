@@ -55,22 +55,25 @@ def _line_96_bitand(source: str, path: Path):
     return matches[0]
 
 
-def _assert_named_panic(
-    node,
-    *,
-    owner: str,
-    observed: str,
-    requested_contains: str,
-) -> None:
-    with pytest.raises(ConstructionPanic) as raised:
-        node.sugar().desugar(None)
-    info = raised.value.info
-    assert info.owner == owner
-    assert info.observed == observed
-    assert requested_contains in info.requested
+def _assert_dual_edge_dispatch(node, *, producer: str = "BinOp") -> None:
+    """Undecided native dispatch publishes Halted + Completed faces."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    outcome = node.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
+    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
+    assert len(halted) == 1
+    assert len(completed) == 1
+    effect = halted[0].effect
+    assert isinstance(effect, RaiseEffect)
+    assert effect.producer_node_owner == producer
+    assert effect.exception_name is None
     # Never invent a runtime TypeError / RuntimeEffect for undecided source.
-    assert "TypeError" not in str(info)
-    assert "RuntimeEffect" not in str(info)
+    assert "TypeError" not in str(outcome)
+    assert "RuntimeEffect" not in str(outcome)
 
 
 def _assert_named_refusal(node, *, owner: str, observed: str) -> None:
@@ -125,19 +128,11 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
     assert (series & 0).tolist() == [0, 0, 0, 0]
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
-    _assert_named_refusal(
-        _line_96_bitand(truthful, path),
-        owner="SymbolicValue.attribute",
-        observed=(
-            "undecided receiver runtime type or member semantics: SymbolicValue.nan"
-        ),
-    )
-    _assert_named_panic(
-        _line_96_bitand(lying, path),
-        owner="binary_operation_exception_floor",
-        observed="SymbolicValue & TermValue",
-        requested_contains="authenticated exceptional exit",
-    )
+    # Truthful right is the import-bound ``numpy.nan`` export coordinate; lying
+    # replaces it with a ground int.  Both keep undecided left Series dispatch
+    # as dual-edge partitions (never sole TypeError).
+    _assert_dual_edge_dispatch(_line_96_bitand(truthful, path))
+    _assert_dual_edge_dispatch(_line_96_bitand(lying, path))
 
 
 @pytest.mark.parametrize(
@@ -157,15 +152,16 @@ def test_pandas_series_nan_bitand_stays_source_undecided_in_the_producer() -> No
         (117, "BitAnd", 's_1111 & "a"', "SymbolicValue & StringValue", "a"),
     ),
 )
-def test_pandas_series_bitand_mixed_rights_stay_named_refusals(
+def test_pandas_series_bitand_mixed_rights_publish_both_dispatch_faces(
     line: int, kind: str, snippet: str, observed: str, runtime_right
 ) -> None:
     """Additional vertical slices: one operator law, mixed decided rights.
 
     Each site raises TypeError at CPython on a concrete Series, but the
     producer only sees a SymbolicValue left.  The shared undecided-binary law
-    must refuse every one without inventing TypeError.
+    publishes both dispatch faces without inventing TypeError.
     """
+    del observed
     path = _corpus_file()
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == FILE_SHA256
@@ -177,12 +173,7 @@ def test_pandas_series_bitand_mixed_rights_stay_named_refusals(
     with pytest.raises(TypeError):
         series & runtime_right
 
-    _assert_named_panic(
-        _binop_at(source, path, line=line, kind=kind),
-        owner="binary_operation_exception_floor",
-        observed=observed,
-        requested_contains="authenticated exceptional exit",
-    )
+    _assert_dual_edge_dispatch(_binop_at(source, path, line=line, kind=kind))
 
 
 def test_source_decided_int_float_bitand_emits_type_error() -> None:

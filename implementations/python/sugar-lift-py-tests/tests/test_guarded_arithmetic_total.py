@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, make_var
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -22,20 +23,28 @@ from sugar_source_tree.panic import SugarNotWritten
         ("right_shift", ">>"),
     ),
 )
-def test_guarded_arithmetic_preserves_an_undecided_arm_as_a_named_refusal(
+def test_guarded_arithmetic_preserves_undecided_arms_as_dual_edge_partitions(
     method, operator
 ) -> None:
+    del operator
     guard = atomic("choose", [])
     value = GuardedValue(
         guard,
         SymbolicValue(make_var("left")),
         SymbolicValue(make_var("right")),
     )
-    with pytest.raises(ConstructionPanic) as raised:
-        getattr(value, method)(TermValue(2), "t.py:1")
-
-    assert raised.value.info.owner == "binary_operation_exception_floor"
-    assert raised.value.info.observed == f"SymbolicValue {operator} TermValue"
+    outcome = getattr(value, method)(TermValue(2), "t.py:1")
+    assert isinstance(outcome, ExitSet)
+    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
+    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
+    # Each arm publishes Halted+Completed; normalize may merge same-effect
+    # faces across arms under a disjoined guard.
+    assert halted
+    assert completed
+    assert all(
+        isinstance(face.effect, RaiseEffect) and face.effect.producer_node_owner == "BinOp"
+        for face in halted
+    )
 
 
 def test_guarded_unary_minus_preserves_an_undecided_arm_as_a_named_refusal() -> None:
