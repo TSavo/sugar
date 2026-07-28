@@ -19,6 +19,123 @@ from sugar_lift_py_tests.ir import (
 )
 
 
+class NativeOperationResolutionV1:
+    """The closed caller-discharge result for one native operation.
+
+    The exceptional arm is authenticated only when both the exception type
+    coordinate and operation occurrence coordinate are present.  A halt without
+    those coordinates is not a fourth exit kind: it remains ``undischarged``.
+    """
+
+    __slots__ = (
+        "_kind",
+        "value",
+        "exception_type_coordinate",
+        "raise_occurrence_coordinate",
+        "reason",
+    )
+
+    def __init__(
+        self,
+        *,
+        kind,
+        value=None,
+        exception_type_coordinate=None,
+        raise_occurrence_coordinate=None,
+        reason=None,
+    ):
+        if kind not in {"completed", "exceptional", "undischarged"}:
+            raise ValueError(f"unknown native operation resolution: {kind}")
+        if kind == "completed" and value is None:
+            raise ValueError("completed native operation requires a value")
+        if kind == "exceptional" and (
+            exception_type_coordinate is None or raise_occurrence_coordinate is None
+        ):
+            raise ValueError(
+                "exceptional native operation requires authenticated type and occurrence"
+            )
+        if kind == "undischarged" and not reason:
+            raise ValueError("undischarged native operation requires a reason")
+        if kind != "exceptional" and (
+            exception_type_coordinate is not None
+            or raise_occurrence_coordinate is not None
+        ):
+            raise ValueError(
+                "non-exceptional resolution cannot carry exception testimony"
+            )
+        self._kind = kind
+        self.value = value
+        self.exception_type_coordinate = exception_type_coordinate
+        self.raise_occurrence_coordinate = raise_occurrence_coordinate
+        self.reason = reason
+
+    @classmethod
+    def completed(cls, value):
+        return cls(kind="completed", value=value)
+
+    @classmethod
+    def exceptional(cls, *, exception_type_coordinate, operation_occurrence):
+        return cls(
+            kind="exceptional",
+            exception_type_coordinate=exception_type_coordinate,
+            raise_occurrence_coordinate=operation_occurrence,
+        )
+
+    @classmethod
+    def undischarged(cls, reason: str):
+        return cls(kind="undischarged", reason=reason)
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def is_completed(self) -> bool:
+        return self._kind == "completed"
+
+    @property
+    def has_authenticated_exception_type(self) -> bool:
+        return (
+            self._kind == "exceptional"
+            and self.exception_type_coordinate is not None
+            and self.raise_occurrence_coordinate is not None
+        )
+
+    @property
+    def is_undischarged(self) -> bool:
+        return self._kind == "undischarged"
+
+    @property
+    def is_exceptional(self) -> bool:
+        return self._kind == "exceptional"
+
+    def project(self, *, source_node):
+        """Project the closed resolution into an ExitSet or a typed refusal."""
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.is_completed:
+            return ExitSet.completed(self.value)
+        if self.has_authenticated_exception_type:
+            occurrence = self.raise_occurrence_coordinate
+            assert occurrence is not None
+            return ExitSet.halted(
+                RaiseEffect(
+                    exception_type_coordinate=self.exception_type_coordinate,
+                    occurrence=str(occurrence.wire()),
+                    blame=str(occurrence.wire()),
+                )
+            )
+        raise SugarNotWritten(
+            blame=str(source_node),
+            owner="NativeOperationResolutionV1.project",
+            observed=self.reason or "native operation exception identity unproven",
+            requested="authenticated exception type and operation occurrence coordinates",
+            fix="retain the operation as undischarged until both coordinates are proven",
+        )
+
+
 def _json(value) -> Any:
     return json.loads(encode_jcs(value))
 
@@ -206,9 +323,27 @@ class NativeOperationExitCarrierV1:
 
         projected = operation(right, self.site)
         if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
-            exits = ExitSet.halted(projected.value.effect)
-        elif isinstance(projected, (Complete, Incomplete, ExitSet)):
-            exits = outcome_to_exitset(projected)
+            effect = projected.value.effect
+            if effect.exception_type_coordinate is None or effect.occurrence_id is None:
+                resolution = NativeOperationResolutionV1.undischarged(
+                    "native operation exception identity unproven"
+                )
+            else:
+                resolution = NativeOperationResolutionV1.exceptional(
+                    exception_type_coordinate=effect.exception_type_coordinate,
+                    operation_occurrence=self.demand.source_node,
+                )
+            exits = resolution.project(source_node=self.demand.source_node)
+        elif isinstance(projected, Complete):
+            exits = NativeOperationResolutionV1.completed(projected.value).project(
+                source_node=self.demand.source_node
+            )
+        elif isinstance(projected, Incomplete):
+            exits = NativeOperationResolutionV1.undischarged(projected.reason).project(
+                source_node=self.demand.source_node
+            )
+        elif isinstance(projected, ExitSet):
+            exits = projected
         else:
             # Other Outcome variants must pass through the exit algebra's loud
             # door.  In particular, never reinterpret an unresolved carrier as

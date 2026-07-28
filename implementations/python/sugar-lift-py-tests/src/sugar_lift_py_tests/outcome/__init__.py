@@ -9,6 +9,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     ContractConditionalConstructionV1,
     NativeOperationDemandV1,
     NativeOperationExitCarrierV1,
+    NativeOperationResolutionV1,
     native_operator_demand,
 )
 
@@ -21,6 +22,7 @@ __all__ = [
     "Incomplete",
     "NativeOperationDemandV1",
     "NativeOperationExitCarrierV1",
+    "NativeOperationResolutionV1",
     "Outcome",
     "complete_value",
     "outcome_to_exitset",
