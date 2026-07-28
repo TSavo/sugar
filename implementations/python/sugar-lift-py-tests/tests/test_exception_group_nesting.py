@@ -362,48 +362,87 @@ def test_bare_reraise_at_inner_level_preserves_inner_occurrences_with_outer_resi
 # ---------------------------------------------------------------------------
 
 
-def test_twin_wrong_type_does_not_match_nested_leaf():
-    """except* OSError must not extract nested TypeError (spelling-adjacent twin)."""
+def test_twin_wrong_type_preserves_original_nested_group():
+    """except* OSError must not touch nested TypeError — whole nested group remains.
+
+    Preserves outer→inner topology and the authenticated TypeError raise-site
+    occurrence from the construction twin (line-aligned, same filename).
+    """
+    name = "twin_wrong_type.py"
+    raise_body = (
+        "        raise ExceptionGroup(\n"
+        "            'outer',\n"
+        "            [ExceptionGroup('inner', [TypeError('t')])],\n"
+        "        )\n"
+    )
+    original = _grouped_halt(
+        _desugar("def f():\n    if True:\n" + raise_body, name=name)
+    )
     effect = _grouped_halt(
         _desugar(
             "def f():\n"
             "    try:\n"
-            "        raise ExceptionGroup(\n"
-            "            'outer',\n"
-            "            [ExceptionGroup('inner', [TypeError('t')])],\n"
-            "        )\n"
-            "    except* OSError:\n"
+            + raise_body
+            + "    except* OSError:\n"
             "        raise RuntimeError('must-not-run')\n",
-            name="twin_wrong_type.py",
+            name=name,
         )
     )
     names = [leaf.exception_name for leaf in _leaves(effect)]
     assert names == ["TypeError"], names
     assert "RuntimeError" not in names
+    # Original nested group topology preserved (not flattened to a bare leaf).
+    assert len(effect.children) == 1
+    assert isinstance(effect.children[0], GroupedRaiseEffect)
+    assert len(effect.children[0].children) == 1
+    assert isinstance(effect.children[0].children[0], RaiseEffect)
+    assert effect.children[0].children[0].exception_name == "TypeError"
+    _assert_residual_preserves_original_occurrences(
+        original=original, residual=effect, names=["TypeError"]
+    )
+    # Nested group content identity retained (segment CID); byte-span occurrence
+    # of the group node may differ across line-aligned wrappers — leaf sites
+    # are the load-bearing authenticated originals (asserted above).
+    assert effect.children[0].group_identity == original.children[0].group_identity
 
 
 def test_twin_never_selects_only_first_nested_leaf_of_repeated_type():
     """except* TypeError extracts BOTH nested TypeErrors, not only the first."""
+    name = "twin_not_first_leaf.py"
+    raise_body = (
+        "        raise ExceptionGroup(\n"
+        "            'outer',\n"
+        "            [\n"
+        "                ExceptionGroup(\n"
+        "                    'inner',\n"
+        "                    [TypeError('t1'), ValueError('v'), TypeError('t2')],\n"
+        "                ),\n"
+        "            ],\n"
+        "        )\n"
+    )
+    original = _grouped_halt(
+        _desugar("def f():\n    if True:\n" + raise_body, name=name)
+    )
     effect = _grouped_halt(
         _desugar(
             "def f():\n"
             "    try:\n"
-            "        raise ExceptionGroup(\n"
-            "            'outer',\n"
-            "            [\n"
-            "                ExceptionGroup(\n"
-            "                    'inner',\n"
-            "                    [TypeError('t1'), ValueError('v'), TypeError('t2')],\n"
-            "                ),\n"
-            "            ],\n"
-            "        )\n"
-            "    except* TypeError:\n"
+            + raise_body
+            + "    except* TypeError:\n"
             "        pass\n",
-            name="twin_not_first_leaf.py",
+            name=name,
         )
     )
     names = [leaf.exception_name for leaf in _leaves(effect)]
     assert names == ["ValueError"], names
+    # Residual ValueError is the authenticated original leaf occurrence.
+    _assert_residual_preserves_original_occurrences(
+        original=original, residual=effect, names=["ValueError"]
+    )
+    # Both TypeError original sites are gone from residual.
+    orig_te = set(_leaf_occurrence_map(original)["TypeError"])
+    res_occs = {leaf.occurrence for leaf in _leaves(effect)}
+    assert orig_te.isdisjoint(res_occs), (orig_te, res_occs)
 
 
 def test_twin_full_outer_consume_is_complete_not_nested_residual():
@@ -423,3 +462,56 @@ def test_twin_full_outer_consume_is_complete_not_nested_residual():
         name="twin_full_consume.py",
     )
     assert isinstance(outcome, Complete), outcome
+
+
+def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
+    """Outer except* binding remains visible after nested TryStar fully consumes.
+
+    Pins temporal state through two handler levels: ``y`` assigned before the
+    nested TryStar is still returned from the outer except* after the inner
+    except* completes (and outer TypeError residual is drained).
+    """
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    outcome = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
+        "    except* ValueError:\n"
+        "        y = 1\n"
+        "        try:\n"
+        "            raise ExceptionGroup('inner', [KeyError('k')])\n"
+        "        except* KeyError:\n"
+        "            z = 2\n"
+        "        return y\n"
+        "    except* TypeError:\n"
+        "        pass\n",
+        name="nested_temporal_y.py",
+    )
+    assert isinstance(outcome, Complete), outcome
+    returns = [
+        s for s in outcome.value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, outcome.value.record.statements
+    assert returns[0].value.value == 1
+
+    # Inner-handler binding used inside the nested except* (same arm).
+    outcome_z = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
+        "    except* ValueError:\n"
+        "        try:\n"
+        "            raise ExceptionGroup('inner', [KeyError('k')])\n"
+        "        except* KeyError:\n"
+        "            z = 2\n"
+        "            return z\n"
+        "    except* TypeError:\n"
+        "        pass\n",
+        name="nested_temporal_z.py",
+    )
+    assert isinstance(outcome_z, Complete), outcome_z
+    returns_z = [
+        s for s in outcome_z.value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns_z and returns_z[0].value.value == 2
