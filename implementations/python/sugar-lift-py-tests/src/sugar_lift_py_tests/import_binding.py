@@ -1,8 +1,15 @@
-"""Non-constructing lexical authentication for imported call uses.
+"""Non-constructing lexical authentication for imported uses.
 
 This pass owns only Python def-use.  It never imports a module, opens a target
 module, or constructs Sugar.  Its output is the source-authenticated half of
 the import-to-contract bridge protocol.
+
+Two receipt faces share one reaching-definition walk:
+
+- **Call targets** — ``authenticated_import_use_receipts`` (existing).
+- **Value occurrences** — ``authenticated_import_value_use_receipts`` for
+  source-visible imported ``Name`` and ``Attribute`` loads (caller actuals,
+  helper identity operands).  Call-target rows stay a separate surface.
 """
 
 from __future__ import annotations
@@ -180,17 +187,13 @@ class AuthenticatedImportUseV1:
         """Demand byte identity against one shared #6090 snapshot per module.
 
         Full-module lexical recompute is amortized: many receipts from one
-        consumer module share one ``authenticated_import_uses`` pass.  Byte
-        identity is unchanged — only recompute frequency (see
+        consumer module share one lexical pass.  Byte identity is unchanged —
+        only recompute frequency (see
         docs/audits/pandas-recensus-latency-bisect.md).
+
+        Call-target and value-use demands revalidate against their own
+        row/outcome surfaces so Call receipts stay unchanged.
         """
-        snapshot = _lexical_revalidation_snapshot(
-            self.root,
-            self.path,
-            self.source,
-            self.source_cid,
-            self.module_identities,
-        )
         site = self.use["useSite"]
         key = (
             site["startLine"],
@@ -198,7 +201,25 @@ class AuthenticatedImportUseV1:
             site["endLine"],
             site["endCol"],
         )
-        if snapshot.outcome_at(key) != "authenticated-import-use" or not (
+        if self.demand.get("kind") == "import-value-use-demand":
+            snapshot = _lexical_value_revalidation_snapshot(
+                self.root,
+                self.path,
+                self.source,
+                self.source_cid,
+                self.module_identities,
+            )
+            expected = "authenticated-import-value-use"
+        else:
+            snapshot = _lexical_revalidation_snapshot(
+                self.root,
+                self.path,
+                self.source,
+                self.source_cid,
+                self.module_identities,
+            )
+            expected = "authenticated-import-use"
+        if snapshot.outcome_at(key) != expected or not (
             snapshot.contains_row(self.demand)
         ):
             raise ValueError(
@@ -299,6 +320,9 @@ class _Pass:
         self.module_identities = module_identities
         self.rows: list[dict[str, Any]] = []
         self.outcomes: dict[tuple[int, int, int, int], str] = {}
+        # Value-occurrence rows (Name / Attribute loads), separate from Call.
+        self.value_rows: list[dict[str, Any]] = []
+        self.value_outcomes: dict[tuple[int, int, int, int], str] = {}
         # Per-occurrence import targets for NAME uses, from this same pass.
         self.name_targets: dict[tuple[int, int, int, int], str] = {}
         self.module_state = module_state or {}
@@ -349,14 +373,26 @@ class _Pass:
             # path; the ImportDef is still the only source-visible binding.
             # Recorded here by the same reaching-definition state the call rows
             # use -- never by a second resolver and never by spelling.
-            reaching = state.get(node.id, frozenset({_UNBOUND}))
-            imports = {value for value in reaching if isinstance(value, _ImportDef)}
-            if len(imports) == 1 and not (reaching - imports - {_UNBOUND}):
-                definition = next(iter(imports))
+            binding = self._unique_import_def(node.id, state, allow_unbound=True)
+            if binding is not None:
                 span = node.line_col_span()
                 self.name_targets[
                     (span.start_line, span.start_col, span.end_line, span.end_col)
-                ] = definition.target_symbol
+                ] = binding.target_symbol
+                self._enroll_value_use(node, binding, ())
+            return
+        if node.kind == "Attribute":
+            # Value occurrence of ``head.attr...`` when head is import-bound.
+            # Recurse first so nested Attribute / Name loads enroll too.
+            self.expression(node.value, state, scope)
+            path = self._attribute_export_path(node)
+            if path is not None:
+                local_name, exported_path = path
+                binding = self._unique_import_def(
+                    local_name, state, allow_unbound=False
+                )
+                if binding is not None:
+                    self._enroll_value_use(node, binding, exported_path)
             return
         if node.kind == "Call":
             self.expression(node.func, state, scope)
@@ -395,6 +431,64 @@ class _Pass:
         for _, _, child in node.children():
             if isinstance(child, Expression):
                 self.expression(child, state, scope)
+
+    def _unique_import_def(
+        self, local_name: str, state: State, *, allow_unbound: bool
+    ) -> _ImportDef | None:
+        reaching = state.get(local_name, frozenset({_UNBOUND}))
+        imports = {value for value in reaching if isinstance(value, _ImportDef)}
+        if len(imports) != 1:
+            return None
+        rest = reaching - imports
+        if allow_unbound:
+            rest = rest - {_UNBOUND}
+        if rest:
+            return None
+        return next(iter(imports))
+
+    @staticmethod
+    def _attribute_export_path(
+        node: Node,
+    ) -> tuple[str, tuple[str, ...]] | None:
+        """``(local_name, exported_path)`` for an Attribute chain to a Name."""
+        attrs: list[str] = []
+        link = node
+        while link.kind == "Attribute":
+            attrs.append(link.attr)
+            link = link.value
+        if link.kind != "Name":
+            return None
+        return link.id, tuple(reversed(attrs))
+
+    def _enroll_value_use(
+        self,
+        node: Node,
+        binding: _ImportDef,
+        exported_path: tuple[str, ...],
+    ) -> None:
+        """Final-checked value-occurrence row at the exact Name/Attribute site."""
+        span = node.line_col_span()
+        key = (span.start_line, span.start_col, span.end_line, span.end_col)
+        self.value_outcomes[key] = "authenticated-import-value-use"
+        use_site = _site(self.source_cid, node)
+        use = {
+            "kind": "authenticated-import-use",
+            "schemaVersion": "1",
+            "useSite": use_site,
+            "importBindingCid": binding.cid,
+        }
+        self.value_rows.append(
+            {
+                "schemaVersion": "1",
+                "kind": "import-value-use-demand",
+                "authenticatedImportUse": {**use, "cid": _hash(use)},
+                "importBinding": json.loads(binding.payload_jcs),
+                "targetSymbol": binding.target_symbol
+                + "".join(f".{part}" for part in exported_path),
+                "importBindingCid": binding.cid,
+                "useSite": use_site,
+            }
+        )
 
     def _call(self, node: Node, state: State, scope: Node) -> None:
         if node.func.kind == "Name":
@@ -800,11 +894,29 @@ class _LexicalRevalidationSnapshotV1:
 _REVALIDATION_SNAPSHOTS: dict[
     tuple[str, str, str, str], _LexicalRevalidationSnapshotV1
 ] = {}
+_VALUE_REVALIDATION_SNAPSHOTS: dict[
+    tuple[str, str, str, str], _LexicalRevalidationSnapshotV1
+] = {}
 
 
 def clear_lexical_revalidation_snapshots() -> None:
     """Drop amortized revalidation snapshots (tests / hermetic process reuse)."""
     _REVALIDATION_SNAPSHOTS.clear()
+    _VALUE_REVALIDATION_SNAPSHOTS.clear()
+
+
+def _revalidation_cache_key(
+    root: Path,
+    path: Path,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]],
+) -> tuple[str, str, str, str]:
+    return (
+        str(root.resolve()),
+        str(path.resolve()),
+        source_cid,
+        _hash(module_identities),
+    )
 
 
 def _lexical_revalidation_snapshot(
@@ -814,13 +926,8 @@ def _lexical_revalidation_snapshot(
     source_cid: str,
     module_identities: dict[str, dict[str, Any]],
 ) -> _LexicalRevalidationSnapshotV1:
-    """One full-module #6090 pass per consumer module for revalidation."""
-    cache_key = (
-        str(root.resolve()),
-        str(path.resolve()),
-        source_cid,
-        _hash(module_identities),
-    )
+    """One full-module call-use pass per consumer module for revalidation."""
+    cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
     hit = _REVALIDATION_SNAPSHOTS.get(cache_key)
     if hit is not None:
         return hit
@@ -839,6 +946,33 @@ def _lexical_revalidation_snapshot(
     return snapshot
 
 
+def _lexical_value_revalidation_snapshot(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]],
+) -> _LexicalRevalidationSnapshotV1:
+    """One full-module value-use pass per consumer module for revalidation."""
+    cache_key = _revalidation_cache_key(root, path, source_cid, module_identities)
+    hit = _VALUE_REVALIDATION_SNAPSHOTS.get(cache_key)
+    if hit is not None:
+        return hit
+    rows, outcomes = authenticated_import_value_uses(
+        root,
+        path,
+        source,
+        source_cid,
+        module_identities=module_identities,
+    )
+    snapshot = _LexicalRevalidationSnapshotV1(
+        row_cids=frozenset(_hash(row) for row in rows),
+        outcomes=MappingProxyType(dict(outcomes)),
+    )
+    _VALUE_REVALIDATION_SNAPSHOTS[cache_key] = snapshot
+    return snapshot
+
+
 def _require_source_cid_matches_text(source: str, source_cid: str) -> None:
     """Refuse dual-door identity at the import-use mint boundary.
 
@@ -852,13 +986,14 @@ def _require_source_cid_matches_text(source: str, source_cid: str) -> None:
         raise ValueError("authenticated import-use source CID is stale")
 
 
-def authenticated_import_uses(
+def _run_lexical_import_pass(
     root: Path,
     path: Path,
     source: str,
     source_cid: str,
     module_identities: dict[str, dict[str, Any]] | None = None,
-) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
+) -> _Pass:
+    """One reaching-definition walk: call rows, value rows, and name targets."""
     _require_source_cid_matches_text(source, source_cid)
     module = SourceFile((source, str(path), source_cid)).root
     module_name = module_name_for_path(root, path)
@@ -876,7 +1011,38 @@ def authenticated_import_uses(
         module_state=module_state,
     )
     runner.statements(module.body, {}, module)
+    return runner
+
+
+def authenticated_import_uses(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
+    runner = _run_lexical_import_pass(
+        root, path, source, source_cid, module_identities
+    )
     return runner.rows, runner.outcomes
+
+
+def authenticated_import_value_uses(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[tuple[int, int, int, int], str]]:
+    """Raw value-occurrence rows for imported Name and Attribute loads.
+
+    Same lexical pass as call uses; separate row surface so Call-target
+    receipts stay byte-identical.
+    """
+    runner = _run_lexical_import_pass(
+        root, path, source, source_cid, module_identities
+    )
+    return runner.value_rows, runner.value_outcomes
 
 
 def import_bound_name_targets(
@@ -909,19 +1075,15 @@ def import_bound_name_targets(
     return dict(runner.name_targets)
 
 
-def authenticated_import_use_receipts(
+def _mint_import_use_receipts(
+    rows: list[dict[str, Any]],
+    *,
     root: Path,
     path: Path,
     source: str,
     source_cid: str,
-    module_identities: dict[str, dict[str, Any]] | None = None,
-) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
-    """Return typed, final-checked receipts from the sole lexical pass."""
-    # Refuse mismatched claims here (same boundary as AuthenticatedImportUseV1);
-    # never rewrite source_cid after minting.
-    rows, outcomes = authenticated_import_uses(
-        root, path, source, source_cid, module_identities=module_identities
-    )
+    module_identities: dict[str, dict[str, Any]] | None,
+) -> list[AuthenticatedImportUseV1]:
     receipts: list[AuthenticatedImportUseV1] = []
     for row in rows:
         binding_value = row["importBinding"]
@@ -942,7 +1104,63 @@ def authenticated_import_use_receipts(
                 _authority=_IMPORT_AUTHORITY,
             )
         )
-    return receipts, outcomes
+    return receipts
+
+
+def authenticated_import_use_receipts(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
+    """Return typed, final-checked Call-target receipts from the lexical pass."""
+    # Refuse mismatched claims here (same boundary as AuthenticatedImportUseV1);
+    # never rewrite source_cid after minting.
+    rows, outcomes = authenticated_import_uses(
+        root, path, source, source_cid, module_identities=module_identities
+    )
+    return (
+        _mint_import_use_receipts(
+            rows,
+            root=root,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities=module_identities,
+        ),
+        outcomes,
+    )
+
+
+def authenticated_import_value_use_receipts(
+    root: Path,
+    path: Path,
+    source: str,
+    source_cid: str,
+    module_identities: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[AuthenticatedImportUseV1], dict[tuple[int, int, int, int], str]]:
+    """Final-checked receipts for imported Name and Attribute value occurrences.
+
+    Exact-coordinate rows so preconstruction can resolve caller actuals and
+    helper identity operands to authenticated object CIDs without spelling
+    authority.  Call-target receipts remain on
+    ``authenticated_import_use_receipts`` unchanged.
+    """
+    rows, outcomes = authenticated_import_value_uses(
+        root, path, source, source_cid, module_identities=module_identities
+    )
+    return (
+        _mint_import_use_receipts(
+            rows,
+            root=root,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities=module_identities,
+        ),
+        outcomes,
+    )
 
 
 def authenticated_module_exports(
