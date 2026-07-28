@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
@@ -130,7 +129,7 @@ def _only_halted(outcome) -> Halted:
 
 
 def _formal_occurrence(compare: Compare) -> str:
-    return str(source_coordinate(compare.sugar().site).wire())
+    return str(compare.sugar().site)
 
 
 def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> None:
