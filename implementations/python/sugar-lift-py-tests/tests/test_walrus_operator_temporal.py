@@ -292,18 +292,56 @@ def test_left_hand_comparison_presented_owns_and_carry_binds() -> None:
     assert _name("n").desugar(scoped).value == TermValue(5)
 
 
-def test_right_hand_less_than_from_left_typed_door() -> None:
-    """``0 < (n := 5)`` via FloorValue → less_than_from_left (typed)."""
+def test_no_string_predicate_from_left_door() -> None:
+    """NamedExpressionValue must not admit comparison via operation:str."""
+    assert "predicate_from_left" not in NamedExpressionValue.__dict__, (
+        "delete string admission; use less_than_from_left etc."
+    )
+
+
+def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
+    """Production tooth: ``0 < (n := 5)`` → FloorValue.less_than → less_than_from_left."""
     left = TermValue(0)
     right = NamedExpressionValue("n", TermValue(5))
-    # FloorValue.less_than routes NamedExpressionValue RHS through
-    # predicate_from_left("less_than") → less_than_from_left.
+    # Must hit typed double-dispatch (not string predicate_from_left).
     out = left.less_than(right, SITE)
     assert isinstance(out, Complete)
     assert isinstance(out.value, NamedExpressionValue)
+    assert out.value.name == "n"
     assert out.value.assigned_value == TermValue(5)
+    # Direct typed door matches Floor routing.
+    direct = right.less_than_from_left(left, SITE)
+    assert isinstance(direct, Complete)
+    assert isinstance(direct.value, NamedExpressionValue)
+    assert direct.value.assigned_value == TermValue(5)
     scoped = out.value.extend_scope(_root("rhs"))
     assert _name("n").desugar(scoped).value == TermValue(5)
+
+
+def test_rhs_walrus_via_comparison_op_sugar_lt() -> None:
+    """``0 < (n := 5)`` through ComparisonOpSugar reaches typed RHS path."""
+    cmp = ComparisonOpSugar(
+        "Lt",
+        _int(0),
+        _walrus("n", _int(5)),
+        site=SITE,
+    )
+    out = cmp.desugar(_root("cmp-lt"))
+    assert isinstance(out, Complete)
+    # Completed predicate still carries the walrus face when RHS is NEV.
+    val = out.value
+    if isinstance(val, NamedExpressionValue):
+        assert val.assigned_value == TermValue(5)
+        scoped = val.extend_scope(_root("cmp-lt-bind"))
+        assert _name("n").desugar(scoped).value == TermValue(5)
+    else:
+        # Ground fold may present a bool-ish predicate; bind still carried if NEV.
+        assert type(val).__name__ in (
+            "PredicateValue",
+            "TrueBoolLiteralSugar",
+            "FalseBoolLiteralSugar",
+            "NamedExpressionValue",
+        ), type(val).__name__
 
 
 def test_if_comparison_left_carries_bind_through_if_sugar() -> None:
@@ -315,6 +353,22 @@ def test_if_comparison_left_carries_bind_through_if_sugar() -> None:
     )
     terms = _return_terms(sugar.desugar(_root("if-cmp")))
     assert TermValue(5) in terms, terms
+
+
+def test_lying_operator_token_twin_refuses_same_outcome() -> None:
+    """Lying operator token: ``Gt`` vs truthful ``Lt`` on ``0 ? (n := 5)`` refuse."""
+    truthful = ComparisonOpSugar(
+        "Lt", _int(0), _walrus("n", _int(5)), site=SITE
+    ).desugar(_root("op-true"))
+    lying = ComparisonOpSugar(
+        "Gt", _int(0), _walrus("n", _int(5)), site=SITE
+    ).desugar(_root("op-lie"))
+    assert isinstance(truthful, Complete)
+    assert isinstance(lying, Complete)
+    # Ground 0 < 5 vs 0 > 5 must not be outcome-identical.
+    assert type(truthful.value).__name__ != type(lying.value).__name__ or (
+        truthful.value != lying.value
+    ), (truthful.value, lying.value)
 
 
 def test_lying_comparison_twin_refuses_wrong_return() -> None:

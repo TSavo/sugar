@@ -1041,8 +1041,9 @@ class FloorValue:
 
         if isinstance(other, GuardedValue):
             return other.predicate_from_left("less_than", self, site)
+        # RHS walrus: typed double-dispatch — never predicate_from_left(str).
         if isinstance(other, NamedExpressionValue):
-            return other.predicate_from_left("less_than", self, site)
+            return other.less_than_from_left(self, site)
 
         return Complete(
             PredicateValue(

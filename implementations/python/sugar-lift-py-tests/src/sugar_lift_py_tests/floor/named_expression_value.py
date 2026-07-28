@@ -11,9 +11,8 @@ class NamedExpressionValue(FloorValue):
 
     Comparison is Floor-owned through the **presented** face: this value only
     contributes its temporal bind via ``_carry``. Left-hand ops dispatch to
-    ``presented_value.<op>(other)``; right-hand routing is the typed
-    ``less_than_from_left`` door that ``FloorValue.less_than`` already calls
-    via ``predicate_from_left`` (no string→method table, no peer unwrap).
+    ``presented_value.<op>(other)``; right-hand routing is operator-owned typed
+    double-dispatch (``less_than_from_left``, …). No ``predicate_from_left(str)``.
     """
 
     name: str
@@ -99,28 +98,31 @@ class NamedExpressionValue(FloorValue):
     def greater_equal(self, other, site):
         return self.presented_value.greater_equal(other, site).and_then(self._carry)
 
-    # --- right-hand: typed door for FloorValue.less_than / GuardedValue ---
+    # --- right-hand: operator-owned typed double-dispatch (no string door) ---
 
     def less_than_from_left(self, left, site):
         """``left < (n := e)`` — presented is the RHS; carry the walrus bind."""
         return left.less_than(self.presented_value, site).and_then(self._carry)
 
-    def predicate_from_left(self, operation: str, left, site):
-        """Only ``less_than`` is admitted on this legacy string door.
+    def less_equal_from_left(self, left, site):
+        """``left <= (n := e)`` — typed RHS door; not string-admitted."""
+        return left.less_equal(self.presented_value, site).and_then(self._carry)
 
-        Typed ``less_than_from_left`` is the real surface; this method exists
-        because ``FloorValue.less_than`` and ``GuardedValue`` still pass the
-        method name. No string→method table, no ``getattr``.
-        """
-        if operation == "less_than":
-            return self.less_than_from_left(left, site)
-        return self._floor_gap(
-            owner="NamedExpressionValue",
-            blame=str(site),
-            observed=operation,
-            requested="typed less_than_from_left on the presented floor",
-            fix="call less_than_from_left; never getattr a comparison method",
-        )
+    def greater_than_from_left(self, left, site):
+        """``left > (n := e)`` — typed RHS door; not string-admitted."""
+        return left.greater_than(self.presented_value, site).and_then(self._carry)
+
+    def greater_equal_from_left(self, left, site):
+        """``left >= (n := e)`` — typed RHS door; not string-admitted."""
+        return left.greater_equal(self.presented_value, site).and_then(self._carry)
+
+    def equals_from_left(self, left, site):
+        """``left == (n := e)`` — typed RHS door; not string-admitted."""
+        return left.equals(self.presented_value, site).and_then(self._carry)
+
+    def is_identical_from_left(self, left, site):
+        """``left is (n := e)`` — typed RHS door; not string-admitted."""
+        return left.is_identical(self.presented_value, site).and_then(self._carry)
 
     def subscript(self, index, site):
         return self.presented_value.subscript(index, site).and_then(self._carry)
