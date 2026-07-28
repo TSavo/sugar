@@ -187,15 +187,20 @@ class IfSugar(Sugar):
         # and preserve their guarded exits exactly as before.
         from sugar_lift_py_tests.outcome import ExitSet
 
+        # Walrus (and any FloorValue with non-identity extend_scope) binds
+        # before branch selection — Python makes the name visible in BOTH arms.
+        # Default FloorValue.extend_scope is identity.
+        branch_ctx = condition.extend_scope(ctx)
+
         if observed_formula == false_guard():
             then_exits = ExitSet(())
-            else_exits = reduce_block_to_exitset(self.else_body, ctx)
+            else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
         elif observed_formula == true_guard():
-            then_exits = reduce_block_to_exitset(self.then_body, ctx)
+            then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
             else_exits = ExitSet(())
         else:
-            then_exits = reduce_block_to_exitset(self.then_body, ctx)
-            else_exits = reduce_block_to_exitset(self.else_body, ctx)
+            then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
+            else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a

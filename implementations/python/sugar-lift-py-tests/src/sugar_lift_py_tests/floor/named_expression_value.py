@@ -7,7 +7,14 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class NamedExpressionValue(FloorValue):
-    """The inseparable value and temporal-bind faces of ``(name := value)``."""
+    """The inseparable value and temporal-bind faces of ``(name := value)``.
+
+    Comparison is Floor-owned through the **presented** face: this value only
+    contributes its temporal bind via ``_carry``. Left-hand ops dispatch to
+    ``presented_value.<op>(other)``; right-hand routing is the typed
+    ``less_than_from_left`` door that ``FloorValue.less_than`` already calls
+    via ``predicate_from_left`` (no string→method table, no peer unwrap).
+    """
 
     name: str
     assigned_value: FloorValue
@@ -25,6 +32,12 @@ class NamedExpressionValue(FloorValue):
         return carried
 
     def extend_scope(self, ctx):
+        # Root mint is Floor-owned when the reducer has no ambient context yet
+        # (function desugar(None) / SourceFile production tooth).
+        if ctx is None:
+            from sugar_lift_py_tests.context import ReduceContext
+
+            ctx = ReduceContext.root(owner="NamedExpressionValue")
         scoped = replace(
             ctx, temporal=ctx.temporal.bind_value(self.name, self.assigned_value)
         )
@@ -66,34 +79,48 @@ class NamedExpressionValue(FloorValue):
     def negate(self):
         return self.presented_value.negate().and_then(self._carry)
 
+    # --- left-hand: presented floor owns the comparison ---
+
     def is_identical(self, other, site):
-        peer = (
-            other.presented_value if isinstance(other, NamedExpressionValue) else other
-        )
-        return self.presented_value.is_identical(peer, site).and_then(self._carry)
+        return self.presented_value.is_identical(other, site).and_then(self._carry)
 
     def equals(self, other, site):
-        peer = (
-            other.presented_value if isinstance(other, NamedExpressionValue) else other
-        )
-        return self.presented_value.equals(peer, site).and_then(self._carry)
+        return self.presented_value.equals(other, site).and_then(self._carry)
 
     def less_than(self, other, site):
-        peer = (
-            other.presented_value if isinstance(other, NamedExpressionValue) else other
-        )
-        return self.presented_value.less_than(peer, site).and_then(self._carry)
+        return self.presented_value.less_than(other, site).and_then(self._carry)
+
+    def less_equal(self, other, site):
+        return self.presented_value.less_equal(other, site).and_then(self._carry)
+
+    def greater_than(self, other, site):
+        return self.presented_value.greater_than(other, site).and_then(self._carry)
+
+    def greater_equal(self, other, site):
+        return self.presented_value.greater_equal(other, site).and_then(self._carry)
+
+    # --- right-hand: typed door for FloorValue.less_than / GuardedValue ---
+
+    def less_than_from_left(self, left, site):
+        """``left < (n := e)`` — presented is the RHS; carry the walrus bind."""
+        return left.less_than(self.presented_value, site).and_then(self._carry)
 
     def predicate_from_left(self, operation: str, left, site):
-        if operation != "less_than":
-            return self._floor_gap(
-                owner="NamedExpressionValue",
-                blame=str(site),
-                observed=operation,
-                requested="predicate from left operand",
-                fix="write the named-expression predicate projection",
-            )
-        return left.less_than(self.presented_value, site).and_then(self._carry)
+        """Only ``less_than`` is admitted on this legacy string door.
+
+        Typed ``less_than_from_left`` is the real surface; this method exists
+        because ``FloorValue.less_than`` and ``GuardedValue`` still pass the
+        method name. No string→method table, no ``getattr``.
+        """
+        if operation == "less_than":
+            return self.less_than_from_left(left, site)
+        return self._floor_gap(
+            owner="NamedExpressionValue",
+            blame=str(site),
+            observed=operation,
+            requested="typed less_than_from_left on the presented floor",
+            fix="call less_than_from_left; never getattr a comparison method",
+        )
 
     def subscript(self, index, site):
         return self.presented_value.subscript(index, site).and_then(self._carry)
