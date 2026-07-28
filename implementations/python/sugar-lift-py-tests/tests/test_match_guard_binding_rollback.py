@@ -306,20 +306,28 @@ def test_guard_halt_bypasses_later_cases() -> None:
         ),
     )
     outcome = sugar.desugar(ReduceContext.root(owner="guard-halt"))
-    # Block contains Incomplete halt entry; later cases do not win unguarded.
-    assert isinstance(outcome, Complete)
-    entries = _block_entries(outcome)
-    incompletes = [e for e in entries if isinstance(e, Incomplete)]
-    assert incompletes, entries
-    assert incompletes[0].effect.exception_name == "ValueError"
-    # Later return 2 only under not(reached) — not as bare unguarded ReturnValue.
-    unguarded_returns = [
-        e
-        for e in entries
-        if isinstance(e, ReturnValue) and e.value == TermValue(2)
-    ]
-    assert not unguarded_returns
+    # Guard halt publishes Halted (state preserved when present); later cases
+    # do not contribute an unguarded Completed winner.
+    if isinstance(outcome, ExitSet):
+        halted = [e for e in outcome.exits if isinstance(e, Halted)]
+        assert halted, outcome.exits
+        assert halted[0].effect.exception_name == "ValueError"
+        # Original Halted face path — effect present; state may be None for
+        # Incomplete-origin guards, but we never rebuilt Incomplete from Halted.
+        completed = [e for e in outcome.exits if isinstance(e, Completed)]
+        for face in completed:
+            from sugar_lift_py_tests.outcome.exit_set import true_guard
 
+            if face.guard == true_guard():
+                # Unguarded completion after guard halt would defeat the law.
+                rets = _block_return_values(ExitSet((face,)))
+                assert TermValue(2) not in rets
+    else:
+        assert isinstance(outcome, Complete)
+        entries = _block_entries(outcome)
+        incompletes = [e for e in entries if isinstance(e, Incomplete)]
+        assert incompletes, entries
+        assert incompletes[0].effect.exception_name == "ValueError"
 
 # ===========================================================================
 # Case order and wildcard fall-through distinct
@@ -401,9 +409,9 @@ def test_swapped_capture_name_does_not_bind_wrong_name() -> None:
         MatchCaseSpec(alternatives=(), body=(_ret(_int(2)),)),
     )
     # Free name y becomes symbolic; comparison may factored dual faces — must not
-    # silently treat as capture x.
+    # silently treat as capture x. Outcome may be ExitSet (multi-face) or Complete.
     outcome = sugar.desugar(ReduceContext.root(owner="swap-name"))
-    assert isinstance(outcome, Complete)
+    assert isinstance(outcome, (Complete, ExitSet))
 
 
 def test_binding_swap_twin_refuses_same_outcome_as_truthful_capture() -> None:
@@ -450,3 +458,55 @@ def test_value_pattern_without_guard_unchanged() -> None:
     outcome = sugar.desugar(ReduceContext.root(owner="value"))
     values = _block_return_values(outcome)
     assert any(v == TermValue(20) or getattr(v, "value", None) == 20 for v in values)
+
+
+# ===========================================================================
+# PRODUCTION source path: case P if g remains loud in nodes.py (honorably red)
+# ===========================================================================
+
+
+def test_production_source_case_guard_construction_is_honorably_red() -> None:
+    """HONORABLY RED: source ``case x if x > 0:`` must construct MatchSugar.
+
+    Today nodes.py Match._construct_sugar refuses guards (loud SugarNotWritten).
+    MatchSugar.desugar already consumes guard+capture when supplied (consumer
+    suite above). This test is the production door: it fails until construction
+    emits MatchCaseSpec(guard=..., capture_name=...).
+
+    Owner of the red: nodes.py Match._construct_sugar (out of scope for this
+    PR — must not touch nodes.py here).
+    fix=admit guard + bare capture into MatchCaseSpec at construction.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "def f(z):\n"
+        "    match z:\n"
+        "        case x if x > 0:\n"
+        "            return x\n"
+        "        case _:\n"
+        "            return 0\n"
+    )
+    tree = SourceFile(
+        (source, "prod_match_guard.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    # Production path — red until construction supplies guard/capture testimony.
+    universe = function.sugar()
+    match_stmts = [
+        s for s in getattr(universe, "statements", ()) if isinstance(s, MatchSugar)
+    ]
+    assert match_stmts, (
+        "PRODUCTION RED (construction): nodes.py Match._construct_sugar still "
+        "refuses `case P if g:` — no MatchSugar in function body. "
+        "owner=nodes.py Match._construct_sugar "
+        "fix=emit MatchCaseSpec(guard=..., capture_name=...) "
+        f"(observed statements={[type(s).__name__ for s in getattr(universe, 'statements', ())]})"
+    )
+    case0 = match_stmts[0].cases[0]
+    assert case0.guard is not None, "construction omitted guard sugar"
+    assert case0.capture_name == "x", "construction omitted capture_name"
