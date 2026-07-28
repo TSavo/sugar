@@ -322,8 +322,13 @@ def test_two_symbolic_equality_operands_keep_both_dispatch_faces() -> None:
 
 
 def test_ground_decided_equality_still_completes() -> None:
-    """Lying twin: two decided scalars do not gain a dispatch split."""
-    from sugar_lift_py_tests.floor import PredicateValue
+    """Lying twin: two decided scalars do not gain a dispatch split.
+
+    Ground ``1 == 2`` folds to a False literal (not a dual-edge ExitSet and
+    not a residual py.eq invent). Accept the honest completed bool sugar.
+    """
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
     outcome = EqualityOpSugar(
         _ValueSugar(TermValue(1)),
@@ -331,7 +336,8 @@ def test_ground_decided_equality_still_completes() -> None:
         "compare-site",
     ).desugar(None)
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
+    assert not isinstance(outcome, ExitSet)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
 
 
 def test_undecided_symbolic_membership_emits_completed_and_exceptional_edges() -> None:
@@ -523,3 +529,101 @@ def test_pandas_left_right_ordering_faces_retain_both_edges(
         atom={"<": "py.lt", "<=": "py.le", ">": "py.gt", ">=": "py.ge"}[op],
     )
     del observed  # documents the source operand pair beside each coordinate
+
+
+@pytest.mark.parametrize(
+    ("expression", "op_kind", "law_name", "atom"),
+    (
+        ("left < right", "Lt", "ordering", "py.lt"),
+        ("needle in container", "In", "membership", "py.in"),
+        ("left == right", "Eq", "equality", "py.eq"),
+    ),
+)
+def test_undecided_dispatch_partition_keys_are_law_scoped(
+    expression: str, op_kind: str, law_name: str, atom: str
+) -> None:
+    """Ordering / membership / equality dual edges use distinct partition families.
+
+    The dual-edge construction is shared, but the ExitSet partition key names
+    the law so residual measurement cannot collapse three mechanisms into one
+    monomorphic ``comparison-native-dispatch`` coordinate.
+    """
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+        CompareLaw,
+        ComparisonOpSugar,
+        compare_law_for,
+        partition_key_for_law,
+    )
+    from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+
+    assert compare_law_for(op_kind).value == law_name
+    node = _synthetic_compare(expression)
+    left = _ValueSugar(SymbolicValue(make_var("left")))
+    right = _ValueSugar(SymbolicValue(make_var("right")))
+    if op_kind == "Eq":
+        outcome = EqualityOpSugar(left, right, node.fragment).desugar(None)
+    elif op_kind == "In":
+        outcome = ComparisonOpSugar(
+            "In",
+            _ValueSugar(SymbolicValue(make_var("needle"))),
+            _ValueSugar(SymbolicValue(make_var("container"))),
+            node.fragment,
+        ).desugar(None)
+    else:
+        outcome = ComparisonOpSugar(
+            op_kind, left, right, node.fragment
+        ).desugar(None)
+
+    _assert_dual_dispatch(outcome, atom=atom, blame=str(node.fragment))
+    expected_prefix = f"compare.{law_name}.dispatch"
+    # partition() returns face stamps; law is sealed into the key used at mint.
+    # Pin the key factory and that identity never dual-edges.
+    assert partition_key_for_law(CompareLaw(law_name), node.fragment, op_kind)[0] == (
+        expected_prefix
+    )
+    assert CompareLaw.IDENTITY not in (
+        CompareLaw.ORDERING,
+        CompareLaw.MEMBERSHIP,
+        CompareLaw.EQUALITY,
+    )
+
+
+def test_identity_comparison_never_publishes_a_raise_partition() -> None:
+    """Identity law is completion-only: ``is`` cannot invoke user code."""
+    from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
+
+    outcome = ComparisonOpSugar(
+        "Is",
+        _ValueSugar(SymbolicValue(make_var("a"))),
+        _ValueSugar(SymbolicValue(make_var("b"))),
+        "identity-site",
+    ).desugar(None)
+    assert isinstance(outcome, Complete)
+    assert not isinstance(outcome, ExitSet)
+    assert isinstance(outcome.value, PredicateValue)
+
+
+def test_chained_comparison_composes_pair_ordering_laws() -> None:
+    """Chaining law: ``a < b < c`` is And of pair ordering dual edges.
+
+    Construction lives at ``Compare._construct_sugar`` (BoolOpSugar over
+    adjacent ComparisonOpSugar pairs). Residual faces are ordered dual-edge
+    composition under short-circuit And — not a monomorphic chain panic.
+    """
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    node = _synthetic_compare("a < b < c")
+    sugar = node.sugar()
+    assert type(sugar).__name__ == "BoolOpSugar"
+    assert sugar.op_kind == "And"
+    assert len(sugar.values) == 2
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, ExitSet)
+    assert any(isinstance(face, Halted) for face in outcome.exits)
+    assert any(isinstance(face, Completed) for face in outcome.exits)

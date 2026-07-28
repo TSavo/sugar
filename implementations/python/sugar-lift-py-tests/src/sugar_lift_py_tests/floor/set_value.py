@@ -145,10 +145,12 @@ class SetValue(FloorValue):
 
 def _closed_member_equal(left, right):
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -165,6 +167,17 @@ def _closed_member_equal(left, right):
     bool_types = (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
     if type(left) in bool_types and type(right) in bool_types:
         return type(left) is type(right)
+    # Nested sequence membership: ``[1] in [[1], [2]]`` is ground list equality
+    # on each element — not a construction gap and not a dual-edge invent.
+    if type(left) is ListValue and type(right) is ListValue:
+        return _closed_sequence_equal(left.elements, right.elements)
+    if type(left) is TupleValue and type(right) is TupleValue:
+        return _closed_sequence_equal(left.elements, right.elements)
+    if type(left) is ListValue or type(right) is ListValue:
+        # list == non-list is False at Python (except exotic peers handled above).
+        return False
+    if type(left) is TupleValue or type(right) is TupleValue:
+        return False
     supported = (TermValue, StringValue, BytesValue, NoneValue, *bool_types)
     if type(left) in supported and type(right) in supported:
         return False
@@ -180,6 +193,21 @@ def _closed_member_equal(left, right):
     if _denotes_a_value(left, supported) and _denotes_a_value(right, supported):
         return None
     return NotImplemented
+
+
+def _closed_sequence_equal(left_elements, right_elements):
+    """Elementwise closed equality for nested list/tuple membership needles."""
+    if len(left_elements) != len(right_elements):
+        return False
+    decisions = tuple(
+        _closed_member_equal(left, right)
+        for left, right in zip(left_elements, right_elements)
+    )
+    if any(decision is None for decision in decisions):
+        return None
+    if any(decision is NotImplemented for decision in decisions):
+        return NotImplemented
+    return all(decisions)
 
 
 def _denotes_a_value(value, supported: tuple) -> bool:
