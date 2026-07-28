@@ -133,6 +133,16 @@ class ComplexValue(FloorValue):
             return constructed
         return super().multiply(other, site)
 
+    def setattr(self, name, value, site):
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="ComplexValue.setattr")
+
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        return ground_exceptional_exit(exception_name="AttributeError", site=site, owner="ComplexValue.delattr")
+
     def setitem(self, index, value, site):
         """Complex numbers reject subscript store with exact TypeError."""
         del index, value
