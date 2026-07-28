@@ -29,13 +29,19 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    GuardedRaise,
     ListValue,
+    LoopControlValue,
+    RaiseValue,
     ReturnValue,
     TermValue,
     TupleValue,
 )
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     Assign,
@@ -118,6 +124,35 @@ CODEX3_OWNER = (
     "Subscript, and store operands — not stop at BlockValue or leave "
     "CallSiteValue opaque. tests-only; no local CallSiteValue adaptation."
 )
+
+
+@pytest.mark.parametrize(
+    "competing_exit",
+    (
+        RaiseValue(RaiseEffect(exception_name="TypeError")),
+        GuardedRaise(
+            (TermValue(True).to_term(owner="guard"),),
+            RaiseEffect(exception_name="TypeError"),
+        ),
+        Incomplete(RaiseEffect(exception_name="TypeError")),
+        LoopControlValue("break", "helper.py:3"),
+    ),
+)
+def test_source_return_projection_refuses_any_competing_control_exit(
+    competing_exit,
+) -> None:
+    """One return is ineligible when any other authenticated exit survives."""
+    from sugar_lift_py_tests.floor.call_site_value import (
+        _project_authenticated_source_return,
+    )
+
+    body = BlockValue(
+        (ReturnValue(TermValue(3)), competing_exit),
+        fall_through=(),
+        can_fall_through=False,
+    )
+
+    assert _project_authenticated_source_return(body) is body
 
 
 # ---------------------------------------------------------------------------
@@ -432,3 +467,162 @@ def test_dig_of_scalar_return_must_not_stop_at_blockvalue_for_binop() -> None:
     assert dug == TermValue(3) or (
         isinstance(dug, ReturnValue) and dug.value == TermValue(3)
     )
+
+
+def test_keyword_bound_source_return_flows_into_binop() -> None:
+    tree, _, _ = _tree(
+        "def combine(left, right):\n"
+        "    return left + right\n\n"
+        "result = combine(2, right=3) + 1\n",
+        bind=frozenset({"combine"}),
+    )
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    assert _completed_value(outer.sugar().desugar(None)) == TermValue(6)
+
+
+def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
+    tree, _, _ = _tree(
+        "def combine(left, right):\n"
+        "    return left + right\n\n"
+        "result = combine(2, stranger=3) + 1\n",
+        bind=frozenset({"combine"}),
+    )
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    with pytest.raises(SourceCallBindingGap, match="missing required formal|unconsumed"):
+        outer.sugar().desugar(None)
+
+
+@pytest.mark.parametrize(("call", "expected"), (("choose(2)", 7), ("choose(2, 8)", 10)))
+def test_default_and_explicit_source_return_values_stay_distinct_actuals(
+    call: str, expected: int
+) -> None:
+    tree, _, _ = _tree(
+        "def choose(left, right=5):\n"
+        "    return left + right\n\n"
+        f"result = {call} + 0\n",
+        bind=frozenset({"choose"}),
+    )
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    assert _completed_value(outer.sugar().desugar(None)) == TermValue(expected)
+
+
+def test_authenticated_lambda_return_flows_into_binop() -> None:
+    tree, _, _ = _tree(
+        "def consume():\n"
+        "    return (lambda value: value + 1)(2) + 3\n\n"
+        "consume()\n",
+        bind=frozenset({"consume"}),
+    )
+    call = _calls_named(tree, "consume")[0]
+    value = call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="authenticated-lambda-return"
+    )
+
+    assert value == TermValue(6)
+
+
+def test_unauthenticated_lambda_callee_stays_loud() -> None:
+    tree, _, _ = _tree("result = (lambda value: value + 1)(2) + 3\n")
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    with pytest.raises(SugarNotWritten, match=r"SUGAR NOT WRITTEN \[Lambda\.sugar\]"):
+        outer.sugar().desugar(None)
+
+
+def test_nested_function_source_return_projects_into_outer_caller() -> None:
+    tree, _, _ = _tree(
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3) + 2\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+    value = call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="nested-function-return"
+    )
+
+    assert value == TermValue(6)
+
+
+def test_nested_function_closure_capture_stays_loud_without_binding_testimony() -> None:
+    tree, _, _ = _tree(
+        "def outer():\n"
+        "    offset = 2\n"
+        "    def inner(value):\n"
+        "        return value + offset\n"
+        "    return inner(3)\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+
+    with pytest.raises((SugarNotWritten, ConstructionPanic)):
+        call.sugar().desugar(None).value._dig_floor_or_none(
+            None, owner="nested-closure-refusal"
+        )
+
+
+def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
+    tree, context, functions = _tree(
+        "def inner(value):\n"
+        "    return value + 10\n\n"
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return value + 1\n"
+        "    return inner(3)\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+    nested = [node for node in tree.nodes() if isinstance(node, FunctionDef) and node.name == "inner"]
+    assert len(nested) == 2
+    # Deliberately seat the outer same-name frame at the nested call: the
+    # authenticated coordinate must reject this cross-wired testimony.
+    nested_call = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call) and getattr(node.func, "id", None) == "inner"
+    )
+    context.source_call_frames[_coordinate(nested_call)] = nested[0].source_visible_call_frame()
+
+    with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
+        call.sugar().desugar(None).value._dig_floor_or_none(
+            None, owner="nested-shadow-cross-wire"
+        )
+
+
+def test_lambda_inside_nested_function_composes_with_source_return_projection() -> None:
+    tree, _, _ = _tree(
+        "def outer():\n"
+        "    def inner(value):\n"
+        "        return (lambda item: item + 1)(value)\n"
+        "    return inner(3) + 2\n\n"
+        "outer()\n",
+        bind=frozenset({"outer", "inner"}),
+    )
+    call = _calls_named(tree, "outer")[0]
+
+    assert call.sugar().desugar(None).value._dig_floor_or_none(
+        None, owner="nested-lambda-return"
+    ) == TermValue(6)

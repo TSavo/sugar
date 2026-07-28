@@ -153,7 +153,16 @@ class CallSiteSugar(ConstructedTermSugar):
         if remaining:
             head, *rest = remaining
             return head.desugar(ctx).and_then(
-                lambda value: self._collect(tuple(rest), accumulated + (value,), ctx)
+                lambda value: self._collect(
+                    tuple(rest),
+                    accumulated
+                    + (
+                        value.project_operation_receiver(
+                            ctx, owner="CallSiteSugar positional actual"
+                        ),
+                    ),
+                    ctx,
+                )
             )
         return self._collect_kwargs(self.keywords, (), accumulated, ctx)
 
@@ -164,7 +173,18 @@ class CallSiteSugar(ConstructedTermSugar):
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
                 lambda value: self._collect_kwargs(
-                    tuple(rest), kw_values + ((name, value),), positional, ctx
+                    tuple(rest),
+                    kw_values
+                    + (
+                        (
+                            name,
+                            value.project_operation_receiver(
+                                ctx, owner="CallSiteSugar keyword actual"
+                            ),
+                        ),
+                    ),
+                    positional,
+                    ctx,
                 )
             )
         if ctx is not None:
@@ -217,9 +237,10 @@ class CallSiteSugar(ConstructedTermSugar):
 
             try:
                 if self.source_call_frame.pending_native_operation is None:
-                    positional = self.source_call_frame.bind_actuals(
+                    bound_source_actuals = self.source_call_frame.bind_actuals(
                         positional, kw_values, ctx
                     )
+                    positional = bound_source_actuals.actuals
                 else:
                     native_operation_actuals = (
                         self.source_call_frame.bind_native_operation_actuals(
@@ -316,6 +337,11 @@ class CallSiteSugar(ConstructedTermSugar):
                 tuple(item.cid for item in self.source_call_frame.formal_coordinates)
                 if self.source_call_frame is not None
                 else ()
+            ),
+            bound_native_actuals_by_coordinate=(
+                None
+                if native_operation_actuals is None
+                else native_operation_actuals.by_formal_coordinate
             ),
         )
         if native_operation_actuals is not None:

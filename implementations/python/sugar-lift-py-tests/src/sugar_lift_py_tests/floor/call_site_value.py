@@ -126,10 +126,27 @@ class CallSiteValue(FloorValue):
     )
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+    bound_native_actuals_by_coordinate: dict[str, FloorValue] | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
         return True
+
+    def project_operation_receiver(self, ctx: object, *, owner: str):
+        """Project an authenticated sole return before operation dispatch.
+
+        The call remains a CallSiteValue everywhere else. A bodyless or
+        multi-exit call stays itself, preserving the loud operation law; only
+        this producer can expose the Floor authenticated by its source body.
+        """
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+
+        projected = self._dig_floor_or_none(ctx, owner=owner)
+        if projected is None or isinstance(projected, BlockValue):
+            return self
+        return projected
 
     def runtime_type_is_decided(self) -> bool:
         """Undecided: no citation fixes an unexecuted call's result type.
@@ -1122,6 +1139,7 @@ class CallSiteValue(FloorValue):
                 incomplete_outcome.append(outcome)
             return None
         value = complete_value(outcome, owner=owner)
+        value = _project_authenticated_source_return(value)
         if isinstance(value, CallSiteValue):
             return value._dig_floor_or_none(
                 reduce_ctx,
@@ -1280,6 +1298,12 @@ class CallSiteValue(FloorValue):
 
         if isinstance(outcome, Complete):
             return Complete(self)
+        from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+        if isinstance(outcome, NativeOperationExitCarrierV1):
+            actuals = self.bound_native_actuals_by_coordinate
+            if actuals is None:
+                return outcome
+            outcome = outcome.discharge(actuals)
         exits = outcome_to_exitset(outcome)
         return ExitSet(
             tuple(
@@ -1439,6 +1463,80 @@ def _force_floor_gap(
         gap_locus=GapLocus.PROJECTION,
     )
     construction_panic(info)
+
+
+def _project_authenticated_source_return(value: FloorValue) -> FloorValue:
+    """Project the sole returned Floor from an authenticated source body.
+
+    A source-call dig has already authenticated and reduced its enrolled body
+    before reaching this function.  Only the body's exact, non-fall-through
+    single-return shape owns a scalar projection.  Multi-path bodies remain a
+    ``BlockValue`` so their guards and alternatives cannot be fabricated away.
+    """
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
+    from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+    from sugar_lift_py_tests.floor.guarded_loop_control import GuardedLoopControl
+    from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.loop_control_value import LoopControlValue
+    from sugar_lift_py_tests.floor.raise_value import RaiseValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+
+    returns = (
+        tuple(
+            statement
+            for statement in value.statements
+            if isinstance(statement, (ReturnValue, GuardedReturn))
+        )
+        if isinstance(value, BlockValue)
+        else ()
+    )
+    control_exits = (
+        tuple(
+            statement
+            for statement in value.statements
+            if isinstance(
+                statement,
+                (
+                    ExceptionalExitValue,
+                    GuardedFaces,
+                    GuardedLoopControl,
+                    GuardedRaise,
+                    Incomplete,
+                    LoopControlValue,
+                    RaiseValue,
+                ),
+            )
+        )
+        if isinstance(value, BlockValue)
+        else ()
+    )
+    if (
+        isinstance(value, BlockValue)
+        and (
+            not value.fall_through
+            or all(guard == false_guard() for guard in value.fall_through)
+        )
+        and len(returns) == 1
+        and not control_exits
+        and isinstance(returns[0], ReturnValue)
+        and isinstance(returns[0].value, FloorValue)
+    ):
+        return returns[0].value
+    if (
+        isinstance(value, BlockValue)
+        and len(returns) == 1
+        and not control_exits
+        and isinstance(returns[0], GuardedReturn)
+        and returns[0].guards
+        and all(guard == true_guard() for guard in returns[0].guards)
+        and isinstance(returns[0].value, FloorValue)
+    ):
+        return returns[0].value
+    return value
 
 
 def _ctx_with_curried_args(

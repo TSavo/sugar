@@ -100,15 +100,27 @@ def _return_value(outcome) -> TermValue:
         assert value is not None
         entries = tuple(
             entry
-            for entry in value.statements
+            for entry in getattr(value, "statements", ())
             if isinstance(entry, (ReturnValue, GuardedReturn))
         )
-        assert len(entries) == 1
-        value = entries[0]
-    if isinstance(value, GuardedReturn):
-        value = value.value
-    if isinstance(value, ReturnValue):
-        value = value.value
+        if entries:
+            assert len(entries) == 1
+            value = entries[0]
+    while True:
+        if isinstance(value, GuardedReturn):
+            value = value.value
+            continue
+        if isinstance(value, ReturnValue):
+            value = value.value
+            continue
+        if isinstance(value, CallSiteValue):
+            projected = value._dig_floor_or_none(
+                None, owner="source-return-compare-control nested return"
+            )
+            assert projected is not None
+            value = projected
+            continue
+        break
     assert isinstance(value, TermValue)
     return value
 

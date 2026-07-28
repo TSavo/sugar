@@ -305,7 +305,14 @@ class ComparisonOpSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         left = self.left.desugar(ctx)
         right = lambda l: self.right.desugar(ctx).and_then(  # noqa: E731
-            lambda r: self._apply(l, r)
+            lambda r: self._apply(
+                l.project_operation_receiver(
+                    ctx, owner="ComparisonOpSugar left operation receiver"
+                ),
+                r.project_operation_receiver(
+                    ctx, owner="ComparisonOpSugar right operation receiver"
+                ),
+            )
         )
         return left.and_then(right)
 

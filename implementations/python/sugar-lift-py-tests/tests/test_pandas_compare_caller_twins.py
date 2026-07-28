@@ -11,7 +11,8 @@ import pytest
 from pandas import date_range
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.floor import CallSiteValue, FloorValue
+from sugar_lift_py_tests.floor import CallSiteValue
+from sugar_lift_py_tests.ir import ctor
 
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
@@ -153,21 +154,12 @@ def test_real_caller_runtime_actuals_raise_but_do_not_supply_floor_testimony() -
     assert assert_invalid_comparison(left, right, box) is None
 
 
-def test_existing_floor_cannot_authenticate_this_pandas_ordering_exception() -> None:
-    """Finding (b): this pair needs return-type testimony the Floor lacks.
+def test_bodyless_call_remains_opaque_without_borrowing_ordering_testimony() -> None:
+    """A bodyless call is the negative twin, not a label for the real caller."""
+    opaque = CallSiteValue("opaque", (), (), ctor("call:opaque", []), None)
 
-    The caller's left actual is the result of ``tm.box_expected``.  Until that
-    call result authenticates a pandas datetime-array Floor value, substitution
-    yields ``CallSiteValue``.  Its inherited generic ordering law can state a
-    ``py.lt`` atom but cannot mint an exception identity.  Consequently this
-    operation must remain undischarged; neither the helper's ``pytest.raises``
-    expectation nor pandas-specific spelling may fill the missing coordinate.
-    """
-    pair = _pair()
-
-    assert ast.unparse(pair.operation) == "left < right"
     assert "less_than" not in CallSiteValue.__dict__
-    assert CallSiteValue.less_than is FloorValue.less_than
+    assert opaque._dig_floor_or_none(None, owner="opaque compare twin") is None
 
 
 def test_lying_caller_coordinate_is_rejected_before_it_can_be_evidence() -> None:

@@ -103,7 +103,14 @@ class MethodCallSugar(ConstructedTermSugar):
         # The RECEIVER is the prefix of the whole argument fold, so its arm
         # count is the base of the exponent every argument raises (#6324).
         return factored_operand(self.receiver.desugar(ctx)).and_then(
-            lambda receiver: self._collect(receiver, self.args, (), ctx)
+            lambda receiver: self._collect(
+                receiver.project_operation_receiver(
+                    ctx, owner="MethodCallSugar receiver"
+                ),
+                self.args,
+                (),
+                ctx,
+            )
         )
 
     def _collect(self, receiver, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
@@ -117,7 +124,15 @@ class MethodCallSugar(ConstructedTermSugar):
             # arguments distribute into m ** k arms.
             return factored_operand(head.desugar(ctx)).and_then(
                 lambda value: self._collect(
-                    receiver, tuple(rest), accumulated + (value,), ctx
+                    receiver,
+                    tuple(rest),
+                    accumulated
+                    + (
+                        value.project_operation_receiver(
+                            ctx, owner="MethodCallSugar positional actual"
+                        ),
+                    ),
+                    ctx,
                 )
             )
         return self._collect_kwargs(receiver, self.keywords, (), accumulated, ctx)
@@ -132,21 +147,22 @@ class MethodCallSugar(ConstructedTermSugar):
             # Same law as the positional fold (#6324).
             return factored_operand(sugar.desugar(ctx)).and_then(
                 lambda value: self._collect_kwargs(
-                    receiver, tuple(rest), kw_values + ((name, value),), positional, ctx
+                    receiver,
+                    tuple(rest),
+                    kw_values
+                    + (
+                        (
+                            name,
+                            value.project_operation_receiver(
+                                ctx, owner="MethodCallSugar keyword actual"
+                            ),
+                        ),
+                    ),
+                    positional,
+                    ctx,
                 )
             )
-        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
-
-        if (
-            isinstance(receiver, CallSiteValue)
-            and receiver.body is not None
-            and receiver.source_call_frame_cid is not None
-        ):
-            receiver = receiver.force_floor(
-                ctx,
-                owner="authenticated method receiver",
-                project_callsite=False,
-            )
+        from sugar_lift_py_tests.floor import ObjectValue
 
         if isinstance(receiver, ObjectValue):
             return receiver.call_method_value(

@@ -363,9 +363,7 @@ def test_self_binding_does_not_leak_into_returned_testimony() -> None:
     assert site.arg_values[0].class_name == "Factory"
 
     dug = _returned_floor_from_make()
-    returns = _collect_return_values(dug)
-    assert returns, f"no ReturnValue under dig: {type(dug).__name__} {dug!r:.200}"
-    returned = returns[0].value
+    returned = dug
     assert returned == TermValue(41), returned
     # Self is not the returned testimony.
     assert not isinstance(returned, ObjectValue)
@@ -375,10 +373,8 @@ def test_self_binding_does_not_leak_into_returned_testimony() -> None:
 def test_discrimination_returned_term_is_not_the_receiver_object() -> None:
     site = _attr_callsite(FACTORY_MAKE_41 + "\nFactory().make()\n", "make")
     dug = site._dig_floor_or_none(None, owner="method-return-as-actual")
-    returns = _collect_return_values(dug)
-    assert returns
-    assert returns[0].value == TermValue(41)
-    assert returns[0].value != site.arg_values[0]
+    assert dug == TermValue(41)
+    assert dug != site.arg_values[0]
 
 
 # ---------------------------------------------------------------------------
@@ -414,8 +410,7 @@ def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
     else:
         assert isinstance(outcome, Complete)
         dug = outcome.value._dig_floor_or_none(None, owner="method-return-as-actual")
-        returns = _collect_return_values(dug)
-        assert returns and returns[0].value == TermValue(41)
+        assert dug == TermValue(41)
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +442,8 @@ def test_chained_method_return_stays_honestly_typed() -> None:
     # Green path: dig / complete to TermValue(7).
     if isinstance(outcome, Complete) and isinstance(outcome.value, CallSiteValue):
         dug = outcome.value._dig_floor_or_none(None, owner="method-return-as-actual")
+        if dug == TermValue(7):
+            return
         returns = _collect_return_values(dug) if dug is not None else []
         if returns and returns[0].value == TermValue(7):
             return
@@ -484,14 +481,12 @@ def test_swapped_receiver_is_not_the_returned_value() -> None:
     receiver = site.arg_values[0]
     assert isinstance(receiver, ObjectValue)
     dug = site._dig_floor_or_none(None, owner="method-return-as-actual")
-    returns = _collect_return_values(dug)
-    assert returns
-    assert returns[0].value == TermValue(41)
-    assert returns[0].value != receiver
+    assert dug == TermValue(41)
+    assert dug != receiver
     # A swapped lying map that treats self as the returned actual fails.
     assert not (
-        isinstance(returns[0].value, ObjectValue)
-        and returns[0].value.class_name == "Factory"
+        isinstance(dug, ObjectValue)
+        and dug.class_name == "Factory"
     )
 
 
