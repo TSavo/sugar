@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ast
+import csv
 from dataclasses import dataclass
+import importlib.metadata
+from pathlib import Path
 
 import pandas as pd
 import pandas._testing as tm
@@ -13,11 +16,16 @@ from pandas import Series, Timedelta
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue
-from sugar_lift_py_tests.ir import ctor
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_call_preconstruction import (
+    populate_source_visible_call_frames,
+)
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import Call as SourceCall
+from sugar_source_tree.nodes import BinOp as SourceBinOp
 from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
@@ -330,6 +338,112 @@ def test_candidate_pair_existing_floor_remains_undischarged() -> None:
     assert len(halted) == 1
     assert len(completed) == 1
     assert halted[0].effect.exception_type_coordinate is None
+
+
+def test_authenticated_box_expected_actual_names_type_error_edge(
+    tmp_path: Path,
+) -> None:
+    """An authenticated attributed producer supplies the real helper's Floor."""
+    pair = _pair()
+    package = tmp_path / "unprivileged"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from unprivileged.helpers import box_expected\n", encoding="utf-8"
+    )
+    (package / "helpers.py").write_text(
+        "def box_expected(expected):\n    return expected\n", encoding="utf-8"
+    )
+    metadata = tmp_path / "unprivileged_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: unprivileged-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(("unprivileged/__init__.py", "", ""))
+        writer.writerow(("unprivileged/helpers.py", "", ""))
+        writer.writerow(("unprivileged_dist-1.0.dist-info/METADATA", "", ""))
+        writer.writerow(("unprivileged_dist-1.0.dist-info/RECORD", "", ""))
+    distribution = importlib.metadata.Distribution.at(metadata)
+
+    actual_source = (
+        "import unprivileged as tm\n"
+        "def actual():\n"
+        "    return tm.box_expected((1,))\n"
+        "actual()\n"
+    )
+    actual_path = tmp_path / "real-binop-actual.py"
+    actual_path.write_text(actual_source, encoding="utf-8")
+    actual_context = TreeConstructionContextV1.for_source_call_construction(
+        workspace_root=str(tmp_path)
+    )
+    actual_tree = SourceFile(
+        workspace_path_source(str(actual_path), root=str(tmp_path)),
+        construction_context=actual_context,
+    )
+    calls = tuple(node for node in actual_tree.nodes() if isinstance(node, SourceCall))
+    actual_call = next(
+        call for call in calls if getattr(call.func, "attr", None) == "box_expected"
+    )
+    populate_source_visible_call_frames(
+        actual_tree,
+        root=tmp_path,
+        path=actual_path,
+        distribution_index={"unprivileged": distribution},
+    )
+
+    actual_outcome = actual_call.sugar().desugar(None)
+    assert hasattr(actual_outcome, "value")
+    actual_return = actual_outcome.value.force_floor(
+        None, owner="authenticated attributed producer", project_callsite=False
+    ).statements[0]
+    assert type(actual_return.value).__name__ == "TupleValue"
+    corpus = authenticated_pandas_corpus()
+    helper_path = corpus.root / HELPER_PATH
+    helper_tree = SourceFile(
+        workspace_path_source(str(helper_path), root=str(corpus.root.parent)),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    helper_operation = next(
+        node
+        for node in helper_tree.nodes()
+        if isinstance(node, SourceBinOp)
+        and node.line_col_span().start_line == pair.operation.lineno
+    )
+    produced = actual_return.value.add(
+        StringValue("a"), helper_operation.fragment
+    )
+    raised = produced.value
+    assert raised.effect.exception_type_coordinate == ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("TypeError")],
+    )
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        AuthenticatedRaiseMatcher,
+        EffectBoundaryDisposition,
+    )
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    class _WrongExpected:
+        def exception_type_identity(self):
+            return ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const("ValueError")],
+            )
+
+    original = Halted(true_guard(), raised.effect, _ReducedBlock((), False, ()))
+    routed = ExitSet((original,)).and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(_WrongExpected()),
+            unmet=ExpectationNotMetEffect("raise", helper_operation.fragment),
+        ),
+    )
+    assert routed.exits == (original,)
 
 
 def test_runtime_wrong_expected_type_does_not_consume_candidate_exception() -> None:
