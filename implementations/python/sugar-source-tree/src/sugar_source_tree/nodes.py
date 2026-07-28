@@ -3454,6 +3454,34 @@ def _substituted_store_target(statement, target, scope):
     return rewrite(target, **changes) if changes else None
 
 
+def _substituted_unpack_store_leaves(statement, target, scope):
+    """Thread load-side receivers/keys for store leaves inside a flat unpack.
+
+    Name (and starred-Name) leaves are binding sites and stay untouched.
+    Attribute/Subscript leaves load their receiver and index, so they take the
+    same ``_substituted_store_target`` door as a standalone store. Nested
+    unpack shapes are not rewritten here — they stay on the name-only or loud
+    paths owned elsewhere.
+    """
+    from .shadow import rewrite
+
+    if not isinstance(target, (Tuple_, List)):
+        return None
+    new_elts = []
+    changed = False
+    for leaf in target.elts:
+        if isinstance(leaf, (Attribute, Subscript)):
+            rewritten = _substituted_store_target(statement, leaf, scope)
+            if rewritten is not None:
+                new_elts.append(rewritten)
+                changed = True
+                continue
+        new_elts.append(leaf)
+    if not changed:
+        return None
+    return rewrite(target, elts=tuple(new_elts))
+
+
 def _valued_store_target_sugar(target, value_sugar, site):
     """The ONE ladder for a valued attribute/subscript store target.
 
@@ -3573,10 +3601,17 @@ class Assign(Statement):
     _child_fields = ("targets", "value")
 
     def substitute(self, scope):
-        """Substitute the RHS only. The targets are BINDING SITES -- a Name
-        being defined, not referenced -- so they are never substituted (that
-        would rewrite the name being bound). The binding this introduces for the
-        rest of the block is reported by substitution_binding()."""
+        """Substitute the RHS, and load-side store target coordinates.
+
+        Plain Name targets are BINDING SITES -- never substituted (that would
+        rewrite the name being bound). Attribute/Subscript store targets load
+        their receiver (and subscript index) as ordinary expressions: those
+        faces must substitute so a prior ``xs = [0]`` reaches ``xs[0] = v`` as
+        a decided list. The same load law applies to store leaves inside a flat
+        unpack (``x, xs[0] = p, q``): Name leaves stay binding sites; store
+        leaves thread receivers and keys. The binding this statement introduces
+        for the rest of the block is reported by substitution_binding().
+        """
         from .shadow import rewrite
 
         new_value, changed = self._substitute_field(self.value, scope)
@@ -3585,6 +3620,10 @@ class Assign(Statement):
             self.targets[0], (Attribute, Subscript)
         ):
             new_target = _substituted_store_target(self, self.targets[0], scope)
+            if new_target is not None:
+                changes["targets"] = (new_target,)
+        elif len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
+            new_target = _substituted_unpack_store_leaves(self, self.targets[0], scope)
             if new_target is not None:
                 changes["targets"] = (new_target,)
         if not changes:
@@ -3658,20 +3697,20 @@ class Assign(Statement):
 
         Nested unpack patterns stay on the name-only destructure path (or
         loud). This is the mass residual: ``o.x, o.y = p, q`` and mixed
-        ``x, o.a = p, q``.
+        ``x, o.a = p, q`` / ``x, obj[key] = p, q``.
 
         A leaf is admitted ONLY when the constructed store retains the exact
         receiver term AND the exact RHS member it is paired with -- positional
         correspondence is the whole claim of an unpack, so a store that cannot
         carry its own value is not allowed to stand in for one. Attribute
         leaves qualify (``AttributeStoreEffectSugar`` carries receiver, attr
-        and value). A Subscript leaf qualifies only over an authenticated
-        object place (``PlaceAssignSugar`` carries receiver, selector, value);
-        over an opaque receiver the only available store sugar is
-        ``SubscriptStoreEffectSugar``, which carries neither receiver nor
-        value -- ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct
-        identically -- so that shape stays loud rather than silently
-        mis-modelling the pairing.
+        and value). Subscript leaves qualify the same way after #6599:
+        ``SubscriptStoreEffectSugar`` carries receiver, index, and value, so
+        ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct *differently*
+        and the pairing is retained. Object-place subscripts still prefer
+        ``PlaceAssignSugar`` at construction. Undecided receivers stay loud
+        at *desugar* time through the store law — never by refusing the leaf
+        at admission.
         """
         if len(self.targets) != 1:
             return None
@@ -3685,10 +3724,6 @@ class Assign(Statement):
             return None
         for leaf, _value in pairs:
             if not isinstance(leaf, (Name, Attribute, Subscript)):
-                return None
-            if isinstance(leaf, Subscript) and not isinstance(
-                leaf.value, ObjectPlaceStateV1
-            ):
                 return None
         # Only useful when at least one leaf is a store (Attribute/Subscript);
         # pure-Name flat unpack is MultiAssignSugar via _destructured_binding.
@@ -4038,23 +4073,36 @@ class Assign(Statement):
                             )
                         continue
                     if isinstance(leaf, Subscript):
-                        # `_flat_store_unpack_pairs` admits a Subscript leaf
-                        # only over an authenticated object place, because
-                        # PlaceAssignSugar is the only subscript store that
-                        # retains its receiver AND its paired RHS member.
-                        from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                            PlaceAssignSugar,
-                        )
-
-                        stores.append(
-                            PlaceAssignSugar(
-                                receiver=leaf.value.sugar(),
-                                selector_kind="subscript",
-                                selector=leaf.slice_.sugar(),
-                                value=val.sugar(),
-                                site=leaf.fragment,
+                        # Object places keep PlaceAssignSugar; every other
+                        # source-visible subscript reuses the #6599 store
+                        # sugar (receiver + index + paired RHS member).
+                        if isinstance(leaf.value, ObjectPlaceStateV1):
+                            from sugar_lift_py_tests.sugar.place_assign_sugar import (
+                                PlaceAssignSugar,
                             )
-                        )
+
+                            stores.append(
+                                PlaceAssignSugar(
+                                    receiver=leaf.value.sugar(),
+                                    selector_kind="subscript",
+                                    selector=leaf.slice_.sugar(),
+                                    value=val.sugar(),
+                                    site=leaf.fragment,
+                                )
+                            )
+                        else:
+                            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                                SubscriptStoreEffectSugar,
+                            )
+
+                            stores.append(
+                                SubscriptStoreEffectSugar(
+                                    receiver=leaf.value.sugar(),
+                                    index=leaf.slice_.sugar(),
+                                    value=val.sugar(),
+                                    site=leaf.fragment,
+                                )
+                            )
                         continue
                     return super()._construct_sugar()
                 return UnpackStoreAssignSugar(
@@ -5559,6 +5607,9 @@ class With(Statement):
 
             manager_slot = item._manager_slot_id()
             enter_slot = f"{manager_slot}#enter_result" if binds_enter_result else None
+            enter_definition, exit_definition = (
+                self._require_native_resource_definitions(resolved_ref)
+            )
             return WithResourceSugar(
                 manager=item.context_expr.sugar(),
                 manager_slot_id=manager_slot,
@@ -5572,6 +5623,8 @@ class With(Statement):
                     resolved_ref, resolved_ref.use_site
                 ),
                 enter_slot_id=enter_slot,
+                enter_definition=enter_definition,
+                exit_definition=exit_definition,
                 site=self.fragment,
             )
         panic = RuntimeSelectedContextManager(
@@ -5583,6 +5636,39 @@ class With(Statement):
         )
         self.reporter.report_gap(self, panic)
         raise panic
+
+    def _require_native_resource_definitions(self, resolved_ref):
+        """Require both protocol methods through the one authenticated door."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            NativeDefinitionCoordinateGapV1,
+            NativeProtocolSlot,
+        )
+        from .panic import SugarNotWritten
+
+        refs = self.unit.construction_context.contract_refs
+        receiver = resolved_ref.use_site
+        enter = refs.require_native_definition(
+            receiver, NativeProtocolSlot.CONTEXT_ENTER
+        )
+        exit_ = refs.require_native_definition(
+            receiver, NativeProtocolSlot.CONTEXT_EXIT
+        )
+        for resolution in (enter, exit_):
+            if isinstance(resolution, NativeDefinitionCoordinateGapV1):
+                raise SugarNotWritten(
+                    blame=self.fragment,
+                    owner="With._require_native_resource_definitions",
+                    observed=resolution.reason,
+                    requested=(
+                        "authenticated source definition coordinates for both "
+                        "context-enter and context-exit"
+                    ),
+                    fix=(
+                        "retain this native resource as undischarged until the "
+                        "shared definition door resolves the missing slot"
+                    ),
+                )
+        return enter, exit_
 
     def _authenticate_expected_exception_type(self, manager, manager_sugar, reference):
         """Attach the floor-owned identity to the selected real call operand."""

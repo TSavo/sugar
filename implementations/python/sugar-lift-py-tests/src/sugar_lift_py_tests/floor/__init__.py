@@ -3,6 +3,7 @@ from __future__ import annotations
 from .array_literal import ArrayLiteral
 from .async_function_callable import AsyncFunctionCallable
 from .block_value import BlockValue
+from .boolop_truth_selection import BoolOpTruthSelection
 from .branch_result_coordinate import (
     BranchResultAuthentication,
     BranchResultCoordinate,

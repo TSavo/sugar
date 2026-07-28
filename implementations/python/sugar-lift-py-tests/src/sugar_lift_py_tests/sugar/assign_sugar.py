@@ -147,10 +147,20 @@ class _PreconstructedStoreSugar(Sugar):
 class UnpackStoreAssignSugar(Sugar):
     """Flat display unpack with Attribute/Subscript store leaves (and optional Names).
 
-    Display RHS members are already projected one-to-one onto leaves at tree
-    construction. Name leaves are spent by substitute (same as MultiAssign);
-    store leaves desugar left-to-right as typed red store effects. This is one
-    temporal binding model: names thread, stores effect — no second door.
+    Python law this sugar sequences (the unpack's own faces, not a second store
+    door):
+
+    - RHS display members are already projected one-to-one onto leaves at tree
+      construction (arity decided there; mismatch stays loud until a ground
+      ``ValueError`` exit exists).
+    - Name leaves are spent by substitute (same as MultiAssign) — binding
+      before later store leaves run.
+    - Store leaves desugar left-to-right through ``reduce_body``: each reuses
+      the Attribute/Subscript store law (#6599 / attribute-store window). A
+      later halt means the statement did not complete; earlier bindings and
+      completed stores are not rolled back.
+
+    One temporal model: names thread, stores effect — no second door.
     """
 
     bindings: tuple  # (name, value_sugar) — provenance; substitute spent them
@@ -174,6 +184,8 @@ class UnpackStoreAssignSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 
         # Name bindings are spent by substitute; only store effects remain.
+        # Sequencing of store success/halt is the shared reducer — not a local
+        # second composition algebra.
         if not self.stores:
             return Complete(BlockValue((), can_fall_through=True))
         return reduce_body(self.stores, ctx)

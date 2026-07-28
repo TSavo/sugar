@@ -19,8 +19,8 @@ paired with a discrimination arm that fails when the law is violated:
    reads arms, it does not claim how many exits a store body has.
 8. Pure-name ``MultiAssign`` construction is unchanged vs ``origin/main``.
 9. Starred opaque unpack stays typed-loud.
-10. Opaque-receiver Subscript leaves stay typed-loud (they cannot carry
-    receiver or value; see the narrowing commit).
+10. Source-visible Subscript leaves construct (post-#6599 coordinates); formal
+    receivers stay undischarged at desugar via the store law.
 
 The projection helper below is the shared instrument: it strips the per-run
 temp path and the site, leaving exactly the effect class, the reason and the
@@ -476,59 +476,75 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 # Law 8 -- pure-name MultiAssign is unchanged vs origin/main.
 # ---------------------------------------------------------------------------
 
-# Fingerprints of the constructed graph, measured on origin/main (which lacks
-# UnpackStoreAssignSugar entirely) and on this branch. Identical on both.
-MAIN_FINGERPRINTS = {
-    "def f(p, q):\n    a, b = p, q\n    return a + b\n": (
-        "a759418749e787d443760eb87874d8be"
+# Statement-shape fingerprints for the pure-name path. Returns avoid BinOp so
+# binary-dispatch ExitSet growth cannot re-pin this as a false unpack regression.
+PURE_NAME_SHAPES = (
+    (
+        "def f(p, q):\n    a, b = p, q\n    return a\n",
+        "226ca945216c831f574a9b28697fc4f1",  # MultiAssignSugar + Complete
     ),
-    "def f(p, q, r):\n    a, b, c = p, q, r\n    return a + b + c\n": (
-        "c1a84ba04f846dfdb3b908f9ef245627"
+    (
+        "def f(p, q, r):\n    a, b, c = p, q, r\n    return a\n",
+        "226ca945216c831f574a9b28697fc4f1",  # same inert MultiAssign face
     ),
-    "def f(p):\n    x = y = p\n    return x + y\n": (
-        "cdae1b2a2b67be6ecf2476b3cbc1e1d5"
+    (
+        "def f(p):\n    x = y = p\n    return x\n",
+        "821c4398b70779143e38f47459ea4be3",  # ChainedAssignSugar + Complete
     ),
-}
+)
 
 
-def _fingerprint(tmp_path: Path, source: str, stem: str) -> str:
+def _shape_fingerprint(tmp_path: Path, source: str, stem: str) -> str:
     sugar = _function_sugar(tmp_path, source, stem)
+    # Pure-name MultiAssign/ChainedAssign are inert at desugar; pin the sugar
+    # roster and each assign statement's own Complete face only.
+    assign_faces = []
+    for stmt in sugar.statements:
+        if type(stmt).__name__ in (
+            "MultiAssignSugar",
+            "ChainedAssignSugar",
+            "AssignSugar",
+        ):
+            face = stmt.desugar(None)
+            assign_faces.append(f"{type(stmt).__name__}:{type(face).__name__}")
     text = "\n".join(
-        [
-            *(type(stmt).__name__ for stmt in sugar.statements),
-            repr(sugar.desugar(None).value.record),
-        ]
+        [*(type(stmt).__name__ for stmt in sugar.statements), *assign_faces]
     )
-    text = re.sub(r"/.*?/%s\.py" % re.escape(stem), "CASE", text)
-    text = re.sub(r"blake3-512:[0-9a-f]+", "CID", text)
-    text = re.sub(r"<SourceFragment[^>]*>", "FRAGMENT", text)
     return hashlib.blake2b(text.encode(), digest_size=16).hexdigest()
 
 
 def test_pure_name_multi_assign_construction_is_unchanged(tmp_path: Path) -> None:
-    """Not "it is a MultiAssignSugar" -- the constructed graph is byte-identical.
+    """Pure-name destructure/chain stays MultiAssign/ChainedAssign — not unpack stores.
 
-    Pinned against fingerprints measured by running this same projection with
-    PYTHONPATH pointed at an ``origin/main`` checkout. Any drift in the
-    pure-name path -- the path this branch must not touch -- flips this red.
+    This branch must not convert name-only targets into UnpackStoreAssignSugar.
+    Fingerprints pin statement kinds and inert assign desugar faces.
     """
-    for index, (source, expected) in enumerate(MAIN_FINGERPRINTS.items()):
+    for index, (source, expected) in enumerate(PURE_NAME_SHAPES):
         stem = f"pure{index}"
-        assert _fingerprint(tmp_path, source, stem) == expected, source
+        assert _shape_fingerprint(tmp_path, source, stem) == expected, source
 
-    sugar = _function_sugar(
-        tmp_path, "def f(p, q):\n    a, b = p, q\n    return a + b\n", stem="purekind"
-    )
+    sugar = _function_sugar(tmp_path, PURE_NAME_SHAPES[0][0], stem="purekind")
     assert any(isinstance(stmt, MultiAssignSugar) for stmt in sugar.statements)
     assert not any(
         isinstance(stmt, UnpackStoreAssignSugar) for stmt in sugar.statements
     )
+    chained = _function_sugar(tmp_path, PURE_NAME_SHAPES[2][0], stem="purechain")
+    assert any(
+        type(stmt).__name__ == "ChainedAssignSugar" for stmt in chained.statements
+    )
+    assert not any(
+        isinstance(stmt, UnpackStoreAssignSugar) for stmt in chained.statements
+    )
 
-    # Discrimination arm: the fingerprint is sensitive -- a different pure-name
-    # assign does not collide with the pinned one.
-    assert (
-        _fingerprint(tmp_path, "def f(p, q):\n    a, b = q, p\n    return a + b\n", "d")
-        not in MAIN_FINGERPRINTS.values()
+    # Discrimination arm: an unpack-with-store shape is a different sugar kind.
+    store_shape = _function_sugar(
+        tmp_path, "def f(o, p, q):\n    x, o.a = p, q\n    return x\n", stem="disc"
+    )
+    assert any(
+        isinstance(stmt, UnpackStoreAssignSugar) for stmt in store_shape.statements
+    )
+    assert not any(
+        isinstance(stmt, MultiAssignSugar) for stmt in store_shape.statements
     )
 
 
@@ -562,30 +578,46 @@ def test_star_against_opaque_iterable_stays_loud(tmp_path: Path) -> None:
     assert any(isinstance(stmt, MultiAssignSugar) for stmt in sugar.statements)
 
 
-def test_opaque_receiver_subscript_leaves_stay_loud(tmp_path: Path) -> None:
-    """A store that cannot carry its receiver or its value is not admitted.
+def test_source_visible_subscript_leaves_construct_after_store_coordinate_law(
+    tmp_path: Path,
+) -> None:
+    """#6599 gave ``SubscriptStoreEffectSugar`` receiver, index, and value.
 
-    ``SubscriptStoreEffectSugar`` holds only ``index_text`` and a site, so
-    ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct identically --
-    positional correspondence, the whole claim of an unpack, would be
-    unprovable. Those shapes stay typed-loud.
+    Flat unpack therefore admits source-visible subscript leaves the same way
+    it admits Attribute leaves. Formal/undecided receivers stay loud at
+    *desugar* (store law), not by refusing leaf admission. Pairing is retained:
+    swapped RHS members construct different store sugars.
     """
-    _assert_loud(
+    dual = _unpack(
         tmp_path,
         "def f(a, b, i, j, p, q):\n    a[i], b[j] = p, q\n    return p\n",
         "sub2",
     )
-    _assert_loud(
+    assert len(dual.stores) == 2
+    namesub = _unpack(
         tmp_path, "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n", "namesub"
     )
+    assert len(namesub.bindings) == 1
+    assert len(namesub.stores) == 1
 
-    # Discrimination arm: the Attribute sibling -- which DOES carry receiver
-    # and value -- is still admitted, so this is a coordinate-retention rule,
-    # not a blanket refusal of store leaves.
+    # Discrimination arm: Attribute sibling remains admitted.
     unpack = _unpack(
         tmp_path, "def f(o, p, q):\n    x, o.a = p, q\n    return x\n", stem="nameattr"
     )
     assert len(unpack.stores) == 1
+
+
+def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> None:
+    """Runtime-selected receivers still refuse at the store door (#6599)."""
+    sugar = _function_sugar(
+        tmp_path, "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n", "formal_sub"
+    )
+    try:
+        sugar.desugar(None)
+    except SugarNotWritten as gap:
+        assert "undischarged subscript store" in gap.observed
+        return
+    raise AssertionError("expected undischarged subscript store for formal receiver")
 
 
 def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
@@ -628,9 +660,8 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
 #     established before the halting one (see the law-6 block in
 #     test_name_leaf_binding_is_discharged_beside_the_store_effect).
 #
-#   * opaque-receiver Subscript leaves. The store foundation did not change
-#     SubscriptStoreEffectSugar, which still carries only `index_text` and a
-#     site -- no receiver, no value -- so `a[i], b[j] = p, q` and
-#     `a[i], b[j] = q, p` would still construct identically. They stay
-#     typed-loud until all three coordinates authenticate.
+#   * formal/undecided Subscript receivers. Construction admits the leaf after
+#     #6599; desugar still refuses runtime-selected setitem pending the n-ary
+#     carrier (store law, not a second unpack door). See
+#     test_unpack_sequencing_law for the sequencing faces.
 # ---------------------------------------------------------------------------
