@@ -322,8 +322,8 @@ def test_production_arithmetic_halt_blocks_store() -> None:
     )
 
 
-def test_production_store_halt_preserves_prior_without_fabricated_completion() -> None:
-    """Store AttributeError after successful get/add — no fabricated field write."""
+def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
+    """Store AttributeError via shared project_setattr: Incomplete(effect), not green Complete(RaiseValue)."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
     class _RefuseSet(ObjectValue):
@@ -342,15 +342,15 @@ def test_production_store_halt_preserves_prior_without_fabricated_completion() -
         "refuse0",
     )
     out = _production_desugar(receiver, TermValue(1))
-    # Get+add ran; store halted — not Completed field=6
-    if isinstance(out, Complete) and isinstance(out.value, ObjectValue):
-        fields = {f.name: f.value for f in out.value.fields}
-        with pytest.raises(AssertionError):
-            assert fields.get("field") == TermValue(6)
-    else:
-        assert isinstance(out, (Incomplete, ExitSet)) or (
-            isinstance(out, Complete) and isinstance(out.value, RaiseValue)
-        )
+    # Shared AttributeStoreEffectSugar.project_setattr converts RaiseValue → Incomplete.
+    assert isinstance(out, Incomplete), (
+        f"store halt must be Incomplete (halted store face), not {type(out).__name__}: {out}"
+    )
+    # Discrimination: Complete(RaiseValue) would greenwash statement completion.
+    with pytest.raises(AssertionError):
+        assert isinstance(out, Complete) and isinstance(out.value, RaiseValue)
+    with pytest.raises(AssertionError):
+        assert isinstance(out, Complete) and isinstance(out.value, ObjectValue)
 
 
 # ---------------------------------------------------------------------------

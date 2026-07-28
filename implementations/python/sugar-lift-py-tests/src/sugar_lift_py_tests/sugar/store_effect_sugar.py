@@ -61,33 +61,47 @@ class AttributeStoreEffectSugar(Sugar):
     def desugar_store(self, ctx: object, value) -> Outcome:
         """Store an RHS already reduced once by a chained assignment."""
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self._store(receiver, value)
+            lambda receiver: self.project_setattr(
+                receiver, self.attr, value, self.site
+            )
         )
 
     def _store(self, receiver, value) -> Outcome:
+        return self.project_setattr(receiver, self.attr, value, self.site)
+
+    @staticmethod
+    def project_setattr(receiver, attr: str, value, site) -> Outcome:
+        """Producer-owned attribute **store** projection (one door).
+
+        Complete law shared by ordinary AttributeStoreEffectSugar and
+        Attribute AugAssign (already-evaluated receiver and value):
+
+        1. Formal receiver → undischarged ``setattr_named`` carrier
+        2. Decided runtime type → Floor ``setattr``; ``Complete(RaiseValue)``
+           becomes ``Incomplete(effect)`` (halted store, not statement green)
+        3. Undecided non-formal → dual-face ``AttributeStoreRuntimeEffect``
+           (never consumer ``SugarNotWritten``)
+        """
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Complete
 
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
-            # Undischarged demand awaiting caller actuals — not a refusal.
-            return self.mint_setattr_named_carrier(
-                site=self.site,
+            return AttributeStoreEffectSugar.mint_setattr_named_carrier(
+                site=site,
                 receiver=receiver,
-                attr=self.attr,
+                attr=attr,
                 value=value,
             )
 
-        # Decided receivers project through Floor setattr (store path ≠ read).
         if receiver.runtime_type_is_decided():
-            projected = receiver.setattr(self.attr, value, self.site)
+            projected = receiver.setattr(attr, value, site)
             if isinstance(projected, Complete) and isinstance(
                 projected.value, RaiseValue
             ):
                 return Incomplete(projected.value.effect)
             return projected
 
-        # Undecided non-formal: dual-face AttributeStoreRuntimeEffect.
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
             runtime_effect_evidence_from_terms,
@@ -98,17 +112,17 @@ class AttributeStoreEffectSugar(Sugar):
             "python:attribute_store",
             [
                 receiver.to_term(owner="AttributeStoreEffectSugar.receiver"),
-                str_const(self.attr),
+                str_const(attr),
                 value.to_term(owner="AttributeStoreEffectSugar.value"),
             ],
         )
         return Incomplete(
             AttributeStoreRuntimeEffect(
                 "attribute assignment runtime boundary: attribute store "
-                f"target `.{self.attr}` -- receiver identity belongs to "
+                f"target `.{attr}` -- receiver identity belongs to "
                 "Python's runtime __setattr__/descriptor dispatch; "
-                f"attr={self.attr} site={self.site}",
-                **runtime_effect_evidence_from_terms(operation, operation, self.site),
+                f"attr={attr} site={site}",
+                **runtime_effect_evidence_from_terms(operation, operation, site),
             )
         )
 

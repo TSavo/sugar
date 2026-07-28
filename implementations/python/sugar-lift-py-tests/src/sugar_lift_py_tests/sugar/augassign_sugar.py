@@ -221,8 +221,17 @@ class AttributeAugAssignSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
+        # Ordering: receiver → producer-owned get → RHS → inplace → producer-owned setattr.
+        # Get/store are AttributeSugar / AttributeStoreEffectSugar doors only.
+        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            AttributeStoreEffectSugar,
+        )
+
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self._get(receiver).and_then(
+            lambda receiver: AttributeSugar.project_attribute(
+                receiver, self.attr, self.get_site, ctx
+            ).and_then(
                 lambda current: self.rhs.desugar(ctx).and_then(
                     lambda right: project_augmented(
                         current,
@@ -230,56 +239,11 @@ class AttributeAugAssignSugar(Sugar):
                         operator=self.operator,
                         projector=self.operation,
                         site=self.op_site,
-                    ).and_then(lambda result: self._store(receiver, result))
+                    ).and_then(
+                        lambda result: AttributeStoreEffectSugar.project_setattr(
+                            receiver, self.attr, result, self.set_site
+                        )
+                    )
                 )
             )
         )
-
-    def _get(self, receiver) -> Outcome:
-        """Attribute load — formal path mints ``attribute_named`` (AttributeSugar)."""
-        formal_coordinate = getattr(receiver, "formal_coordinate", None)
-        if formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-            from sugar_lift_py_tests.floor import StringValue
-
-            return NativeOperationExitCarrierV1.mint(
-                site=self.get_site,
-                operator="attribute_named",
-                operands=(receiver, StringValue(self.attr)),
-                coordinates=(formal_coordinate, None),
-            )
-        return receiver.attribute(self.attr, self.get_site)
-
-    def _store(self, receiver, result) -> Outcome:
-        """setattr last — formal receiver mints ``setattr_named`` (store sugar door)."""
-        from sugar_lift_py_tests.sugar.store_effect_sugar import (
-            AttributeStoreEffectSugar,
-        )
-
-        formal_coordinate = getattr(receiver, "formal_coordinate", None)
-        if formal_coordinate is not None:
-            return AttributeStoreEffectSugar.mint_setattr_named_carrier(
-                site=self.set_site,
-                receiver=receiver,
-                attr=self.attr,
-                value=result,
-            )
-        if not receiver.runtime_type_is_decided():
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="AttributeAugAssignSugar._store",
-                blame=self.set_site,
-                observed="undischarged augmented attribute store over undecided receiver",
-                requested=(
-                    "NativeOperationExitCarrierV1 setattr_named demand over "
-                    "receiver formal coordinate and result"
-                ),
-                fix=(
-                    "attach formal coordinates via AugAssign.substitute store-target "
-                    "law (same door as Assign); do not invent setattr completion"
-                ),
-            )
-        return receiver.setattr(self.attr, result, self.set_site)
