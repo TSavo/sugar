@@ -75,6 +75,25 @@ class SetValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Keep runtime set iteration order loud; construction order is not it."""
+        del ctx
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="SetValue.slice_assign_iterable_with",
+            blame=operation.blame,
+            observed=(
+                "constructed SetValue members carry construction order, not "
+                "authenticated Python set iteration order"
+            ),
+            requested="finite RHS members in authenticated runtime iteration order",
+            fix=(
+                "carry producer-owned set iteration-order testimony into SetValue, "
+                "then project exactly that order through this Floor door"
+            ),
+        )
+
     def contains(self, item, site):
         # A guarded needle is not one needle: distribute into its faces and
         # rejoin under the same guard before this receiver's own law runs.
