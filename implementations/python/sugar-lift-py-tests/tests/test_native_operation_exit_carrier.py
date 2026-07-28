@@ -206,11 +206,44 @@ def test_undischarged_native_operation_is_typed_loud_not_completed():
         outcome_to_exitset(carrier)
 
 
-def test_missing_authenticated_actual_remains_typed_loud():
+def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic():
     carrier, left, _ = _carrier()
 
-    with pytest.raises(ConstructionPanic, match="authenticated actual"):
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
         carrier.discharge({left.coordinate_cid: TermValue(1)})
+
+
+def test_unavailable_native_operation_is_undischarged_not_a_construction_panic():
+    carrier, left, right = _carrier(operator="not_a_floor_operation")
+    with pytest.raises(SugarNotWritten, match="producer operation unavailable"):
+        carrier.discharge(
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        )
+
+
+def test_unsupported_native_arity_is_undischarged_not_a_construction_panic():
+    from dataclasses import replace
+
+    carrier, left, right = _carrier()
+    demand = replace(
+        carrier.demand,
+        operand_terms=carrier.demand.operand_terms + (carrier.demand.operand_terms[0],),
+        operand_coordinate_cids=carrier.demand.operand_coordinate_cids
+        + (left.coordinate_cid,),
+    )
+    malformed = replace(
+        carrier,
+        demand=demand,
+        operands=carrier.operands + (carrier.operands[0],),
+        coordinates=carrier.coordinates + (left,),
+    )
+    with pytest.raises(SugarNotWritten, match="arity is unavailable"):
+        malformed.discharge(
+            {
+                left.coordinate_cid: TermValue(1),
+                right.coordinate_cid: TermValue(2),
+            }
+        )
 
 
 def test_swapped_operands_retain_distinct_demand_coordinates():

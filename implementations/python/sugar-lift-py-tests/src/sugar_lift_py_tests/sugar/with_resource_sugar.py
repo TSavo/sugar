@@ -38,7 +38,15 @@ class WithResourceSugar(Sugar):
     contract_ref: object | None = None
     context_manager_edge: object | None = None
     enter_slot_id: str | None = None
+    enter_definition: object | None = None
+    exit_definition: object | None = None
     site: object = dataclass_field(compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self.enter_definition is None or self.exit_definition is None:
+            raise ValueError(
+                "WithResourceSugar requires authenticated enter and exit definition coordinates"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -64,12 +72,10 @@ class WithResourceSugar(Sugar):
         return _call_pair(
             name="with_resource_closes_completed_and_halted",
             owner_sugar="WithResourceSugar",
-            truthful=prefix
-            + "def test_a():\n"
+            truthful=prefix + "def test_a():\n"
             "    assert A(False)\n"
             "    assert A(True)\n",
-            lying=prefix
-            + "def test_a():\n"
+            lying=prefix + "def test_a():\n"
             "    assert A(False)\n"
             "    assert not A(True)\n",
         )
@@ -137,7 +143,27 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
-                    after = face.and_exit(exit_es, disposition=self.disposition)
+                    from sugar_lift_py_tests.context_manager_contract import (
+                        NeverSuppressesDispositionV1,
+                        ReturnTruthinessDispositionV1,
+                    )
+                    from sugar_lift_py_tests.effect import RaiseEffect
+
+                    if (
+                        isinstance(self.disposition, ReturnTruthinessDispositionV1)
+                        and isinstance(body_exit, Halted)
+                        and isinstance(body_exit.effect, RaiseEffect)
+                    ):
+                        after = face.and_exit_truthiness(exit_es, site=self.site)
+                    else:
+                        disposition = (
+                            NeverSuppressesDispositionV1()
+                            if isinstance(
+                                self.disposition, ReturnTruthinessDispositionV1
+                            )
+                            else self.disposition
+                        )
+                        after = face.and_exit(exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )

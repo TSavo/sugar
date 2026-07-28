@@ -5,6 +5,7 @@ Production ``open(...)`` stays RuntimeSelected.
 
 from __future__ import annotations
 
+import ast
 import inspect
 
 import pytest
@@ -12,9 +13,12 @@ import pytest
 from sugar_lift_py_tests.context_manager_contract import (
     NeverSuppresses,
     NeverSuppressesDispositionV1,
+    ReturnTruthinessDispositionV1,
     RuntimeSelected,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.effect import LoopControlEffect, RaiseEffect
+from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.floor.manager_coordinate import (
@@ -38,6 +42,28 @@ from sugar_lift_py_tests.sugar.resource_coord_sugar import (
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
+
+
+def test_authenticated_pandas_303_builtin_open_resource_coordinate():
+    """Real corpus half; native-definition lifecycle twins below are synthetic."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+
+    corpus = authenticated_pandas_corpus()
+    assert (corpus.version, corpus.file_count) == ("3.0.3", 1421)
+    relative = "tests/series/methods/test_to_csv.py"
+    source = (corpus.root / relative).read_text(encoding="utf-8")
+    site = next(
+        node
+        for node in ast.walk(ast.parse(source, filename=relative))
+        if isinstance(node, ast.With)
+        and node.lineno == 57
+        and isinstance(node.items[0].context_expr, ast.Call)
+    )
+    item = site.items[0]
+    assert ast.get_source_segment(source, item.context_expr) == (
+        'open(path, "w", encoding="utf-8")'
+    )
+    assert ast.get_source_segment(source, item.optional_vars) == "outfile"
 
 
 class _FixedSugar(Sugar):
@@ -135,6 +161,12 @@ def _resource(
         body=body if body is not None else (_Pass(),),
         disposition=disposition or NeverSuppresses(),
         enter_slot_id=enter_slot_id,
+        enter_definition=SourceFragmentCoordinateV1(
+            "blake3-512:" + "e" * 128, 1, 0, 1, 1
+        ),
+        exit_definition=SourceFragmentCoordinateV1(
+            "blake3-512:" + "x" * 128, 2, 0, 2, 1
+        ),
         site=None,
     )
 
@@ -273,6 +305,73 @@ def test_runtime_selected_not_guessed():
     assert len(reds) == 1
 
 
+@pytest.mark.parametrize(
+    ("exit_value", "halt_count"), [(TermValue(1), 0), (TermValue(0), 1)]
+)
+def test_native_exit_return_truthiness_decides_raise_suppression(
+    exit_value, halt_count
+):
+    """Synthetic extension: the native definition's real return decides."""
+    out = _resource(
+        body=(_Raise("ValueError"),),
+        exit=_FixedSugar(Complete(exit_value)),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    raises = [
+        entry
+        for entry in out.value.contribution()
+        if isinstance(entry, Incomplete)
+        and getattr(entry.effect, "exception_name", None) == "ValueError"
+    ]
+    assert len(raises) == halt_count
+
+
+def test_native_undecided_exit_return_keeps_both_suppression_faces():
+    """Load-bearing lying twin: unknown truth may never swallow the halt."""
+    out = _resource(
+        body=(_Raise("ValueError"),),
+        exit=_FixedSugar(Complete(SymbolicValue(make_var("exit_result")))),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    contributions = out.value.contribution()
+    assert any(
+        isinstance(entry, Incomplete)
+        and getattr(entry.effect, "exception_name", None) == "ValueError"
+        for entry in contributions
+    )
+    assert out.value.can_fall_through
+
+
+def test_truthy_native_exit_runs_but_cannot_suppress_loop_transfer():
+    """Truthy exit suppresses exceptions, never break/continue/return control."""
+    cid = "blake3-512:" + "a" * 128
+    transfer = LoopControlEffect("break", cid, cid)
+    exit_runs = []
+    out = _resource(
+        body=(_FixedSugar(Incomplete(transfer)),),
+        exit=_FixedSugar(Complete(TermValue(1)), probe=exit_runs),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    assert exit_runs == [1]
+    assert any(
+        isinstance(entry, Incomplete) and entry.effect == transfer
+        for entry in out.value.contribution()
+    )
+
+
+def test_native_exit_runs_on_early_return_value():
+    from sugar_lift_py_tests.floor import ReturnValue
+
+    exit_runs = []
+    out = _resource(
+        body=(_FixedSugar(Complete(ReturnValue(TermValue(7)))),),
+        exit=_FixedSugar(Complete(TermValue(0)), probe=exit_runs),
+        disposition=ReturnTruthinessDispositionV1(),
+    ).desugar()
+    assert exit_runs == [1]
+    assert any(isinstance(entry, ReturnValue) for entry in out.value.contribution())
+
+
 def test_completed_body_survives_never_suppresses():
     sugar = _resource(body=(_Pass(),))
     out = sugar.desugar()
@@ -357,15 +456,17 @@ def test_never_suppresses_needs_no_second_cleanup_algebra():
     exit_es = ExitSet((Completed(true_guard(), _FloorValue("exited")),))
     faces = (
         Completed(true_guard(), _FloorValue("body")),
-        Halted(true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")),
+        Halted(
+            true_guard(), RaiseEffect(exception_name="ValueError"), _FloorValue("pre")
+        ),
     )
     for disposition in (NeverSuppresses(), NeverSuppressesDispositionV1()):
         for face in faces:
             through_exit = ExitSet((face,)).and_exit(exit_es, disposition=disposition)
             through_finally = ExitSet((face,)).and_finally(lambda: exit_es)
-            assert through_exit.exits == through_finally.exits, (
-                f"{type(disposition).__name__} / {type(face).__name__} diverged"
-            )
+            assert (
+                through_exit.exits == through_finally.exits
+            ), f"{type(disposition).__name__} / {type(face).__name__} diverged"
 
 
 def test_lying_the_equivalence_is_specific_to_never_suppresses():

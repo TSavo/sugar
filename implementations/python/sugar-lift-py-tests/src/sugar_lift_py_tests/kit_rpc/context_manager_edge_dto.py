@@ -10,6 +10,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundarySemanticsV1,
     ImportSignatureV2,
     NeverSuppressesDispositionV1,
+    ReturnTruthinessDispositionV1,
     ProtocolResourceSemanticsV1,
     TotalCompletionV1,
     import_signature_to_value,
@@ -43,7 +44,10 @@ def _admitted(reference: ContextManagerContractRefV1) -> bool:
         and isinstance(semantics.enter.sort, PrimitiveSort)
         and semantics.enter.sort.name == "Value"
         and isinstance(semantics.exit.completion, TotalCompletionV1)
-        and isinstance(semantics.exit.disposition, NeverSuppressesDispositionV1)
+        and isinstance(
+            semantics.exit.disposition,
+            (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
+        )
     )
 
 

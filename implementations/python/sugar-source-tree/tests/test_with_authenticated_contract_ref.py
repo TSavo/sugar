@@ -20,11 +20,13 @@ from sugar_lift_py_tests.context_manager_contract import (
     EnterResultContractV1,
     ExitContractV1,
     NeverSuppressesDispositionV1,
+    ReturnTruthinessDispositionV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ContextManagerResolutionGapV1,
     ImportSignatureV2,
+    NativeProtocolSlot,
     ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -55,7 +57,7 @@ def _coordinate(node) -> SourceFragmentCoordinateV1:
     )
 
 
-def _source_with_resolution(source_identity, resolution):
+def _source_with_resolution(source_identity, resolution, *, native_definitions=None):
     first = SourceFile(source_identity)
     with_node = next(
         node for node in first.nodes() if node.kind in {"With", "AsyncWith"}
@@ -63,10 +65,15 @@ def _source_with_resolution(source_identity, resolution):
     use_site = _coordinate(with_node.items[0].context_expr)
     if callable(resolution):
         resolution = resolution(use_site)
+    if native_definitions is None:
+        native_definitions = _native_protocol_definitions
     table = ResolvedContractRefsV1(
         catalog_cid=_cid("c"),
         table_cid=_cid("t"),
         by_use_site=MappingProxyType({use_site: resolution}),
+        native_definitions=MappingProxyType(
+            {} if native_definitions is None else native_definitions(use_site)
+        ),
     )
     return SourceFile(
         source_identity,
@@ -100,6 +107,67 @@ def _resolved(use_site) -> ContextManagerContractRefV1:
         import_signature=ImportSignatureV2(()),
         semantics=semantics,
     )
+
+
+def _truthiness_resolved(use_site) -> ContextManagerContractRefV1:
+    resolved = _resolved(use_site)
+    return ContextManagerContractRefV1(
+        **{
+            **resolved.__dict__,
+            "semantics": ProtocolResourceSemanticsV1(
+                enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
+                exit=ExitContractV1(disposition=ReturnTruthinessDispositionV1()),
+            ),
+        }
+    )
+
+
+def _native_protocol_definitions(use_site):
+    return {
+        (use_site, NativeProtocolSlot.CONTEXT_ENTER): SourceFragmentCoordinateV1(
+            _cid("e"), 10, 4, 11, 20
+        ),
+        (use_site, NativeProtocolSlot.CONTEXT_EXIT): SourceFragmentCoordinateV1(
+            _cid("x"), 20, 4, 22, 20
+        ),
+    }
+
+
+def test_native_resource_requires_both_authenticated_definition_coordinates():
+    source = (
+        "def f(path):\n    with acquire(path) as resource:\n        return resource\n"
+    )
+    tree = _source_with_resolution(
+        (source, "native-resource.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=_native_protocol_definitions,
+    )
+    boundary = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(boundary, WithResourceSugar)
+    assert boundary.enter_definition == SourceFragmentCoordinateV1(
+        _cid("e"), 10, 4, 11, 20
+    )
+    assert boundary.exit_definition == SourceFragmentCoordinateV1(
+        _cid("x"), 20, 4, 22, 20
+    )
+    assert boundary.enter_slot_id is not None
+    assert boundary.enter_slot_id.startswith(boundary.manager_slot_id)
+
+
+def test_open_name_without_native_definition_stays_typed_loud():
+    """A builtin spelling grants no authority when the shared door has a gap."""
+    source = "def f(path):\n    with open(path):\n        pass\n"
+    tree = _source_with_resolution(
+        (source, "native-resource-gap.py", _cid("q")),
+        _truthiness_resolved,
+        native_definitions=lambda use_site: {
+            (use_site, NativeProtocolSlot.CONTEXT_ENTER): SourceFragmentCoordinateV1(
+                _cid("e"), 10, 4, 11, 20
+            )
+        },
+    )
+    with pytest.raises(SugarNotWritten, match="authenticated source definition"):
+        next(node for node in tree.nodes() if node.kind == "With").sugar()
 
 
 def _function_sugar(source_identity, resolution):
@@ -533,8 +601,16 @@ def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):
         _coordinate(item.context_expr): _resolved(_coordinate(item.context_expr))
         for item in with_node.items
     }
+    native_definitions = {}
+    for use_site in rows:
+        native_definitions.update(_native_protocol_definitions(use_site))
     context = TreeConstructionContextV1(
-        ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+        ResolvedContractRefsV1(
+            _cid("c"),
+            _cid("t"),
+            MappingProxyType(rows),
+            MappingProxyType(native_definitions),
+        )
     )
     source = SourceFile(path_source(str(multiple)), construction_context=context)
     nested = next(source.functions()).sugar()
@@ -569,10 +645,18 @@ def test_multiple_items_nest_and_store_binding_target_constructs(tmp_path):
         _coordinate(item.context_expr): _resolved(_coordinate(item.context_expr))
         for item in node.items
     }
+    native_definitions = {}
+    for use_site in rows:
+        native_definitions.update(_native_protocol_definitions(use_site))
     composed = SourceFile(
         path_source(str(target)),
         construction_context=TreeConstructionContextV1(
-            ResolvedContractRefsV1(_cid("c"), _cid("t"), MappingProxyType(rows))
+            ResolvedContractRefsV1(
+                _cid("c"),
+                _cid("t"),
+                MappingProxyType(rows),
+                MappingProxyType(native_definitions),
+            )
         ),
     )
     chain = []
