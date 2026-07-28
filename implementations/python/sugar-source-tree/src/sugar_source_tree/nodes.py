@@ -5312,22 +5312,46 @@ class With(Statement):
         )
         if identity is None:
             return manager_sugar
+        # Attribute import paths cannot re-enter AttributeSugar (the module
+        # receiver is SymbolicValue). Project the authenticated exception
+        # class floor from the import identity; Name paths keep their existing
+        # sugar and only wrap when a source ClassDef graph is available.
+        class_value = None
+        if isinstance(actual, Attribute):
+            from sugar_lift_py_tests.floor.exception_class_value import (
+                ExceptionClassValue,
+            )
+
+            qualified = getattr(identity.args[1], "value", None)
+            if isinstance(qualified, str) and qualified:
+                class_value = ExceptionClassValue(qualified)
+        elif isinstance(actual, Name):
+            try:
+                class_value = self.unit.exception_class_value(actual)
+            except SugarNotWritten:
+                class_value = None
+        wrapped = AuthenticatedExceptionTypeSugar(
+            (
+                manager_sugar.args[actual_location[1]]
+                if actual_location[0] == "arg"
+                else next(
+                    sugar
+                    for name, sugar in manager_sugar.keywords
+                    if name == actual_location[1]
+                )
+            ),
+            identity,
+            site=actual.fragment,
+            class_value=class_value,
+        )
         if actual_location[0] == "arg":
             args = list(manager_sugar.args)
-            position = actual_location[1]
-            args[position] = AuthenticatedExceptionTypeSugar(
-                args[position], identity, site=actual.fragment
-            )
+            args[actual_location[1]] = wrapped
             return replace(manager_sugar, args=tuple(args))
         keywords_sugar = list(manager_sugar.keywords)
         for position, (name, sugar) in enumerate(keywords_sugar):
             if name == actual_location[1]:
-                keywords_sugar[position] = (
-                    name,
-                    AuthenticatedExceptionTypeSugar(
-                        sugar, identity, site=actual.fragment
-                    ),
-                )
+                keywords_sugar[position] = (name, wrapped)
                 break
         return replace(manager_sugar, keywords=tuple(keywords_sugar))
 
@@ -5652,31 +5676,58 @@ class Raise(Statement):
 
         identity = None
         mro = None
-        type_name = None
+        type_operand = None
         if isinstance(self.exc, Call) and isinstance(self.exc.func, Name):
-            type_name = self.exc.func
+            type_operand = self.exc.func
+        elif isinstance(self.exc, Call) and isinstance(self.exc.func, Attribute):
+            type_operand = self.exc.func
         elif isinstance(self.exc, Name):
-            type_name = self.exc
-        if type_name is not None:
+            type_operand = self.exc
+        elif isinstance(self.exc, Attribute):
+            type_operand = self.exc
+        if type_operand is not None:
             with reduction_span(
                 sugar="Raise.exception_type_identity",
                 role="construction",
                 site=where,
             ):
-                identity = self.unit.exception_type_identity(type_name)
-                mro = self.unit.exception_type_mro(type_name)
+                if isinstance(type_operand, Name):
+                    identity = self.unit.exception_type_identity(type_operand)
+                    mro = self.unit.exception_type_mro(type_operand)
+                else:
+                    identity = self.unit.imported_exception_type_identity(
+                        type_operand
+                    )
+                    mro = None
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
             exception_sugar = self.exc.sugar()
-        if identity is not None and isinstance(exception_sugar, CallSiteSugar):
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        if identity is not None and isinstance(
+            exception_sugar, (CallSiteSugar, MethodCallSugar)
+        ):
             exception_sugar = replace(
                 exception_sugar,
                 exception_type_coordinate=identity,
                 exception_type_mro=mro,
             )
         elif identity is not None:
+            class_value = None
+            if isinstance(type_operand, Attribute):
+                from sugar_lift_py_tests.floor.exception_class_value import (
+                    ExceptionClassValue,
+                )
+
+                qualified = getattr(identity.args[1], "value", None)
+                if isinstance(qualified, str) and qualified:
+                    class_value = ExceptionClassValue(qualified)
             exception_sugar = AuthenticatedExceptionTypeSugar(
-                exception_sugar, identity, mro, self.exc.fragment
+                exception_sugar,
+                identity,
+                mro,
+                self.exc.fragment,
+                class_value=class_value,
             )
 
         return RaiseSugar(

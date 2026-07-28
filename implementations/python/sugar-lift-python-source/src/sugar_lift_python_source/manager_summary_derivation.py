@@ -687,13 +687,37 @@ def populate_source_derived_resource_refs(
             # A surviving bare builtin is therefore the language-owned value,
             # not a free formal. NameSugar deliberately represents every other
             # survivor symbolically, so project this one native floor here.
+            #
+            # Import Attribute exception-class paths (``pkg.Error``) are a
+            # second closed projection: the Attribute floor cannot resolve a
+            # SymbolicValue module receiver, but ``imported_exception_type_identity``
+            # already authenticates the dotted type. Project that identity as
+            # the call actual so EffectBoundary managers construct instead of
+            # dying at incomplete-call-actuals.
+            from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+                AuthenticatedExceptionTypeValue,
+            )
+            from sugar_lift_py_tests.floor.exception_class_value import (
+                ExceptionClassValue,
+            )
             from sugar_lift_py_tests.outcome import Complete as _Complete
-            from sugar_source_tree.nodes import Name
+            from sugar_source_tree.nodes import Attribute, Name
 
             if isinstance(node, Name):
                 builtin = actual_ctx.temporal.value_if_bound(node.id)
                 if builtin is not None:
                     return _Complete(builtin)
+            if isinstance(node, Attribute):
+                identity = node.unit.imported_exception_type_identity(node)
+                if identity is not None:
+                    qualified = getattr(identity.args[1], "value", None)
+                    if isinstance(qualified, str) and qualified:
+                        class_value = ExceptionClassValue(qualified)
+                        return _Complete(
+                            AuthenticatedExceptionTypeValue(
+                                class_value, identity, None, class_value
+                            )
+                        )
             return node.sugar().desugar(actual_ctx)
 
         actuals = []
