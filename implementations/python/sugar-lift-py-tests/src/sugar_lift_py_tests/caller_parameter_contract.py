@@ -560,7 +560,7 @@ class NativeOperationExitCarrierV1:
                     "pre_effect_state must be reducer-issued testimony; raw "
                     f"{type(pre_effect_state).__name__} is not admissible"
                 )
-            if testimony is not None and testimony.state is not pre_effect_state.state:
+            if testimony is not None and testimony.state != pre_effect_state.state:
                 from sugar_lift_py_tests.gap.info import GapKind
                 from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -575,7 +575,8 @@ class NativeOperationExitCarrierV1:
                     ),
                     gap_kind=GapKind.FLOOR,
                 )
-            testimony = pre_effect_state
+            if testimony is None:
+                testimony = pre_effect_state
         return replace(
             self,
             continuations=(*self.continuations, step),
