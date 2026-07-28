@@ -6,8 +6,8 @@ groups stay nested: children are never flattened. Spelling does not grant
 group authority — only the Raise construction path that recognized the builtin
 group coordinate may mint this sugar.
 
-Group occurrence identity is the sealed ``SourceMemento`` coordinate from
-``SourceFragment.seal()`` — never a fabricated ``filename:line:col`` string.
+Group occurrence identity is the sealed ``SourceMemento`` from the typed
+``SourceFragment`` construction door — never a fabricated ``filename:line:col``.
 """
 
 from __future__ import annotations
@@ -17,50 +17,22 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-
-def sealed_source_occurrence(site, *, owner: str) -> str:
-    """Sealed source occurrence coordinate via the typed fragment interface.
-
-    Requires ``SourceFragment.seal() -> SourceMemento``. Absence of that typed
-    interface is a construction error — not a soft getattr membrane.
-    """
-    from sugar_source_tree.fragment import SourceFragment, SourceMemento
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if not isinstance(site, SourceFragment):
-        raise SugarNotWritten(
-            blame=site,
-            owner=owner,
-            observed=type(site).__name__,
-            requested="SourceFragment site with seal() -> SourceMemento",
-            fix="construct GroupedRaiseSugar only from an enumerated source fragment",
-        )
-    memento = site.seal()
-    if not isinstance(memento, SourceMemento):
-        raise SugarNotWritten(
-            blame=site,
-            owner=owner,
-            observed=type(memento).__name__,
-            requested="SourceMemento from SourceFragment.seal()",
-            fix="seal() must return the typed SourceMemento currency",
-        )
-    # Full sealed coordinate — segment cid alone collides across files that
-    # share identical span text; file + source_cid pin the authenticated source.
-    return (
-        f"{memento.file}:{memento.start}:{memento.end}"
-        f":{memento.source_cid}:{memento.cid}"
-    )
+from sugar_source_tree.fragment import SourceFragment
 
 
 @dataclass(frozen=True)
 class GroupedRaiseSugar(Sugar):
-    """Construct one authenticated exception-group tree without flattening it."""
+    """Construct one authenticated exception-group tree without flattening it.
+
+    Construction door: ``site`` is a typed ``SourceFragment``. The producer
+    (Raise → GroupedRaiseSugar) must pass an enumerated fragment; there is no
+    runtime kind-admission membrane over seal/memento.
+    """
 
     group_identity: str
     message: Sugar
     children: tuple[Sugar, ...]
-    site: object = dataclass_field(compare=False)
+    site: SourceFragment = dataclass_field(compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -86,8 +58,13 @@ class GroupedRaiseSugar(Sugar):
                     fix="keep non-exception group members loud",
                 )
             effects.append(outcome.effect)
-        occurrence = sealed_source_occurrence(
-            self.site, owner="GroupedRaiseSugar.desugar"
+        # Typed door: site is SourceFragment; seal() returns SourceMemento.
+        memento = self.site.seal()
+        # Full sealed coordinate — segment cid alone collides across files that
+        # share identical span text; file + source_cid pin the authenticated source.
+        occurrence = (
+            f"{memento.file}:{memento.start}:{memento.end}"
+            f":{memento.source_cid}:{memento.cid}"
         )
         return Incomplete(
             GroupedRaiseEffect(

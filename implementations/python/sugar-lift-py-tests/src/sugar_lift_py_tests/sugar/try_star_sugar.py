@@ -7,7 +7,9 @@ Laws (owned here; ExitSet/carrier untouched):
 - Unmatched residual continues to subsequent handlers in source order.
 - Temporal state is an ExitSet of **per-face** handler states — never a single
   scalar accumulator. Each handler face branches the frontier independently.
-- Every ExitSet face is retained with the enclosing body guard conjoined.
+- Every ExitSet face carries the enclosing body guard conjoined.
+- Handler fall-through is **not** a try* completed edge while residual remains;
+  residual continues and ultimately halts unless later consumed.
 - Exceptional raise effects regroup **only within equal guards** (never AND
   mutually exclusive alternative faces into one impossible guard).
 - Finally restore preserves residual; finally terminate overrides.
@@ -147,8 +149,9 @@ class TryStarSugar(Sugar):
                         base_ctx, slot_id, matched, blame=self.site
                     )
                     if slot_id is not None:
-                        handler_ctx = _with_observed_effect(
-                            handler_ctx, slot_id, matched, blame=self.site
+                        # Shared typed surface (ReduceContext / FactoryBuildContext).
+                        handler_ctx = handler_ctx.with_observed_effect(
+                            slot_id, matched
                         )
                     seed = replace(face.state, context=handler_ctx)
                     handler_exits = promote_raise_halts(
@@ -184,6 +187,7 @@ class TryStarSugar(Sugar):
                             )
                             continue
                         if isinstance(handler_exit, Halted):
+                            # Non-raise halt leaves the residual walk as an exit.
                             retained.append(
                                 Halted(
                                     guard,
@@ -210,9 +214,10 @@ class TryStarSugar(Sugar):
                             )
                             continue
                         if isinstance(handler_exit, Completed):
-                            retained.append(
-                                Completed(guard, handler_exit.value, faces, owed)
-                            )
+                            # Handler fall-through is NOT a try* completed edge
+                            # while an unmatched residual remains — Python has
+                            # no completed edge there. Only advance temporal
+                            # state on the residual/exceptional frontier.
                             next_state = (
                                 handler_exit.value
                                 if isinstance(handler_exit.value, _ReducedBlock)
@@ -247,6 +252,7 @@ class TryStarSugar(Sugar):
 
             # Emit residual / exceptional per face — regroup only within a face
             # (equal guard path). Never AND guards across alternative faces.
+            # Completed only when residual is empty and no exceptional remains.
             for face in frontier:
                 effects = list(face.exceptional)
                 if face.residual.children:
@@ -262,10 +268,6 @@ class TryStarSugar(Sugar):
                                 face.faces,
                                 face.pending,
                             )
-                        )
-                    elif not face.exceptional and not face.residual.children:
-                        retained.append(
-                            Completed(face.guard, face.state, face.faces, face.pending)
                         )
                 else:
                     retained.append(
@@ -323,28 +325,6 @@ def _seed_temporal(state, ctx):
         can_fall_through=True,
         fall_through=(),
         context=ctx,
-    )
-
-
-def _with_observed_effect(ctx, slot_id, effect, *, blame):
-    """Typed ``ReduceContext.with_observed_effect`` — no exception capability probe."""
-    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-    from sugar_lift_py_tests.context.reduce_context import ReduceContext
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if isinstance(ctx, ReduceContext):
-        return ctx.with_observed_effect(slot_id, effect)
-    if isinstance(ctx, FactoryBuildContext):
-        # Typed front door: derive ReduceContext, then the typed method.
-        return ReduceContext.derived(
-            ctx, owner="TryStarSugar.desugar"
-        ).with_observed_effect(slot_id, effect)
-    raise SugarNotWritten(
-        blame=blame,
-        owner="TryStarSugar.desugar",
-        observed=type(ctx).__name__ if ctx is not None else "None",
-        requested="ReduceContext.with_observed_effect for except* as-binding",
-        fix="route except* handlers through the shared ReduceContext",
     )
 
 

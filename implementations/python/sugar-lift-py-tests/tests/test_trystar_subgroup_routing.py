@@ -691,25 +691,85 @@ def test_handler_terminal_return_face_is_retained_not_dropped():
     assert returns and returns[0].value.value == 7
 
 
-def test_handler_completion_and_residual_both_retained_as_faces():
-    """Non-exceptional completion is retained; residual regroup is separate halt.
+def _capture_trystar_exitset(sugar, ctx):
+    """Desugar TryStar but capture the ExitSet before exitset_to_outcome."""
+    import sugar_lift_py_tests.sugar.exit_set_routing as esr
 
-    Discriminates the old bug that only kept Halted|Completed-via-merge and
-    dropped other faces when residual remained after a completing handler.
+    captured = {}
+    real = esr.exitset_to_outcome
+
+    def capture(es):
+        captured["es"] = es
+        return real(es)
+
+    esr.exitset_to_outcome = capture
+    try:
+        sugar.desugar(ctx)
+    finally:
+        esr.exitset_to_outcome = real
+    assert "es" in captured
+    return captured["es"]
+
+
+def test_handler_pass_with_residual_is_not_a_completed_edge():
+    """Handler fall-through is not a try* completed edge while residual remains.
+
+    Python has no completed edge when except* handles part of a group and an
+    unmatched subgroup continues — the residual must ultimately halt unless
+    later consumed. Discriminates the false-Completed emission bug.
     """
-    effect = _grouped_halt(
-        _desugar(
-            "def f():\n"
-            "    try:\n"
-            "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
-            "    except* ValueError:\n"
-            "        pass\n",
-            name="retain_completion.py",
-        )
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
+    from sugar_source_tree.nodes import TryStar
+
+    source = (
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('g', [ValueError(), TypeError()])\n"
+        "    except* ValueError:\n"
+        "        pass\n"
     )
-    # Residual TypeError only — handler completed (pass) was not exceptional,
-    # so regroup is residual alone (not dropped, not rewritten to ValueError).
+    outcome = _desugar(source, name="residual_not_complete.py")
+    # Must halt with residual TypeError — never Complete at the function edge.
+    assert not isinstance(outcome, Complete), outcome
+    effect = _grouped_halt(outcome)
     assert [leaf.exception_name for leaf in _leaves(effect)] == ["TypeError"]
+
+    tree = SourceFile(
+        (source, "residual_faces.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    fn = list(tree.functions())[-1]
+
+    def find_trystar(node):
+        if isinstance(node, TryStar):
+            return node
+        for field in getattr(node, "_child_fields", ()):
+            child = getattr(node, field, None)
+            if isinstance(child, tuple):
+                for item in child:
+                    found = find_trystar(item)
+                    if found is not None:
+                        return found
+            elif child is not None:
+                found = find_trystar(child)
+                if found is not None:
+                    return found
+        return None
+
+    sugar = find_trystar(fn).sugar()
+    assert isinstance(sugar, TryStarSugar)
+    es = _capture_trystar_exitset(sugar, None)
+    completed = [face for face in es.exits if isinstance(face, Completed)]
+    halted = [face for face in es.exits if isinstance(face, Halted)]
+    assert halted, es.exits
+    # No Completed face while residual still lives.
+    assert not completed, completed
+    assert all(
+        isinstance(face.effect, GroupedRaiseEffect)
+        and [leaf.exception_name for leaf in _leaves(face.effect)] == ["TypeError"]
+        for face in halted
+    )
 
 
 def test_guarded_handler_faces_conjoin_body_guard():
@@ -809,26 +869,6 @@ def test_guarded_handler_faces_conjoin_body_guard():
         assert any(
             leaf.exception_name == "RuntimeError" for leaf in _leaves(effect)
         )
-
-
-def _capture_trystar_exitset(sugar, ctx):
-    """Desugar TryStar but capture the ExitSet before exitset_to_outcome."""
-    import sugar_lift_py_tests.sugar.exit_set_routing as esr
-
-    captured = {}
-    real = esr.exitset_to_outcome
-
-    def capture(es):
-        captured["es"] = es
-        return real(es)
-
-    esr.exitset_to_outcome = capture
-    try:
-        sugar.desugar(ctx)
-    finally:
-        esr.exitset_to_outcome = real
-    assert "es" in captured
-    return captured["es"]
 
 
 def test_alternative_exceptional_faces_keep_separate_guards():

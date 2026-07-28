@@ -70,6 +70,10 @@ class FactoryBuildContext:
     # ambient strip posts stay logo-safe (str.suffixof sorts).
     nested_external_bridge: bool = False
     in_flight_effects: tuple[tuple[str, object], ...] = ()
+    # Same observed-effect slot surface as ReduceContext — except* as-binding
+    # and EffectRef projection share one typed operation, not a ladder of
+    # implementation kinds.
+    observed_effects: tuple[tuple[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.construction_audit_sink is None and self.audit_sink is not None:
@@ -103,6 +107,7 @@ class FactoryBuildContext:
             building=self.building,
             nested_external_bridge=self.nested_external_bridge,
             in_flight_effects=self.in_flight_effects,
+            observed_effects=self.observed_effects,
         )
 
     def with_in_flight_effect(
@@ -117,6 +122,23 @@ class FactoryBuildContext:
 
     def in_flight_effect_for(self, slot_id: str):
         for candidate_slot, effect in reversed(self.in_flight_effects):
+            if candidate_slot == slot_id:
+                return effect
+        return None
+
+    def with_observed_effect(
+        self, slot_id: str, effect: object
+    ) -> "FactoryBuildContext":
+        """Shared typed surface with ReduceContext — except* as-binding."""
+        from dataclasses import replace
+
+        return replace(
+            self,
+            observed_effects=(*self.observed_effects, (slot_id, effect)),
+        )
+
+    def observed_effect_for(self, slot_id: str):
+        for candidate_slot, effect in reversed(self.observed_effects):
             if candidate_slot == slot_id:
                 return effect
         return None
