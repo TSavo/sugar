@@ -22,6 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import MappingProxyType
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_contract import (
     CallParameterV1,
     EffectBoundarySemanticsV1,
@@ -298,7 +300,7 @@ def test_no_pyarrow_spelling_arm_in_authenticator():
 
 
 def test_importorskip_binding_authenticates_arrow_invalid(tmp_path):
-    """Truthful: ``pa = pytest.importorskip("pyarrow")`` is an import binding."""
+    """Truthful: the manager operand role authenticates the import coordinate."""
     path = tmp_path / "skip.py"
     path.write_text(
         "import pytest\n"
@@ -316,13 +318,27 @@ def test_importorskip_binding_authenticates_arrow_invalid(tmp_path):
         "python:exception_type_identity",
         [str_const("import"), str_const("pyarrow.ArrowInvalid")],
     )
-    sugar = _attribute(tree, "ArrowInvalid").sugar()
-    from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+    boundary = _boundary(tmp_path, path.read_text(encoding="utf-8"))
+    expected = boundary.manager.desugar().value.arg_values[0]
+    assert isinstance(expected, AuthenticatedExceptionTypeValue)
+    assert expected.exception_type_identity() == identity
 
-    assert isinstance(sugar, ImportMemberSugar)
-    assert sugar.qualified_name == "pyarrow.ArrowInvalid"
-    floor = sugar.desugar().value
-    assert floor.exception_type_identity() == identity
+
+def test_import_bound_attribute_body_does_not_invent_member_success(tmp_path):
+    """Lying twin: an import coordinate alone is not member-existence testimony."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    path = tmp_path / "body.py"
+    path.write_text(
+        "import pandas as pd\n"
+        "def f():\n"
+        "    return pd.util.foo\n",
+        encoding="utf-8",
+    )
+    tree = SourceFile(path_source(str(path)))
+
+    with pytest.raises(SugarNotWritten, match="attribute"):
+        _attribute(tree, "foo").sugar().desugar()
 
 
 def test_try_import_optional_binding_authenticates_module_attr(tmp_path):
