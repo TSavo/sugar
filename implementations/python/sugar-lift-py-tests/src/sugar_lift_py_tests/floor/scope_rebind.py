@@ -7,6 +7,15 @@ from sugar_lift_py_tests.ir import Formula
 from .floor_value import FloorValue
 
 
+def _context_for_rebind(ctx, *, owner: str):
+    """Scope-mutating Floors mint a root when the reducer has no context yet."""
+    if ctx is not None:
+        return ctx
+    from sugar_lift_py_tests.context import ReduceContext
+
+    return ReduceContext.root(owner=owner)
+
+
 @dataclass(frozen=True)
 class ScopeRebind(FloorValue):
     """A mutation rebinds to the UPDATED VALUE; the history is in the value's nested
@@ -23,10 +32,12 @@ class ScopeRebind(FloorValue):
 
     def extend_scope(self, ctx):
         # Thread the updated value forward so later statements resolve the name.
+        # Root mint is Floor-owned when the reducer has no ambient context yet.
         from sugar_lift_py_tests.sugar.nonlocal_sugar import (
             reject_unconstructed_nonlocal_store,
         )
 
+        ctx = _context_for_rebind(ctx, owner="ScopeRebind")
         reject_unconstructed_nonlocal_store(ctx, self.name)
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self.value))
 
@@ -56,6 +67,7 @@ class ScopeRebinds(FloorValue):
         return ()
 
     def extend_scope(self, ctx):
+        ctx = _context_for_rebind(ctx, owner="ScopeRebinds")
         temporal = ctx.temporal
         for name, value in self.bindings:
             temporal = temporal.bind_value(name, value)

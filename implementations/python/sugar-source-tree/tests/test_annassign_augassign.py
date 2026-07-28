@@ -51,13 +51,19 @@ def test_aug_assign_rebinds_and_is_inert():
     assert v.post().args[1].value == 2
 
 
-def test_name_augassign_constructs_explicit_read_op_store_child():
+def test_name_augassign_constructs_inplace_owned_rebind():
+    """Name OP=: project_inplace + name; not substitute-time BinOp rebind."""
     function = _fn("def arbitrary():\n    renamed = 1\n    renamed += 2\n")
     substituted = function.substitute({})
     sugar = substituted.body[1].sugar()
     assert isinstance(sugar, AugAssignSugar)
-    assert isinstance(sugar.operation, BinOpSugar)
-    assert sugar.operation.op_kind == "Add"
+    assert sugar.name == "renamed"
+    assert sugar.operator == "iadd"
+    from sugar_source_tree.operators import BinaryOperator
+
+    assert sugar.operation.__func__ is BinaryOperator.project_inplace
+    # Prior read is the assigned constant, not a BinOpSugar binding child.
+    assert not isinstance(sugar.left, BinOpSugar)
 
 
 def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
@@ -76,7 +82,8 @@ def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
         if statement.kind == "AugAssign"
     )
     assert isinstance(sugar, AugAssignSugar)
-    assert type(sugar.operation.left).__name__ == "IfExpSugar"
+    # Prior load is the if-join (IfExpSugar), not a last-writer Constant alone.
+    assert type(sugar.left).__name__ == "IfExpSugar"
 
 
 def _red_effects(source):
@@ -226,8 +233,6 @@ def test_aug_assign_with_no_prior_binding_is_sound():
         "NativeOperationExitCarrierV1",
     }
     # AugAssign sugar is present — the binding was not dropped.
-    from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
-
     assert any(isinstance(s, AugAssignSugar) for s in sugar.statements)
 
 

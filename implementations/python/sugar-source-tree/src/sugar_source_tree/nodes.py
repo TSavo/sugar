@@ -4271,8 +4271,9 @@ class AugAssign(Statement):
     def substitute(self, scope):
         """`<target> OP= <value>` -- substitute the value and load-side targets.
 
-        A plain Name target is a binding site: the rebind (target OP value) is
-        threaded by ``substitution_binding`` / the ``operation`` slot.
+        A plain Name target is a binding site: the prior load is carried as
+        ``prior_read``; the rebind itself is evaluation-time ScopeRebind of
+        authenticated project_inplace (not a substitute-time BinOp).
 
         Attribute and Subscript targets are runtime stores — receivers (and
         subscript indices) are load expressions and must substitute so formals
@@ -4284,11 +4285,12 @@ class AugAssign(Statement):
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of, rewrite
 
-        # Structural operator site before any rewrite (Attribute/Subscript only).
-        # Name targets rebind via _make_binop; operator_site for Name is owned by
-        # the separate Name AugAssign vertical (must not dual-eval project_inplace).
+        # Structural operator site before any rewrite (Name/Attribute/Subscript).
+        # Name rebind is evaluation-time ScopeRebind of project_inplace — not
+        # substitute-time _make_binop (__add__).  operator_site is the iadd
+        # occurrence for all three targets.
         pre_sub_operator_site = None
-        if isinstance(self.target, (Attribute, Subscript)):
+        if isinstance(self.target, (Name, Attribute, Subscript)):
             pre_sub_operator_site = getattr(self, "operator_site", None)
             if pre_sub_operator_site is None:
                 pre_sub_operator_site = self._mint_operator_site_from_structure()
@@ -4317,20 +4319,25 @@ class AugAssign(Statement):
         rewritten = self if not changes else rewrite(self, **changes)
         if not isinstance(rewritten.target, Name):
             return rewritten
+        # Prior binding as the load; RHS already substituted.  Do not mint a
+        # BinOp rebind child — inplace owns the binding at desugar time.
         name = rewritten.target.id
         old_state = unwrap_binding_state(scope.get(name, rewritten.target))
         old_read = binding_state_read_node(
             old_state,
             make_read=rewritten.target._make_binding_read,
         )
-        operation = rewritten._make_binop(old_read, rewritten.op, rewritten.value)
         desc = rewritten.ref.describe()
         return materialize(
             self.unit,
             ShadowNode(
                 desc.kind,
                 desc.raw_span or self.span,
-                (*desc.slots, ("operation", Child(_handle_of(operation)))),
+                (
+                    *desc.slots,
+                    ("prior_read", Child(_handle_of(old_read))),
+                    ("operator_site", Leaf(pre_sub_operator_site)),
+                ),
             ),
             self.reporter,
         )
@@ -4382,41 +4389,40 @@ class AugAssign(Statement):
         )
 
     def substitution_binding(self, scope):
-        # `x OP= e` rebinds x to `x OP e`, reading the OLD x from the scope
-        # (or the target itself if x was free). Only a plain Name target binds.
+        # `x OP= e` — lexical rebind is evaluation-time ScopeRebind of the
+        # authenticated inplace result.  Thread the Name itself so later uses
+        # stay NameSugar and read temporal (not a substitute-time BinOp/__add__).
+        # Only a plain Name target binds.
+        del scope
         if not isinstance(self.target, Name):
             return None
-        operation = getattr(self, "operation", None)
-        if isinstance(operation, Node):
-            return {self.target.id: operation}
-        name = self.target.id
-        old_state = scope.get(name, self.target)
-        old_state = unwrap_binding_state(old_state)
-        old_read = binding_state_read_node(
-            old_state,
-            make_read=self.target._make_binding_read,
-        )
-        return {name: self._make_binop(old_read, self.op, self.value)}
+        return {self.target.id: self.target}
 
     def _construct_sugar(self):
-        """`<target> OP= <value>` -- a plain Name target is INERT at the
-        meaning layer: substitution_binding ALWAYS threads for a Name target
-        (it falls back to the target itself as the old value when nothing was
-        bound yet, so there is no shape where a Name target both fails to
-        thread and stays loud). The rebind rode into the tail as the fold
-        binding; the statement itself states nothing more. Attribute/subscript
-        targets are runtime stores rather than lexical bindings, so they reuse
-        Assign's typed attribute/subscript store effects."""
+        """`<target> OP= <value>` — Name: project_inplace owns ScopeRebind.
+
+        Attribute/subscript targets are runtime stores (get → inplace → set).
+        Name targets evaluate left/right once through the same inplace edge
+        and rebind the name to that result; halt skips the rebind.
+        """
         if isinstance(self.target, Name):
             from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 
-            operation = getattr(self, "operation", None)
-            if not isinstance(operation, Node):
-                return super()._construct_sugar()
-            # Name rebind owns the BinOp binding; do not dual-eval project_inplace
-            # here while discard-the-result would leave __add__ as the rebind.
+            prior = getattr(self, "prior_read", None)
+            if not isinstance(prior, Node):
+                # No substitute yet (e.g. direct sugar on raw node): fall back
+                # to the target as the old read.
+                prior = self.target
+            op_site = getattr(self, "operator_site", None)
+            if op_site is None:
+                op_site = self._mint_operator_site_from_structure()
             return AugAssignSugar(
-                operation=operation.sugar(),
+                name=self.target.id,
+                left=prior.sugar(),
+                right=self.value.sugar(),
+                operator=type(self.op).inplace_operator,
+                operation=self.op.project_inplace,
+                op_site=op_site,
                 site=self.fragment,
             )
         if isinstance(self.target, Attribute):

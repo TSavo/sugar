@@ -44,14 +44,15 @@ class _ReducedBlock:
 
 
 def _extend_receiver_store_scope(value, ctx):
-    from sugar_lift_py_tests.floor import ReceiverFieldStoreValue
+    """Thread statement-owned rebinds: Floor ``extend_scope`` only.
 
-    candidate = getattr(value, "value", value)
-    return (
-        candidate.extend_scope(ctx)
-        if isinstance(candidate, ReceiverFieldStoreValue)
-        else ctx
-    )
+    The reducer does not probe capability, ladder rebind kinds, or mint root
+    contexts.  Default FloorValue.extend_scope is identity; Floors that rebind
+    (ScopeRebind, ReceiverFieldStoreValue, …) own their own root-context mint
+    when ``ctx`` is absent.  ``value`` is an Outcome (Complete/Incomplete) or a
+    FloorValue — both expose Floor-owned ``extend_scope``.
+    """
+    return value.extend_scope(ctx)
 
 
 def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
@@ -302,9 +303,7 @@ def reduce_block_to_exitset(
                     nested_transforms = (
                         () if follow.transform is None else (follow.transform,)
                     )
-                    next_context = _extend_receiver_store_scope(
-                        linear.value, active_ctx
-                    )
+                    next_context = _extend_receiver_store_scope(linear, active_ctx)
                 for transform in reversed(state.transforms):
                     contribution = transform(contribution)
                 entries = (*state.entries, *contribution)
