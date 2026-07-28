@@ -349,3 +349,11 @@ class TupleValue(FloorValue):
                 exception_name="TypeError", site=site, owner="TupleValue.subscript"
             )
         return self.undecided_subscript(index, site, owner="TupleValue.subscript")
+
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="TupleValue.setitem"
+        )
