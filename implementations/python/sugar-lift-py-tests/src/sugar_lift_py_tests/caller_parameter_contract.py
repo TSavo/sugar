@@ -249,6 +249,72 @@ class NativeOperationDemandV1:
         )
 
 
+# Explicit projectors for authenticated native operations.
+#
+# Each entry names its own Floor signature.  A generic
+# ``operation(*operands, site)`` splat would conceal argument-order defects
+# (swapped index/value still calls cleanly and yields a plausible wrong
+# answer).  The table is the contract: producers mint operands in the
+# *discharge* order these parameters declare.
+#
+# Discharge order for stores is not source evaluation order.  Python evaluates
+# ``receiver[index] = value`` as RHS, then receiver, then index — but the
+# resolved operation is called as ``receiver.setitem(index, value)``.  Those
+# two orders are distinct; producers (windows 10876 / 17534) own the source
+# chain, and these projectors own the call signature.
+_NATIVE_OPERATION_PROJECTORS = {
+    # Unary Floor methods (one operand + site).
+    "truth": lambda value, site: value.truth(site),
+    "boolop_truth": lambda value, site: value.boolop_truth(site),
+    "unary_minus": lambda value, site: value.unary_minus(site),
+    "unary_plus": lambda value, site: value.unary_plus(site),
+    "bitwise_invert": lambda value, site: value.bitwise_invert(site),
+    # Binary adapters and Floor methods (two operands + site).
+    "unary_truth": lambda value, unit, site: value.unary_truth(unit, site),
+    "attribute_named": lambda receiver, name, site: receiver.attribute_named(
+        name, site
+    ),
+    "add": lambda left, right, site: left.add(right, site),
+    "subtract": lambda left, right, site: left.subtract(right, site),
+    "multiply": lambda left, right, site: left.multiply(right, site),
+    "divide": lambda left, right, site: left.divide(right, site),
+    "floor_divide": lambda left, right, site: left.floor_divide(right, site),
+    "modulo": lambda left, right, site: left.modulo(right, site),
+    "power": lambda left, right, site: left.power(right, site),
+    "matrix_multiply": lambda left, right, site: left.matrix_multiply(right, site),
+    "bitwise_and": lambda left, right, site: left.bitwise_and(right, site),
+    "bitwise_or": lambda left, right, site: left.bitwise_or(right, site),
+    "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
+    "left_shift": lambda left, right, site: left.left_shift(right, site),
+    "right_shift": lambda left, right, site: left.right_shift(right, site),
+    "equals": lambda left, right, site: left.equals(right, site),
+    "is_identical": lambda left, right, site: left.is_identical(right, site),
+    "less_than": lambda left, right, site: left.less_than(right, site),
+    "less_equal": lambda left, right, site: left.less_equal(right, site),
+    "greater_than": lambda left, right, site: left.greater_than(right, site),
+    "greater_equal": lambda left, right, site: left.greater_equal(right, site),
+    "contains": lambda container, item, site: container.contains(item, site),
+    # Ternary store protocol (receiver, index|name, value + site).
+    # Discharge order: receiver, index, value — never RHS-first.
+    "setitem": lambda receiver, index, value, site: receiver.setitem(
+        index, value, site
+    ),
+    # Attribute store: name arrives as StringValue; unwrap with .value.
+    # Window 17534 mints operator="setattr_named" with operands
+    # (receiver, StringValue(name), value).
+    "setattr_named": lambda receiver, name, value, site: receiver.setattr(
+        name.value, value, site
+    ),
+}
+
+
+def _native_operation_projector_arity(projector) -> int:
+    """Operand count named by an explicit projector (site is always last)."""
+    import inspect
+
+    return len(inspect.signature(projector).parameters) - 1
+
+
 @dataclass(frozen=True)
 class NativeOperationExitCarrierV1:
     """Deferred native operation whose discharge codomain is an ``ExitSet``.
@@ -257,6 +323,11 @@ class NativeOperationExitCarrierV1:
     are replaced by authenticated caller actuals.  Keeping that codomain here,
     rather than retaining a ``FloorValue``, is what preserves the exceptional
     arm until an enclosing effect boundary consumes it.
+
+    Discharge routes through :data:`_NATIVE_OPERATION_PROJECTORS`: each operator
+    names its Floor signature explicitly so n-ary stores (``setitem``,
+    ``setattr_named``) are first-class, and a missing projector stays
+    undischarged rather than panicking.
     """
 
     demand: NativeOperationDemandV1
@@ -288,12 +359,42 @@ class NativeOperationExitCarrierV1:
     def discharge(self, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits."""
         from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.gap.info import GapKind
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
         def undischarged(reason):
             return NativeOperationResolutionV1.undischarged(reason).project(
                 source_node=self.demand.source_node
+            )
+
+        # Internal invariant: mint and later mutation must keep the three
+        # parallel sequences aligned.  A length disagreement is our bug, not
+        # missing caller evidence — it stays a construction panic.
+        if not (
+            len(self.operands)
+            == len(self.coordinates)
+            == len(self.demand.operand_coordinate_cids)
+        ):
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.discharge",
+                blame=self.demand.source_node,
+                observed=(
+                    "native operation carrier operands/coordinates/"
+                    "operand_coordinate_cids lengths disagree "
+                    f"({len(self.operands)}, {len(self.coordinates)}, "
+                    f"{len(self.demand.operand_coordinate_cids)})"
+                ),
+                requested=(
+                    "aligned operands, coordinates, and formal coordinate cids"
+                ),
+                fix=(
+                    "fix the carrier mint or mutation that broke the length "
+                    "invariant; missing authenticated evidence is undischarged, "
+                    "not a panic"
+                ),
+                gap_kind=GapKind.FLOOR,
             )
 
         actual_operands = []
@@ -310,25 +411,24 @@ class NativeOperationExitCarrierV1:
                 )
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
 
-        if len(actual_operands) not in {1, 2}:
+        projector = _NATIVE_OPERATION_PROJECTORS.get(self.demand.operator)
+        if projector is None:
             return undischarged(
-                "native operation arity is unavailable until a unary or binary "
-                f"producer is authenticated (arity={len(actual_operands)})"
-            )
-        left = actual_operands[0]
-        operation = getattr(left, self.demand.operator, None)
-        if not callable(operation):
-            return undischarged(
-                "native producer operation unavailable on authenticated actual: "
-                f"{self.demand.operator}"
+                "native operation projector unavailable for operator "
+                f"{self.demand.operator!r}"
             )
 
-        if len(actual_operands) == 1:
-            projected = operation(self.site)
-        elif len(actual_operands) == 2:
-            projected = operation(actual_operands[1], self.site)
-        else:
-            return undischarged("native operation arity is unavailable")
+        expected_arity = _native_operation_projector_arity(projector)
+        if len(actual_operands) != expected_arity:
+            return undischarged(
+                "native operation arity is unavailable for projector "
+                f"{self.demand.operator!r} "
+                f"(arity={len(actual_operands)}, expected={expected_arity})"
+            )
+
+        # Bind by the projector's declared parameter order.  Each lambda names
+        # its Floor signature; this is not a generic method splat.
+        projected = projector(*actual_operands, self.site)
         if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
             effect = projected.value.effect
             if effect.exception_type_coordinate is None or effect.occurrence_id is None:

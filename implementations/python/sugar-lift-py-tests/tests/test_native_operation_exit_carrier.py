@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from dataclasses import dataclass, replace
+
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     NativeOperationResolutionV1,
+    _NATIVE_OPERATION_PROJECTORS,
     authenticated_exceptional_resolution_count,
     source_coordinate,
 )
@@ -20,17 +23,26 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.floor import NoneValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    FloorValue,
+    ListValue,
+    NoneValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import (
+    Complete,
     Completed,
     ExitSet,
     Halted,
     outcome_to_exitset,
     true_guard,
 )
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -215,15 +227,13 @@ def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic()
 
 def test_unavailable_native_operation_is_undischarged_not_a_construction_panic():
     carrier, left, right = _carrier(operator="not_a_floor_operation")
-    with pytest.raises(SugarNotWritten, match="producer operation unavailable"):
+    with pytest.raises(SugarNotWritten, match="projector unavailable"):
         carrier.discharge(
             {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
         )
 
 
 def test_unsupported_native_arity_is_undischarged_not_a_construction_panic():
-    from dataclasses import replace
-
     carrier, left, right = _carrier()
     demand = replace(
         carrier.demand,
@@ -384,3 +394,261 @@ def test_same_named_exception_keeps_distinct_operation_origins():
     assert first_exit.effect.exception_type_coordinate == exception_type
     assert second_exit.effect.exception_type_coordinate == exception_type
     assert first_exit.effect.occurrence != second_exit.effect.occurrence
+
+
+def _setitem_site():
+    source = "def store(receiver, index, value):\n    receiver[index] = value\n"
+    tree = SourceFile(
+        (source, "setitem_operation.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    return next(tree.functions()).fragment
+
+
+def _setattr_site():
+    source = "def store(receiver, value):\n    receiver.name = value\n"
+    tree = SourceFile(
+        (source, "setattr_operation.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    return next(tree.functions()).fragment
+
+
+def _setitem_carrier():
+    """Mint setitem in discharge order: receiver, index, value."""
+    receiver = _coordinate("receiver", 0)
+    index = _coordinate("index", 1)
+    value = _coordinate("value", 2)
+    carrier = NativeOperationExitCarrierV1.mint(
+        site=_setitem_site(),
+        operator="setitem",
+        operands=(
+            SymbolicValue(make_var("receiver"), receiver),
+            SymbolicValue(make_var("index"), index),
+            SymbolicValue(make_var("value"), value),
+        ),
+        coordinates=(receiver, index, value),
+    )
+    return carrier, receiver, index, value
+
+
+@dataclass(frozen=True)
+class _AttrStoreReceiver(FloorValue):
+    """Minimal Floor receiver that owns ``setattr`` for discharge twins.
+
+    Window 17534 owns production Floor ``setattr`` arms; this test double only
+    authenticates the projector table's ``setattr_named`` unwrap path.
+    """
+
+    fields: tuple[tuple[str, FloorValue], ...] = ()
+
+    def setattr(self, name, value, site):
+        del site
+        remaining = tuple(field for field in self.fields if field[0] != name)
+        return Complete(_AttrStoreReceiver((*remaining, (name, value))))
+
+    def to_term(self, *, owner: str):
+        del owner
+        return ctor(
+            "test:attr_store_receiver",
+            [
+                ctor(
+                    "test:attr_store_field",
+                    [str_const(name), field.to_term(owner="attr-store")],
+                )
+                for name, field in self.fields
+            ],
+        )
+
+
+def test_setitem_discharges_in_receiver_index_value_order_and_completes():
+    """``receiver[index] = value`` discharge order is receiver, index, value."""
+    carrier, receiver, index, value = _setitem_carrier()
+
+    exits = carrier.discharge(
+        {
+            receiver.coordinate_cid: ListValue((TermValue(0), TermValue(1))),
+            index.coordinate_cid: TermValue(0),
+            value.coordinate_cid: TermValue(9),
+        }
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    assert completed.value == ListValue((TermValue(9), TermValue(1)))
+
+
+def test_setitem_discharges_and_halts_with_named_exception_identity():
+    """Store halt identity comes from the operation floor, never the boundary."""
+    carrier, receiver, index, value = _setitem_carrier()
+
+    exits = carrier.discharge(
+        {
+            receiver.coordinate_cid: ListValue((TermValue(0),)),
+            index.coordinate_cid: TermValue(4),
+            value.coordinate_cid: TermValue(9),
+        }
+    )
+
+    assert len(exits.exits) == 1
+    halted = exits.exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _Expected("IndexError").identity
+    assert halted.effect.occurrence is not None
+
+
+def test_setattr_named_unwraps_string_value_and_discharges():
+    """Window 17534: name is StringValue; projector unwraps with ``name.value``."""
+    receiver = _coordinate("receiver", 0)
+    value = _coordinate("value", 1)
+    carrier = NativeOperationExitCarrierV1.mint(
+        site=_setattr_site(),
+        operator="setattr_named",
+        operands=(
+            SymbolicValue(make_var("receiver"), receiver),
+            StringValue("name"),
+            SymbolicValue(make_var("value"), value),
+        ),
+        coordinates=(receiver, None, value),
+    )
+
+    exits = carrier.discharge(
+        {
+            receiver.coordinate_cid: _AttrStoreReceiver(),
+            value.coordinate_cid: TermValue(7),
+        }
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    assert completed.value == _AttrStoreReceiver((("name", TermValue(7)),))
+
+
+def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge():
+    """Python eval order (RHS, receiver, index) is not the setitem call order.
+
+    Source producers evaluate value first, then the target's receiver, then
+    the index.  Discharge still binds ``receiver, index, value`` because the
+    Floor method is ``setitem(index, value)``.  Conflating the two orders is
+    the defect the explicit projector table exists to prevent.
+    """
+    order: list[str] = []
+
+    @dataclass(frozen=True)
+    class _Probe(Sugar):
+        label: str
+        payload: FloorValue
+
+        def desugar(self, ctx=None):
+            del ctx
+            order.append(self.label)
+            return Complete(self.payload)
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    # The store producer's source chain (window 10876): value → receiver → index.
+    value = _Probe("value", TermValue(9))
+    receiver = _Probe("receiver", ListValue((TermValue(0),)))
+    index = _Probe("index", TermValue(0))
+    source_outcome = value.desugar().and_then(
+        lambda stored: receiver.desugar().and_then(
+            lambda recv: index.desugar().and_then(
+                lambda idx: recv.setitem(idx, stored, _setitem_site())
+            )
+        )
+    )
+    assert order == ["value", "receiver", "index"]
+    assert isinstance(source_outcome, Complete)
+    assert source_outcome.value == ListValue((TermValue(9),))
+
+    # Discharge order is independently receiver, index, value on the table.
+    import inspect
+
+    parameters = tuple(
+        inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
+    )
+    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters[:3] != ("value", "receiver", "index")
+
+
+def test_lying_swapped_index_and_value_must_fail_to_match_correct_store():
+    """Swapped index/value still calls cleanly — so order must be enforced by twins.
+
+    A generic splat would hide this: both orders invoke ``setitem`` without
+    TypeError.  The explicit projector names the signature so a producer that
+    mints value before index cannot silently claim the truthful store face.
+    """
+    receiver = _coordinate("receiver", 0)
+    index = _coordinate("index", 1)
+    value = _coordinate("value", 2)
+    site = _setitem_site()
+    truthful = NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator="setitem",
+        operands=(
+            SymbolicValue(make_var("receiver"), receiver),
+            SymbolicValue(make_var("index"), index),
+            SymbolicValue(make_var("value"), value),
+        ),
+        coordinates=(receiver, index, value),
+    )
+    # LYING mint: index and value slots swapped relative to the projector.
+    lying = NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator="setitem",
+        operands=(
+            SymbolicValue(make_var("receiver"), receiver),
+            SymbolicValue(make_var("value"), value),
+            SymbolicValue(make_var("index"), index),
+        ),
+        coordinates=(receiver, value, index),
+    )
+
+    actuals = {
+        receiver.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        index.coordinate_cid: TermValue(1),
+        value.coordinate_cid: TermValue(99),
+    }
+    truthful_exits = truthful.discharge(actuals)
+    lying_exits = lying.discharge(actuals)
+
+    assert isinstance(truthful_exits.exits[0], Completed)
+    assert truthful_exits.exits[0].value == ListValue(
+        (TermValue(0), TermValue(99), TermValue(2))
+    )
+    # The lying order stores at index 99 (the value) — IndexError — or at the
+    # wrong cell.  Either way it must not equal the truthful post-state.
+    lying_face = lying_exits.exits[0]
+    if isinstance(lying_face, Completed):
+        assert lying_face.value != truthful_exits.exits[0].value
+    else:
+        assert isinstance(lying_face, Halted)
+
+
+def test_lying_operator_absent_from_projector_table_is_undischarged_not_panic():
+    """An operator not in the table is undischarged — never panic, never complete."""
+    carrier, left, right = _carrier(operator="invented_store_protocol")
+
+    with pytest.raises(SugarNotWritten, match="projector unavailable"):
+        carrier.discharge(
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        )
+
+
+def test_mismatched_operand_coordinate_lengths_still_construction_panic():
+    """Internal length disagreement remains a loud panic, not undischarged."""
+    carrier, left, right = _carrier()
+    # Break only the carrier.coordinates axis; demand cids stay binary.
+    malformed = replace(carrier, coordinates=(left,))
+
+    with pytest.raises(ConstructionPanic, match="lengths disagree"):
+        malformed.discharge(
+            {
+                left.coordinate_cid: TermValue(1),
+                right.coordinate_cid: TermValue(2),
+            }
+        )
