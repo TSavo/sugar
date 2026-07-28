@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from enum import Enum
 from typing import Any, Mapping
 
 from .canonicalizer import blake3_512_of, encode_jcs
@@ -20,6 +21,16 @@ from .ir import Sort
 
 class ContractRefProtocolError(ValueError):
     pass
+
+
+class NativeProtocolSlot(str, Enum):
+    """Closed source protocol slots, independent of vendor member spelling."""
+
+    CONTEXT_ENTER = "context-enter"
+    CONTEXT_EXIT = "context-exit"
+    TRUTH = "truth"
+    SET_ITEM = "set-item"
+    GET_ITEM = "get-item"
 
 
 @dataclass(frozen=True, order=True)
@@ -122,6 +133,18 @@ ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolut
 
 
 @dataclass(frozen=True)
+class NativeDefinitionCoordinateGapV1:
+    receiver: SourceFragmentCoordinateV1
+    slot: NativeProtocolSlot
+    reason: str
+
+
+NativeDefinitionCoordinateResolutionV1 = (
+    SourceFragmentCoordinateV1 | NativeDefinitionCoordinateGapV1
+)
+
+
+@dataclass(frozen=True)
 class SourceDerivedContextManagerRefV1:
     """Live protocol testimony plus its immutable h=h(p) summary coordinate."""
 
@@ -137,6 +160,10 @@ class ResolvedContractRefsV1:
     catalog_cid: str
     table_cid: str
     by_use_site: Mapping[SourceFragmentCoordinateV1, ContextManagerResolutionV1]
+    native_definitions: Mapping[
+        tuple[SourceFragmentCoordinateV1, NativeProtocolSlot],
+        NativeDefinitionCoordinateResolutionV1,
+    ] = field(default_factory=dict)
 
     def require(
         self, use_site: SourceFragmentCoordinateV1
@@ -147,6 +174,19 @@ class ResolvedContractRefsV1:
             raise ContractRefProtocolError(
                 "BackendDefect: enrolled context-manager demand missing from resolution table"
             ) from exc
+
+    def require_native_definition(
+        self, receiver: SourceFragmentCoordinateV1, slot: NativeProtocolSlot
+    ) -> NativeDefinitionCoordinateResolutionV1:
+        """Resolve one authenticated source definition, or retain UNDECIDED."""
+        result = self.native_definitions.get((receiver, slot))
+        if result is None:
+            return NativeDefinitionCoordinateGapV1(
+                receiver=receiver,
+                slot=slot,
+                reason="authenticated source definition coordinate is not enrolled",
+            )
+        return result
 
 
 # Placeholder table for construction that does not enroll context-manager

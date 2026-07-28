@@ -198,9 +198,9 @@ class NativeOperationDemandV1:
             raise ValueError("native operation requires a nonempty operator")
         operands = tuple(operands)
         coordinates = tuple(coordinates)
-        if len(operands) != 2 or len(coordinates) != len(operands):
+        if not operands or len(coordinates) != len(operands):
             raise ValueError(
-                "native operation requires two ordered operands and aligned coordinates"
+                "native operation requires ordered operands and aligned coordinates"
             )
 
         source_node = source_coordinate(site)
@@ -317,7 +317,7 @@ class NativeOperationExitCarrierV1:
                 )
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
 
-        left, right = actual_operands
+        left = actual_operands[0]
         operation = getattr(left, self.demand.operator, None)
         if not callable(operation):
             construction_panic_gap(
@@ -332,7 +332,19 @@ class NativeOperationExitCarrierV1:
                 gap_kind=GapKind.FLOOR,
             )
 
-        projected = operation(right, self.site)
+        if len(actual_operands) == 1:
+            projected = operation(self.site)
+        elif len(actual_operands) == 2:
+            projected = operation(actual_operands[1], self.site)
+        else:
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.discharge",
+                blame=self.demand.source_node,
+                observed="native operation has unsupported operand arity",
+                requested="a unary or binary native operation",
+                fix="retain the operation demand until its native arity is supported",
+                gap_kind=GapKind.FLOOR,
+            )
         if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
             effect = projected.value.effect
             if effect.exception_type_coordinate is None or effect.occurrence_id is None:

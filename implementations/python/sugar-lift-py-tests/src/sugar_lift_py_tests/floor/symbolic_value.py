@@ -183,6 +183,17 @@ class SymbolicValue(FloorValue):
         return self.term
 
     def truth(self, site):
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="truth",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         # A symbolic value EMITS the Python truth relation; the sort adjudicates later.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
