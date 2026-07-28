@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 
 def _is_set_coordinate(term) -> bool:
@@ -14,7 +14,7 @@ def _is_set_coordinate(term) -> bool:
 
 
 @dataclass(frozen=True)
-class ComprehensionValue(FloorValue):
+class ComprehensionValue(GuardStableValue):
     """A native comprehension coordinate with no invented cardinality.
 
     Finite literal comprehensions reduce to concrete collection floors. All
@@ -28,9 +28,27 @@ class ComprehensionValue(FloorValue):
     term: object
     finite_elements: tuple | None = None
 
+    def denotes_value(self) -> bool:
+        """A constructed fold denotes the sequence it builds.
+
+        Its runtime TYPE is decided -- the fold constructor names whether
+        it is a list, set, or dict comprehension -- so this value alone
+        never makes a pair undecided. Only an undecided right operand does.
+        """
+        return True
+
     def to_term(self, *, owner: str):
         del owner
         return self.term
+
+    def project_sequence_with(self, operation, ctx):
+        """`a, b = <comprehension>` -- the comprehension owns the cardinality.
+
+        It answers from `finite_elements` when its owner projected every member
+        of an exact finite iterable, and otherwise retains the arity demand. The
+        operation reads the testimony; this face only routes to it.
+        """
+        return operation.project_comprehension(self, ctx)
 
     def contains(self, item, site):
         # Finite comprehension testimony folds like a list; otherwise membership
@@ -121,7 +139,6 @@ class ComprehensionValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         return Complete(
             ComprehensionValue(
@@ -129,9 +146,7 @@ class ComprehensionValue(FloorValue):
                     "py.list_append",
                     [
                         self.term,
-                        floor_to_term(
-                            value, owner="ComprehensionValue.append_with value"
-                        ),
+                        value.to_term(owner="ComprehensionValue.append_with value"),
                     ],
                     symbol_kind="method-coordinate",
                 )
@@ -231,10 +246,9 @@ class ComprehensionValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import Term, ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        index_term = floor_to_term(index, owner="ComprehensionValue.setitem index")
-        value_term = floor_to_term(value, owner="ComprehensionValue.setitem value")
+        index_term = index.to_term(owner="ComprehensionValue.setitem index")
+        value_term = value.to_term(owner="ComprehensionValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",

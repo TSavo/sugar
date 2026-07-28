@@ -7,12 +7,21 @@ from pathlib import Path
 import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_SRC = os.path.normpath(os.path.join(_HERE, "..", "src"))
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-# the tests dir itself (shared fixtures / helpers next to test modules).
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+_ROOT = _HERE
+while _ROOT != os.path.dirname(_ROOT) and not (
+    os.path.isdir(os.path.join(_ROOT, "implementations"))
+    and os.path.isdir(os.path.join(_ROOT, "tests"))
+):
+    _ROOT = os.path.dirname(_ROOT)
+if os.path.join(_ROOT, "tests") not in sys.path:
+    sys.path.insert(0, os.path.join(_ROOT, "tests"))
+
+from checkout_resolution import pin_checkout  # noqa: E402
+
+# Pin this package's sources to THIS checkout before anything imports them.
+# Without the pin these tests resolve whatever editable install the machine
+# happens to have -- which does not fail, it passes about the wrong code.
+pin_checkout(__file__, siblings=())
 
 from sugar_lift_py_tests.sugar_binary import (  # noqa: E402
     SugarBinaryResolutionError,

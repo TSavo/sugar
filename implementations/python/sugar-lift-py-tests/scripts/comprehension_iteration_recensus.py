@@ -3,6 +3,11 @@
 
 from __future__ import annotations
 
+# Not the board. This module measures its own named denominator; the sole
+# authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
+# See tests/test_one_authoritative_scoreboard.py.
+SCOREBOARD_AUTHORITY = False
+
 import argparse
 import ast
 from collections import Counter, defaultdict
@@ -216,8 +221,14 @@ def main() -> int:
                     syntax[_syntax_coordinate(node, lines)] = _shape(node)
 
             def construct_file():
+                from sugar_lift_py_tests.lift_rpc import (
+                    open_source_file_for_construction,
+                )
+
                 reporter = CollectingReporter()
-                source_file = SourceFile.from_path(str(path), reporter=reporter)
+                source_file = open_source_file_for_construction(
+                    path, root=args.corpus, reporter=reporter
+                )
                 for function in source_file.functions():
                     try:
                         function.sugar()

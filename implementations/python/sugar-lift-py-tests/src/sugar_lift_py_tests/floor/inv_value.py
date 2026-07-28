@@ -43,6 +43,9 @@ class InvValue(FloorValue):
         # Asserted then_bindings are definite on the continuing path: the false
         # face of the predicate would have halted (AssertionError), so the tail
         # only runs under the true face.
+        if ctx is None:
+            return None
+
         from dataclasses import replace
 
         temporal = ctx.temporal

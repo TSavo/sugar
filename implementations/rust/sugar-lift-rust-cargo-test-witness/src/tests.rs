@@ -370,3 +370,126 @@ fn cid_filename_replaces_colon_with_underscore() {
         format!("{proof_stem}.witness")
     );
 }
+
+// ------- sugar.enumerate PRIMITIVES -------
+//
+// There is no `lift` kit method: full-tree construction is `sugar.enumerate`
+// over the SourceTree (#6222). These pin the two decisions the wire glue in
+// `bin/witness_rpc.rs` delegates here -- file IDENTITY and the universe ANCHOR
+// -- so neither can drift without a red test. They do not spawn `cargo test`.
+
+/// A scratch crate laid out the way `discover_rust_files` walks: `.rs` under
+/// the project root, `target/` skipped.
+fn scratch_project(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "sugar-witness-enumerate-{tag}-{}-{}",
+        std::process::id(),
+        blake3_512_of(tag.as_bytes())
+            .chars()
+            .rev()
+            .take(12)
+            .collect::<String>()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("mkdir scratch src");
+    dir
+}
+
+#[test]
+fn file_memento_mints_identity_through_the_shared_content_door() {
+    let dir = scratch_project("identity");
+    let body = "pub fn one() -> u32 { 1 }\n";
+    std::fs::write(dir.join("src").join("lib.rs"), body).expect("write source");
+
+    let memento = file_source_memento(&dir, "src/lib.rs").expect("seal the locator");
+
+    assert_eq!(memento["kind"], "source-memento");
+    assert_eq!(memento["file"], "src/lib.rs");
+    // The CID is the content address of the DECODED utf-8 bytes -- the same
+    // door `path_source` uses python-side. A kit minting its own identity would
+    // address the same file differently than every other kit.
+    assert_eq!(memento["source_cid"], blake3_of(body.as_bytes()));
+    // A whole file has no single body span or AST template.
+    assert!(memento["span"].is_null(), "file locator carries no span");
+    assert!(
+        memento["template_cid"].is_null(),
+        "file locator carries no ast template"
+    );
+    assert_eq!(memento["function_name"], "");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn undecodable_source_is_a_loud_error_never_a_made_up_identity() {
+    let dir = scratch_project("undecodable");
+    // Lone 0x80 continuation byte: valid to read, invalid utf-8.
+    std::fs::write(dir.join("src").join("lib.rs"), [0x80u8]).expect("write source");
+
+    let sealed = file_source_memento(&dir, "src/lib.rs");
+
+    let reason = sealed.expect_err("undecodable source must not seal a locator");
+    assert!(
+        reason.contains("src/lib.rs") && reason.contains("utf-8"),
+        "the gap must name the file and why it could not be sealed: {reason}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn missing_source_is_a_loud_error_never_a_made_up_identity() {
+    let dir = scratch_project("missing");
+
+    let sealed = file_source_memento(&dir, "src/absent.rs");
+
+    let reason = sealed.expect_err("an absent file must not seal a locator");
+    assert!(
+        reason.contains("src/absent.rs"),
+        "the gap must name the file it could not read: {reason}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn universe_anchor_is_the_first_sealable_code_file_in_sorted_order() {
+    let dir = scratch_project("anchor");
+    std::fs::write(dir.join("src").join("zeta.rs"), "pub fn z() {}\n").expect("write zeta");
+    std::fs::write(dir.join("src").join("alpha.rs"), "pub fn a() {}\n").expect("write alpha");
+
+    let anchor = enumerate_anchor_file(&dir).expect("a readable code file anchors the universe");
+
+    // The witness package is a WHOLE-SUITE artifact emitted at exactly one
+    // file; sorted order is what makes that one file deterministic.
+    assert_eq!(anchor, "src/alpha.rs");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn universe_anchor_skips_a_file_that_gapped_in_the_census() {
+    let dir = scratch_project("anchor-gap");
+    // `alpha.rs` sorts first but cannot be sealed, so it has no memento to be
+    // asked `at` and can never be the anchor.
+    std::fs::write(dir.join("src").join("alpha.rs"), [0x80u8]).expect("write alpha");
+    std::fs::write(dir.join("src").join("beta.rs"), "pub fn b() {}\n").expect("write beta");
+
+    let anchor = enumerate_anchor_file(&dir).expect("the sealable file anchors the universe");
+
+    assert_eq!(anchor, "src/beta.rs");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_project_with_no_sealable_code_file_has_no_anchor() {
+    let dir = scratch_project("anchor-none");
+
+    assert!(
+        enumerate_anchor_file(&dir).is_none(),
+        "no readable code file means an empty universe, not a fabricated anchor"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

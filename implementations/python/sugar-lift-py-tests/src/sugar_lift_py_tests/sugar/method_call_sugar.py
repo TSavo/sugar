@@ -30,6 +30,11 @@ class MethodCallSugar(Sugar):
     site: object = dataclass_field(compare=False)
     keywords: tuple = ()  # (name, sugar) pairs, in source order
     source_call_frame: object = dataclass_field(default=None, compare=False)
+    # Exception construction only: when Raise authenticates an Attribute
+    # exception-class path, the resulting CallSiteValue carries that identity.
+    exception_type_coordinate: object = dataclass_field(default=None, compare=False)
+    exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
+    native_definition_coordinate: object = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -44,14 +49,24 @@ class MethodCallSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return self.receiver.desugar(ctx).and_then(
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
+
+        # The RECEIVER is the prefix of the whole argument fold, so its arm
+        # count is the base of the exponent every argument raises (#6324).
+        return factored_operand(self.receiver.desugar(ctx)).and_then(
             lambda receiver: self._collect(receiver, self.args, (), ctx)
         )
 
     def _collect(self, receiver, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
+
         if remaining:
             head, *rest = remaining
-            return head.desugar(ctx).and_then(
+            # One completed arm per argument (#6324): `and_then` is
+            # `ExitSet.sequence`, so an unfactored partitioning argument
+            # multiplies the accumulated tuple by its arm count, and k
+            # arguments distribute into m ** k arms.
+            return factored_operand(head.desugar(ctx)).and_then(
                 lambda value: self._collect(
                     receiver, tuple(rest), accumulated + (value,), ctx
                 )
@@ -61,9 +76,12 @@ class MethodCallSugar(Sugar):
     def _collect_kwargs(
         self, receiver, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> Outcome:
+        from sugar_lift_py_tests.outcome.exit_set import factored_operand
+
         if remaining:
             (name, sugar), *rest = remaining
-            return sugar.desugar(ctx).and_then(
+            # Same law as the positional fold (#6324).
+            return factored_operand(sugar.desugar(ctx)).and_then(
                 lambda value: self._collect_kwargs(
                     receiver, tuple(rest), kw_values + ((name, value),), positional, ctx
                 )
@@ -95,6 +113,7 @@ class MethodCallSugar(Sugar):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
+                blame=self.site,
                 owner="MethodCallSugar._collect_kwargs",
                 observed=type(receiver).__name__,
                 requested="authenticated constructed receiver matching the method frame",
@@ -124,5 +143,7 @@ class MethodCallSugar(Sugar):
                 body=None,
                 site=self.site,
                 runtime_dispatch_receiver=receiver,
+                exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
             )
         )

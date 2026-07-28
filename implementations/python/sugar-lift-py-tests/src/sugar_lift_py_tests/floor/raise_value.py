@@ -29,6 +29,16 @@ class RaiseValue(FloorValue):
 
         return FollowStep.halt(keeps_rest=False)
 
+    def truth(self, site):
+        # A raise is not a Python boolean. Expression evaluation already halted
+        # with the exceptional exit; demanding truthiness of the raise terminal
+        # is a force-floor stage bug (owner=truth, observed=RaiseValue). Re-emit
+        # the effect so `if <expr-that-raises>:` propagates rather than panics.
+        del site
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(self.effect)
+
     def guarded(self, formula):
         from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
 

@@ -21,6 +21,7 @@ from sugar_source_tree.panic import (
 
 def test_dynamic_export_is_a_named_with_construction_gap_kind():
     panic = ContextManagerResolutionConstructionGap(
+        blame="demand:test",
         kind="dynamic-export",
         demand_cid="demand:test",
         candidate_member_cids=(),
@@ -37,6 +38,7 @@ def test_dynamic_export_is_a_named_with_construction_gap_kind():
 def test_static_export_absent_and_unsupported_statement_parse():
     for kind in ("static-export-absent", "unsupported-statement"):
         panic = ContextManagerResolutionConstructionGap(
+            blame="demand:test",
             kind=kind,
             demand_cid="demand:test",
             candidate_member_cids=(),
@@ -51,6 +53,7 @@ def test_static_export_absent_and_unsupported_statement_parse():
 def test_unknown_resolution_kind_stays_loud_not_valueerror():
     """A newly minted kind must not crash the census with ValueError."""
     panic = ContextManagerResolutionConstructionGap(
+        blame="demand:test",
         kind="brand-new-resolution-kind-2026",
         demand_cid="demand:test",
         candidate_member_cids=(),
@@ -66,6 +69,7 @@ def test_unknown_resolution_kind_stays_loud_not_valueerror():
 
 def test_known_runtime_selected_still_parses():
     panic = ContextManagerResolutionConstructionGap(
+        blame="demand:test",
         kind="runtime-selected",
         demand_cid="demand:test",
         candidate_member_cids=(),

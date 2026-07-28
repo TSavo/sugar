@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 import json
 from typing import Any
 
@@ -8,8 +8,144 @@ from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.context_manager_contract import _json_value
 from sugar_lift_py_tests.floor import FloorValue
-from sugar_lift_py_tests.ir import Formula, Term, formula_to_value, term_to_value
+from sugar_lift_py_tests.ir import (
+    Formula,
+    Term,
+    atomic,
+    ctor,
+    formula_to_value,
+    str_const,
+    term_to_value,
+)
 
+
+class NativeOperationResolutionV1:
+    """The closed caller-discharge result for one native operation.
+
+    The exceptional arm is authenticated only when both the exception type
+    coordinate and operation occurrence coordinate are present.  A halt without
+    those coordinates is not a fourth exit kind: it remains ``undischarged``.
+    """
+
+    __slots__ = (
+        "_kind",
+        "value",
+        "exception_type_coordinate",
+        "raise_occurrence_coordinate",
+        "reason",
+    )
+
+    def __init__(
+        self,
+        *,
+        kind,
+        value=None,
+        exception_type_coordinate=None,
+        raise_occurrence_coordinate=None,
+        reason=None,
+    ):
+        if kind not in {"completed", "exceptional", "undischarged"}:
+            raise ValueError(f"unknown native operation resolution: {kind}")
+        if kind == "completed" and value is None:
+            raise ValueError("completed native operation requires a value")
+        if kind == "exceptional" and (
+            exception_type_coordinate is None or raise_occurrence_coordinate is None
+        ):
+            raise ValueError(
+                "exceptional native operation requires authenticated type and occurrence"
+            )
+        if kind == "undischarged" and not reason:
+            raise ValueError("undischarged native operation requires a reason")
+        if kind != "exceptional" and (
+            exception_type_coordinate is not None
+            or raise_occurrence_coordinate is not None
+        ):
+            raise ValueError(
+                "non-exceptional resolution cannot carry exception testimony"
+            )
+        self._kind = kind
+        self.value = value
+        self.exception_type_coordinate = exception_type_coordinate
+        self.raise_occurrence_coordinate = raise_occurrence_coordinate
+        self.reason = reason
+
+    @classmethod
+    def completed(cls, value):
+        return cls(kind="completed", value=value)
+
+    @classmethod
+    def exceptional(cls, *, exception_type_coordinate, operation_occurrence):
+        return cls(
+            kind="exceptional",
+            exception_type_coordinate=exception_type_coordinate,
+            raise_occurrence_coordinate=operation_occurrence,
+        )
+
+    @classmethod
+    def undischarged(cls, reason: str):
+        return cls(kind="undischarged", reason=reason)
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def is_completed(self) -> bool:
+        return self._kind == "completed"
+
+    @property
+    def has_authenticated_exception_type(self) -> bool:
+        return (
+            self._kind == "exceptional"
+            and self.exception_type_coordinate is not None
+            and self.raise_occurrence_coordinate is not None
+        )
+
+    @property
+    def is_undischarged(self) -> bool:
+        return self._kind == "undischarged"
+
+    @property
+    def is_exceptional(self) -> bool:
+        return self._kind == "exceptional"
+
+    @property
+    def is_authenticated_exceptional_exit(self) -> bool:
+        """The only resolution arm admitted to an authenticated-exit tally."""
+        return self.has_authenticated_exception_type
+
+    def project(self, *, source_node):
+        """Project the closed resolution into an ExitSet or a typed refusal."""
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.is_completed:
+            return ExitSet.completed(self.value)
+        if self.has_authenticated_exception_type:
+            occurrence = self.raise_occurrence_coordinate
+            assert occurrence is not None
+            return ExitSet.halted(
+                RaiseEffect(
+                    exception_type_coordinate=self.exception_type_coordinate,
+                    occurrence=str(occurrence.wire()),
+                    blame=str(occurrence.wire()),
+                )
+            )
+        raise SugarNotWritten(
+            blame=str(source_node),
+            owner="NativeOperationResolutionV1.project",
+            observed=self.reason or "native operation exception identity unproven",
+            requested="authenticated exception type and operation occurrence coordinates",
+            fix="retain the operation as undischarged until both coordinates are proven",
+        )
+
+
+def authenticated_exceptional_resolution_count(resolutions) -> int:
+    """Count named exceptional resolutions by coordinates, never by arm kind."""
+    return sum(
+        resolution.is_authenticated_exceptional_exit for resolution in resolutions
+    )
 
 def _json(value) -> Any:
     return json.loads(encode_jcs(value))
@@ -28,6 +164,415 @@ def source_coordinate(site) -> SourceFragmentCoordinateV1:
         span.end_line,
         span.end_col,
     )
+
+
+def native_operator_demand(operator: str, operands: tuple[Term, ...]) -> Formula:
+    """The unresolved caller obligation for one ordered native operation.
+
+    This formula records a question.  It does not choose a result, an exception
+    type, or a runtime coordinate; caller discharge supplies authenticated
+    actual operands and the ordinary Floor answers the question later.
+    """
+    return atomic(
+        "python:native_operator_demand",
+        [str_const(operator), *operands],
+    )
+
+
+@dataclass(frozen=True)
+class NativeOperationDemandV1:
+    """Content identity for an ordered native-operation occurrence."""
+
+    source_node: SourceFragmentCoordinateV1
+    operator: str
+    operand_terms: tuple[Term, ...]
+    operand_coordinate_cids: tuple[str | None, ...]
+    candidate: Term
+    candidate_cid: str
+    demanded_formula: Formula
+    demand_cid: str
+
+    @classmethod
+    def mint(cls, *, site, operator, operands, coordinates):
+        if not isinstance(operator, str) or not operator:
+            raise ValueError("native operation requires a nonempty operator")
+        operands = tuple(operands)
+        coordinates = tuple(coordinates)
+        if not operands or len(coordinates) != len(operands):
+            raise ValueError(
+                "native operation requires ordered operands and aligned coordinates"
+            )
+
+        source_node = source_coordinate(site)
+        operand_terms = tuple(
+            operand.to_term(owner=f"native operation {operator} operand")
+            for operand in operands
+        )
+        coordinate_cids = tuple(
+            None if coordinate is None else coordinate.coordinate_cid
+            for coordinate in coordinates
+        )
+        candidate = ctor(
+            "python:native_operation",
+            [str_const(operator), *operand_terms],
+        )
+        candidate_preimage = {
+            "kind": "native-operation-candidate",
+            "schemaVersion": "1",
+            "sourceNode": source_node.wire(),
+            "operator": operator,
+            "operands": [_json(term_to_value(term)) for term in operand_terms],
+            "formalCoordinates": list(coordinate_cids),
+            "candidate": _json(term_to_value(candidate)),
+        }
+        candidate_cid = _cid(candidate_preimage)
+        demanded_formula = native_operator_demand(operator, operand_terms)
+        demand_preimage = {
+            "kind": "native-operation-demand",
+            "schemaVersion": "1",
+            "sourceNode": source_node.wire(),
+            "operator": operator,
+            "operands": [_json(term_to_value(term)) for term in operand_terms],
+            "formalCoordinates": list(coordinate_cids),
+            "candidateCid": candidate_cid,
+            "demandedFormula": _json(formula_to_value(demanded_formula)),
+        }
+        return cls(
+            source_node=source_node,
+            operator=operator,
+            operand_terms=operand_terms,
+            operand_coordinate_cids=coordinate_cids,
+            candidate=candidate,
+            candidate_cid=candidate_cid,
+            demanded_formula=demanded_formula,
+            demand_cid=_cid(demand_preimage),
+        )
+
+
+def _ast_minted_native_operator_constants() -> frozenset[str]:
+    """String ``operator=`` kwargs that feed native-operation carrier mints.
+
+    Discovers:
+
+    * ``NativeOperationExitCarrierV1.mint(operator="...")`` literals
+    * ``defer_formal_native_operation(..., operator="...")`` and other call
+      sites that pass a floor-method name through to ``mint``
+
+    Dynamic ``operator=owner`` / ``operator=method`` paths are not string
+    constants; :func:`production_native_operation_operators` unions the tables
+    those paths draw from so the coverage tooth still closes both directions.
+
+    Single-character / non-identifier strings (e.g. ``BinaryOperatorOperation``
+    term coordinates ``"+"``) are excluded — those are term spellings, not
+    carrier operator names.
+    """
+    import ast
+    from pathlib import Path
+
+    package_root = Path(__file__).resolve().parent
+    found: set[str] = set()
+    for path in package_root.rglob("*.py"):
+        if path.name == "caller_parameter_contract.py":
+            # This module defines projectors and mint plumbing, not producers.
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "operator":
+                    continue
+                value = keyword.value
+                if not (
+                    isinstance(value, ast.Constant) and isinstance(value.value, str)
+                ):
+                    continue
+                name = value.value
+                # Carrier operators are Floor method names (identifiers), never
+                # binary term spellings like "+" / "//".
+                if name.isidentifier():
+                    found.add(name)
+    return frozenset(found)
+
+
+def production_native_operation_operators() -> frozenset[str]:
+    """Every operator production code mints onto the native-operation carrier.
+
+    Sources (union — each is a real mint path, not a guess):
+
+    * AST string constants on ``NativeOperationExitCarrierV1.mint(operator=...)``
+    * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
+    * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
+    * contracted store operators whose producers pin the mint shape for this
+      table even when the live store path still carries dual-face Incomplete
+      instrumentation (``setitem`` window 10876, ``setattr_named`` window 17534)
+
+    The projector table's key set must equal this set exactly, both directions.
+    """
+    from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
+
+    # Store producers pin these operator strings for n-ary discharge.  Keep
+    # them in the production set so a missing projector cannot merge green.
+    contracted_store_operators = frozenset({"setitem", "setattr_named"})
+    return (
+        _ast_minted_native_operator_constants()
+        | frozenset(_BINARY_OPERATOR_COORDINATE)
+        | frozenset(COMPARE_METHODS.values())
+        | contracted_store_operators
+    )
+
+
+# Explicit projectors for authenticated native operations.
+#
+# Each entry names its own Floor signature.  A generic
+# ``operation(*operands, site)`` splat would conceal argument-order defects
+# (swapped index/value still calls cleanly and yields a plausible wrong
+# answer).  The table is the contract: producers mint operands in the
+# *discharge* order these parameters declare.
+#
+# Discharge order for stores is not source evaluation order.  Python evaluates
+# ``receiver[index] = value`` as RHS, then receiver, then index — but the
+# resolved operation is called as ``receiver.setitem(index, value)``.  Those
+# two orders are distinct; producers (windows 10876 / 17534) own the source
+# chain, and these projectors own the call signature.
+#
+# Key set must equal :func:`production_native_operation_operators` exactly.
+_NATIVE_OPERATION_PROJECTORS = {
+    # Unary / adapter Floor methods.
+    "truth": lambda value, site: value.truth(site),
+    "boolop_truth": lambda value, site: value.boolop_truth(site),
+    "unary_truth": lambda value, unit, site: value.unary_truth(unit, site),
+    "attribute_named": lambda receiver, name, site: receiver.attribute_named(
+        name, site
+    ),
+    # Formal subscript load (#6611): receiver[index] — binary, not the store.
+    "subscript": lambda receiver, index, site: receiver.subscript(index, site),
+    # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys).
+    "add": lambda left, right, site: left.add(right, site),
+    "subtract": lambda left, right, site: left.subtract(right, site),
+    "multiply": lambda left, right, site: left.multiply(right, site),
+    "divide": lambda left, right, site: left.divide(right, site),
+    "floor_divide": lambda left, right, site: left.floor_divide(right, site),
+    "modulo": lambda left, right, site: left.modulo(right, site),
+    "power": lambda left, right, site: left.power(right, site),
+    "matrix_multiply": lambda left, right, site: left.matrix_multiply(right, site),
+    "bitwise_and": lambda left, right, site: left.bitwise_and(right, site),
+    "bitwise_or": lambda left, right, site: left.bitwise_or(right, site),
+    "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
+    "left_shift": lambda left, right, site: left.left_shift(right, site),
+    "right_shift": lambda left, right, site: left.right_shift(right, site),
+    # Equality, ordering, membership (compare / equality sugars).
+    "equals": lambda left, right, site: left.equals(right, site),
+    "less_than": lambda left, right, site: left.less_than(right, site),
+    "less_equal": lambda left, right, site: left.less_equal(right, site),
+    "greater_than": lambda left, right, site: left.greater_than(right, site),
+    "greater_equal": lambda left, right, site: left.greater_equal(right, site),
+    "contains": lambda container, item, site: container.contains(item, site),
+    # Ternary store protocol (receiver, index|name, value + site).
+    # Discharge order: receiver, index, value — never RHS-first.
+    "setitem": lambda receiver, index, value, site: receiver.setitem(
+        index, value, site
+    ),
+    # Attribute store: name arrives as StringValue; unwrap with .value.
+    # Window 17534 mints operator="setattr_named" with operands
+    # (receiver, StringValue(name), value).
+    "setattr_named": lambda receiver, name, value, site: receiver.setattr(
+        name.value, value, site
+    ),
+}
+
+
+def _native_operation_projector_arity(projector) -> int:
+    """Operand count named by an explicit projector (site is always last)."""
+    import inspect
+
+    return len(inspect.signature(projector).parameters) - 1
+
+
+def _conjoin_guards(guards):
+    guards = tuple(guards)
+    if not guards:
+        return None
+    if len(guards) == 1:
+        return guards[0]
+    from sugar_lift_py_tests.ir import and_
+
+    return and_(list(guards))
+
+
+@dataclass(frozen=True)
+class NativeOperationExitCarrierV1:
+    """Deferred native operation whose discharge codomain is an ``ExitSet``.
+
+    The same recorded operation can complete or raise after its formal operands
+    are replaced by authenticated caller actuals.  Keeping that codomain here,
+    rather than retaining a ``FloorValue``, is what preserves the exceptional
+    arm until an enclosing effect boundary consumes it.
+
+    Discharge routes through :data:`_NATIVE_OPERATION_PROJECTORS`: each operator
+    names its Floor signature explicitly so n-ary stores (``setitem``,
+    ``setattr_named``) are first-class, and a missing projector stays
+    undischarged rather than panicking.
+    """
+
+    demand: NativeOperationDemandV1
+    operands: tuple[FloorValue, ...]
+    coordinates: tuple[object | None, ...]
+    site: object = dataclass_field(compare=False, repr=False)
+    continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
+    guards: tuple = dataclass_field(default=(), repr=False)
+
+    def __post_init__(self):
+        operand_count = len(self.operands)
+        coordinate_count = len(self.coordinates)
+        demand_count = len(self.demand.operand_coordinate_cids)
+        if len({operand_count, coordinate_count, demand_count}) != 1:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(operand_count, coordinate_count, demand_count),
+                requested="one authenticated coordinate slot per ordered operand",
+                fix="rebuild the carrier with aligned operands and coordinates",
+                gap_kind=GapKind.FLOOR,
+            )
+        stored_cids = tuple(
+            None if coordinate is None else coordinate.coordinate_cid
+            for coordinate in self.coordinates
+        )
+        if stored_cids != self.demand.operand_coordinate_cids:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="NativeOperationExitCarrierV1.__post_init__",
+                blame=self.demand.source_node,
+                observed=(stored_cids, self.demand.operand_coordinate_cids),
+                requested="stored coordinates authenticating to the demand CID tuple",
+                fix="preserve ordered coordinate identity when constructing the carrier",
+                gap_kind=GapKind.FLOOR,
+            )
+
+    @classmethod
+    def mint(cls, *, site, operator, operands, coordinates):
+        operands = tuple(operands)
+        coordinates = tuple(coordinates)
+        return cls(
+            demand=NativeOperationDemandV1.mint(
+                site=site,
+                operator=operator,
+                operands=operands,
+                coordinates=coordinates,
+            ),
+            operands=operands,
+            coordinates=coordinates,
+            site=site,
+        )
+
+    def and_then(self, step):
+        """Retain enclosing expression work until the operation discharges."""
+        return replace(self, continuations=(*self.continuations, step))
+
+    def guarded(self, guard, face=None):
+        """Guard the deferred operation without discharging or losing its demand."""
+        del face
+        return replace(self, guards=(*self.guards, guard))
+
+    def discharge(self, actuals_by_formal_coordinate):
+        """Evaluate against authenticated actual operands and project exits.
+
+        Coordinate-length and coordinate-identity invariants are owned by
+        :meth:`__post_init__` (#6613).  Missing authenticated evidence, an
+        operator absent from the projector table, and projector arity mismatch
+        remain undischarged — never a construction panic.
+        """
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        def undischarged(reason):
+            return NativeOperationResolutionV1.undischarged(reason).project(
+                source_node=self.demand.source_node
+            )
+
+        actual_operands = []
+        for original, coordinate_cid in zip(
+            self.operands, self.demand.operand_coordinate_cids, strict=True
+        ):
+            if coordinate_cid is None:
+                actual_operands.append(original)
+                continue
+            if coordinate_cid not in actuals_by_formal_coordinate:
+                return undischarged(
+                    "authenticated caller actual absent for "
+                    f"{coordinate_cid}"
+                )
+            actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
+
+        projector = _NATIVE_OPERATION_PROJECTORS.get(self.demand.operator)
+        if projector is None:
+            return undischarged(
+                "native operation projector unavailable for operator "
+                f"{self.demand.operator!r}"
+            )
+
+        expected_arity = _native_operation_projector_arity(projector)
+        if len(actual_operands) != expected_arity:
+            return undischarged(
+                "native operation arity is unavailable for projector "
+                f"{self.demand.operator!r} "
+                f"(arity={len(actual_operands)}, expected={expected_arity})"
+            )
+
+        # Bind by the projector's declared parameter order.  Each lambda names
+        # its Floor signature; this is not a generic method splat.
+        projected = projector(*actual_operands, self.site)
+        if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
+            effect = projected.value.effect
+            if effect.exception_type_coordinate is None or effect.occurrence_id is None:
+                resolution = NativeOperationResolutionV1.undischarged(
+                    "native operation exception identity unproven"
+                )
+            else:
+                resolution = NativeOperationResolutionV1.exceptional(
+                    exception_type_coordinate=effect.exception_type_coordinate,
+                    operation_occurrence=self.demand.source_node,
+                )
+            exits = resolution.project(source_node=self.demand.source_node)
+        elif isinstance(projected, Complete):
+            exits = NativeOperationResolutionV1.completed(projected.value).project(
+                source_node=self.demand.source_node
+            )
+        elif isinstance(projected, Incomplete):
+            exits = NativeOperationResolutionV1.undischarged(projected.reason).project(
+                source_node=self.demand.source_node
+            )
+        elif isinstance(projected, ExitSet):
+            exits = projected
+        else:
+            # Other Outcome variants must pass through the exit algebra's loud
+            # door.  In particular, never reinterpret an unresolved carrier as
+            # a normal completion.
+            exits = outcome_to_exitset(projected)
+
+        for continuation in self.continuations:
+            def resume(value, *, step=continuation):
+                next_outcome = step(value)
+                if isinstance(next_outcome, NativeOperationExitCarrierV1):
+                    return next_outcome.discharge(actuals_by_formal_coordinate)
+                return next_outcome
+
+            exits = exits.and_then(resume)
+        guard = _conjoin_guards(self.guards)
+        if guard is not None:
+            exits = exits.guarded(guard)
+        return exits
 
 
 @dataclass(frozen=True)
@@ -67,12 +612,111 @@ class ParameterContractDemandV1:
         }
 
 
+def merge_demands(*groups) -> tuple[ParameterContractDemandV1, ...]:
+    """The demand SET: union by content address, ordered by content address.
+
+    `demand_cid` is the content address of the WHOLE obligation — owner source
+    identity, formal coordinate, operation site, demanded formula, candidate —
+    so equal cids are the same obligation and dedupe is not a heuristic. It is
+    the arithmetic of the obligation: a conjunction is idempotent, `F and F` IS
+    `F`, and one obligation reaching a join twice through a shared outcome DAG
+    (`p[0]` read once and consumed on both faces of a fold) is one obligation.
+
+    Ordering is by cid, never by arrival. The universe is content: a set that
+    ordered by the order two folds happened to run would make the same
+    obligations mint two different rows, and there is no RNG and no clock here
+    to justify that.
+    """
+    by_cid: dict[str, ParameterContractDemandV1] = {}
+    for group in groups:
+        for demand in group:
+            by_cid.setdefault(demand.demand_cid, demand)
+    return tuple(by_cid[cid] for cid in sorted(by_cid))
+
+
+def merge_pending(*groups) -> tuple:
+    """Union pending CARRIERS by candidate content address (#6352 family).
+
+    The carrier set is the exit-level counterpart of ``merge_demands``. Two
+    carriers are the same pending construction exactly when their
+    ``candidate_cid`` agrees -- that address is taken over the source node AND
+    the candidate term, so equal addresses are the same construction at the
+    same site, and dedupe is arithmetic rather than a heuristic.
+
+    Same candidate reaching a join twice: ONE carrier, demand sets unioned by
+    ``merge_demands`` -- which is idempotent, so a shared outcome DAG that
+    delivers the same obligation on two faces still owes it once. Different
+    candidates: two carriers, both kept, nothing conjoined.
+
+    Ordering is by ``candidate_cid``, never by arrival, for the reason
+    ``merge_demands`` orders by ``demand_cid``: the universe is content, and
+    two folds that happened to run in a different order must not mint two
+    different rows.
+    """
+    # THE EMPTY AND SINGLETON CASES COST NOTHING. This is called once per exit
+    # pair in `ExitSet.sequence` -- the innermost loop of every k-operand fold
+    # in the lift -- and almost every arm owes nothing at all, so building a
+    # dict, sorting it and rebuilding a tuple to answer `()` is work done per
+    # arm per fold step for no result. A group of at most one carrier is
+    # already sorted and already deduped, so it is returned as it stands.
+    populated = [group for group in groups if group]
+    if not populated:
+        return ()
+    if len(populated) == 1 and len(populated[0]) <= 1:
+        return tuple(populated[0])
+
+    by_candidate: dict[str, "ContractConditionalConstructionV1"] = {}
+    for group in groups:
+        for entry in group:
+            prior = by_candidate.get(entry.candidate_cid)
+            by_candidate[entry.candidate_cid] = (
+                entry
+                if prior is None
+                else replace(
+                    prior, demands=merge_demands(prior.demands, entry.demands)
+                )
+            )
+    return tuple(by_candidate[cid] for cid in sorted(by_candidate))
+
+
+def weaken_pending(entries, formula) -> tuple:
+    """Every carrier in a group weakened to one guarded face.
+
+    Weakening only some of a group would leave the rest owed unconditionally on
+    a face that may never run, which is a STRONGER obligation than the source
+    states -- the same reason ``demanded_under`` weakens every demand in a set.
+    """
+    return merge_pending(tuple(entry.demanded_under(formula) for entry in entries))
+
+
 @dataclass(frozen=True)
 class ContractConditionalConstructionV1:
+    """A constructed value together with every caller obligation it incurred.
+
+    `demands` is a SET, not one demand (#6352). One expression can incur several
+    distinct obligations — `[p[0], q[1]]` owes `python:indexable(p)` AND
+    `python:indexable(q)`, `f(p[0], q[1])` the same — and the entry used to hold
+    exactly one. Every join that met a second one panicked NAMED: `collection
+    TupleValue`, `IfExpSugar._join`, and `ContractConditionalConstructionV1
+    .and_then` each said the same sentence, "widen ... to carry a demand SET".
+    Three call sites requesting one widening is the ontology telling you it is
+    missing a kind of thing, so the thing is here now.
+
+    Two demands are NOT conjoined into one. Each carries its own
+    `formal_coordinate_cid` and `owner_source_identity_cid`; fusing their
+    formulas would mint one obligation attributed to one formal that actually
+    spans two, which is a fabricated fact, not a smaller answer.
+
+    THE WIRE SHAPE IS UNCHANGED. `contribution` splits the entry into one entry
+    per demand before anything is projected, so `to_value`, the link unit, and
+    the Rust linker still see exactly one demand per row. The set exists only
+    in flight, where the joins happen.
+    """
+
     source_node: SourceFragmentCoordinateV1
     candidate: Term
     candidate_cid: str
-    demand: ParameterContractDemandV1
+    demands: tuple[ParameterContractDemandV1, ...]
     value: FloorValue
 
     @classmethod
@@ -92,20 +736,109 @@ class ContractConditionalConstructionV1:
             demanded_formula=demand_formula,
             candidate_cid=candidate_cid,
         )
-        return cls(source_node, candidate, candidate_cid, demand, value)
+        return cls(source_node, candidate, candidate_cid, (demand,), value)
 
     def and_then(self, step):
+        """Continue with the carried value; every demand rides on the result.
+
+        A following ``Complete`` takes the demands back and the entry rides on
+        into the block record, where ``link_unit_projection`` enrols it and the
+        linker discharges it.
+
+        Anything else has nowhere to carry it, and this used to ``return
+        following`` -- silently dropping the obligation. A dropped demand is
+        never enrolled and never discharged, so `p[0]` would stand with no
+        `python:indexable(p)` owed by anyone. That is not a smaller answer, it is
+        a wrong one, and it is loud now. Measured on 25 pandas modules / 158
+        functions: 4 such drops before this branch existed, and threading the
+        collection/f-string/bool-op reducers through ``and_then`` exposed 20
+        more that had previously been lost inside an `.value` read instead.
+        """
         from sugar_lift_py_tests.outcome import Complete
 
         following = step(self.value)
-        return (
-            replace(self, value=following.value)
-            if isinstance(following, Complete)
-            else following
+        if isinstance(following, Complete):
+            return replace(self, value=following.value)
+        from sugar_lift_py_tests.floor.single_outcome_law import rewrap_pending
+
+        return rewrap_pending(
+            self,
+            following,
+            owner="ContractConditionalConstructionV1.and_then",
+            blame=self.source_node,
+        )
+
+    def demanded_under(self, formula):
+        """Weaken the pending obligation to a guarded face; carried value untouched.
+
+        The demand is owed only where the branch runs. `python:indexable(p)` for
+        `if c: return p[0]` is `c -> python:indexable(p)`, never the
+        unconditional obligation: a caller that never takes the branch owes
+        nothing. Re-minting changes `demand_cid`, which is correct -- it IS a
+        different obligation.
+
+        This is the half a caller wants when the caller is guarding the VALUE
+        itself (an `IfExp` that fuses both arms into one `GuardedValue`), so
+        guarding the value here too would guard it twice. `guarded` is the other
+        door, for a caller that hands the whole entry under a branch.
+        """
+        from sugar_lift_py_tests.ir import implies
+
+        # EVERY demand weakens. Weakening only one of a set would leave the
+        # others owed unconditionally on a face that may never run, which is a
+        # stronger obligation than the source states.
+        return replace(
+            self,
+            demands=merge_demands(
+                tuple(
+                    ParameterContractDemandV1.mint(
+                        owner_source_identity_cid=demand.owner_source_identity_cid,
+                        formal_coordinate_cid=demand.formal_coordinate_cid,
+                        operation_site=demand.operation_site,
+                        demanded_formula=implies(formula, demand.demanded_formula),
+                        candidate_cid=demand.candidate_cid,
+                    )
+                    for demand in self.demands
+                )
+            ),
+        )
+
+    def guarded(self, formula):
+        """Ride under a branch: the CARRIED value guards, the DEMAND weakens.
+
+        This entry is a wrapper -- `and_then` threads the branch's real floor
+        value through `self.value`, and `resume_project` substitutes exactly
+        that value once the linker discharges the demand. So a guard reaching
+        this entry has two distinct arms to conserve, and neither may be
+        dropped:
+
+        1. The carried value guards the way it would have if no demand were
+           pending (ReturnValue -> GuardedReturn, InvValue -> implication, ...).
+           Guarding the wrapper without guarding the value would let the
+           resumed record project an UNGUARDED return for a branch that only
+           runs under `formula`.
+        2. The demand is owed only on the guarded face. `python:indexable(p)`
+           for `if c: return p[0]` is `c -> python:indexable(p)`, never the
+           unconditional obligation -- a caller that never takes the branch
+           owes nothing. Weakening re-mints the demand, so `demand_cid`
+           changes: it IS a different obligation.
+
+        Nested guards compose by repeated application, innermost first, which
+        is the same accumulation `Incomplete.guarded` records positionally.
+        """
+        return replace(
+            self.demanded_under(formula), value=self.value.guarded(formula)
         )
 
     def contribution(self):
-        return (self,)
+        """One row per demand: the SET collapses back to singletons HERE.
+
+        This is the boundary the wire lives behind. `to_value`, the link unit,
+        and the Rust linker each state one demand per row, and they are right
+        to -- an obligation is owned by ONE formal coordinate. The set is an
+        in-flight join carrier, not a wire shape, so it never reaches them.
+        """
+        return tuple(replace(self, demands=(demand,)) for demand in self.demands)
 
     def inv_contribution(self):
         return ()
@@ -133,6 +866,35 @@ class ContractConditionalConstructionV1:
     def extend_scope(self, ctx):
         return self.value.extend_scope(ctx)
 
+    def sole_demand(self) -> ParameterContractDemandV1:
+        """The one demand a PROJECTED row states, or a named gap.
+
+        Every projection boundary reads this. `contribution` splits the set
+        before anything is projected, so a set arriving here means a producer
+        reached the wire without going through the block record -- loud, not
+        silently first-of-set.
+        """
+        if len(self.demands) == 1:
+            return self.demands[0]
+        from sugar_lift_py_tests.gap.info import GapKind
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="ContractConditionalConstructionV1.sole_demand",
+            blame=self.source_node,
+            observed=(
+                f"a projected contract row carries {len(self.demands)} demands "
+                f"({', '.join(demand.demand_cid for demand in self.demands)})"
+            ),
+            requested="exactly one demand per projected row",
+            fix=(
+                "route the entry through `contribution`, which splits the "
+                "in-flight demand SET into one row per demand, before "
+                "projecting it to the wire"
+            ),
+            gap_kind=GapKind.FLOOR,
+        )
+
     def to_value(self) -> dict[str, Any]:
         return {
             "kind": "contract-conditional-construction",
@@ -140,7 +902,7 @@ class ContractConditionalConstructionV1:
             "sourceNode": self.source_node.wire(),
             "candidate": _json(term_to_value(self.candidate)),
             "candidateCid": self.candidate_cid,
-            "demand": self.demand.to_value(),
+            "demand": self.sole_demand().to_value(),
         }
 
 
@@ -535,7 +1297,7 @@ def resume_project(universe, accepted: dict[str, dict]):
             entry.value
             if (
                 isinstance(entry, ContractConditionalConstructionV1)
-                and entry.demand.demand_cid in accepted
+                and entry.sole_demand().demand_cid in accepted
             )
             else entry
         )
@@ -570,7 +1332,7 @@ def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
         )
     pending = {}
     for candidate in link_unit.candidates:
-        key = candidate.demand.demand_cid
+        key = candidate.sole_demand().demand_cid
         if key in pending:
             raise ResumeStalePanic("duplicate pending demand in link unit")
         pending[key] = candidate

@@ -40,6 +40,121 @@ class _ReducedBlock:
     can_fall_through: bool
     fall_through: tuple
     transforms: tuple = ()
+    context: object = dataclass_field(default=None, compare=False, repr=False)
+
+
+def _extend_receiver_store_scope(value, ctx):
+    from sugar_lift_py_tests.floor import ReceiverFieldStoreValue
+
+    candidate = getattr(value, "value", value)
+    return (
+        candidate.extend_scope(ctx)
+        if isinstance(candidate, ReceiverFieldStoreValue)
+        else ctx
+    )
+
+
+def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
+    """Move every arm's pending obligations INTO that arm's block record.
+
+    THE NAMED CONSUMPTION. ``Completed.pending_contracts`` and
+    ``Halted.pending_contracts`` are in-flight carriers: they conserve an
+    obligation through the exit algebra, but nothing downstream of the algebra
+    reads them, so an arm that still owed something when the block finished had
+    its obligation vanish at this boundary -- conserved for the whole flight and
+    dropped on landing. Enrolment is what makes it discharged rather than
+    forgotten: ``entry.contribution()`` is the same one-row-per-demand split a
+    completed carrier goes through, and the rows join the block's entries, where
+    ``link_unit_projection`` enrols them for the linker.
+
+    The field is CLEARED as the rows are appended. That is what makes this a
+    consumption and not a duplication: the obligation exists in exactly one
+    place afterwards.
+
+    THIS IS ALSO THE ONE MINT. An arm carries its obligations as they were
+    incurred; the arm's ``guard`` is the face they are owed on, so `guard -> D`
+    is minted here, once, against the guard the arm finally holds. An arm under
+    the true guard owes the bare obligation and is not re-minted at all.
+
+    An arm with no block to enrol into (a halted arm whose state is ``None``)
+    stays LOUD, and the gap belongs to the PRODUCER that built it, not here.
+    Every composition that fans a halt across incoming arms -- ``and_finally``
+    over a cleanup halt, ``and_exit`` over an exit-expression halt,
+    ``outcome_to_exitset`` over an ``Incomplete`` -- can emit a halted arm whose
+    ``state`` is ``None``, and an obligation incurred on the path that reached
+    it then has no record to be owed on.
+
+    Two things that look like answers are not. Splicing the enclosing block's
+    prefix onto such an arm is sound about what happened but changes what
+    ``state is None`` MEANS: ``exit_disposition._boundary_halted_edge`` reads it
+    as "the reducer omitted the real pre-halt state" and refuses on it, so
+    supplying a record here would silence that refusal for exactly the arms that
+    owe. Synthesising a record whose entries are only the demand rows is worse
+    -- it asserts a temporal record where the producer said there was none.
+    Measured: it is one row on pandas `core/reshape/pivot.py:284` (two demands
+    from `pivot.py:327:19`, the `data[to_filter]` subscript on a formal), and
+    one loud row naming the producer is the honest answer until the producer
+    carries the record.
+    """
+    if not any(exit_.pending_contracts for exit_ in exits.exits):
+        # The overwhelmingly common case, and it must cost nothing: this runs at
+        # the end of EVERY block reduction, nested ones included, and rebuilding
+        # the set would pay for a second `normalize` over every arm of every
+        # block that never owed anything.
+        return exits
+
+    from sugar_lift_py_tests.caller_parameter_contract import weaken_pending
+    from sugar_lift_py_tests.gap.info import GapKind
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+    enrolled: list[object] = []
+    for exit_ in exits.exits:
+        if not exit_.pending_contracts:
+            enrolled.append(exit_)
+            continue
+        owed = (
+            exit_.pending_contracts
+            if _is_true(exit_.guard)
+            else weaken_pending(exit_.pending_contracts, exit_.guard)
+        )
+        rows = tuple(row for entry in owed for row in entry.contribution())
+        block = exit_.value if isinstance(exit_, Completed) else exit_.state
+        if not isinstance(block, _ReducedBlock):
+            construction_panic_gap(
+                owner="reduce_block_to_exitset.enrol_exit_obligations",
+                blame=exit_.pending_contracts[0].source_node,
+                observed=(
+                    "a block exit owing "
+                    + ", ".join(
+                        demand.demand_cid
+                        for entry in exit_.pending_contracts
+                        for demand in entry.demands
+                    )
+                    + f" carries {type(block).__name__} where its reduced block "
+                    "record should be, so there is nothing to enrol the "
+                    "obligation into"
+                ),
+                requested="a reduced block record on every exit that owes",
+                fix=(
+                    "carry the reduced block on this arm, or hand the obligation "
+                    "to the producer that does; never drop it and never enrol it "
+                    "on a block that did not run"
+                ),
+                gap_kind=GapKind.FLOOR,
+            )
+        widened = _ReducedBlock(
+            (*block.entries, *rows),
+            block.can_fall_through,
+            block.fall_through,
+            block.transforms,
+            block.context,
+        )
+        if isinstance(exit_, Completed):
+            enrolled.append(Completed(exit_.guard, widened, exit_.faces, ()))
+        else:
+            enrolled.append(Halted(exit_.guard, exit_.effect, widened, exit_.faces, ()))
+    return ExitSet(tuple(enrolled)).normalize()
 
 
 def _prefixed(state: _ReducedBlock, inner: object) -> object:
@@ -61,7 +176,49 @@ def _prefixed(state: _ReducedBlock, inner: object) -> object:
         getattr(inner, "can_fall_through", False),
         (),
         state.transforms,
+        getattr(inner, "context", state.context),
     )
+
+
+def _halt_state(state: _ReducedBlock, exit_) -> object:
+    """The temporal record a halted arm of a nested statement carries.
+
+    Normally ``_prefixed``: the nested reduction's own record with this block's
+    prefix spliced in front. A nested payload that is not a block record has
+    nothing to splice onto and is left alone -- ``outcome_to_exitset`` converts
+    an ``Incomplete`` to ``Halted(guard, effect, None)`` because that conversion
+    has no record to offer, and ``and_finally`` / ``and_exit`` fan cleanup and
+    exit halts across incoming arms the same way.
+
+    A stateless halt that OWES is the one case where ``None`` is not an answer.
+    The obligation was incurred on the path that reached the halt, and
+    ``_enrol_exit_obligations`` needs a record to enrol it into. The prefix IS
+    that record: an arm with no nested record halted at the top of this
+    statement, so everything this block had established when the statement began
+    is the complete temporal record for that path. Nothing is invented -- the
+    prefix genuinely happened.
+
+    WHY THIS DOES NOT WEAKEN THE BOUNDARY REFUSAL.
+    ``exit_disposition._boundary_halted_edge`` reads ``state is None`` as "the
+    reducer omitted the real pre-halt state" and refuses on it, so supplying a
+    record where that check will see one would silence it. It will not see this
+    one: that check runs inside ``ExitSet.and_exit``, during the statement's own
+    ``head.desugar(ctx)``, which is UPSTREAM of this seam. By the time a
+    statement hands its ExitSet back here, its boundary edges are already
+    decided.
+
+    Narrow on purpose. An arm that owes nothing keeps exactly the state it had,
+    so no existing temporal testimony moves; this supplies a record only where
+    one is now required and was previously absent. Measured on the 22-file
+    pandas 3.0.3 slice: with this, `pivot.py:536` and `format.py:1620` enrol and
+    drain; without it, all three sites merely change owner from
+    `ContractConditionalConstructionV1.and_then` to this module's refusal, which
+    is reattribution, not a drain.
+    """
+    spliced = _prefixed(state, exit_.state)
+    if exit_.pending_contracts and not isinstance(spliced, _ReducedBlock):
+        return state
+    return spliced
 
 
 def reduce_block_to_exitset(
@@ -69,7 +226,7 @@ def reduce_block_to_exitset(
 ) -> ExitSet[_ReducedBlock]:
     """Reduce a suite to guarded exits before the linear compatibility view."""
     exits = ExitSet.completed(
-        _ReducedBlock(entries=(), can_fall_through=True, fall_through=())
+        _ReducedBlock(entries=(), can_fall_through=True, fall_through=(), context=ctx)
     )
 
     for index, head in enumerate(statements):
@@ -81,8 +238,84 @@ def reduce_block_to_exitset(
                 # but its source tail is unreachable and must not be reduced
                 # into a contradictory second post-state.
                 return ExitSet.completed(state)
-            outcome = head.desugar(ctx)
+            active_ctx = state.context if state.context is not None else ctx
+            statement_ctx = active_ctx
+            # ObservedEffectBinding rows are producer testimony for a consumed
+            # slot (Try/With routing). Thread them into the next statement's
+            # reduction context so EffectRef / ObservationRef project the same
+            # RaiseEffect the boundary routed — not a pure unauthenticated
+            # coordinate. Handler bodies also receive this via
+            # TrySugar.with_observed_effect before their first statement.
+            from sugar_lift_py_tests.effect_router import ObservedEffectBinding
+
+            observed = tuple(
+                entry
+                for entry in state.entries
+                if isinstance(entry, ObservedEffectBinding)
+            )
+            if observed:
+                from sugar_lift_py_tests.context import ReduceContext
+
+                statement_ctx = (
+                    ReduceContext.root(owner="reduce_block_to_exitset")
+                    if statement_ctx is None
+                    else ReduceContext.derived(
+                        statement_ctx, owner="reduce_block_to_exitset"
+                    )
+                )
+                for binding in observed:
+                    statement_ctx = statement_ctx.with_observed_effect(
+                        binding.slot_id, binding.effect
+                    )
+            outcome = head.desugar(statement_ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+
+            def project(value):
+                if isinstance(value, _ReducedBlock):
+                    contribution = value.entries
+                    continues = value.can_fall_through
+                    nested_fall_through = value.fall_through
+                    nested_transforms = value.transforms
+                    next_context = (
+                        value.context if value.context is not None else active_ctx
+                    )
+                else:
+                    linear = Complete(value)
+                    contribution = linear.contribution()
+                    continues = linear.follow().continues
+                    nested_fall_through = ()
+                    nested_transforms = ()
+                    next_context = _extend_receiver_store_scope(
+                        linear.value, active_ctx
+                    )
+                for transform in reversed(state.transforms):
+                    contribution = transform(contribution)
+                entries = (*state.entries, *contribution)
+                if not continues:
+                    return ExitSet.completed(
+                        _ReducedBlock(entries, False, (), context=next_context)
+                    )
+                return ExitSet.completed(
+                    _ReducedBlock(
+                        entries,
+                        True,
+                        (*state.fall_through, *nested_fall_through),
+                        (*state.transforms, *nested_transforms),
+                        next_context,
+                    )
+                )
+
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            if isinstance(outcome, NativeOperationExitCarrierV1):
+                # A formal native operation is neither a completion nor a halt
+                # until an authenticated caller supplies its actual operands.
+                # Retain the ordinary statement projection as a continuation;
+                # discharge will feed its Completed face through this exact
+                # block seam, while its Halted face bypasses the tail.
+                return outcome.and_then(project)
 
             if (
                 isinstance(outcome, Complete)
@@ -124,6 +357,7 @@ def reduce_block_to_exitset(
                     faces.can_fall_through,
                     (),
                     state.transforms,
+                    active_ctx,
                 )
                 if faces.can_fall_through:
                     exits.append(
@@ -148,24 +382,6 @@ def reduce_block_to_exitset(
                     )
                     outcome = outcome.guarded(continuation)
 
-                def project(value):
-                    linear = Complete(value)
-                    contribution = linear.contribution()
-                    for transform in reversed(state.transforms):
-                        contribution = transform(contribution)
-                    entries = (*state.entries, *contribution)
-                    follow = linear.follow()
-                    if not follow.continues:
-                        return ExitSet.completed(_ReducedBlock(entries, False, ()))
-                    return ExitSet.completed(
-                        _ReducedBlock(
-                            entries,
-                            True,
-                            state.fall_through,
-                            state.transforms,
-                        )
-                    )
-
                 # A statement that reduces to its OWN ExitSet (a nested block:
                 # try/with, or an unpack assignment whose store leaves are
                 # sequenced by this same reducer) hands back halted arms whose
@@ -182,7 +398,13 @@ def reduce_block_to_exitset(
                             Halted(
                                 exit_.guard,
                                 exit_.effect,
-                                _prefixed(state, exit_.state),
+                                _halt_state(state, exit_),
+                                # This rebuild used to state three fields, so it
+                                # dropped BOTH the arm's partition testimony and
+                                # its pending obligations on the way through --
+                                # the same shape of loss `ExitSet.guarded` had.
+                                exit_.faces,
+                                exit_.pending_contracts,
                             )
                             if isinstance(exit_, Halted)
                             else exit_
@@ -195,6 +417,7 @@ def reduce_block_to_exitset(
             for transform in reversed(state.transforms):
                 contribution = transform(contribution)
             entries = (*state.entries, *contribution)
+            next_context = _extend_receiver_store_scope(outcome, active_ctx)
 
             follow = outcome.follow()
             if follow.continues and follow.halt_guard is not None:
@@ -223,6 +446,7 @@ def reduce_block_to_exitset(
                                 True,
                                 state.fall_through,
                                 state.transforms,
+                                next_context,
                             ),
                         ),
                     )
@@ -242,7 +466,12 @@ def reduce_block_to_exitset(
                         )
                     return ExitSet.halted(outcome.effect, state=state)
                 return ExitSet.completed(
-                    _ReducedBlock(entries, can_fall_through=False, fall_through=())
+                    _ReducedBlock(
+                        entries,
+                        can_fall_through=False,
+                        fall_through=(),
+                        context=next_context,
+                    )
                 )
 
             transforms = state.transforms
@@ -252,12 +481,42 @@ def reduce_block_to_exitset(
             if follow.continuation_guard is not None:
                 fall_through = (*fall_through, follow.continuation_guard)
             return ExitSet.completed(
-                _ReducedBlock(entries, True, fall_through, transforms)
+                _ReducedBlock(entries, True, fall_through, transforms, next_context)
             )
 
-        exits = exits.sequence(reduce_next)
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
 
-    return exits
+        if isinstance(exits, NativeOperationExitCarrierV1):
+            exits = exits.and_then(reduce_next)
+        elif (
+            len(exits.exits) == 1
+            and isinstance(exits.exits[0], Completed)
+            and exits.exits[0].guard == true_guard()
+            and not exits.exits[0].faces
+            and not exits.exits[0].pending_contracts
+        ):
+            # The straight-line singleton is the only ExitSet face that can
+            # become a deferred native-operation carrier without needing a
+            # guarded carrier algebra. Preserve it directly. Branching paths
+            # continue through ExitSet.sequence and remain loud if they try to
+            # smuggle an undischarged carrier through a guard.
+            exits = reduce_next(exits.exits[0].value)
+        else:
+            exits = exits.sequence(reduce_next)
+
+    # The block boundary is where an obligation stops being in flight, so it is
+    # the one door that consumes the carriers. Doing it here rather than per
+    # statement keeps a single owner and lets `sequence` compose obligations
+    # across statements first.
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    if isinstance(exits, NativeOperationExitCarrierV1):
+        return exits
+    return _enrol_exit_obligations(exits)
 
 
 def reduce_statements(statements: tuple, ctx: object = None):
@@ -284,6 +543,20 @@ def reduce_body(statements: tuple, ctx: object = None):
     (calls, unsupported statements) that will.
     """
     exits = reduce_block_to_exitset(statements, ctx)
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    if isinstance(exits, NativeOperationExitCarrierV1):
+        return exits.and_then(
+            lambda state: Complete(
+                BlockValue(
+                    state.entries,
+                    fall_through=state.fall_through,
+                    can_fall_through=state.can_fall_through,
+                )
+            )
+        )
     collapsed = exits.collapse()
     if isinstance(collapsed, Incomplete):
         return collapsed

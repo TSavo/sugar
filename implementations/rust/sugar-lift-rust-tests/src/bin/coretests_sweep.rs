@@ -1194,7 +1194,10 @@ mod tests {
         let (rel, asserts, discharged, refused, raw_delta, parse_ok) = &rows[0];
         assert_eq!(rel, "num/ops.rs");
         assert_eq!((*asserts, *discharged, *refused), (74, 0, 74));
-        assert_eq!(*raw_delta, 0, "raw_delta 0 keeps missing_assertions unmoved");
+        assert_eq!(
+            *raw_delta, 0,
+            "raw_delta 0 keeps missing_assertions unmoved"
+        );
         assert!(*parse_ok, "the file PARSED; it panicked during the lift");
     }
 

@@ -85,6 +85,12 @@ class EffectBoundaryDisposition:
 
     matcher: AuthenticatedRaiseMatcher
     unmet: object = None
+    # The ``as`` slot this boundary authenticates, or None when the source
+    # binds no name. A slot is authenticated ONLY on the arm whose halt this
+    # boundary actually consumed -- never on the restored arm and never on a
+    # body that completed, because on those arms no occurrence exists to
+    # project and inventing one is the forbidden ``E()``.
+    observation_slot_id: str | None = None
 
 
 @dataclass(frozen=True)

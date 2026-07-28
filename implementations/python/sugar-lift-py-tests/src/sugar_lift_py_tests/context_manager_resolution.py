@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from enum import Enum
 from typing import Any, Mapping
 
 from .canonicalizer import blake3_512_of, encode_jcs
@@ -20,6 +21,16 @@ from .ir import Sort
 
 class ContractRefProtocolError(ValueError):
     pass
+
+
+class NativeProtocolSlot(str, Enum):
+    """Closed source protocol slots, independent of vendor member spelling."""
+
+    CONTEXT_ENTER = "context-enter"
+    CONTEXT_EXIT = "context-exit"
+    TRUTH = "truth"
+    SET_ITEM = "set-item"
+    GET_ITEM = "get-item"
 
 
 @dataclass(frozen=True, order=True)
@@ -60,6 +71,16 @@ class SourceFragmentCoordinateV1:
 
 
 @dataclass(frozen=True)
+class OpaqueSourceCallObligationV1:
+    """Authenticated unresolved callee testimony parked at one source call."""
+
+    coordinate: SourceFragmentCoordinateV1
+    target_name: str
+    resolved_object_cid: str
+    resolution_kind: str = "opaque-call-target"
+
+
+@dataclass(frozen=True)
 class ContextManagerContractRefV1:
     resolution_cid: str
     demand_cid: str
@@ -84,14 +105,43 @@ class ContextManagerContractRefV1:
 
 @dataclass(frozen=True)
 class ContextManagerResolutionGapV1:
+    """One unresolved context-manager demand: a structural kind beside its data.
+
+    ``kind`` is the STRUCTURAL key and nothing else -- a member of the closed
+    vocabulary in :func:`_gap_kinds`.  It never contains a symbol.  The
+    derivation layer used to fuse ``f"{kind}:{detail}"`` into this field, which
+    put most of the pinned-pandas resolution board's mass under a vendor spelling
+    (#6371) and produced, in process, a gap this module's own decoder would
+    refuse.
+
+    ``target_symbol`` and ``detail`` are DATA: they ride the row for a human
+    reading one row, and are never a bucket key.  A measurement a vendor rename
+    can move is not a measurement.
+    """
+
     demand_cid: str
     use_site: SourceFragmentCoordinateV1
     target_symbol: str | None
     kind: str
     candidate_member_cids: tuple[str, ...]
+    # In-process only.  Not read from or written to the wire, so no preimage
+    # and no CID changes: the authenticated table hashes the bytes present.
+    detail: str | None = None
 
 
 ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolutionGapV1
+
+
+@dataclass(frozen=True)
+class NativeDefinitionCoordinateGapV1:
+    receiver: SourceFragmentCoordinateV1
+    slot: NativeProtocolSlot
+    reason: str
+
+
+NativeDefinitionCoordinateResolutionV1 = (
+    SourceFragmentCoordinateV1 | NativeDefinitionCoordinateGapV1
+)
 
 
 @dataclass(frozen=True)
@@ -110,6 +160,10 @@ class ResolvedContractRefsV1:
     catalog_cid: str
     table_cid: str
     by_use_site: Mapping[SourceFragmentCoordinateV1, ContextManagerResolutionV1]
+    native_definitions: Mapping[
+        tuple[SourceFragmentCoordinateV1, NativeProtocolSlot],
+        NativeDefinitionCoordinateResolutionV1,
+    ] = field(default_factory=dict)
 
     def require(
         self, use_site: SourceFragmentCoordinateV1
@@ -120,6 +174,19 @@ class ResolvedContractRefsV1:
             raise ContractRefProtocolError(
                 "BackendDefect: enrolled context-manager demand missing from resolution table"
             ) from exc
+
+    def require_native_definition(
+        self, receiver: SourceFragmentCoordinateV1, slot: NativeProtocolSlot
+    ) -> NativeDefinitionCoordinateResolutionV1:
+        """Resolve one authenticated source definition, or retain UNDECIDED."""
+        result = self.native_definitions.get((receiver, slot))
+        if result is None:
+            return NativeDefinitionCoordinateGapV1(
+                receiver=receiver,
+                slot=slot,
+                reason="authenticated source definition coordinate is not enrolled",
+            )
+        return result
 
 
 # Placeholder table for construction that does not enroll context-manager
@@ -158,19 +225,35 @@ class TreeConstructionContextV1:
     # installed only beside a successful authenticated row; every other row is
     # a typed loud classification consumed by census/linking.
     source_call_resolutions: dict = field(default_factory=dict)
+    # Unresolved named calls parked at exact source coordinates. Ordinary Sugar
+    # construction consumes the testimony only when execution reaches the call.
+    opaque_source_call_obligations: dict = field(default_factory=dict)
     source_derived_contract_refs: dict = field(default_factory=dict)
+    # Reaching provider Calls for bare-Name manager uses, keyed by the immutable
+    # manager-use coordinate.  Binding coordinates own identity: the Name at the
+    # With head is not the provider; this table seats the authenticated Call
+    # that the Name reaches so With construction never re-resolves by spelling.
+    source_manager_provider_calls: dict = field(default_factory=dict)
     # Runtime-only, prebound class-base Sugar children keyed by the exact
     # subclass definition coordinate.  These are never serialized; the class
     # definition projects their sealed CIDs into its own preimage.
     source_class_bases: dict = field(default_factory=dict)
+    # When projecting an authenticated definition into a call frame, dual-mode
+    # factory bodies may contain With sites only on non-manager return paths
+    # (e.g. pytest.raises function form). Soft projection does not require
+    # those nested Withs to already carry a closed CM row — the CM form's
+    # return path is what construct_manager_behavior force_floors.
+    frame_projection: bool = False
 
     @classmethod
     def for_source_call_construction(
         cls,
         *,
         source_call_frames: dict | None = None,
+        opaque_source_call_obligations: dict | None = None,
         call_contract_refs: object | None = None,
         workspace_root: str | None = None,
+        frame_projection: bool = False,
     ) -> "TreeConstructionContextV1":
         """Construction context for sole-path source-call frames without CM enrollment."""
         return cls(
@@ -178,23 +261,36 @@ class TreeConstructionContextV1:
             call_contract_refs=call_contract_refs,
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
+            frame_projection=frame_projection,
+            opaque_source_call_obligations=(
+                {}
+                if opaque_source_call_obligations is None
+                else opaque_source_call_obligations
+            ),
         )
 
 
-_GAP_KINDS = frozenset(
-    {
-        "runtime-selected",
-        "unresolved-symbol",
-        "ambiguous-symbol",
-        "wrong-contract-kind",
-        "signature-mismatch",
-        "unauthenticated-member",
-        "payload-cid-mismatch",
-        "unsupported-cm-schema",
-        "no-derived-contract",
-        "stale-derived-contract",
-    }
-)
+def _gap_kinds() -> frozenset[str]:
+    """The closed resolution-gap vocabulary, read from its ONE owner.
+
+    This used to be a second hand-maintained copy of ten members, and it drifted:
+    the source-derived path minted fused ``kind:detail`` strings that this very
+    decoder would have refused as ``malformed context-manager resolution gap``.
+    Two lists cannot disagree if there is only one list, so the members come
+    from :class:`WithConstructionGapKind`, which the producers' own typed
+    ``Literal``s are declared against.
+
+    Imported lazily: ``sugar_source_tree`` depends on this module.
+    """
+    from sugar_source_tree.panic import WithConstructionGapKind
+
+    return frozenset(
+        member.value
+        for member in WithConstructionGapKind
+        # The catch-all is a READER's fallback for a kind this build does not
+        # name; no producer may emit it as a gap kind of its own.
+        if member is not WithConstructionGapKind.UNRECOGNIZED_RESOLUTION_KIND
+    )
 
 
 def _cid(value: Any, field: str) -> str:
@@ -343,7 +439,7 @@ def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
             "gap",
         }:
             gap = resolution["gap"]
-            if not isinstance(gap, dict) or gap.get("kind") not in _GAP_KINDS:
+            if not isinstance(gap, dict) or gap.get("kind") not in _gap_kinds():
                 raise ContractRefProtocolError(
                     "malformed context-manager resolution gap"
                 )

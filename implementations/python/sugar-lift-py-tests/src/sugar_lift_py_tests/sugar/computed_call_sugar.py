@@ -98,6 +98,7 @@ class ComputedCallSugar(Sugar):
 
             if not isinstance(frame, SourceVisibleCallFrameV1):
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="ComputedCallSugar.desugar",
                     observed=type(frame).__name__,
                     requested="a closed SourceCallFrameV1 variant",
@@ -107,6 +108,7 @@ class ComputedCallSugar(Sugar):
                 positional = frame.bind_actuals(positional, kw_values, ctx)
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="ComputedCallSugar.desugar",
                     observed=str(exc),
                     requested="actuals matching the authenticated lambda signature",

@@ -840,6 +840,47 @@ def test_the_assertion_with_routes_through_the_shared_exitset_algebra(
     assert routed == incoming.and_exit(exit_es, disposition=disposition)
 
 
+def test_assertion_with_threads_the_reduction_context_through_manager_and_body(
+    tmp_path, monkeypatch
+):
+    """A real assertion-With is a statement in its enclosing reduction.
+
+    Manager operands and body statements must therefore see the same context
+    as their enclosing block. Dropping it makes the boundary work only for
+    already-ground fixtures, not for general source-derived bindings.
+    """
+    _resource, boundary = _both_arms(tmp_path, stem="context")
+    from sugar_lift_py_tests.claim import SugarCatalog
+    from sugar_lift_py_tests.context import FactoryBuildContext
+
+    marker = FactoryBuildContext("context.py", SugarCatalog())
+    observed = []
+
+    manager_type = type(boundary.manager)
+    manager_desugar = manager_type.desugar
+
+    def manager_probe(self, ctx=None):
+        if self is boundary.manager:
+            observed.append(("manager", ctx))
+        return manager_desugar(self, ctx)
+
+    body_type = type(boundary.body[0])
+    body_desugar = body_type.desugar
+
+    def body_probe(self, ctx=None):
+        if self is boundary.body[0]:
+            observed.append(("body", ctx))
+        return body_desugar(self, ctx)
+
+    monkeypatch.setattr(manager_type, "desugar", manager_probe)
+    monkeypatch.setattr(body_type, "desugar", body_probe)
+
+    boundary.desugar(marker)
+
+    assert ("manager", marker) in observed
+    assert ("body", marker) in observed
+
+
 def test_discrimination_the_routing_probe_observes_a_real_call(tmp_path, monkeypatch):
     """The probe is armed: it sees the resource router too, under a resource contract.
 
@@ -972,19 +1013,21 @@ def test_expected_observation_with_no_constructed_occurrence_stays_loud(tmp_path
     ``ExpectationNotMet`` halt, which would assert the opposite. Both are facts
     about an observation nobody constructed. The site stays loud instead.
 
-    The refusal lands one rung earlier than a desugar gap: the contract never
-    installs a boundary sugar at all, so there is no object that could later be
-    routed into a completion by a hopeful arm.
+    The typed warning boundary now constructs, but routing still refuses: this
+    body has no authenticated warning occurrence on its completed face.  That
+    is the useful distinction from an unsupported-manager refusal -- the
+    manager contract is understood, while the observation remains undecided.
     """
-    from sugar_source_tree.panic import UnsupportedContextManagerSemantics
+    from sugar_source_tree.panic import SugarNotWritten
 
-    with pytest.raises(UnsupportedContextManagerSemantics) as raised:
-        _with_statement(
-            tmp_path, MATCHING_BODY, OBSERVATION_SEMANTICS, stem="observation"
-        )
-    assert raised.value.owner == "With._construct_sugar"
-    # The refusal names the observation as the missing thing, not the manager.
-    assert "semantics" in raised.value.observed
+    boundary = _with_statement(
+        tmp_path, MATCHING_BODY, OBSERVATION_SEMANTICS, stem="observation"
+    )
+    assert isinstance(boundary, WithEffectBoundarySugar)
+    with pytest.raises(SugarNotWritten) as raised:
+        boundary.desugar()
+    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
+    assert raised.value.observed == "warning boundary carries an unprojected message pattern"
 
 
 def test_discrimination_the_same_site_routes_under_a_constructed_effect_kind(tmp_path):

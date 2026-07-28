@@ -41,6 +41,11 @@ class OpaqueOpCallsite(FloorValue):
     # stays `arg` so single-operand sites stay a one-field construction.
     extra_args: tuple[FloorValue, ...] = ()
 
+    def denotes_a_value(self) -> bool:
+        # An operator coordinate denotes the operator's RESULT. Same testimony
+        # as CallSiteValue: a value of undecided identity, never a callable.
+        return True
+
     def to_term(self, *, owner: str) -> Term:
         from sugar_lift_py_tests.ir import ctor
 

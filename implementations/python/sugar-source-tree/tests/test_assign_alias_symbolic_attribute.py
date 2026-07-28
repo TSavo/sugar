@@ -59,9 +59,11 @@ def test_renamed_alias_has_the_same_single_binding_path():
 
 
 def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
+    # Free undecided receiver + ground-true branch: dual-face RuntimeEffect.
+    # Formal receivers mint setattr_named (vertical completion).
     function = _function(
-        "def arbitrary(predicate, symbolic_receiver, constructed_value):\n"
-        "    if predicate:\n"
+        "def arbitrary(constructed_value):\n"
+        "    if True:\n"
         "        symbolic_receiver.payload = constructed_value\n"
         "    return constructed_value\n"
     )

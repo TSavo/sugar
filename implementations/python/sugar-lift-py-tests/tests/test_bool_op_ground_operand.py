@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.ir import make_var, num, py_eq
-from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+from sugar_lift_py_tests.floor.none_value import NoneValue
+from sugar_lift_py_tests.outcome import Complete, outcome_to_exitset
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -39,13 +39,25 @@ class _Site:
         return _Left()
 
 
-def _bool_op(kind: str, *operands: object) -> PredicateValue:
+def _bool_op(kind: str, *operands: object):
     site = _Site()
     sugar = BoolOpSugar(op_kind=kind, values=operands, site=site)
-    out = sugar.desugar(None)
-    assert isinstance(out, Complete), out
-    assert isinstance(out.value, PredicateValue), type(out.value)
-    return out.value
+    return sugar.desugar(None)
+
+
+def _completed_values(outcome):
+    return tuple(
+        face.value
+        for face in outcome_to_exitset(outcome).exits
+        if hasattr(face, "value")
+    )
+
+
+def _has_symbolic_formula(outcome) -> bool:
+    return any(
+        isinstance(value, PredicateValue) and value.formula == _symbolic_z_eq_1()
+        for value in _completed_values(outcome)
+    )
 
 
 def _z_eq_1() -> EqualityOpSugar:
@@ -63,76 +75,93 @@ def _symbolic_z_eq_1():
 
 def test_none_and_true_is_false() -> None:
     site = _Site()
-    value = _bool_op(
+    outcome = _bool_op(
         "And",
         NoneLiteralSugar(site=site),
         TrueBoolLiteralSugar(site=site),
     )
-    assert value.formula == false_guard()
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, NoneValue)
 
 
 def test_true_and_false_is_false() -> None:
     site = _Site()
-    value = _bool_op(
+    outcome = _bool_op(
         "And",
         TrueBoolLiteralSugar(site=site),
         FalseBoolLiteralSugar(site=site),
     )
-    assert value.formula == false_guard()
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
 
 
 def test_none_or_true_is_true() -> None:
     site = _Site()
-    value = _bool_op(
+    outcome = _bool_op(
         "Or",
         NoneLiteralSugar(site=site),
         TrueBoolLiteralSugar(site=site),
     )
-    assert value.formula == true_guard()
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
 
 def test_symbolic_and_true_absorbs_to_symbolic() -> None:
     """(z == 1) and True → py.eq(z, 1); True is identity of ∧."""
     site = _Site()
-    value = _bool_op("And", _z_eq_1(), TrueBoolLiteralSugar(site=site))
-    assert value.formula == _symbolic_z_eq_1()
+    outcome = _bool_op("And", _z_eq_1(), TrueBoolLiteralSugar(site=site))
+    assert _has_symbolic_formula(outcome)
+    assert any(
+        isinstance(value, TrueBoolLiteralSugar) for value in _completed_values(outcome)
+    )
 
 
 def test_true_and_symbolic_absorbs_to_symbolic() -> None:
     """True and (z == 1) → py.eq(z, 1); order must not matter for absorption."""
     site = _Site()
-    value = _bool_op("And", TrueBoolLiteralSugar(site=site), _z_eq_1())
-    assert value.formula == _symbolic_z_eq_1()
+    outcome = _bool_op("And", TrueBoolLiteralSugar(site=site), _z_eq_1())
+    assert _has_symbolic_formula(outcome)
 
 
 def test_symbolic_or_false_absorbs_to_symbolic() -> None:
     """(z == 1) or False → py.eq(z, 1); False is identity of ∨."""
     site = _Site()
-    value = _bool_op("Or", _z_eq_1(), FalseBoolLiteralSugar(site=site))
-    assert value.formula == _symbolic_z_eq_1()
+    outcome = _bool_op("Or", _z_eq_1(), FalseBoolLiteralSugar(site=site))
+    assert _has_symbolic_formula(outcome)
+    assert any(
+        isinstance(value, FalseBoolLiteralSugar) for value in _completed_values(outcome)
+    )
 
 
 def test_false_and_symbolic_is_false() -> None:
     """False and (z == 1) → false; proves ∧ selects false, not the symbolic."""
     site = _Site()
-    value = _bool_op("And", FalseBoolLiteralSugar(site=site), _z_eq_1())
-    assert value.formula == false_guard()
+    outcome = _bool_op("And", FalseBoolLiteralSugar(site=site), _z_eq_1())
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, FalseBoolLiteralSugar)
 
 
 def test_true_or_symbolic_is_true() -> None:
     """True or (z == 1) → true; proves ∨ selects true, not the symbolic."""
     site = _Site()
-    value = _bool_op("Or", TrueBoolLiteralSugar(site=site), _z_eq_1())
-    assert value.formula == true_guard()
+    outcome = _bool_op("Or", TrueBoolLiteralSugar(site=site), _z_eq_1())
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
 
 def test_symbolic_and_false_is_false() -> None:
     site = _Site()
-    value = _bool_op("And", _z_eq_1(), FalseBoolLiteralSugar(site=site))
-    assert value.formula == false_guard()
+    outcome = _bool_op("And", _z_eq_1(), FalseBoolLiteralSugar(site=site))
+    assert _has_symbolic_formula(outcome)
+    assert any(
+        isinstance(value, FalseBoolLiteralSugar) for value in _completed_values(outcome)
+    )
 
 
 def test_symbolic_or_true_is_true() -> None:
     site = _Site()
-    value = _bool_op("Or", _z_eq_1(), TrueBoolLiteralSugar(site=site))
-    assert value.formula == true_guard()
+    outcome = _bool_op("Or", _z_eq_1(), TrueBoolLiteralSugar(site=site))
+    assert _has_symbolic_formula(outcome)
+    assert any(
+        isinstance(value, TrueBoolLiteralSugar) for value in _completed_values(outcome)
+    )

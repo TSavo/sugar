@@ -16,11 +16,14 @@ from sugar_lift_py_tests.ir import Term, _term_content_cid
 _CLOSED_OPERATIONS = frozenset(
     {
         "python.issubclass",
+        "python.isinstance",
+        "python.len",
         "python.set.contains",
         "python.set.union",
         "python.set.intersection",
         "python.set.difference",
         "python.set.construct",
+        "python.tuple.construct",
     }
 )
 

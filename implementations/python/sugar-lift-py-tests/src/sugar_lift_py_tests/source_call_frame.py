@@ -10,6 +10,14 @@ from .context_manager_resolution import SourceFragmentCoordinateV1
 
 
 @dataclass(frozen=True)
+class BoundNativeOperationActualsV1:
+    """The one Python binder's ordered result, indexed by formal coordinate."""
+
+    actuals: tuple
+    by_formal_coordinate: dict[str, object]
+
+
+@dataclass(frozen=True)
 class SourceVisibleCallFrameV1:
     """A body constructed by FunctionDef through the ordinary tree door."""
 
@@ -25,6 +33,8 @@ class SourceVisibleCallFrameV1:
     default_fragment_cids: tuple[str | None, ...]
     body: object = field(compare=False)
     owner: object = field(compare=False, repr=False)
+    native_operation_formal_coordinates: tuple = field(default=(), compare=False)
+    pending_native_operation: object | None = field(default=None, compare=False)
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
@@ -48,12 +58,37 @@ class SourceVisibleCallFrameV1:
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
 
     def bind_actuals(self, positional: tuple, keywords: tuple, ctx=None) -> tuple:
+        """Bind positional/keyword FloorValues onto this frame's formals.
+
+        ``keywords`` is ``(name, value)`` pairs in source order. A name of
+        ``None`` or ``\"**\"`` is a typed ``**`` expansion: when the value is a
+        constructed ``DictValue`` with string keys, its entries join the
+        named-keyword map (Python's call-time ``**mapping`` projection). Other
+        expansion shapes stay a ``SourceCallBindingGap`` so the call remains
+        loud rather than inventing keys.
+        """
         from sugar_lift_py_tests.floor import DictValue, StringValue, TupleValue
 
         remaining = list(positional)
-        named = dict(keywords)
-        if len(named) != len(keywords):
-            raise SourceCallBindingGap("duplicate keyword actual")
+        named: dict = {}
+        for key, value in keywords:
+            if key is None or key == "**":
+                if type(value) is not DictValue:
+                    raise SourceCallBindingGap(
+                        "spread keyword requires typed DictValue projection"
+                    )
+                for entry_key, entry_value in value.entries:
+                    if type(entry_key) is not StringValue:
+                        raise SourceCallBindingGap("non-string keyword expansion key")
+                    if entry_key.value in named:
+                        raise SourceCallBindingGap(
+                            "duplicate keyword actual from expansion"
+                        )
+                    named[entry_key.value] = entry_value
+                continue
+            if key in named:
+                raise SourceCallBindingGap("duplicate keyword actual")
+            named[key] = value
         bound = []
         for index, (name, kind, default) in enumerate(
             zip(
@@ -99,6 +134,31 @@ class SourceVisibleCallFrameV1:
         if remaining or named:
             raise SourceCallBindingGap("unconsumed call actual")
         return tuple(bound)
+
+    def bind_native_operation_actuals(
+        self, positional: tuple, keywords: tuple, ctx=None
+    ) -> BoundNativeOperationActualsV1:
+        """Bind once, then key that exact result by formal coordinates."""
+        bound = self.bind_actuals(positional, keywords, ctx)
+        return BoundNativeOperationActualsV1(
+            actuals=bound,
+            by_formal_coordinate={
+                coordinate.coordinate_cid: actual
+                for coordinate, actual in zip(
+                    self.native_operation_formal_coordinates,
+                    bound,
+                    strict=True,
+                )
+            },
+        )
+
+    def with_native_operation_projection(self, formal_coordinates, pending):
+        """Seat one already-constructed formal operation on this call frame."""
+        return replace(
+            self,
+            native_operation_formal_coordinates=tuple(formal_coordinates),
+            pending_native_operation=pending,
+        )
 
     def bind_node_actuals(
         self,

@@ -22,6 +22,12 @@ const SURFACE: &str = "rust-cargo-test-witness";
 const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
 const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 const RESOLVE_WITNESS_RPC_METHOD: &str = "sugar.plugin.resolve_witness";
+// The ONE construction door. There is no `lift` kit method: full-tree
+// construction is `sugar.enumerate` over the SourceTree (#6222). This kit is
+// the Rust twin of `sugar_pytest_witness.lift_lsp`, which crossed the same
+// membrane first; the level protocol is
+// `protocol/specs/2026-07-08-enumeration-protocol.md`.
+const ENUMERATE_RPC_METHOD: &str = "sugar.enumerate";
 
 fn send(obj: &Value) {
     let mut out = std::io::stdout().lock();
@@ -74,6 +80,120 @@ fn handle_lift(id: &Value, params: &Value) -> Value {
         }),
         Err(e) => err_reply(id, e),
     }
+}
+
+// ---------------------------------------------------------------------------
+// `sugar.enumerate` -- the ONE construction door
+// ---------------------------------------------------------------------------
+
+/// Levels a SOURCE kit censuses that a witness PRODUCER has nothing to say
+/// about. Answering an empty census (rather than an error) keeps `prove`/report
+/// walks that sweep every registered surface from failing on this kit. Byte-for
+/// byte the python witness kit's `_EMPTY_CENSUS_LEVELS`.
+const EMPTY_CENSUS_LEVELS: &[&str] = &[
+    "functions",
+    "call_sites",
+    "assertions",
+    "facts",
+    "implications",
+    "exports",
+    "contract-declarations",
+    "provider-contract-members",
+    "contract-demands",
+    "context-manager-edges",
+    "parameter-contract-resume",
+];
+
+fn enumerate_result(id: &Value, nodes: Vec<Value>, gaps: Vec<Value>) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "result": {"nodes": nodes, "gaps": gaps}})
+}
+
+/// `sugar.enumerate`: `source_files` censuses the crate's real source closure;
+/// `universe` emits this kit's contribution.
+///
+/// A witness package is a WHOLE-SUITE artifact, not a per-file one, so the
+/// suite runs exactly once: the census reports every `.rs` file (so the Rust
+/// fold's `sourceMementos`/`sourceLedger` testify the real source closure), and
+/// the package's two IR rows -- the custom-evidence contract and its signed
+/// WitnessPackageMemento -- are emitted at the ANCHOR file only (the first code
+/// file in sorted order). Every other file answers an empty universe, which is
+/// the truth: it contributes no contract of its own.
+///
+/// `discover_rust_files` returns `["."]` as its test-file handle -- a stable
+/// suite identifier, not a real path -- so the anchor is taken from the CODE
+/// files, which are real files with real mementos.
+fn handle_enumerate(id: &Value, params: &Value) -> Value {
+    let level = params.get("level").and_then(Value::as_str).unwrap_or("");
+    let ws = resolve_root(params);
+
+    if level == "parameter-contract-link-units" {
+        // A witness producer enrolls no parameter-contract link units.
+        return json!({"jsonrpc": "2.0", "id": id, "result": {"rows": []}});
+    }
+    if EMPTY_CENSUS_LEVELS.contains(&level) {
+        return enumerate_result(id, Vec::new(), Vec::new());
+    }
+
+    if level == "source_files" {
+        let (code_files, _test_files) = kit::discover_rust_files(&ws);
+        let mut nodes = Vec::new();
+        let mut gaps = Vec::new();
+        for rel in &code_files {
+            match kit::file_source_memento(&ws, rel) {
+                Ok(memento) => nodes.push(
+                    json!({"memento": memento, "audit": Value::Null, "payload": Value::Null}),
+                ),
+                Err(reason) => gaps.push(json!({
+                    "memento": kit::degenerate_file_memento(rel, None),
+                    "reason": reason,
+                })),
+            }
+        }
+        return enumerate_result(id, nodes, gaps);
+    }
+
+    if level == "universe" {
+        let at = params.get("at").cloned().unwrap_or(Value::Null);
+        let file_rel = at.get("file").and_then(Value::as_str);
+        let Some(anchor) = kit::enumerate_anchor_file(&ws) else {
+            // No readable code file at all means no package -- an empty
+            // universe, not a gap (the census already testified the reason).
+            return enumerate_result(id, Vec::new(), Vec::new());
+        };
+        if file_rel != Some(anchor.as_str()) {
+            // Not the anchor: no contract of its own.
+            return enumerate_result(id, Vec::new(), Vec::new());
+        }
+        let result = match kit::lift_project(&ws) {
+            // No tests -> no witness package. An empty universe, not a gap.
+            Ok(None) => return enumerate_result(id, Vec::new(), Vec::new()),
+            Ok(Some(result)) => result,
+            Err(e) => return err_reply(id, e),
+        };
+        // Write the package bundle to disk (audit material; never fail lift).
+        let _ = kit::write_bundle_package(&ws, &result.bundle_cid, &result.bundle_bytes);
+        let anchor_memento = match kit::file_source_memento(&ws, &anchor) {
+            Ok(memento) => memento,
+            Err(reason) => return err_reply(id, reason),
+        };
+        let nodes = result
+            .ir
+            .into_iter()
+            .map(|row| {
+                json!({"memento": anchor_memento.clone(), "audit": row, "payload": Value::Null})
+            })
+            .collect();
+        return enumerate_result(id, nodes, Vec::new());
+    }
+
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32602,
+            "message": format!("sugar.enumerate: unknown level `{level}`"),
+        },
+    })
 }
 
 /// The ORACLE's resolve surface (mirror python `handle_resolve_witness`). Given a
@@ -213,7 +333,9 @@ fn kit_declaration() -> Value {
             {"name": "initialize", "required": true},
             {"name": KIT_DECLARATION_RPC_METHOD, "required": true},
             {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
-            {"name": "lift", "required": true},
+            // lift is not a kit method: full-tree construction is
+            // sugar.enumerate only (#6222). Same eviction the python kits made.
+            {"name": ENUMERATE_RPC_METHOD, "required": true},
             {"name": RESOLVE_WITNESS_RPC_METHOD, "required": false},
             {"name": "shutdown", "required": false},
         ]},
@@ -339,6 +461,7 @@ fn main() {
                 send(&json!({"jsonrpc": "2.0", "id": id, "result": component_plan(&params)}))
             }
             "lift" => send(&handle_lift(&id, &params)),
+            ENUMERATE_RPC_METHOD => send(&handle_enumerate(&id, &params)),
             RESOLVE_WITNESS_RPC_METHOD => send(&handle_resolve_witness(&id, &params)),
             "shutdown" => {
                 send(&json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}));

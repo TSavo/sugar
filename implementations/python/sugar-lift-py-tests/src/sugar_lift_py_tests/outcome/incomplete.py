@@ -7,8 +7,28 @@ from sugar_lift_py_tests.effect import Effect, effect_reason, require_effect
 
 @dataclass(frozen=True)
 class Incomplete:
+    """A typed effect, plus any caller obligation already incurred on this path.
+
+    ``pending_contracts`` is the effect face of the parameter-contract carrier
+    (#6352). `o.x = p[k]` evaluates `p[k]` -- incurring `python:indexable(p)` --
+    and THEN answers with a store effect. The obligation was incurred before
+    the effect, on the path that reached it, so it is owed. It used to have
+    nowhere to go and `rewrap_pending` panicked NAMED rather than drop it.
+
+    It rides here for exactly the reason ``branch_conditions`` does: it is
+    wrapper-level testimony ABOUT the outcome, never smashed into the effect,
+    which stays pristine. And it goes on to the block record through
+    ``contribution``, which is what enrols it for the linker to discharge.
+
+    A PARTITION now has its own arm rather than being loud: every face of an
+    ``ExitSet`` carries the obligation weakened under that face's own guard,
+    on ``Completed.pending_contracts`` and ``Halted.pending_contracts`` alike.
+    See ``floor/single_outcome_law.rewrap_pending``.
+    """
+
     effect: Effect
     branch_conditions: tuple = ()
+    pending_contracts: tuple = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
@@ -56,7 +76,19 @@ class Incomplete:
     def contribution(self):
         # An effect contributes itself to the block record; the unresolved tail rides
         # beside it via follow.
-        return (self,)
+        #
+        # Any obligation incurred BEFORE the effect contributes beside it, one
+        # row per demand, exactly as a completed carrier would (#6352). The
+        # entry's own `contribution` does the set-to-singleton split, so this
+        # never has to know the set exists.
+        return (
+            self,
+            *(
+                row
+                for entry in self.pending_contracts
+                for row in entry.contribution()
+            ),
+        )
 
     def guarded(self, formula):
         """Keep a typed effect red while recording its branch condition.
@@ -66,7 +98,14 @@ class Incomplete:
         effects, e.g. RaiseEffect, compute ``reason`` as a property with no field
         to replace), and a raise guarded by several nested ifs accumulates its
         conditions in order."""
-        return Incomplete(self.effect, (*self.branch_conditions, formula))
+        # A carried obligation weakens on the same face the effect is guarded
+        # by: a caller that never takes the branch never evaluated `p[k]` and
+        # owes nothing (#6352).
+        return Incomplete(
+            self.effect,
+            (*self.branch_conditions, formula),
+            tuple(entry.demanded_under(formula) for entry in self.pending_contracts),
+        )
 
     def extend_scope(self, ctx):
         # An effect does not rebind: the rest never runs under a new scope.

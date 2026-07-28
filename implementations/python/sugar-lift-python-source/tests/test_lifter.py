@@ -6635,13 +6635,17 @@ def test_kit_declaration_returns_python_source_lift_surface() -> None:
     required_by_name = {
         method["name"]: method["required"] for method in result["rpc"]["methods"]
     }
+    # `lift` is NOT in this table and must never come back: full-tree
+    # construction is `sugar.enumerate` only (#6222). Still exact equality over
+    # the whole table, so an unannounced method is as red as a missing one.
     assert required_by_name == {
         "initialize": True,
         KIT_DECLARATION_RPC_METHOD: True,
-        "lift": True,
+        "sugar.enumerate": True,
         "compile": False,
         "shutdown": False,
     }
+    assert "lift" not in required_by_name
     assert result["proofResolution"] == {"strategy": "pip"}
     assert result["effectKinds"] == ["panic-freedom"]
     assert result["effectLeaves"] == RUNTIME_FAILURE_EFFECT_LEAVES

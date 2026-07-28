@@ -127,21 +127,26 @@ class CallSiteValue(FloorValue):
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
+    def denotes_value(self) -> bool:
+        """A call result denotes a Python runtime value."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Undecided: no citation fixes an unexecuted call's result type.
+
+        Which ``__op__``/``__rop__`` Python would select for an operation
+        over this value is undecided too, so a binary operation reaches the
+        named producer refusal rather than standing on a ground field law or
+        claiming completion.
+        """
+        return False
+
     def exception_type_identity(self) -> Term | None:
         return self.exception_type_coordinate
 
     def attribute(self, name, site):
-        """Retain attribute lookup on this exact constructed call result.
-
-        Construction does not execute the call or invent the attribute value;
-        downstream source construction receives the stable projection term.
-        """
-        del site
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
+        """Keep an unexecuted call result's member lookup a named third value."""
+        return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
 
     def _identity(self) -> tuple:
         """Authenticate this immutable callsite's finite coordinate once.
@@ -218,6 +223,12 @@ class CallSiteValue(FloorValue):
     def to_term(self, *, owner: str):
         del owner
         return self.term
+
+    def denotes_a_value(self) -> bool:
+        # A call's RESULT is a value; what it is equal to is undecided until
+        # the callee floors. That makes membership over it an obligation, not
+        # a gap. A FunctionCallable is the callee itself and stays no.
+        return True
 
     def guarded(self, formula):
         """A callsite coordinate rides under a guard unchanged.
@@ -398,8 +409,7 @@ class CallSiteValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        # A callsite receiver stays the py.subscript coordinate regardless of index.
-        return self.py_subscript_coordinate(index, site)
+        return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
 
     def setitem(self, index, value, site):
         """Rebind an opaque mapping/list-shaped callsite after ``xs[k] = v``.
@@ -764,60 +774,35 @@ class CallSiteValue(FloorValue):
         return Complete(self.linear_method_call("__format__", (spec,), site))
 
     def add(self, other, site):
-        """Addition floor via interface dispatch: dig then redispatch, else EUF +.
+        """Addition floor via interface dispatch: dig, redispatch, or refuse.
 
         AddOpSugar calls left.add(right) — not binary_operator_with. Without this
         totalizer, dig of `want_bytes(x) + self.sep` construction_panics mid-body.
         """
-        return self._dig_or_symbolic_binop(other, site, op="+", floor_method="add")
+        return self._dig_or_refuse_binop(other, site, op="+", floor_method="add")
 
     def subtract(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="-", floor_method="subtract")
+        return self._dig_or_refuse_binop(other, site, op="-", floor_method="subtract")
 
     def multiply(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="*", floor_method="multiply")
+        return self._dig_or_refuse_binop(other, site, op="*", floor_method="multiply")
 
     def power(self, other, site):
-        """Dig a proved return body, otherwise retain runtime ``__pow__`` dispatch."""
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.power")
-        if dug is not None and dug is not self:
-            return dug.power(other, site)
-
-        from sugar_lift_py_tests.effect import (
-            PowerRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        operand = ctor(
-            "**",
-            [
-                self.to_term(owner=str(site)),
-                other.to_term(owner=str(site)),
-            ],
-        )
-        return Incomplete(
-            PowerRuntimeEffect(
-                "power dispatch depends on the runtime call result's __pow__; "
-                f"owner=CallSiteValue.power site={site}",
-                **runtime_effect_evidence("py.power", operand, site),
-            )
-        )
+        return self._dig_or_refuse_binop(other, site, op="**", floor_method="power")
 
     def divide(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="/", floor_method="divide")
+        return self._dig_or_refuse_binop(other, site, op="/", floor_method="divide")
 
     def modulo(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="%", floor_method="modulo")
+        return self._dig_or_refuse_binop(other, site, op="%", floor_method="modulo")
 
     def floor_divide(self, other, site):
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op="//", floor_method="floor_divide"
         )
 
     def left_shift(self, other, site):
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op="<<", floor_method="left_shift"
         )
 
@@ -825,48 +810,37 @@ class CallSiteValue(FloorValue):
         # Base64 / alphabet index math: `ord(c) >> 2` on call results.
         # Without this, FloorValue.right_shift panics (A2 mint-failed on
         # python-literal-base64 / base64-federation).
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op=">>", floor_method="right_shift"
         )
 
     def bitwise_and(self, other, site):
         # Same family as left_shift / bitwise_or: dig then redispatch, else
-        # EUF `&`. Base20 / base64 nibble masks (`b0 & 15`) hit CallSiteValue.
-        return self._dig_or_symbolic_binop(
+        # retain the named undecided-dispatch refusal.
+        return self._dig_or_refuse_binop(
             other, site, op="&", floor_method="bitwise_and"
         )
 
     def bitwise_xor(self, other, site):
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.bitwise_xor")
-        if dug is not None and dug is not self:
-            return dug.bitwise_xor(other, site)
-        if self.body is not None:
-            return super().bitwise_xor(other, site)
-
-        from sugar_lift_py_tests.effect import runtime_bitwise_xor
-
-        return runtime_bitwise_xor(self, other, site)
-
-    def bitwise_or(self, other, site):
-        return self._dig_or_symbolic_binop(
-            other, site, op="|", floor_method="bitwise_or"
+        return self._dig_or_refuse_binop(
+            other, site, op="^", floor_method="bitwise_xor"
         )
 
+    def bitwise_or(self, other, site):
+        return self._dig_or_refuse_binop(other, site, op="|", floor_method="bitwise_or")
+
     def matrix_multiply(self, other, site):
-        return self._dig_or_symbolic_binop(
+        return self._dig_or_refuse_binop(
             other, site, op="@", floor_method="matrix_multiply"
         )
 
-    def _dig_or_symbolic_binop(self, other, site, *, op: str, floor_method: str):
-        """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
+    def _dig_or_refuse_binop(self, other, site, *, op: str, floor_method: str):
+        """Dig source body when present; otherwise retain undecided dispatch.
 
         No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
         Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
 
         if isinstance(other, GuardedValue):
             return other.map_from_left(floor_method, self, site)
@@ -880,17 +854,10 @@ class CallSiteValue(FloorValue):
             if callable(method):
                 return method(other, site)
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    op,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        refused = self._undecided_binary_law(other, site, op)
+        if refused is not None:
+            return refused
+        return getattr(super(), floor_method)(other, site)
 
     def edge_contribution(self, source_contract):
         # Project one call-edge row: the coordinates this value already carries.
@@ -975,6 +942,39 @@ class CallSiteValue(FloorValue):
         return self._dig_or_symbolic_redispatch(
             operation, ctx, owner_suffix="callsite subscript receiver"
         )
+
+    def project_sequence_with(self, operation, ctx):
+        """``a, b = f(...)``: unpack of a callsite result.
+
+        Same dig-or-symbolic totalizer as binary_operator_with and
+        subscript_with, and the same route ``OpaqueOpCallsite`` already
+        documents for this exact operation: dig the callsite floor when the
+        body floors, so a callee returning a display makes the arity lift-time
+        decidable and the members bind from the values already in hand;
+        otherwise re-dispatch on ``SymbolicValue(self.term)``, which retains
+        the typed ``SequenceUnpackRuntimeEffect`` over the callsite's own term.
+
+        Neither arm invents a member and neither assumes the count matched --
+        which is what ``SequenceProjectionOperation`` requires of a value that
+        answers at all. Absence of this arm was the ``project_sequence_with``
+        panic on six of the measured rows.
+
+        It dispatches on the dug floor's own port rather than through
+        ``_dig_or_symbolic_redispatch``: that helper -- and
+        ``unary_operator_with`` and ``call_method_with`` beside it -- imports a
+        ``perform_operation`` that does not exist anywhere in this tree, so it
+        raises ``ImportError`` on contact. Routing a measured row through dead
+        code would trade a named gap for an uncounted crash. The opaque arm
+        hands the CALLSITE ITSELF to ``project_symbolic``, so the retained
+        obligation names ``call:<callee>(...)`` -- the coordinate the unpack
+        actually demands members of -- and never a fabricated element.
+        """
+        floor = self._dig_floor_or_none(
+            ctx, owner=f"{operation.owner} callsite unpack right-hand side"
+        )
+        if floor is not None:
+            return floor.project_sequence_with(operation, ctx)
+        return operation.project_symbolic(self, ctx)
 
     def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -1244,6 +1244,64 @@ class CallSiteValue(FloorValue):
             self.formal_coordinate_cids,
         )
         return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
+
+    def producer_outcome(self, ctx: Any = None):
+        """Publish authenticated source-body halts at the Call expression.
+
+        A completed source body still denotes this ordinary call coordinate;
+        later consumers may demand its returned floor exactly as before.  A
+        halted body is already the Call producer's authenticated exceptional
+        face and must not wait for an assertion (or any other consumer) to dig
+        it out.  Mixed bodies retain every guard and arm testimony while only
+        replacing completed block records with the call coordinate they
+        compute.
+        """
+        if self.body is None:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(self)
+
+        outcome = self.reduce_source_outcome(ctx)
+        return self.project_producer_outcome(outcome)
+
+    def project_producer_outcome(self, outcome):
+        """Project a source-authenticated callee outcome onto this Call node."""
+
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        def call_owned(effect):
+            if isinstance(effect, RaiseEffect):
+                return replace(effect, producer_node_owner="Call")
+            return effect
+
+        if isinstance(outcome, Complete):
+            return Complete(self)
+        exits = outcome_to_exitset(outcome)
+        return ExitSet(
+            tuple(
+                (
+                    Completed(
+                        exit_.guard,
+                        self,
+                        exit_.faces,
+                        exit_.pending_contracts,
+                    )
+                    if isinstance(exit_, Completed)
+                    else Halted(
+                        exit_.guard,
+                        call_owned(exit_.effect),
+                        exit_.state,
+                        exit_.faces,
+                        exit_.pending_contracts,
+                    )
+                )
+                for exit_ in exits.exits
+            )
+        ).normalize()
 
 
 def force_floor(

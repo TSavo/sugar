@@ -108,6 +108,9 @@ def module_scope_third_party_imports(package: Path) -> dict[str, list[str]]:
                     continue  # sibling script module, first-party
                 if (package / "tests" / f"{root}.py").exists():
                     continue
+                if (ROOT / "tests" / f"{root}.py").exists():
+                    continue  # repo-level test support (checkout_resolution),
+                    # reached by path from a conftest, not a distribution
                 dist = IMPORT_TO_DIST.get(root, normalize(root))
                 found.setdefault(dist, []).append(rel)
 

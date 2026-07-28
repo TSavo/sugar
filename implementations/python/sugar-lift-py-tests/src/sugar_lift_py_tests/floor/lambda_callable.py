@@ -90,6 +90,7 @@ class LambdaCallable(FloorValue):
         frame = self.source_call_frame
         if frame is None or len(self.parameters) != 1:
             raise SugarNotWritten(
+                blame=self.construction_identity,
                 owner="LambdaCallable.apply",
                 observed="lambda has no single-actual source frame",
                 requested="the ordinary SourceCallFrameV1 call door",

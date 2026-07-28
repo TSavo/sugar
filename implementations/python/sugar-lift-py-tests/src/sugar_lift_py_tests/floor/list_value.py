@@ -18,6 +18,35 @@ class ListValue(FloorValue):
 
     elements: tuple
 
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``list``."""
+        return True
+
+    def python_index_protocol(self) -> bool:
+        return False
+
+    def attribute(self, name, site):
+        # Bound methods and fields on a constructed list (``[].append``, ``xs.index``) stay the
+        # py.getattr coordinate -- one law, shared with StringValue and the
+        # other constructed containers. Never invent a method body or a field.
+        del site
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
+
+        return getattr_coordinate(self, name, owner="ListValue.attribute")
+
+    def setattr(self, name, value, site):
+        """Lists have no instance ``__dict__``; attribute store is AttributeError.
+
+        Distinct from the read path: ``xs.append`` may resolve as a bound method
+        coordinate while ``xs.append = f`` still raises AttributeError.
+        """
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="ListValue.setattr"
+        )
+
     def to_term(self, *, owner: str):
         # Project elements into FOL — assert equality / dig return faces.
         from sugar_lift_py_tests.ir import ctor
@@ -43,6 +72,21 @@ class ListValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
+    def project_sequence_with(self, operation, ctx):
+        """Unpack against authenticated reduced members already in hand.
+
+        A constructed list is the same testimony an ``ArrayLiteral`` carries --
+        ``to_term`` projects both as ``array`` -- so it takes the SAME arm.
+        Routing it through ``project_tuple`` would print a tuple diagnostic for
+        an arity mismatch on a list: a correct refusal wearing the wrong name.
+        """
+        return operation.project_array(self, ctx)
+
+    @property
+    def items(self) -> tuple:
+        """Member sequence for SequenceProjectionOperation.project_array."""
+        return self.elements
+
     def length(self, site):
         # A list knows its length: the count of reduced elements.
         del site
@@ -52,6 +96,15 @@ class ListValue(FloorValue):
         return Complete(TermValue(len(self.elements)))
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         # Membership over a constructed list: decide when every element has a
         # closed equality; emit a typed obligation when a member is symbolic;
         # stay loud for unconstructed member shapes (same law as SetValue).
@@ -138,50 +191,36 @@ class ListValue(FloorValue):
 
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            # ``list + <decided non-list>`` is Python's TypeError.  Undecided
+            # rights stay on the shared third-value law via super().
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="ListValue.add")
         return super().add(other, site)
 
     def multiply(self, other, site):
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
+        # Python list repetition, through the one sequence-repetition law.
+        from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-        if type(other) is TermValue and type(other.value) in (int, bool):
-            from sugar_lift_py_tests.outcome import Complete
-
-            repeated = len(self.elements) * max(other.value, 0)
-            static_unfold_limit = 128
-
-            if repeated > static_unfold_limit:
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="ListValue.multiply",
-                    blame=str(site),
-                    observed=f"list repetition cardinality={repeated}",
-                    requested=f"finite repetition at or below {static_unfold_limit}",
-                    fix="keep exact sequence repetition within the finite unfold budget",
-                )
-            return Complete(ListValue(self.elements * other.value))
-        from sugar_lift_py_tests.floor.sequence_repetition import (
-            is_known_invalid_repetition_count,
-            known_invalid_repetition_type_error,
+        return repeat_sequence(
+            self, other, site, elements=self.elements, rebuild=ListValue
         )
 
-        if is_known_invalid_repetition_count(other):
-            return known_invalid_repetition_type_error(self, other, site)
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+    def subtract(self, other, site):
+        """Lists never subtract: decided peers are TypeError."""
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "python:sequence_repeat",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+            return ground_type_error(site=site, owner="ListValue.subtract")
+        return super().subtract(other, site)
+
+    def floor_divide(self, other, site):
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="ListValue.floor_divide")
+        return super().floor_divide(other, site)
 
     def matrix_multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -193,12 +232,12 @@ class ListValue(FloorValue):
         return super().matrix_multiply(other, site)
 
     def subscript(self, index, site):
-        # Concrete list + in-range TermValue int folds to the element; out of
-        # range is IndexError. Non-concrete index stays the py.subscript coordinate.
+        # Concrete list + integer index is fully decided. A known non-integer
+        # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
-        if type(index) is TermValue and type(index.value) is int:
+        if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -214,7 +253,13 @@ class ListValue(FloorValue):
                 length=n,
                 site=site,
             )
-        return self.py_subscript_coordinate(index, site)
+        if index.python_index_protocol() is False:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="ListValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
     def setitem(self, index, value, site):
         from sugar_lift_py_tests.floor.term_value import TermValue

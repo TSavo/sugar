@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from sugar_lift_py_tests.effect import runtime_effect_evidence
 from typing import Any
 
 from .floor_value import FloorValue
@@ -95,35 +94,16 @@ class ArrayLiteral(FloorValue):
         return operation.project_literal(self, ctx)
 
     def multiply(self, other, site):
-        if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.outcome import Complete
+        # Array repetition, through the one sequence-repetition law -- the same
+        # law list and tuple were consolidated onto (#6060). This arm kept a
+        # private copy that PANICKED above a static cap; the cap was abolished
+        # there and the array was the straggler, still reaching for the deleted
+        # `sugar.for_sugar` cap and raising ImportError instead of repeating.
+        from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
-            repeated = len(self.items) * max(other.value, 0)
-            from sugar_lift_py_tests.sugar.for_sugar import (
-                STATIC_UNFOLD_LIMIT,
-                finite_unfold_cap_panic,
-            )
-
-            if repeated > STATIC_UNFOLD_LIMIT:
-                finite_unfold_cap_panic(
-                    construction="ArrayLiteral repetition",
-                    site=site,
-                    observed=f"array repetition cardinality={repeated}",
-                    limit=STATIC_UNFOLD_LIMIT,
-                )
-            return Complete(ArrayLiteral(self.items * other.value))
-        if type(other) is SymbolicValue:
-            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            return Incomplete(
-                SequenceRepetitionRuntimeEffect(
-                    "sequence repetition by symbolic count: ArrayLiteral depends "
-                    f"on runtime __index__/length semantics; site={site}",
-                    **runtime_effect_evidence("py.sequence_repeat", other, site),
-                )
-            )
-        return super().multiply(other, site)
+        return repeat_sequence(
+            self, other, site, elements=self.items, rebuild=ArrayLiteral
+        )
 
 
 def _call_method_gap(

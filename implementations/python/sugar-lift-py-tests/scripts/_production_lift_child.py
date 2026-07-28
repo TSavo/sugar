@@ -63,17 +63,29 @@ def _typed_construction_row(error) -> dict[str, object] | None:
     return None
 
 
-def production_lift_testimony(path: Path, rel: str) -> dict[str, object]:
-    """Enumerate one file and construct each function once."""
-    from sugar_lift_python_source.source_oracle import path_source
+def production_lift_testimony(
+    path: Path,
+    rel: str,
+    *,
+    corpus_root: Path,
+    construction_context,
+) -> dict[str, object]:
+    """Enumerate one file with the caller's frozen corpus context."""
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
     gaps: list[dict[str, object]] = []
     reporter = CollectingReporter()
     try:
-        # Enumeration protocol: one file identity → one SourceFile → functions.
-        source_file = SourceFile(path_source(str(path)), reporter=reporter)
+        # Enumeration protocol: one authenticated construction door. A bare
+        # SourceFile has no manager-resolution context and paints every With as
+        # RuntimeSelectedContextManager, which is false typed-gap testimony.
+        source_file = open_source_file_for_construction(
+            path,
+            root=corpus_root,
+            reporter=reporter,
+            construction_context=construction_context,
+        )
     except BaseException as error:
         row = _typed_construction_row(error)
         if row is None:
@@ -118,13 +130,29 @@ def production_lift_bootstrap_error() -> str | None:
     return None
 
 
-def run_production_lift_child(path: Path, rel: str) -> int:
+def run_production_lift_child(
+    path: Path,
+    rel: str,
+    *,
+    corpus_root: Path,
+    construction_context,
+) -> int:
     """Enumerate one file, construct each function, emit one terminal row.
 
     Typed construction failures → ``typed-gap`` and exit 0.
     Any other exception propagates (bare-exception signal to the caller).
     """
-    print(json.dumps(production_lift_testimony(path, rel)), flush=True)
+    print(
+        json.dumps(
+            production_lift_testimony(
+                path,
+                rel,
+                corpus_root=corpus_root,
+                construction_context=construction_context,
+            )
+        ),
+        flush=True,
+    )
     return 0
 
 

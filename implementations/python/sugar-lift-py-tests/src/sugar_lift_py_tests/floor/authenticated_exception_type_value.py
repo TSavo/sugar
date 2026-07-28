@@ -34,6 +34,7 @@ class AuthenticatedExceptionTypeValue(FloorValue):
 
         if not isinstance(supertype, AuthenticatedExceptionTypeValue):
             raise SugarNotWritten(
+                blame=site,
                 owner="AuthenticatedExceptionTypeValue.test_python_subtype",
                 observed=type(supertype).__name__,
                 requested="authenticated exception type operand",
@@ -47,6 +48,7 @@ class AuthenticatedExceptionTypeValue(FloorValue):
         )
         if not isinstance(leaf_class, ClassValue):
             raise SugarNotWritten(
+                blame=site,
                 owner="AuthenticatedExceptionTypeValue.test_python_subtype",
                 observed=type(leaf_class).__name__,
                 requested="authenticated ClassValue leaf",

@@ -67,7 +67,9 @@ class ImportAliasValue(FloorValue):
         raise AssertionError("construction_panic_gap returned")
 
     def subscript(self, index, site):
-        return self.py_subscript_coordinate(index, site)
+        return self.undecided_subscript(
+            index, site, owner="ImportAliasValue.subscript"
+        )
 
     def getattr_static(self, name: str, site):
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus

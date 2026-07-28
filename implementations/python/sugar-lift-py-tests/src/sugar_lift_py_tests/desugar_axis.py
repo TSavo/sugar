@@ -22,9 +22,21 @@ them into ``R_desugar`` produces a number whose denominator is a lie:
                               named audit defects raised by the instrument
                               itself (unsupported outcome envelope, outcome
                               cycle, effect with no occurrence coordinate).
+``desugarDesignedGaps``       a DECLARED mechanism refusing on purpose, as its
+                              correct answer, in something that is not a
+                              ``SugarNotWritten``. Counted under its own owner,
+                              never red, never summed into the three above.
 
-Both new collections make the final instrument exit RED. Neither is ever added
-to ``R_desugar``.
+The first two new collections make the final instrument exit RED. None of the
+three is ever added to ``R_desugar``.
+
+WHY THE FOURTH EXISTS. ``ExitSetFactoringGap`` is a ``ValueError``, so it landed
+in ``desugarDefects`` — twelve rows of the pandas board, every one classifying
+``isRemainingWork: False``, which is ``factor_completed`` doing exactly its job.
+Counting correct output as a defect is the same disease that made ``R_desugar``
+overstate its board by 7.6x, at smaller scale. The door is by DECLARED TYPE and
+nothing else: see ``_designed_gap_types`` for why "a ValueError from this call"
+would have been a cure worse than the disease.
 
 Row identity is the *effect occurrence*, not the enclosing function line. A
 function holding three distinct stores is three rows; the same occurrence
@@ -38,6 +50,11 @@ is, which is exactly the silent skip this axis exists to eliminate.
 """
 
 from __future__ import annotations
+
+# Not the board. This module measures its own named denominator; the sole
+# authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
+# See tests/test_one_authoritative_scoreboard.py.
+SCOREBOARD_AUTHORITY = False
 
 import dataclasses
 from collections import Counter
@@ -221,13 +238,82 @@ class OutcomeWalk:
 # --------------------------------------------------------------------------
 
 
+def _designed_gap_types() -> tuple[type, ...]:
+    """THE DECLARED SET of designed gaps, by type, stated here and nowhere else.
+
+    A designed gap is a refusal a mechanism raises ON PURPOSE, as its correct
+    answer, which happens not to be a ``SugarNotWritten``. ``ExitSetFactoringGap``
+    is one: ``factor_completed`` refuses arms it cannot prove exclusive because
+    collapsing them would drop a reachable outcome, and its own module says so —
+    "the honest answer is a named gap". Twelve of the pandas board's defect rows
+    were that refusal working, every one classifying ``isRemainingWork: False``.
+
+    MEMBERSHIP IS BY DECLARED TYPE, never by "a ValueError out of this call".
+    That distinction is the whole reason this door exists rather than a wider
+    catch: ``ExitSetFactoringGap`` IS a ``ValueError``, so anything shaped like
+    "the exception class of the thing I expected" would swallow every genuine
+    ``ValueError`` bug raised anywhere under desugar — which is precisely the
+    failure this is built to prevent. Exact type identity, not ``isinstance``:
+    a subclass is a different mechanism and must earn its own line here.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
+
+    return (ExitSetFactoringGap,)
+
+
+def _is_designed_gap(exc: BaseException) -> bool:
+    """Whether THIS occurrence is correct output. Type is necessary, not sufficient.
+
+    A DECLARED TYPE ONLY SAYS WHICH MECHANISM SPOKE. It does not say that this
+    occurrence was the mechanism working. ``ExitSetFactoringGap`` has two
+    populations and its own classifier is what tells them apart:
+
+    * ``isRemainingWork: False`` — the gate doing its job. Correct output.
+    * ``isRemainingWork: True``  — ``UNSTAMPED`` and not merged: a producer that
+      owns a split and has not testified. That is CLOSABLE WORK, and it is the
+      shape #6375 actually closed at ``selectn.py:224``.
+
+    Gating on type alone would file the second kind as correct output in a
+    bucket that is never red and never summed — publishing a closable
+    producer-omission as a finished result and silencing it. That is a red
+    residual ratified as a baseline. It is the same disease this door cures,
+    pointed the other way, and it is the WORSE direction: counting correct
+    output as a defect is loud and self-correcting, counting work as correct
+    output is neither.
+
+    It is latent only because all twelve occurrences on tonight's board classify
+    ``False``. That is a fact about one measurement, not a property of the type.
+
+    NO VERDICT IS NOT A VERDICT OF "DESIGNED". ``classification()`` answers
+    ``None`` when the refusal carries no arms, and an unclassifiable occurrence
+    stays a defect and stays red rather than defaulting into the quiet bucket.
+    """
+    if type(exc) not in _designed_gap_types():
+        return False
+    classify = getattr(exc, "classification", None)
+    if not callable(classify):
+        return False
+    verdict = classify()
+    if verdict is None:
+        return False
+    return getattr(verdict, "is_remaining_work", True) is False
+
+
 class DesugarAxis:
     """Accumulates the four disjoint desugar-layer quantities for a file/run."""
 
     def __init__(self) -> None:
         self.families: Counter[str] = Counter()
+        # The disjoint split of R_desugar, read off the occurrence-key prefix.
+        self.categories: Counter[str] = Counter()
+        self.by_category_owner: Counter[str] = Counter()
         self.construction_panics: list[dict[str, Any]] = []
         self.defects: list[dict[str, Any]] = []
+        # Designed gaps: correct output from a named mechanism, COUNTED in its
+        # own bucket. Never folded into defects (they are not bugs), never into
+        # R_desugar (they are not typed refusals), and never dropped — a
+        # designed refusal is reported correct output, not silence.
+        self.designed_gaps: list[dict[str, Any]] = []
         # Row identity: (owner, authenticated effect-occurrence coordinate).
         self._seen: set[tuple[str, str]] = set()
 
@@ -239,9 +325,54 @@ class DesugarAxis:
             return
         self._seen.add(key)
         self.families[owner] += 1
+        # R_desugar is a MIXED number and must never be published raw. The
+        # occurrence key already says which kind of row this is: a
+        # ``desugar-call:`` key is a typed refusal (the reduction stopped and
+        # owes work), anything else is an authenticated effect occurrence --
+        # the correct OUTPUT of a reduction that succeeded. Publishing the sum
+        # as "work remaining" overstated the earlier board by 7.6x, because
+        # 7483 of 8624 rows were accounted semantics.
+        category = (
+            "typed-refusal"
+            if occurrence.startswith("desugar-call:")
+            else "constructed-effect"
+        )
+        self.categories[category] += 1
+        self.by_category_owner[f"{category}/{owner}"] += 1
 
-    def _defect(self, kind: str, where: str, detail: str) -> None:
-        self.defects.append({"kind": kind, "where": where, "detail": detail})
+    def _defect(
+        self, kind: str, where: str, detail: str, *, exc: object | None = None
+    ) -> None:
+        row: dict[str, Any] = {"kind": kind, "where": where, "detail": detail}
+        # If the exception carries a classifier verdict, RECORD IT. #6364 built
+        # the remaining-work vs correct-refusal split as data on the exception
+        # (ExitSetFactoringGap.classification), and this census was
+        # stringifying the message and throwing that data away -- so every
+        # factoring gap reached the ledger UNCLASSIFIED and the split could not
+        # be read at corpus scale. Never re-derive it by parsing a repr.
+        classify = getattr(exc, "classification", None)
+        if callable(classify):
+            try:
+                verdict = classify()
+            except Exception:  # noqa: BLE001 -- a classifier defect is not R
+                verdict = None
+            if verdict is not None and hasattr(verdict, "row"):
+                row["classification"] = verdict.row()
+        self.defects.append(row)
+
+    def _designed_gap(self, where: str, exc: BaseException) -> None:
+        """Record one designed gap: named owner, carried verdict, counted."""
+        row: dict[str, Any] = {
+            "owner": type(exc).__name__,
+            "where": where,
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+        classify = getattr(exc, "classification", None)
+        if callable(classify):
+            verdict = classify()
+            if verdict is not None and hasattr(verdict, "row"):
+                row["classification"] = verdict.row()
+        self.designed_gaps.append(row)
 
     # -- the one door -------------------------------------------------------
 
@@ -289,7 +420,14 @@ class DesugarAxis:
             return
         if isinstance(outcome, tuple) and len(outcome) == 2 and outcome[0] == "defect":
             exc = outcome[1]
-            self._defect("desugar-exception", where, f"{type(exc).__name__}: {exc}")
+            # A designed gap gets its own counted bucket. TWO conditions, and
+            # the second is the load-bearing one — see `_is_designed_gap`.
+            if _is_designed_gap(exc):
+                self._designed_gap(where, exc)
+                return
+            self._defect(
+                "desugar-exception", where, f"{type(exc).__name__}: {exc}", exc=exc
+            )
             return
 
         walk = OutcomeWalk().walk(outcome)
@@ -312,22 +450,44 @@ class DesugarAxis:
 
     def merge(self, other: "DesugarAxis") -> None:
         self.families.update(other.families)
+        self.categories.update(other.categories)
+        self.by_category_owner.update(other.by_category_owner)
         self.construction_panics.extend(other.construction_panics)
         self.defects.extend(other.defects)
+        self.designed_gaps.extend(other.designed_gaps)
         self._seen |= other._seen
 
     def row(self) -> dict[str, Any]:
         return {
             "desugarFamilies": dict(self.families),
             "R_desugar": sum(self.families.values()),
+            # Disjoint and summing to R_desugar. Read these, not the total.
+            "desugarCategories": dict(self.categories),
+            "desugarByCategoryOwner": dict(self.by_category_owner),
+            "R_desugar_owed_work": int(self.categories.get("typed-refusal", 0)),
+            "R_desugar_accounted_semantics": int(
+                self.categories.get("constructed-effect", 0)
+            ),
             "desugarConstructionPanics": list(self.construction_panics),
             "desugarDefects": list(self.defects),
+            # Designed gaps: correct output, counted and named, never red and
+            # never summed into any of the four quantities above.
+            "desugarDesignedGaps": list(self.designed_gaps),
+            "R_desugar_designed_gaps": len(self.designed_gaps),
+            "desugarDesignedGapOwners": dict(
+                Counter(row["owner"] for row in self.designed_gaps)
+            ),
         }
 
     @property
     def red(self) -> bool:
         """Panics and defects make the instrument exit red. R_desugar does not:
-        a typed refusal is a measured frontier row, not a broken instrument."""
+        a typed refusal is a measured frontier row, not a broken instrument.
+
+        Neither does a DESIGNED gap. It is a named mechanism answering
+        correctly, so holding the run red on it would be the 171.6x disease in
+        miniature: counting correct output as remaining work. It is counted and
+        published under its own owner instead — reported, never silent."""
         return bool(self.construction_panics or self.defects)
 
 

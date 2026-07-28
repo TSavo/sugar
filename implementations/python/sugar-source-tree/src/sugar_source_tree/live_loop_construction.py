@@ -13,7 +13,11 @@ from sugar_lift_py_tests.loop_construction import (
     seal_loop_record,
 )
 
-from .binding_provenance import _state_wire
+from .binding_provenance import (
+    LoopProjectedBindingStateV1,
+    LoopProjectedFaceV1,
+    _state_wire,
+)
 from .binding_state import (
     BindingEntryV1,
     BindingMap,
@@ -44,12 +48,12 @@ class LiveOutwardHaltedFaceV1:
 
 
 def _formula_cid(formula) -> str:
-    import json
-
-    from sugar_lift_py_tests.canonicalizer import encode_jcs
+    # Encode the Value tree once and hash those bytes. Do not decode the
+    # canonical JCS string back through JSON merely to re-encode for the CID.
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
     from sugar_lift_py_tests.ir import formula_to_value
 
-    return cid_of_json(json.loads(encode_jcs(formula_to_value(formula))))
+    return blake3_512_of(encode_jcs(formula_to_value(formula)).encode("utf-8"))
 
 
 def _seal_runtime_state(state):
@@ -90,14 +94,29 @@ def _seal_runtime_state(state):
         # NormalExhaustion, so that face's LoopBindingRef IS the unconditional
         # post-value (the ref itself carries the completion identity). Seal it
         # directly. A multi-face projection (a loop that can break) is a genuine
-        # multi-way join whose binary-guarded folding is not yet built -- it
-        # stays LOUD rather than guess a fallthrough and bind the wrong value.
+        # multi-way join. It is sealed AS a partition over the loop's own
+        # completion routes rather than folded into nested binary guards: a
+        # fold has to pick an order and name one face the else-branch, which
+        # asserts a fallthrough the producer never declared. Each face keeps
+        # the guard formula CID the producer minted and the arity it declared,
+        # so completeness travels instead of being reconstructed downstream.
         if len(state.completed_faces) == 1:
             return _seal_runtime_state(state.completed_faces[0].state)
-        raise BindingStateWireGap(
-            "multi-face loop projected binding sealing is unimplemented; "
-            "stays loud rather than fold a multi-way completion join"
+        faces = tuple(
+            sorted(
+                (
+                    LoopProjectedFaceV1(
+                        face.completion_kind,
+                        face.guard_formula_cid,
+                        cid_of_json(_state_wire(_seal_runtime_state(face.state))),
+                        face.exit_partition_arity,
+                    )
+                    for face in state.completed_faces
+                ),
+                key=lambda face: face.completion_kind,
+            )
         )
+        return LoopProjectedBindingStateV1(state.target_cid, faces)
     raise BindingStateWireGap(
         f"live loop state has no authenticated sealed projection: "
         f"{type(state).__name__}"
@@ -579,11 +598,28 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         else_obligation_cid = else_obligation["elseExhaustionObligationCid"]
 
     post_records = []
+    # THE EXIT ROUTES, NAMED BY THE PRODUCER (#6336 family).
+    #
+    # A loop leaves exactly one way, and this tuple is the loop saying which
+    # ways exist. `BodyFallthrough` is deliberately absent and must stay absent:
+    # it is the LATCH input (`loop_construction.py` requires the latch
+    # obligation's input face to be exactly that kind), i.e. the loop-back edge,
+    # not an exit route. Stamping it as a third exit member would assert an
+    # exclusion between the loop-back edge and the two real exits that nobody
+    # established -- and, because a family admits only when it is COMPLETE,
+    # would cost the two genuine exit arms the admission they legitimately earn.
+    #
+    # `exitPartitionArity` is that count carried on the wire so a downstream
+    # projection reads a DECLARED family size instead of counting whatever
+    # happened to arrive. A dropped post-binding record then makes the family
+    # short of its declared size, and the projection refuses loudly rather than
+    # certifying a partial partition as exhaustive.
     completed_post_kinds = (
         ("BreakExit", "NormalExhaustion")
         if "BreakExit" in face_snapshots
         else ("NormalExhaustion",)
     )
+    exit_partition_arity = len(completed_post_kinds)
     for completion_kind in completed_post_kinds:
         face, state_record, _snapshot = (
             post_exhaustion_face
@@ -600,6 +636,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                     "incomingStateCid": pre_state["stateCid"],
                     "completedFaceCid": face["completedFaceCid"],
                     "projectedStateCid": state_record["stateCid"],
+                    "exitPartitionArity": exit_partition_arity,
                 },
                 "postBindingObligationCid",
             )

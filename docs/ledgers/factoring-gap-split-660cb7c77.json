@@ -1,0 +1,236 @@
+{
+ "schema": "factoringGap-split-v1",
+ "commit": "660cb7c77",
+ "corpus": "pandas 3.0.3",
+ "files": [
+  {
+   "file": "core/arrays/arrow/array.py",
+   "n_functions": 155,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 1,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 0,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {},
+   "factoring_gap_rows": []
+  },
+  {
+   "file": "core/arrays/datetimelike.py",
+   "n_functions": 112,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 0,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 2,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {
+    "unstamped": 2
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "unstamped",
+     "mergedArm": true,
+     "leftOwner": "CallSiteValue",
+     "rightOwner": "CallSiteValue",
+     "isRemainingWork": false
+    },
+    {
+     "kind": "unstamped",
+     "mergedArm": true,
+     "leftOwner": "CallSiteValue",
+     "rightOwner": "CallSiteValue",
+     "isRemainingWork": false
+    }
+   ]
+  },
+  {
+   "file": "core/frame.py",
+   "n_functions": 293,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 5,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 0,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {},
+   "factoring_gap_rows": []
+  },
+  {
+   "file": "core/generic.py",
+   "n_functions": 223,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 0,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 1,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {
+    "unstamped": 1
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "unstamped",
+     "mergedArm": true,
+     "leftOwner": "SymbolicValue",
+     "rightOwner": "StringValue",
+     "isRemainingWork": false
+    }
+   ]
+  },
+  {
+   "file": "core/groupby/groupby.py",
+   "n_functions": 102,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 1,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 1,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {
+    "unstamped": 1
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "unstamped",
+     "mergedArm": true,
+     "leftOwner": "CallSiteValue",
+     "rightOwner": "GuardedValue",
+     "isRemainingWork": false
+    }
+   ]
+  },
+  {
+   "file": "core/indexes/base.py",
+   "n_functions": 235,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 3,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 0,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {},
+   "factoring_gap_rows": []
+  },
+  {
+   "file": "core/indexing.py",
+   "n_functions": 83,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 1,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 1,
+   "R(factoring_gaps_remaining_work)": 1,
+   "factoring_gap_split": {
+    "unstamped": 1
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "unstamped",
+     "mergedArm": false,
+     "leftOwner": "PredicateValue",
+     "rightOwner": "PredicateValue",
+     "isRemainingWork": true
+    }
+   ]
+  },
+  {
+   "file": "core/methods/selectn.py",
+   "n_functions": 9,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 1,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 1,
+   "R(factoring_gaps_remaining_work)": 1,
+   "factoring_gap_split": {
+    "unstamped": 1
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "unstamped",
+     "mergedArm": false,
+     "leftOwner": "SymbolicValue",
+     "rightOwner": "SymbolicValue",
+     "isRemainingWork": true
+    }
+   ]
+  },
+  {
+   "file": "core/reshape/pivot.py",
+   "n_functions": 14,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 3,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 0,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {},
+   "factoring_gap_rows": []
+  },
+  {
+   "file": "core/series.py",
+   "n_functions": 179,
+   "stableZero": true,
+   "R(timeout)": 0,
+   "R(construction_panics)": 0,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 0,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {},
+   "factoring_gap_rows": []
+  },
+  {
+   "file": "io/excel/_openpyxl.py",
+   "n_functions": 23,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 0,
+   "R(unnamed_exceptions)": 1,
+   "R(factoring_gaps)": 1,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {
+    "unstamped": 1
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "unstamped",
+     "mergedArm": true,
+     "leftOwner": "CallSiteValue",
+     "rightOwner": "CallSiteValue",
+     "isRemainingWork": false
+    }
+   ]
+  },
+  {
+   "file": "io/formats/style.py",
+   "n_functions": 64,
+   "stableZero": false,
+   "R(timeout)": 0,
+   "R(construction_panics)": 1,
+   "R(unnamed_exceptions)": 0,
+   "R(factoring_gaps)": 1,
+   "R(factoring_gaps_remaining_work)": 0,
+   "factoring_gap_split": {
+    "stamped-not-separating": 1
+   },
+   "factoring_gap_rows": [
+    {
+     "kind": "stamped-not-separating",
+     "mergedArm": true,
+     "leftOwner": "CallSiteValue",
+     "rightOwner": "CallSiteValue",
+     "isRemainingWork": false
+    }
+   ]
+  }
+ ],
+ "totals": {
+  "gaps": 8,
+  "work": 2,
+  "kinds": {
+   "unstamped": 7,
+   "stamped-not-separating": 1
+  }
+ }
+}

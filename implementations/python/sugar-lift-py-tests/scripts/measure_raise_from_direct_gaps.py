@@ -81,9 +81,15 @@ def measure(root: Path) -> dict[str, object]:
             continue
 
         selected_files += 1
+        from sugar_lift_py_tests.lift_rpc import (
+            open_source_file_for_construction,
+        )
+
         reporter = CollectingReporter()
         try:
-            source_file = SourceFile.from_path(str(path), reporter=reporter)
+            source_file = open_source_file_for_construction(
+                path, root=root, reporter=reporter
+            )
             # This instrument owns Raise classification, so construct every
             # Raise directly. An unwritten enclosing function must not hide a
             # cause descendant, and an unrelated sibling gap must not label

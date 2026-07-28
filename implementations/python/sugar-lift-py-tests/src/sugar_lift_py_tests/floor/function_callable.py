@@ -41,51 +41,15 @@ class FunctionCallable(FloorValue):
         del formula
         return self
 
-    def call_scope_updates(self, arg_values, ctx, site):
-        """Replay a straight-line local callback and return its caller rebinds."""
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.floor.call_site_value import (
-            CallSiteValue,
-            _ctx_with_curried_args,
-        )
-        from sugar_lift_py_tests.outcome import complete_value, Complete
-        from sugar_lift_py_tests.sugar.install_source_dig import ContextualizedDigBody
-        from sugar_lift_py_tests.sugar_body import SugarBody
-
-        callsite = complete_value(
-            self.callsite(arg_values, (), site),
-            owner="FunctionCallable.call_scope_updates",
-        )
-        if not isinstance(callsite, CallSiteValue):
-            construction_panic_gap(
-                owner="FunctionCallable",
-                blame=str(site),
-                observed=type(callsite).__name__,
-                requested="callback CallSiteValue",
-                fix="construct the callback callsite or panic loudly",
-            )
-        body = callsite.body
-        if not isinstance(body, SugarBody) or not isinstance(
-            body.sugar, ContextualizedDigBody
-        ):
-            construction_panic_gap(
-                owner="FunctionCallable",
-                blame=str(site),
-                observed=type(body).__name__,
-                requested="straight-line callback scope updates",
-                fix="carry a contextualized local callback body or panic loudly",
-            )
-        curried = _ctx_with_curried_args(ctx, callsite.parameters, callsite.arg_values)
-        final_ctx = body.sugar.scope_after(curried)
-        caller_names = tuple(binding.name for binding in ctx.temporal.bindings)
-        updates = tuple(
-            (name, final_ctx.temporal.value_for(name))
-            for name in caller_names
-            if final_ctx.temporal.value_for(name) != ctx.temporal.value_for(name)
-        )
-        from .scope_rebind import ScopeRebinds
-
-        return Complete(ScopeRebinds(updates))
+    # `call_scope_updates` lived here: replay a straight-line local callback and
+    # return its caller rebinds. It is deleted, not repointed. Its only success
+    # path required `body.sugar` to be `ContextualizedDigBody` and then called
+    # `body.sugar.scope_after(...)`; that type and that method were deleted with
+    # the sugar web (f4f2574f0) and exist nowhere in the kit, so no body could
+    # ever have satisfied the guard. Nothing in src/ or tests/ called it. The
+    # capability -- replaying a dug callback for caller-scope rebinds -- is LOST,
+    # not moved; see the issue this change files. Rebuild it against a live body
+    # type rather than restoring this arm.
 
     def callable_application_with(self, operation, ctx):
         del ctx
@@ -426,22 +390,14 @@ class FunctionCallable(FloorValue):
                 )
             )
             if static_type_error:
-                import hashlib
-
-                from sugar_lift_py_tests.effect import RaiseEffect
-                from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
-
-                source_sha256 = (
-                    hashlib.sha256(site.source.encode()).hexdigest()
-                    if site.source is not None
-                    else None
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
                 )
-                exception = ExceptionValue("TypeError", (), site)
-                return Complete(
-                    RaiseValue(
-                        RaiseEffect("TypeError", str(site), source_sha256),
-                        exception=exception,
-                    )
+
+                return ground_exceptional_exit(
+                    exception_name="TypeError",
+                    site=site,
+                    owner="FunctionCallable.call",
                 )
             construction_panic_gap(
                 owner="FunctionCallable",
@@ -460,20 +416,14 @@ class FunctionCallable(FloorValue):
                 symbol_kind="contract-target",
             )
         body = self.body
-        from sugar_lift_py_tests.sugar.install_source_dig import ContextualizedDigBody
-        from sugar_lift_py_tests.sugar_body import SugarBody
-
-        if isinstance(body, SugarBody) and isinstance(
-            body.sugar, ContextualizedDigBody
-        ):
-            body = replace(
-                body,
-                sugar=replace(
-                    body.sugar,
-                    callable_binding=self,
-                    callable_name_is_parameter=self.name in self.parameters,
-                ),
-            )
+        # A `ContextualizedDigBody` branch stood here and re-`replace`d the body
+        # sugar with `callable_binding` / `callable_name_is_parameter`. That type
+        # and both fields were deleted with the sugar web (f4f2574f0) and exist
+        # nowhere, so the branch could never be taken -- but its import sat on
+        # THIS path, unconditional, so every successful `FunctionCallable.callsite`
+        # raised ModuleNotFoundError: not a panic, not a refusal, not a family the
+        # census buckets. The dead branch is deleted; carrying the callable binding
+        # into a dug body is a LOST capability, filed, not silently re-plumbed.
         return Complete(
             CallSiteValue(
                 target_name=self.name,

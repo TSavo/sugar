@@ -85,6 +85,13 @@ class LoopProjectedCompletedFace:
     guard_formula_cid: str
     state: BindingState
     guard_formula: object | None = None
+    exit_partition_arity: int | None = None
+    """How many exit routes the PRODUCER declared for this loop occurrence.
+
+    ``None`` is a face from a producer that never stated a family size. Such a
+    face can still be read; it simply cannot carry completeness downstream, in
+    the same way ``PartitionFace.arity is None`` cannot.
+    """
 
     def __post_init__(self) -> None:
         _require_runtime_cid(self.target_cid, "targetCid")
@@ -424,6 +431,7 @@ class ConstructionTestimonyReporterV1:
         from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 
         panic = ConstructedValueTestimonyNotWritten(
+            blame=node.fragment,
             owner="CollectingReporter.present_construction",
             observed=(
                 f"{canonicalized} of {type(value).__name__} at "
@@ -1243,6 +1251,54 @@ def join_binding_state(
     when_false: BindingState,
     make_ifexp,
 ) -> BindingState:
+    """Join the two branch faces of one binding into a single state.
+
+    THE ``IfExp`` COLLAPSE BELOW IS LOAD-BEARING, NOT A CONVENIENCE. It reads
+    like an optimisation -- both sides are plain values, so express the join as
+    an if-expression instead of a guarded binding -- and it is the single thing
+    keeping the commonest conditional-binding shape in real code away from a
+    source-keyed partition.
+
+    ``GuardedBinding`` is what later mints
+    ``partition(("binding.projection", slot.slot_id))``, and ``slot_id`` is
+    keyed on ``(source_cid, span, fragment_cid)`` with NO execution component
+    (``branch_result_slot``). ``_faces_exclusive`` then proves two arms
+    exclusive from their carried faces alone and never reads their guards. So
+    two arms from DIFFERENT executions that shared one slot would be declared
+    mutually exclusive and collapsed into a single guarded value -- the second
+    execution's value re-attributed to the negation of the first's guard.
+
+    That conflation is not reachable today, and this arm is one of three
+    reasons why. The other two are that ordinary call sites stay opaque (one
+    callee is not reduced twice into one ``ExitSet``) and that loops route
+    through ``LoopGuardedProjection`` instead.
+
+    THE MINT NEEDS ALL THREE OF: a name bound in exactly ONE branch, with NO
+    PRIOR BINDING of that name, then read afterwards. Measured::
+
+        if p: x = 1 else: x = 2 ; return x   ->  no mint   (this arm)
+        x = 0 ; if p: x = 1 ; return x       ->  no mint
+        if p: x = 1 ; return x               ->  MINTS
+
+    The prior binding kills it for the same reason this arm does: ``x = 0``
+    leaves the else-face bound too, so the join has a plain Node on both sides
+    and collapses here. **Initializing the name first is the more natural way
+    to write that code**, which is why the mint is harder to reach than "bound
+    in one branch, then read" suggests -- one of twelve probed shapes reaches
+    it. Anyone checking this docstring against a shape with a prior
+    initialization will see no mint and should not conclude the docstring is
+    wrong.
+
+    **Making this symmetric -- returning a ``GuardedBinding`` here for
+    consistency with the arms below -- would hand a source-keyed partition to
+    the most common shape in the corpus.** Do not do it without giving the slot
+    an execution component first.
+
+    Pinned by ``tests/test_binding_partition_execution_conflation.py``
+    (``test_tripwire_a_two_branch_binding_never_mints``), which fails if this
+    arm stops collapsing, and by the tripwires beside it for the other two
+    properties.
+    """
     from sugar_source_tree.nodes import Node
 
     if when_true is when_false or when_true == when_false:
@@ -1250,6 +1306,9 @@ def join_binding_state(
     when_true = unwrap_binding_state(when_true)
     when_false = unwrap_binding_state(when_false)
     if isinstance(when_true, Node) and isinstance(when_false, Node):
+        # Both sides are plain values: the join is an if-expression, and NO
+        # partition is minted. See the docstring -- this is the property that
+        # keeps ordinary conditional bindings off the source-keyed partition.
         return make_ifexp(slot, when_true, when_false)
     if isinstance(when_true, UnboundBinding) and isinstance(when_false, UnboundBinding):
         return UnboundBinding(name=when_true.name, cause=when_true.cause)

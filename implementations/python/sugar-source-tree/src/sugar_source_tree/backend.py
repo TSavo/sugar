@@ -67,9 +67,18 @@ def materialize(
     *data* is memoized on the unit's ConstructionCache — slots resolve once
     per (ref, reporter, control_context) into a shared row; shells may be
     built freely over that row. Registration runs in the constructor.
+
+    ``unit`` is the unit to construct UNDER, which is the parent's for a child
+    slot. A ref that was parsed out of a specific source overrides it with that
+    source (``BackendNode.minting_unit``): a span belongs to the text it was
+    measured in, and no parent may re-home it. The unit also owns the field
+    memo, so this keeps a node's cached field data with the file it came from.
     """
     from .construction_cache import ConstructionCache
 
+    minting_unit = ref.minting_unit
+    if minting_unit is not None:
+        unit = minting_unit
     ctx = control_context or ControlConstructionContextV1()
     cache = getattr(unit, "construction_cache", None)
     if cache is None:
@@ -242,6 +251,28 @@ class BackendNode(Typeable):
 
     def describe(self) -> Description:
         raise NotImplementedError
+
+    @property
+    def minting_unit(self) -> Optional[SourceUnit]:
+        """The source this handle's span was MINTED FROM, when it has one.
+
+        A span is only meaningful against the text it was measured in, so a
+        handle parsed out of a file must say which file that was. Adapters that
+        parse answer with their unit; a handle whose span is BORROWED from an
+        origin (every shadow rewrite, every synthetic constituent) answers
+        ``None`` and correctly takes the unit it is materialized under, because
+        a borrowed span is already expressed in that source's coordinates.
+
+        This exists because a child slot used to inherit its PARENT's unit
+        unconditionally. Within one file that is free and right. Across files --
+        which is what happens the moment a caller's actual argument is bound
+        into a callee body parsed from another file -- it re-homed the child
+        onto a source its span was never measured in, and projecting it read
+        `offset 55069 outside 0..27637` (a pandas use site against contextlib.py
+        on the census's Python 3.12). The span was never wrong; the source it
+        was being read against was.
+        """
+        return None
 
     def resolve_type(self) -> type[Node]:
         """Two arms: the concrete node class for this kind, or panic."""

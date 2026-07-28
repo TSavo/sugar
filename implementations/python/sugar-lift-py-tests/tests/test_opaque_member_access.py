@@ -1,14 +1,10 @@
-"""Member access on an OPAQUE object is a symbolic read, not a gap.
+"""Opaque member operations refuse until a producer owns their runtime edges.
 
-`OpaqueObjectStateV1` is an authenticated call-result identity with no field
-testimony: statically we know only WHICH call produced it, never its fields --
-those come into existence at runtime, observed by the witness. So `opaque.attr`
-and `opaque[key]` must NOT raise SugarNotWritten (the old withhold); they
-construct the honest EUF coordinate `py.getattr(recv, "attr")` /
-`py.subscript(recv, key)`, carrying the opaque call term and nothing invented.
-
-A free-function call `g(x)` is the deterministic opaque receiver (no vendor,
-no numpy): its result has no field testimony, exactly like `np.asarray(...)`.
+An unexecuted call authenticates which call produced the receiver, but not its
+runtime type or members.  A completed ``py.getattr`` coordinate would silently
+choose the success edge; a guessed ``AttributeError`` would silently choose the
+failure edge.  Neither choice has source testimony, so both attribute and
+subscript operations remain named construction refusals.
 """
 
 import os
@@ -16,73 +12,83 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.ir import (
-    atomic as _atomic,
-    ctor as _ctor,
-    make_var,
-    num,
-    str_const,
-    eq as _eq,
-)
 
 
-def _post_of(src):
-    d = tempfile.mkdtemp()
-    p = os.path.join(d, "m.py")
-    open(p, "w").write(src)
-    fn = list(SourceFile(path_source(p)).functions())[0]
-    return fn.sugar().desugar(None).value.post()
-
-
-def test_opaque_attribute_is_getattr_not_gap():
-    # `g(x).foo` -- attribute on an opaque call result -- projects the honest
-    # symbolic read, NOT SugarNotWritten and NOT a fabricated field value.
-    post = _post_of("def f(x):\n    return g(x).foo\n")
-    expected = _eq(
-        make_var("out"),
-        _ctor("py.getattr", [_ctor("call:g", [make_var("x")]), str_const("foo")]),
-    )
-    assert post == expected, f"post was {post!r}"
-
-
-def test_opaque_subscript_is_subscript_not_gap():
-    # `g(x)[0]` -- subscript on an opaque call result -- projects py.subscript.
-    post = _post_of("def f(x):\n    return g(x)[0]\n")
-    expected = _eq(
-        make_var("out"),
-        _ctor("py.subscript", [_ctor("call:g", [make_var("x")]), num(0)]),
-    )
-    assert post == expected, f"post was {post!r}"
-
-
-def test_opaque_member_access_no_longer_raises():
-    # The discrimination against the OLD behavior: the guard used to raise
-    # SugarNotWritten on any opaque receiver. Construction must now complete.
+def _attribute_refusal(src):
     from sugar_source_tree.panic import SugarNotWritten
 
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as source_file:
+        source_file.write(src)
+    function = next(SourceFile(path_source(path)).functions())
     try:
-        _post_of("def f(x):\n    return g(x).foo\n")
-    except SugarNotWritten as e:  # pragma: no cover - the regression tripwire
-        raise AssertionError(f"opaque member access wrongly withheld: {e}")
+        function.sugar().desugar(None)
+    except SugarNotWritten as refusal:
+        return refusal
+    raise AssertionError("opaque member operation invented a completed coordinate")
 
 
-def test_opaque_attribute_congruence():
-    # Same attribute on the SAME opaque call is the SAME term (equal-in-equal-out
-    # one level up). Two `g(x).foo` reads produce identical coordinates.
-    a = _post_of("def f(x):\n    return g(x).foo\n")
-    b = _post_of("def f(x):\n    return g(x).foo\n")
-    assert a == b
+def _subscript_refusal(src):
+    from sugar_source_tree.panic import SugarNotWritten
+
+    directory = tempfile.mkdtemp()
+    path = os.path.join(directory, "m.py")
+    with open(path, "w", encoding="utf-8") as source_file:
+        source_file.write(src)
+    function = next(SourceFile(path_source(path)).functions())
+    try:
+        function.sugar().desugar(None)
+    except SugarNotWritten as refusal:
+        return refusal
+    raise AssertionError("opaque subscript invented a completed coordinate or panic")
+
+
+def test_opaque_attribute_is_named_undecided():
+    info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+
+    assert info.owner == "CallSiteValue.attribute"
+    assert info.observed.endswith("CallSiteValue.foo")
+    assert "source-authenticated attribute success or exceptional exit" in (
+        info.requested
+    )
+
+
+def test_opaque_subscript_is_named_undecided():
+    refusal = _subscript_refusal("def f(x):\n    return g(x)[0]\n")
+
+    assert refusal.owner == "CallSiteValue.subscript"
+    assert "undecided receiver runtime type" in refusal.observed
+    assert "KeyError" not in refusal.observed
+    assert "IndexError" not in refusal.observed
+
+
+def test_opaque_attribute_uses_the_typed_construction_refusal():
+    info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+
+    assert type(info).__name__ == "SugarNotWritten"
+    assert "AttributeError" not in info.observed
+    assert "AttributeError" not in info.requested
+
+
+def test_opaque_attribute_refusal_is_reproducible():
+    first = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+    second = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+
+    assert (first.owner, first.observed, first.requested) == (
+        second.owner,
+        second.observed,
+        second.requested,
+    )
 
 
 def test_opaque_attribute_name_is_carried_verbatim():
-    # The attribute name is a static identifier carried onto the coordinate,
-    # never desugared: `.bar` yields "bar", distinct from `.foo`.
-    post = _post_of("def f(x):\n    return g(x).bar\n")
-    expected = _eq(
-        make_var("out"),
-        _ctor("py.getattr", [_ctor("call:g", [make_var("x")]), str_const("bar")]),
-    )
-    assert post == expected, f"post was {post!r}"
+    foo = _attribute_refusal("def f(x):\n    return g(x).foo\n")
+    bar = _attribute_refusal("def f(x):\n    return g(x).bar\n")
+
+    assert foo.observed.endswith(".foo")
+    assert bar.observed.endswith(".bar")
+    assert foo.observed != bar.observed
 
 
 if __name__ == "__main__":

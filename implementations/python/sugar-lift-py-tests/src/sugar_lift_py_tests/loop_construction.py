@@ -164,6 +164,39 @@ def _decode_binding_entry(raw: Any) -> tuple[str, dict[str, Any]]:
         )
         for field in ("guardFormulaCid", "whenTrueStateCid", "whenFalseStateCid"):
             _require_cid(state[field], field)
+    elif kind == "loopProjected":
+        # A loop post-state carried into a later statement. The faces are the
+        # loop's own completion routes -- one per kind, no else-branch -- so the
+        # wire validates the partition rather than a binary fold.
+        state = _exact(
+            state, {"kind", "targetCid", "faces"}, "loopProjected BindingStateV1"
+        )
+        _require_cid(state["targetCid"], "targetCid")
+        if not isinstance(state["faces"], list) or not state["faces"]:
+            raise LoopWireError("loopProjected BindingStateV1 requires faces")
+        kinds = []
+        for face in state["faces"]:
+            face = _exact(
+                face,
+                {"completionKind", "guardFormulaCid", "stateCid", "exitPartitionArity"},
+                "loopProjected face",
+            )
+            if face["completionKind"] not in {
+                "BodyFallthrough",
+                "BreakExit",
+                "NormalExhaustion",
+            }:
+                raise LoopWireError("unknown loop completion kind")
+            for field in ("guardFormulaCid", "stateCid"):
+                _require_cid(face[field], field)
+            arity = face["exitPartitionArity"]
+            if arity is not None and not isinstance(arity, int):
+                raise LoopWireError("exitPartitionArity must be an int or null")
+            kinds.append(face["completionKind"])
+        if len(set(kinds)) != len(kinds):
+            raise LoopWireError("loopProjected faces must be one per completion kind")
+        if kinds != sorted(kinds):
+            raise LoopWireError("loopProjected faces must be completion-kind sorted")
     else:
         raise LoopWireError("unknown BindingStateV1 variant")
     return coordinate_cid, deepcopy(raw)
@@ -355,6 +388,10 @@ _EXACT_FIELDS = {
         "incomingStateCid",
         "completedFaceCid",
         "projectedStateCid",
+        # The producer's declared count of exit routes for this loop occurrence
+        # (#6336 family). Part of the sealed preimage on purpose: a family size
+        # that could be attached after the fact is not testimony.
+        "exitPartitionArity",
         "postBindingObligationCid",
     },
 }
@@ -640,6 +677,27 @@ def decode_loop_construction_v1(graph: Any) -> LoopConstructionV1:
         state(post.raw["projectedStateCid"])
         if post.raw["completedFaceCid"] not in completed_by_cid:
             raise LoopWireError("post binding face is not completed")
+        # The producer's DECLARED exit-route count for this loop occurrence.
+        # It is a partition size, so it must be at least two to be a split at
+        # all, and it must never name the latch: `BodyFallthrough` is the
+        # loop-back edge, not a way out.
+        arity = post.raw.get("exitPartitionArity")
+        if not isinstance(arity, int) or isinstance(arity, bool) or arity < 1:
+            raise LoopWireError(
+                "post binding must declare exitPartitionArity: the number of "
+                "exit routes this loop occurrence owns. Without it a downstream "
+                "projection could only count the faces that happened to arrive, "
+                "and a dropped face would read as a complete partition"
+            )
+        if completed_by_cid[post.raw["completedFaceCid"]].completion_kind == (
+            "BodyFallthrough"
+        ):
+            raise LoopWireError(
+                "post binding must not project BodyFallthrough: it is the latch "
+                "input (the loop-back edge), not an exit route. Projecting it "
+                "would put the latch into the exit partition and assert an "
+                "exclusion against the real exits that nobody established"
+            )
 
     for cid in root["outwardHaltedFaceCids"]:
         halted = record(cid, "loop-outward-halted-face")

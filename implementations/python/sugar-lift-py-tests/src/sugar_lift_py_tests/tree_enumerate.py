@@ -191,7 +191,7 @@ def fact_of(node) -> Optional[Any]:
 # trivially and no gap is counted twice across a function/module split.
 
 
-def audit_file_gaps(full_path: Path):
+def audit_file_gaps(full_path: Path, *, root: Path):
     """The file's frontier: ONE construction per top-level statement; the
     reporter witnesses every gap underneath it as it is built.
 
@@ -211,8 +211,13 @@ def audit_file_gaps(full_path: Path):
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
 
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
     reporter = CollectingReporter()
-    sf = SourceFile.from_path(str(full_path), reporter=reporter)
+    # Construction needs its context: the bare door builds a tree with none,
+    # and a context-less tree paints every With RuntimeSelectedContextManager
+    # regardless of resolvability. See scripts/construction_context_door_law.py.
+    sf = open_source_file_for_construction(full_path, root=root, reporter=reporter)
     for stmt in sf.root.body:
         try:
             stmt.sugar()
@@ -405,6 +410,16 @@ def source_audit_from_roll_call(full_path: Path, file_rel: str) -> dict:
     }
 
 
+def _root_of(full_path: Path, file_rel: str) -> Path:
+    """The root ``file_rel`` is stated against -- the locus's own denominator."""
+    resolved = Path(full_path).resolve()
+    relative = Path(file_rel)
+    root = resolved
+    for _ in relative.parts:
+        root = root.parent
+    return root
+
+
 def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
     """The recovered-construction audit leaf for one file, tree-walked.
 
@@ -421,7 +436,9 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
         RecoveredConstructionPanicDto,
     )
 
-    sf, gaps = audit_file_gaps(full_path)
+    # The workspace root is what `file_rel` is stated against, by definition.
+    root = _root_of(full_path, file_rel)
+    sf, gaps = audit_file_gaps(full_path, root=root)
     demanded_source = f"module:{sf.unit.source_cid}"
     panics = []
     for node, panic in gaps:

@@ -98,6 +98,90 @@ def builtin_constant_names() -> frozenset[str]:
 _EMPTY_BUILTIN_TEMPORAL = None
 
 
+# Python owns its exception hierarchy, so the kit TRANSPORTS it rather than
+# deriving or assuming it. Every entry names one builtin exception's immediate
+# bases, restricted to ``BUILTIN_EXCEPTION_NAMES`` (the set is closed under
+# this relation: no base falls outside it except ``object``).
+#
+# Before this table existed every builtin exception carried ``bases=()``, which
+# is not "unknown" -- it is the positive claim that the class has no ancestry.
+# ``except Exception`` therefore did not catch ``raise ValueError``, and
+# ``issubclass(ValueError, Exception)`` reduced to ``False``. A fabricated
+# empty ancestry is a decided answer standing in for vendor testimony; this is
+# the testimony.
+BUILTIN_EXCEPTION_BASES: dict[str, tuple[str, ...]] = {
+    "ArithmeticError": ('Exception',),
+    "AssertionError": ('Exception',),
+    "AttributeError": ('Exception',),
+    "BaseException": (),
+    "BaseExceptionGroup": ('BaseException',),
+    "BlockingIOError": ('OSError',),
+    "BrokenPipeError": ('ConnectionError',),
+    "BufferError": ('Exception',),
+    "BytesWarning": ('Warning',),
+    "ChildProcessError": ('OSError',),
+    "ConnectionAbortedError": ('ConnectionError',),
+    "ConnectionError": ('OSError',),
+    "ConnectionRefusedError": ('ConnectionError',),
+    "ConnectionResetError": ('ConnectionError',),
+    "DeprecationWarning": ('Warning',),
+    "EOFError": ('Exception',),
+    "EncodingWarning": ('Warning',),
+    "EnvironmentError": ('Exception',),
+    "Exception": ('BaseException',),
+    "ExceptionGroup": ('BaseExceptionGroup', 'Exception'),
+    "FileExistsError": ('OSError',),
+    "FileNotFoundError": ('OSError',),
+    "FloatingPointError": ('ArithmeticError',),
+    "FutureWarning": ('Warning',),
+    "GeneratorExit": ('BaseException',),
+    "IOError": ('Exception',),
+    "ImportError": ('Exception',),
+    "ImportWarning": ('Warning',),
+    "IndentationError": ('SyntaxError',),
+    "IndexError": ('LookupError',),
+    "InterruptedError": ('OSError',),
+    "IsADirectoryError": ('OSError',),
+    "KeyError": ('LookupError',),
+    "KeyboardInterrupt": ('BaseException',),
+    "LookupError": ('Exception',),
+    "MemoryError": ('Exception',),
+    "ModuleNotFoundError": ('ImportError',),
+    "NameError": ('Exception',),
+    "NotADirectoryError": ('OSError',),
+    "NotImplementedError": ('RuntimeError',),
+    "OSError": ('Exception',),
+    "OverflowError": ('ArithmeticError',),
+    "PendingDeprecationWarning": ('Warning',),
+    "PermissionError": ('OSError',),
+    "ProcessLookupError": ('OSError',),
+    "RecursionError": ('RuntimeError',),
+    "ReferenceError": ('Exception',),
+    "ResourceWarning": ('Warning',),
+    "RuntimeError": ('Exception',),
+    "RuntimeWarning": ('Warning',),
+    "StopAsyncIteration": ('Exception',),
+    "StopIteration": ('Exception',),
+    "SyntaxError": ('Exception',),
+    "SyntaxWarning": ('Warning',),
+    "SystemError": ('Exception',),
+    "SystemExit": ('BaseException',),
+    "TabError": ('IndentationError',),
+    "TimeoutError": ('OSError',),
+    "TypeError": ('Exception',),
+    "UnboundLocalError": ('NameError',),
+    "UnicodeDecodeError": ('UnicodeError',),
+    "UnicodeEncodeError": ('UnicodeError',),
+    "UnicodeError": ('ValueError',),
+    "UnicodeTranslateError": ('UnicodeError',),
+    "UnicodeWarning": ('Warning',),
+    "UserWarning": ('Warning',),
+    "ValueError": ('Exception',),
+    "Warning": ('Exception',),
+    "ZeroDivisionError": ('ArithmeticError',),
+}
+
+
 def builtin_name_temporal():
     """Return the shared immutable lexical floor for Python's builtin names.
 
@@ -135,16 +219,41 @@ def builtin_name_temporal():
         )
     # Override generic callable coordinates with exact builtins ownership. No
     # exception constructor object is imported or executed to establish it.
-    for name in sorted(BUILTIN_EXCEPTION_NAMES):
-        temporal = temporal.bind_value(
-            name,
-            BuiltinExceptionClassValue(name=name, bases=(), record=BlockValue(())),
+    # Bind exception classes in ancestry order so every base is already the
+    # exact ClassValue its subclass points at -- one object per class, so the
+    # `candidate is supertype` walk in ClassValue.test_python_subtype answers
+    # on identity rather than on a re-spelled copy.
+    exception_values: dict[str, BuiltinExceptionClassValue] = {}
+
+    def exception_value(name: str) -> BuiltinExceptionClassValue:
+        existing = exception_values.get(name)
+        if existing is not None:
+            return existing
+        bases = tuple(
+            exception_value(base) for base in BUILTIN_EXCEPTION_BASES[name]
         )
+        value = BuiltinExceptionClassValue(
+            name=name, bases=bases, record=BlockValue(())
+        )
+        exception_values[name] = value
+        return value
+
+    for name in sorted(BUILTIN_EXCEPTION_NAMES):
+        temporal = temporal.bind_value(name, exception_value(name))
     temporal = temporal.bind_value(
         "issubclass", BuiltinSemanticCallable(operation="python.issubclass")
     )
     temporal = temporal.bind_value(
+        "isinstance", BuiltinSemanticCallable(operation="python.isinstance")
+    )
+    temporal = temporal.bind_value(
+        "len", BuiltinSemanticCallable(operation="python.len")
+    )
+    temporal = temporal.bind_value(
         "set", BuiltinSemanticCallable(operation="python.set.construct")
+    )
+    temporal = temporal.bind_value(
+        "tuple", BuiltinSemanticCallable(operation="python.tuple.construct")
     )
     _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal

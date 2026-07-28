@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.ir import Term
 
-from .floor_value import FloorValue
+from .floor_value import _BINARY_OPERATOR_COORDINATE, FloorValue
 
 
 def _pep604_type_union_leaves(term: Term) -> tuple[Term, ...] | None:
@@ -44,6 +44,25 @@ class SymbolicValue(FloorValue):
 
     term: Term
     formal_coordinate: object | None = None
+
+    def denotes_value(self) -> bool:
+        """This floor value denotes a Python runtime value."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Undecided: this is an unresolved term: nothing names its Python type.
+
+        Which ``__op__``/``__rop__`` Python would select for an
+        operation over this value is therefore undecided too, so a binary
+        operation reaches the named producer refusal rather than standing on a
+        ground field law or claiming completion.
+        """
+        return False
+
+    def denotes_a_value(self) -> bool:
+        # A symbolic term IS a value whose identity is not decidable yet --
+        # membership over it is an obligation, never a gap.
+        return True
 
     def python_isinstance(self, type_name: str, type_term, site):
         """Fold ground ``python:*`` data ctors against a named builtin type.
@@ -164,6 +183,17 @@ class SymbolicValue(FloorValue):
         return self.term
 
     def truth(self, site):
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="truth",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         # A symbolic value EMITS the Python truth relation; the sort adjudicates later.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
@@ -239,12 +269,10 @@ class SymbolicValue(FloorValue):
         )
 
     def unary_minus(self, site):
-        # Symbolic arithmetic negation: emit py.neg(term) (LAW in symbolic_term).
-        del site
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.neg", [self.term])))
+        # The term does not state a runtime type, so it cannot decide whether
+        # ``-`` returns a value or raises TypeError.  A symbolic ``py.neg``
+        # coordinate for the success face would erase that exceptional face.
+        return super().unary_minus(site)
 
     def absolute(self, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -275,192 +303,154 @@ class SymbolicValue(FloorValue):
         if type(other) is ListValue:
             return other.multiply(self, site)
 
-        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        if isinstance(other, GuardedValue):
-            return other.map_from_left("multiply", self, site)
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "*",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_dispatch(other, site, "*")
 
     def power(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "**",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_dispatch(other, site, "**")
 
     def add(self, other, site):
-        # Symbolic / EUF addition: emit ``+(self, other)``. CallSiteValue dig
-        # redispatches here when body is opaque; never invent a concrete sum.
-        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        if isinstance(other, GuardedValue):
-            return other.map_from_left("add", self, site)
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "+",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_dispatch(other, site, "+")
 
     def subtract(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "-",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_dispatch(other, site, "-")
 
     def divide(self, other, site):
-        return self._arithmetic_coordinate(other, site, "/")
+        return self._arithmetic_dispatch(other, site, "/")
 
     def floor_divide(self, other, site):
-        return self._arithmetic_coordinate(other, site, "//")
+        return self._arithmetic_dispatch(other, site, "//")
 
     def modulo(self, other, site):
-        return self._arithmetic_coordinate(other, site, "%")
+        return self._arithmetic_dispatch(other, site, "%")
 
-    def _arithmetic_coordinate(self, other, site, operator):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+    def _arithmetic_dispatch(self, other, site, operator):
+        return self._runtime_binary_dispatch(other, site, operator)
 
     def right_shift(self, other, site):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    ">>",
-                    [
-                        self.to_term(owner=str(site)),
-                        other.to_term(owner=str(site)),
-                    ],
-                )
-            )
-        )
+        return self._runtime_binary_dispatch(other, site, ">>")
 
     def bitwise_and(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "&")
+        return self._runtime_bitwise_dispatch(other, site, "&")
 
     def bitwise_xor(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "^")
+        return self._runtime_bitwise_dispatch(other, site, "^")
 
     def bitwise_or(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "|")
+        return self._runtime_bitwise_dispatch(other, site, "|")
 
     def left_shift(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "<<")
+        return self._runtime_bitwise_dispatch(other, site, "<<")
 
-    def _runtime_bitwise_coordinate(self, other, site, operator):
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+    def _runtime_bitwise_dispatch(self, other, site, operator):
+        return self._runtime_binary_dispatch(other, site, operator)
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    operator,
-                    [self.to_term(owner=str(site)), other.to_term(owner=str(site))],
-                )
+    def _runtime_binary_dispatch(self, other, site, operator):
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+
+        owner = next(
+            method
+            for method, coordinate in _BINARY_OPERATOR_COORDINATE.items()
+            if coordinate == operator
+        )
+        left_coordinate = self.formal_coordinate
+        right_coordinate = getattr(other, "formal_coordinate", None)
+        if left_coordinate is not None or right_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
             )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator=owner,
+                operands=(self, other),
+                coordinates=(left_coordinate, right_coordinate),
+            )
+        if isinstance(other, GuardedValue):
+            return other.map_from_left(owner, self, site)
+        denotes_other = getattr(other, "denotes_value", None)
+        if callable(denotes_other) and denotes_other():
+            from sugar_lift_py_tests.effect import RaiseEffect
+            from sugar_lift_py_tests.ir import atomic, ctor, str_const
+            from sugar_lift_py_tests.outcome import ExitSet
+            from sugar_lift_py_tests.outcome.exit_set import (
+                Completed,
+                Halted,
+                complement_guard,
+                partition,
+            )
+
+            left_term = self.to_term(owner=f"{operator} left operand")
+            right_term = other.to_term(owner=f"{operator} right operand")
+            dispatch_raises = atomic(
+                "python.binary_dispatch_raises",
+                [str_const(operator), left_term, right_term],
+            )
+            halted_face, completed_face = partition(
+                ("binary-native-dispatch", str(site), operator)
+            )
+            return ExitSet(
+                (
+                    Halted(
+                        dispatch_raises,
+                        RaiseEffect(
+                            blame=str(site),
+                            occurrence=str(site),
+                            producer_node_owner="BinOp",
+                        ),
+                        faces=frozenset({halted_face}),
+                    ),
+                    Completed(
+                        complement_guard(dispatch_raises),
+                        SymbolicValue(ctor(operator, [left_term, right_term])),
+                        frozenset({completed_face}),
+                    ),
+                )
+            ).normalize()
+        return self._binary_floor_gap(
+            other,
+            site,
+            owner,
+            f"runtime binary operator {operator}",
         )
 
     def matrix_multiply(self, other, site):
-        return self._runtime_bitwise_coordinate(other, site, "@")
+        return self._runtime_bitwise_dispatch(other, site, "@")
 
     def unary_plus(self, site):
-        # Unary plus on a symbolic is identity (symbolic_term UAdd returns the
-        # operand). Match the LAW; do not invent a py.pos spelling.
-        del site
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(self)
+        # The term does not state a runtime type, so it cannot decide whether
+        # ``+`` is identity or raises TypeError (e.g. DatetimeArray).  Completing
+        # as the operand erases that exceptional face.
+        return super().unary_plus(site)
 
     def bitwise_invert(self, site):
-        # Symbolic bitwise NOT: emit py.invert(term).
-        del site
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.invert", [self.term])))
+        # The term does not state a runtime type, so it cannot decide whether
+        # ``~`` returns a value or raises TypeError.  A symbolic coordinate for
+        # the success face would erase that exceptional face.
+        return super().bitwise_invert(site)
 
     def subscript(self, index, site):
-        built = self.py_subscript_coordinate(index, site)
-        if self.formal_coordinate is None:
-            return built
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            ContractConditionalConstructionV1,
-        )
-        from sugar_lift_py_tests.ir import atomic
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
 
-        return ContractConditionalConstructionV1.mint(
-            site=site,
-            candidate=built.value.to_term(owner=str(site)),
-            demand_formula=atomic("python:indexable", [self.term]),
-            value=built.value,
-            coordinate=self.formal_coordinate,
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="subscript",
+                operands=(self, index),
+                coordinates=(
+                    self.formal_coordinate,
+                    getattr(index, "formal_coordinate", None),
+                ),
+            )
+        return self.undecided_subscript(
+            index,
+            site,
+            owner="SymbolicValue.subscript",
         )
 
     def attribute(self, name, site):
-        # A symbolic receiver stays the py.getattr coordinate: an opaque term
-        # `py.getattr(recv, "name")`, the same EUF vocabulary as py.subscript.
-        # The lift does not know the receiver's fields, so `.name` is an
-        # uninterpreted projection -- decidable only where it later meets an
-        # equality, never invented.
-        del site
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
+        return self.undecided_attribute(name, site, owner="SymbolicValue.attribute")
 
     def contains(self, item, site):
         # `item in self`: a symbolic container stays the py.in coordinate, a

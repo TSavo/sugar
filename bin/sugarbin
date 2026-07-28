@@ -135,6 +135,20 @@ dispatch_execution_subcommand() {
     fi
   fi
 
+  if [[ "$subcommand" != build ]]; then
+    local elevated_name
+    for elevated_name in ${env_names[@]+"${env_names[@]}"}; do
+      case "$elevated_name" in
+        SUGAR_BINARY_ALLOW_BUILD|SUGAR_BINARY_PUBLISH|SUGAR_BINARY_REQUIRE_PUBLISH)
+          if [[ ${!elevated_name:-0} != 0 ]]; then
+            echo "sugarbin: provisioning authority requires explicit sugarbin build; refusing $subcommand with $elevated_name=${!elevated_name}" >&2
+            return 2
+          fi
+          ;;
+      esac
+    done
+  fi
+
   local route_env="${execution_env%%:*}" docker_image="" core_image=""
   if [[ "$route_env" == docker ]]; then
     local contract_python
@@ -254,7 +268,9 @@ dispatch_execution_subcommand() {
     sugar_bx_write_mount_proof || return $?
     local remote_needs="$needs" has_artifacts=0
     if [[ -n "$remote_needs" ]]; then
-      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" || return $?
+      local provision_artifacts=0
+      [[ "$subcommand" != build ]] || provision_artifacts=1
+      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" "$provision_artifacts" || return $?
       has_artifacts=1
     fi
     if [[ "$subcommand" == build ]]; then
@@ -391,11 +407,18 @@ case "${1:-}" in
     dispatch_execution_subcommand "$subcommand" "$@"
     exit $?
     ;;
+  artifact)
+    [[ $# -ge 2 ]] || { echo "sugarbin: artifact requires publish or pull" >&2; exit 2; }
+    artifact_subcommand="$2"
+    shift 2
+    ;;
 esac
 
 usage() {
   cat <<'EOF'
 usage: bin/sugarbin [--bin <name>] [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
+       bin/sugarbin artifact publish --kind python-demand-table --content-key <key> --input <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
+       bin/sugarbin artifact pull --kind python-demand-table --content-key <key> --output <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
 
 Resolve a Sugar workspace binary by source stamp:
   SUGAR_BIN override -> local target by stamp -> shelf by stamp -> build + publish.
@@ -424,6 +447,13 @@ On success, prints exactly the binary path to stdout. Diagnostics go to stderr.
 EOF
 }
 
+artifact_subcommand="${artifact_subcommand:-}"
+artifact_kind=""
+artifact_key=""
+artifact_input=""
+artifact_output=""
+artifact_shelf_root=""
+artifact_runtime=""
 bin_name="sugar"
 profile="release"
 platform_override="auto"
@@ -449,6 +479,36 @@ while [[ $# -gt 0 ]]; do
       print_source_stamp=1
       shift
       ;;
+    --kind)
+      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --kind requires an artifact subcommand and value" >&2; exit 2; }
+      artifact_kind="$2"
+      shift 2
+      ;;
+    --content-key)
+      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --content-key requires an artifact subcommand and value" >&2; exit 2; }
+      artifact_key="$2"
+      shift 2
+      ;;
+    --input)
+      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --input requires an artifact subcommand and value" >&2; exit 2; }
+      artifact_input="$2"
+      shift 2
+      ;;
+    --output)
+      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --output requires an artifact subcommand and value" >&2; exit 2; }
+      artifact_output="$2"
+      shift 2
+      ;;
+    --shelf-root)
+      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --shelf-root requires an artifact subcommand and value" >&2; exit 2; }
+      artifact_shelf_root="$2"
+      shift 2
+      ;;
+    --runtime)
+      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --runtime requires an artifact subcommand and value" >&2; exit 2; }
+      artifact_runtime="$2"
+      shift 2
+      ;;
     --help | -h)
       usage
       exit 0
@@ -461,10 +521,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$profile" in
-  release | debug) ;;
-  *) echo "sugarbin: --profile must be release or debug" >&2; exit 2 ;;
-esac
+if [[ -n "$artifact_subcommand" ]]; then
+  [[ "$profile" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "sugarbin: artifact --profile must be a path-safe name" >&2; exit 2; }
+else
+  case "$profile" in
+    release | debug) ;;
+    *) echo "sugarbin: --profile must be release or debug" >&2; exit 2 ;;
+  esac
+fi
 
 package_for_bin() {
   case "$1" in
@@ -541,7 +605,8 @@ require_b3sum() {
 }
 
 rust_build_input_stream() {
-  # Shared preimage with tools/sugar_source_stamp.py (kit + binary identity).
+  # Shared preimage with tools/sugar_source_stamp.py: the Cargo package's
+  # local Rust dependency closure only.
   python3 "$repo_root/tools/sugar_source_stamp.py" --stream \
     --repo-root "$repo_root" \
     --rust-workspace "$rust_workspace" \
@@ -686,6 +751,58 @@ github_repo() {
 
 cache_dir() {
   printf '%s\n' "${SUGAR_BINARY_CACHE_DIR:-$HOME/.cache/sugar/binaries}"
+}
+
+# The cache is ONE host directory reached under two names: HOME is
+# /home/runner inside a runner container, the owning user's home on the host,
+# and the bind mount joins them (#6355 established this for the lease path).
+# Its artifact cells earn that sharing -- content-addressed, written once,
+# world-readable, and never rewritten once complete. Every identity reads the
+# same bytes under a name derived from those bytes.
+#
+# A Cargo target directory is not that shape. Cargo rewrites .rustc_info.json,
+# the build and artifact locks, every fingerprint and .d file, and the
+# executables themselves on each invocation. Those land at 644 under the
+# writer's umask, and every writer we have -- root under bpytest, uid 1001 in
+# a runner container, uid 1000 interactive over ssh -- defaults to umask 022.
+# Measured on battleaxe: .build children are 755 owned by root:root and
+# 1001:docker with 644 contents. So the first identity to touch a build family
+# owns it permanently and every other identity dies inside Cargo on
+# .cargo-build-lock with a bare EACCES.
+#
+# Group-writable plus setgid does not rescue it. setgid governs the group of
+# new entries, not the mode a foreign umask writes; sharing a mutable Cargo
+# tree would require umask 002 from every writer, including writers inside
+# images we do not own. So the scratch tree is partitioned by identity and the
+# artifact cells stay shared. Sharing is kept exactly where sharing is sound.
+build_identity_key() {
+  local uid
+  uid="$(id -u 2>/dev/null)" || uid=""
+  if [[ -z "$uid" ]]; then
+    log "crime=unnameable-build-identity owner=bin/sugarbin illegal shape=id -u yielded no uid so the per-identity build root under $(cache_dir)/.build cannot be named replacement=run where id(1) works, or set SUGAR_BINARY_BUILD_ROOT to a directory this identity owns"
+    return 1
+  fi
+  printf 'uid-%s\n' "$uid"
+}
+
+# An unusable build root refuses by name and states the correct remedy. It must
+# never suggest repointing SUGAR_BINARY_CACHE_DIR: that is the workaround that
+# discards the shared artifact cells the cache exists to serve.
+require_writable_build_root() {
+  local root="$1" probe owner
+  if ! mkdir -p "$root" 2>/dev/null; then
+    log "crime=uncreatable-build-root owner=bin/sugarbin path=$root current-uid=$(id -u) illegal shape=the per-identity Cargo build root under the host-shared cache could not be created replacement=make $(dirname "$root") creatable by this identity, or set SUGAR_BINARY_BUILD_ROOT to a directory this identity owns -- do NOT repoint SUGAR_BINARY_CACHE_DIR, that abandons every shared artifact cell"
+    return 1
+  fi
+  probe="$root/.sugarbin-write-probe.$$"
+  if ! : >"$probe" 2>/dev/null; then
+    owner="$(stat -c '%u:%g mode=%a' "$root" 2>/dev/null \
+      || stat -f '%u:%g mode=%Lp' "$root" 2>/dev/null \
+      || printf 'unknown')"
+    log "crime=foreign-owned-build-root owner=bin/sugarbin path=$root owned=$owner current-uid=$(id -u) illegal shape=a Cargo target directory owned by another identity cannot be rewritten, and Cargo would otherwise die on .cargo-build-lock with a bare EACCES replacement=remove $root, or set SUGAR_BINARY_BUILD_ROOT to a directory this identity owns -- do NOT repoint SUGAR_BINARY_CACHE_DIR, that abandons every shared artifact cell"
+    return 1
+  fi
+  rm -f "$probe"
 }
 
 shelf_tag_for_stamp() {
@@ -986,11 +1103,18 @@ build_from_source() {
     return 1
   }
   local target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
-  local build_base="${SUGAR_BINARY_BUILD_ROOT:-$(cache_dir)/.build}"
+  local build_base
+  if [[ -n "${SUGAR_BINARY_BUILD_ROOT:-}" ]]; then
+    build_base="$SUGAR_BINARY_BUILD_ROOT"
+  else
+    local identity_key
+    identity_key="$(build_identity_key)" || return 1
+    build_base="$(cache_dir)/.build/$identity_key"
+  fi
   local family_identity
   family_identity="$(build_family_identity "$stamp")" || return $?
   local build_root="$build_base/$(stamp_for_filename "$family_identity")"
-  mkdir -p "$build_root"
+  require_writable_build_root "$build_root" || return 1
   local built="$build_root/$profile/$bin_name"
   # SUGAR_BUILD_STAMP is the authenticated sourceStamp (source matter only).
   # SUGAR_BUILD_GIT_HEAD remains a version/attestation label, not a shelf key.
@@ -1027,10 +1151,17 @@ filesystem_shelf_root() {
 }
 
 filesystem_shelf_cell() {
-  local stamp="$1" name="$2"
-  printf '%s/%s/%s/%s/%s\n' \
-    "$(filesystem_shelf_root)" "$(platform_key)" "$profile" \
-    "$(stamp_for_filename "$stamp")" "$name"
+  local kind="$1" stamp="$2" name="$3" runtime="${4:-}"
+  if [[ "$kind" == binary ]]; then
+    printf '%s/%s/%s/%s/%s\n' \
+      "$(filesystem_shelf_root)" "$(platform_key)" "$profile" \
+      "$(stamp_for_filename "$stamp")" "$name"
+    return 0
+  fi
+  [[ -n "$runtime" ]] || { log "artifact shelf cell requires an authenticated runtime"; return 2; }
+  printf '%s/%s/%s/%s/%s/%s/%s\n' \
+    "$(filesystem_shelf_root)" "$kind" "$(platform_key)" "$profile" \
+    "$runtime" "$(stamp_for_filename "$stamp")" "$name"
 }
 
 filesystem_shelf_complete() {
@@ -1041,10 +1172,10 @@ filesystem_shelf_complete() {
 }
 
 publish_to_filesystem_shelf() {
-  local bin="$1" stamp="$2" name="$3" manifest cell parent tmp actor sha meta
+  local bin="$1" stamp="$2" name="$3" kind="${4:-binary}" runtime="${5:-}" manifest cell parent tmp actor sha meta
   manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
-  cell="$(filesystem_shelf_cell "$stamp" "$name")"
+  cell="$(filesystem_shelf_cell "$kind" "$stamp" "$name" "$runtime")"
   if filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf already has $name"
     return 0
@@ -1152,7 +1283,7 @@ pull_from_filesystem_shelf() {
     return 0
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
-  cell="$(filesystem_shelf_cell "$stamp" "$name")"
+  cell="$(filesystem_shelf_cell binary "$stamp" "$name")"
   if ! filesystem_shelf_complete "$cell" "$name"; then
     log "filesystem shelf miss for $name"
     return 1
@@ -1170,6 +1301,139 @@ pull_from_filesystem_shelf() {
   fi
   log "filesystem shelf hit for $name"
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
+}
+
+write_payload_artifact_manifest() {
+  local payload="$1" kind="$2" key="$3" runtime="$4" manifest sha
+  manifest="$(artifact_manifest_path "$payload")"
+  sha="$(sha256_file "$payload")"
+  python3 - "$manifest" "$kind" "$key" "$runtime" "$(platform_key)" "$profile" "$sha" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, kind, content_key, runtime, platform, profile, sha256 = sys.argv[1:]
+data = {
+    "schema": 1,
+    "artifactKind": kind,
+    "contentKey": content_key,
+    "runtime": runtime,
+    "platform": platform,
+    "profile": profile,
+    "sha256": sha256,
+}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix=".sugarbin-artifact-manifest-", dir=os.path.dirname(path))
+with os.fdopen(fd, "w", encoding="utf-8") as out:
+    json.dump(data, out, indent=2, sort_keys=True)
+    out.write("\n")
+os.replace(temporary, path)
+PY
+}
+
+verify_payload_artifact_manifest() {
+  local payload="$1" manifest="$2" kind="$3" key="$4" runtime="$5"
+  [[ -f "$payload" && -f "$manifest" ]] || return 1
+  python3 - "$manifest" "$payload" "$kind" "$key" "$runtime" "$(platform_key)" "$profile" <<'PY'
+import hashlib
+import json
+import sys
+
+manifest, payload, kind, content_key, runtime, platform, profile = sys.argv[1:]
+try:
+    with open(manifest, encoding="utf-8") as source:
+        data = json.load(source)
+except Exception as error:
+    print(f"sugarbin: invalid payload artifact manifest: {error}", file=sys.stderr)
+    raise SystemExit(1)
+expected = {
+    "schema": 1,
+    "artifactKind": kind,
+    "contentKey": content_key,
+    "runtime": runtime,
+    "platform": platform,
+    "profile": profile,
+}
+for field, value in expected.items():
+    if data.get(field) != value:
+        print(f"sugarbin: payload artifact identity mismatch: {field}", file=sys.stderr)
+        raise SystemExit(1)
+with open(payload, "rb") as source:
+    actual = hashlib.sha256(source.read()).hexdigest()
+if data.get("sha256") != actual:
+    print("sugarbin: payload artifact checksum mismatch", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+publish_payload_artifact() {
+  local kind="$1" key="$2" runtime="$3" input="$4" name="$5" staging payload status
+  [[ -f "$input" ]] || { log "artifact input is not a file: $input"; return 1; }
+  staging="$(mktemp -d "${TMPDIR:-/tmp}/sugarbin-artifact-publish.XXXXXX")"
+  payload="$staging/$name"
+  cp "$input" "$payload"
+  write_payload_artifact_manifest "$payload" "$kind" "$key" "$runtime" || { status=$?; rm -rf "$staging"; return "$status"; }
+  publish_to_filesystem_shelf "$payload" "$key" "$name" "$kind" "$runtime"
+  status=$?
+  rm -rf "$staging"
+  return "$status"
+}
+
+pull_payload_artifact() {
+  local kind="$1" key="$2" runtime="$3" output="$4" name="$5" cell staging payload manifest output_manifest
+  cell="$(filesystem_shelf_cell "$kind" "$key" "$name" "$runtime")"
+  if ! filesystem_shelf_complete "$cell" "$name"; then
+    log "filesystem shelf miss for $kind key $key"
+    return 1
+  fi
+  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack $kind"; return 2; }
+  staging="$(mktemp -d "${TMPDIR:-/tmp}/sugarbin-artifact-pull.XXXXXX")"
+  payload="$staging/$name"
+  manifest="$(artifact_manifest_path "$payload")"
+  if ! gzip -dc "$cell/$name.gz" >"$payload" || ! cp "$cell/$name.sugarbin.json" "$manifest"; then
+    rm -rf "$staging"
+    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
+    return 2
+  fi
+  if ! verify_payload_artifact_manifest "$payload" "$manifest" "$kind" "$key" "$runtime"; then
+    rm -rf "$staging"
+    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
+    return 2
+  fi
+  mkdir -p "$(dirname "$output")"
+  output_manifest="$(artifact_manifest_path "$output")"
+  mv -f "$manifest" "$output_manifest"
+  mv -f "$payload" "$output"
+  rm -rf "$staging"
+  log "filesystem shelf hit for $kind key $key"
+}
+
+dispatch_artifact_subcommand() {
+  [[ "$artifact_kind" == python-demand-table ]] || { log "unknown artifact kind: $artifact_kind"; return 2; }
+  [[ "$artifact_key" =~ ^blake3-512[:_][0-9a-f]{128}$ ]] || { log "artifact --content-key must be a blake3-512 content key"; return 2; }
+  [[ "$artifact_runtime" =~ ^[A-Za-z0-9._-]+$ ]] || { log "artifact --runtime must be a path-safe name"; return 2; }
+  local declared_python runtime
+  declared_python="$(awk -F ' *= *' '$1 == "python" { gsub(/"/, "", $2); print $2 }' "$repo_root/sugar-build.toml")"
+  [[ -n "$declared_python" ]] || { log "crime=missing-runtime-authority owner=sugar-build.toml replacement=declare tools.python exactly once"; return 78; }
+  runtime="cpython-$declared_python"
+  if [[ "$artifact_runtime" != "$runtime" ]]; then
+    log "crime=undeclared-python-runtime owner=bin/sugarbin required=$runtime requested=$artifact_runtime replacement=request the runtime declared by sugar-build.toml or publish a distinct declared cell"
+    return 78
+  fi
+  [[ -z "$artifact_shelf_root" ]] || SUGAR_BINARY_SHELF_ROOT="$artifact_shelf_root"
+  local name="$artifact_kind"
+  case "$artifact_subcommand" in
+    publish)
+      [[ -n "$artifact_input" && -z "$artifact_output" ]] || { log "artifact publish requires --input and forbids --output"; return 2; }
+      publish_payload_artifact "$artifact_kind" "$artifact_key" "$artifact_runtime" "$artifact_input" "$name"
+      ;;
+    pull)
+      [[ -n "$artifact_output" && -z "$artifact_input" ]] || { log "artifact pull requires --output and forbids --input"; return 2; }
+      pull_payload_artifact "$artifact_kind" "$artifact_key" "$artifact_runtime" "$artifact_output" "$name"
+      ;;
+    *) log "unknown artifact subcommand: $artifact_subcommand"; return 2 ;;
+  esac
 }
 
 # An override path names the profile it was built under whenever it sits in a
@@ -1252,5 +1516,10 @@ main() {
   publish_to_filesystem_shelf "$built" "$stamp" "$name" || return $?
   printf '%s\n' "$built"
 }
+
+if [[ -n "$artifact_subcommand" ]]; then
+  dispatch_artifact_subcommand
+  exit $?
+fi
 
 main "$@"

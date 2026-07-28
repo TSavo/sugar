@@ -170,6 +170,20 @@ fn sugarbin_build_identity_target_contract() {
 }
 
 #[test]
+fn sugarbin_build_root_identity_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_build_root_identity.sh"))
+        .arg(&root)
+        .status()
+        .expect("run build root identity contract");
+    assert!(
+        status.success(),
+        "build root identity contract failed: {status}"
+    );
+}
+
+#[test]
 fn remote_execution_provisioning_has_one_owner() {
     let root = repo_root();
     let offenders = duplicate_remote_ownership(&root);

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
+
 from dataclasses import field as dataclass_field, dataclass
 
 from sugar_lift_py_tests.ir import Formula
@@ -33,6 +35,10 @@ class PredicateValue(FloorValue):
     else_bindings: tuple[tuple[str, FloorValue], ...] = dataclass_field(
         default=(), compare=False
     )
+
+    def denotes_value(self) -> bool:
+        """A carried boolean formula denotes a Python ``bool``."""
+        return True
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
@@ -68,6 +74,25 @@ class PredicateValue(FloorValue):
                 )
             )
         )
+
+    def guarded(self, formula):
+        """A carried boolean rides under a guard unchanged.
+
+        Same arm as ``CallSiteValue`` / ``ImportAliasValue``: this is a VALUE,
+        not an exit and not an obligation. A PredicateValue states no
+        ``inv_contribution`` and no ``post_contribution``, so a branch guard
+        over it is already owned by the branch's own control -- there is
+        nothing here for the guard to weaken.
+
+        Weakening the carried formula to ``formula -> self.formula`` would be a
+        different value, not a guarded one: for `x = (a == b) if c else d` it
+        would make `x` TRUE wherever `c` is false, which the source never
+        states. An assertion over this predicate is an ``InvValue``, and THAT
+        is the arm that becomes an implication (``InvValue.guarded``); the
+        obligation is weakened where the obligation lives, never here.
+        """
+        del formula
+        return self
 
     def negate(self):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
@@ -310,7 +335,12 @@ class PredicateValue(FloorValue):
                 if isinstance(branch_answer, Incomplete):
                     effects.append(branch_answer.guarded(guard))
                     continue
-                assert isinstance(branch_answer, Complete)
+                branch_answer = require_single_value(
+                    branch_answer,
+                    owner="PredicateValue branch binding join",
+                    blame=name,
+                    arm="branch",
+                )
                 guarded.append((guard, name, branch_answer.value))
                 continue
             prior_answer = prior.answer(before_scope)
@@ -323,8 +353,18 @@ class PredicateValue(FloorValue):
             ):
                 joined.append((name, GuardedValue(guard, binding, prior)))
                 continue
-            assert isinstance(branch_answer, Complete)
-            assert isinstance(prior_answer, Complete)
+            branch_answer = require_single_value(
+                branch_answer,
+                owner="PredicateValue branch binding join",
+                blame=name,
+                arm="branch",
+            )
+            prior_answer = require_single_value(
+                prior_answer,
+                owner="PredicateValue branch binding join",
+                blame=name,
+                arm="prior",
+            )
             joined.append(
                 (
                     name,
@@ -377,8 +417,18 @@ class PredicateValue(FloorValue):
                     )
                 )
                 continue
-            assert isinstance(then_answer, Complete)
-            assert isinstance(else_answer, Complete)
+            then_answer = require_single_value(
+                then_answer,
+                owner="PredicateValue then/else binding join",
+                blame=name,
+                arm="then",
+            )
+            else_answer = require_single_value(
+                else_answer,
+                owner="PredicateValue then/else binding join",
+                blame=name,
+                arm="else",
+            )
             joined.append(
                 (
                     name,
@@ -401,7 +451,12 @@ class PredicateValue(FloorValue):
                 if isinstance(answer, Incomplete):
                     effects.append(answer.guarded(branch_guard))
                     continue
-                assert isinstance(answer, Complete)
+                answer = require_single_value(
+                    answer,
+                    owner="PredicateValue one-sided binding join",
+                    blame=name,
+                    arm="branch",
+                )
                 guarded.append((branch_guard, name, answer.value))
         return tuple(joined), tuple(guarded), tuple(effects)
 
@@ -421,7 +476,12 @@ class PredicateValue(FloorValue):
             if isinstance(answer, Incomplete):
                 effects.append(answer)
                 continue
-            assert isinstance(answer, Complete)
+            answer = require_single_value(
+                answer,
+                owner="PredicateValue surviving binding join",
+                blame=name,
+                arm="surviving",
+            )
             bindings.append((name, answer.value))
         return tuple(bindings), tuple(effects)
 

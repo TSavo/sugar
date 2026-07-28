@@ -1,5 +1,15 @@
 # Pandas Gap Census
 
+> **NON-AUTHORITATIVE BOARD.** The numbers below were measured before the
+> Python corpus board had a pinned denominator. The file *count* (1421) happens
+> to match the current pin, but a count is not an identity: nothing here records
+> which pandas bytes were walked, so these figures cannot be differenced against
+> a current measurement to yield a delta. The sole authority is
+> `implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py`,
+> pinned to `docs/ledgers/pins/pandas-3.0.3.pin.json`
+> (aggregate `bbb70a76…`, content-only `a1155ae2…`, path-bound `04b67544…`).
+> Quote those. Kept here as testimony of what was observed and when.
+
 Part of #3503. This is the shared pandas wall payload for sibling drain lanes; it is a census and work-list, not a recognizer change.
 
 ## Gate Handoff

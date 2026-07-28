@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, NoReturn, cast
 
-from .floor_value import FloorValue
+from .guard_stable_value import GuardStableValue
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
@@ -15,8 +15,15 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class StringValue(FloorValue):
+class StringValue(GuardStableValue):
     value: str
+
+    def denotes_value(self) -> bool:
+        """This floor value denotes a ``str``."""
+        return True
+
+    def python_index_protocol(self) -> bool:
+        return False
 
     def python_isinstance(self, type_name: str, type_term, site):
         del type_term
@@ -83,11 +90,26 @@ class StringValue(FloorValue):
     # decides it, matching the 1==1 doctrine that equality is stated, not
     # pre-decided.
 
+    def _unorderable_ground_peer(self, other) -> bool:
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        return type(other) in (
+            TermValue,
+            NoneValue,
+            ListValue,
+            TupleValue,
+            SetValue,
+        )
+
     def less_than(self, other, site):
         # A string stands on the ordering floor: two strings order by Python's
         # lexicographic rule and fold to the True/False literal. Ground
-        # cross-type is TypeError -- a named runtime effect, not an emit.
-        # Symbolic falls to super() emit.
+        # cross-type is authenticated TypeError, not an emit. Symbolic falls
+        # to super() emit.
         if type(other) is StringValue:
             from sugar_lift_py_tests.outcome import Complete
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -102,26 +124,10 @@ class StringValue(FloorValue):
                 if self.value < other.value
                 else FalseBoolLiteralSugar(site=site)
             )
-        from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.floor.set_value import SetValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        if self._unorderable_ground_peer(other):
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
-        if type(other) in (TermValue, NoneValue, ListValue, TupleValue, SetValue):
-            from sugar_lift_py_tests.effect import (
-                TypeErrorRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            return Incomplete(
-                TypeErrorRuntimeEffect(
-                    f"unorderable types runtime boundary: "
-                    f"StringValue and {type(other).__name__}; site={site}",
-                    **runtime_effect_evidence("py.less_than", other, site),
-                )
-            )
+            return ground_type_error(site=site, owner="StringValue.less_than")
         return super().less_than(other, site)
 
     def length(self, site):
@@ -139,20 +145,20 @@ class StringValue(FloorValue):
         # body; call_method_with still owns static folds when the call site is
         # known.
         del site
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
-        return Complete(
-            SymbolicValue(
-                ctor(
-                    "py.getattr",
-                    [self.to_term(owner="StringValue.attribute"), str_const(name)],
-                )
-            )
-        )
+        return getattr_coordinate(self, name, owner="StringValue.attribute")
 
     def contains(self, item, site):
+        # A guarded needle is not one needle: distribute into its faces and
+        # rejoin under the same guard before this receiver's own law runs.
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_predicate,
+        )
+
+        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        if distributed is not None:
+            return distributed
         # Python ``needle in haystack`` for str: substring when both are strings;
         # TypeError for ground non-string needles; py.in when the needle is
         # symbolic/opaque. Never invent membership for unconstructed shapes.
@@ -218,24 +224,12 @@ class StringValue(FloorValue):
             # Python raises TypeError for non-str needles in a str. Both sides
             # are lift-time decidable, so construct the exact exceptional exit —
             # never mint RuntimeEffect authority over ground operands.
-            import hashlib
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-            from sugar_lift_py_tests.effect import RaiseEffect
-            from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
-            from sugar_lift_py_tests.outcome import Complete
-
-            source = getattr(site, "source", None)
-            source_sha256 = (
-                hashlib.sha256(source.encode()).hexdigest()
-                if source is not None
-                else None
-            )
-            exception = ExceptionValue("TypeError", (), site)
-            return Complete(
-                RaiseValue(
-                    RaiseEffect("TypeError", str(site), source_sha256),
-                    exception=exception,
-                )
+            return ground_exceptional_exit(
+                exception_name="TypeError",
+                site=site,
+                owner="StringValue.contains",
             )
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -248,11 +242,11 @@ class StringValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        # Concrete string + in-range TermValue int folds to the one-char string;
-        # out of range is IndexError. Non-concrete index stays py.subscript.
+        # Concrete string + integer index is fully decided. A known non-integer
+        # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         if type(index) is SliceValue:
             bounds = (index.lower, index.upper, index.step)
@@ -276,7 +270,7 @@ class StringValue(FloorValue):
                     )
                 return Complete(StringValue(self.value[slice(lower, upper, step)]))
 
-        if type(index) is TermValue and type(index.value) is int:
+        if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.value)
             if -n <= i < n:
@@ -292,7 +286,13 @@ class StringValue(FloorValue):
                 length=n,
                 site=site,
             )
-        return self.py_subscript_coordinate(index, site)
+        if index.python_index_protocol() is False:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="StringValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="StringValue.subscript")
 
     def add(self, other, site):
         # A string's addition IS concatenation: two strings fold to their join.
@@ -329,15 +329,19 @@ class StringValue(FloorValue):
             )
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.add")
         return super().add(other, site)
 
     def subtract(self, other, site):
-        """Dispatch subtraction only when the right operand is runtime-opaque.
+        """``str - x``: undecided rights stay third-valued; decided rights TypeError.
 
         A body-less call result has no lift-time value, so Python's
-        ``__sub__``/``__rsub__`` choice is genuinely runtime-dependent.  A
-        call with a body is decidable machinery work and ground strings are a
-        Python TypeError; both stay on the loud subtraction floor.
+        ``__sub__``/``__rsub__`` choice is genuinely runtime-dependent.  Two
+        source-decided ground types never select a string subtraction — that
+        is authenticated TypeError, not a coordinate and not a RuntimeEffect.
         """
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
@@ -345,6 +349,10 @@ class StringValue(FloorValue):
             from sugar_lift_py_tests.effect import runtime_subtract
 
             return runtime_subtract(self, other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.subtract")
         return super().subtract(other, site)
 
     def multiply(self, other, site):
@@ -353,12 +361,16 @@ class StringValue(FloorValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        if type(other) is TermValue and type(other.value) is int:
+        if type(other) is TermValue and isinstance(other.value, int):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(StringValue(self.value * other.value))
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.multiply")
         return super().multiply(other, site)
 
     def divide(self, other, site):
@@ -367,6 +379,10 @@ class StringValue(FloorValue):
 
         if type(other) is CallSiteValue:
             return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
+        if other.denotes_value() and other.runtime_type_is_decided():
+            from sugar_lift_py_tests.floor.ground_exit import ground_type_error
+
+            return ground_type_error(site=site, owner="StringValue.divide")
         return super().divide(other, site)
 
     def modulo(self, other, site):
@@ -668,18 +684,11 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
         iterable = args[0]
         parts = _static_str_parts(iterable)
         if parts is not None:
-            from sugar_lift_py_tests.sugar.for_sugar import (
-                STATIC_UNFOLD_LIMIT,
-                finite_unfold_cap_panic,
-            )
-
-            if len(parts) > STATIC_UNFOLD_LIMIT:
-                finite_unfold_cap_panic(
-                    construction="StringValue.join",
-                    site=operation.blame,
-                    observed=f"join cardinality={len(parts)}",
-                    limit=STATIC_UNFOLD_LIMIT,
-                )
+            # Cardinality does not change WHAT a join is: every part is already
+            # a constructed string, so the fold is exact at any length. This arm
+            # used to PANIC above a static cap from the deleted `sugar.for_sugar`
+            # -- the same abolished cap `floor/sequence_repetition.py` names, and
+            # since that module went the panic was an ImportError, not a refusal.
             return Complete(StringValue(receiver.value.join(parts)))
         # Opaque iterable (vendor columns, symbolic seq): coordinate only.
         return opaque_coordinate()

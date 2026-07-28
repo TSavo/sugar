@@ -29,18 +29,56 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
+def _ground_atomic_truth(formula):
+    """Evaluate constant FOL atoms that if-guards must fold before dual arms run.
+
+    ``len(xs) == 1`` over a constructed one-element tuple is ``=(1, 1)`` — a
+    decided Python condition. Leaving it symbolic forces IfSugar to reduce both
+    arms under the atom, so the false multi-exception ``join`` path panics even
+    when source has a singleton. Ground constants are not invented testimony:
+    they are the values already present in the equality atom.
+    """
+    from sugar_lift_py_tests.ir import (
+        _Atomic,
+        _ConstBool,
+        _ConstInt,
+        _ConstReal,
+        _ConstStr,
+    )
+
+    if not isinstance(formula, _Atomic) or formula.name != "=" or len(formula.args) != 2:
+        return None
+    left, right = formula.args
+    const_types = (_ConstInt, _ConstReal, _ConstBool, _ConstStr)
+    if type(left) not in const_types or type(right) is not type(left):
+        return None
+    return left.value == right.value
+
+
 def predicate_formula(value, site):
     """The one truth-to-formula projection shared by all guarded constructs."""
     from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
     truth = value.truth(site)
     if not isinstance(truth, Complete):
         raise NotImplementedError(
             f"condition truth did not produce one value: {type(truth).__name__}"
         )
-    formula = getattr(truth.value, "formula", None)
+    truth_value = truth.value
+    # A truth face that PRESENTS another value (`if (n := c):` -- the walrus keeps
+    # its value and bind faces inseparable) is transparent to the guard: the
+    # binding is temporal and `extend_scope` applies it, while the GUARD is the
+    # presented face's formula. Reading `formula` off the wrapper found nothing
+    # and reported `condition folded without a symbolic formula:
+    # NamedExpressionValue`, blaming the wrapper for a formula the presented
+    # value had all along. Structural: any value that presents another is
+    # projected through, with no table of which ones do.
+    presented = getattr(truth_value, "presented_value", None)
+    if presented is not None:
+        truth_value = presented
+    formula = getattr(truth_value, "formula", None)
     if formula is None:
-        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -48,13 +86,19 @@ def predicate_formula(value, site):
             TrueBoolLiteralSugar,
         )
 
-        if isinstance(truth.value, TrueBoolLiteralSugar):
+        if isinstance(truth_value, TrueBoolLiteralSugar):
             return true_guard()
-        if isinstance(truth.value, FalseBoolLiteralSugar):
+        if isinstance(truth_value, FalseBoolLiteralSugar):
             return false_guard()
         raise NotImplementedError(
-            f"condition folded without a symbolic formula: {type(value).__name__}"
+            "condition folded without a symbolic formula: "
+            f"{type(truth_value).__name__} (condition {type(value).__name__})"
         )
+    ground = _ground_atomic_truth(formula)
+    if ground is True:
+        return true_guard()
+    if ground is False:
+        return false_guard()
     return formula
 
 
@@ -90,6 +134,7 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
+        from sugar_lift_py_tests.outcome.exit_set import partition as _partition
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
@@ -102,20 +147,60 @@ class IfSugar(Sugar):
         cond = self.test.desugar(ctx)
         if not isinstance(cond, Complete):
             return cond
+        # Condition expression itself raised: the if never selects a branch.
+        # Do not demand truth of RaiseValue (that was force-floor:truth:RaiseValue).
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        if isinstance(cond.value, RaiseValue):
+            return Incomplete(cond.value.effect)
         observed_formula = predicate_formula(cond.value, self.site)
-        formula = branch_result_guard(self.branch_slot, self.site)
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+
+        formula = (
+            observed_formula
+            if observed_formula in (false_guard(), true_guard())
+            else branch_result_guard(self.branch_slot, self.site)
+        )
         authentication = BranchResultAuthentication(
             self.branch_slot, observed_formula, self.site
         )
 
-        then_exits = reduce_block_to_exitset(self.then_body)
-        else_exits = reduce_block_to_exitset(self.else_body)
+        # Carry the call-frame temporal into each branch. Formals are
+        # BindingCoordinateRefSugar keyed by coordinate cid; without ctx the
+        # branch suite cannot resolve authenticated actuals and panics as
+        # unspecialized source-call formal (dual-mode EffectBoundary factories
+        # nest further ifs that read those formals).
+        # A ground condition selects one suite before that suite is reduced.
+        # Reducing the dead peer first can demand a loud producer that Python
+        # never executes, turning an unreachable diagnostic into a function
+        # construction failure. Symbolic conditions still reduce both suites
+        # and preserve their guarded exits exactly as before.
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if observed_formula == false_guard():
+            then_exits = ExitSet(())
+            else_exits = reduce_block_to_exitset(self.else_body, ctx)
+        elif observed_formula == true_guard():
+            then_exits = reduce_block_to_exitset(self.then_body, ctx)
+            else_exits = ExitSet(())
+        else:
+            then_exits = reduce_block_to_exitset(self.then_body, ctx)
+            else_exits = reduce_block_to_exitset(self.else_body, ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a
         # halt on one face coexists with the complementary Completed exit.
         not_formula = not_(formula)
-        exits = then_exits.guarded(formula).union(else_exits.guarded(not_formula))
+        # This If OWNS the split, so it mints the partition and stamps each
+        # branch with its face. Downstream factoring reads the exclusion off
+        # the arms as testimony instead of re-proving it from guard spelling,
+        # which stops being legible once these guards are conjoined with a
+        # prefix or merged with a sibling arm.
+        then_face, else_face = _partition(("IfSugar", self.site, formula))
+        exits = then_exits.guarded(formula, then_face).union(
+            else_exits.guarded(not_formula, else_face)
+        )
         entries = []
         for exit_ in exits.exits:
             if isinstance(exit_, Halted):

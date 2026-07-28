@@ -42,11 +42,34 @@ from __future__ import annotations
 from enum import Enum
 
 
-class SourceTreePanic(Exception):
-    """Common base. Never raised directly — always one of the two below."""
+def _render_blame(blame: object) -> str:
+    """Project a native coordinate to actionable prose only at the panic edge."""
+    filename = getattr(blame, "filename", None)
+    line = getattr(blame, "line", None)
+    col = getattr(blame, "col", None)
+    if filename is not None and line is not None and col is not None:
+        return f"{filename}:{line}:{col}"
+    return str(blame)
 
-    def __init__(self, owner: str, observed: str, requested: str, fix: str) -> None:
-        super().__init__(owner, observed, requested, fix)
+
+class SourceTreePanic(Exception):
+    """Common base. Every refusal carries the native coordinate it blames."""
+
+    def __init__(
+        self,
+        *,
+        blame: object,
+        owner: str,
+        observed: str,
+        requested: str,
+        fix: str,
+    ) -> None:
+        if blame is None:
+            raise TypeError(
+                "blame must be a real source or backend coordinate, not None"
+            )
+        super().__init__(blame, owner, observed, requested, fix)
+        self.blame = blame
         self.owner = owner
         self.observed = observed
         self.requested = requested
@@ -57,6 +80,7 @@ class SourceTreePanic(Exception):
     def __str__(self) -> str:  # pragma: no cover - formatting only
         return (
             f"{self._LABEL} [{self.owner}]\n"
+            f"  blame:     {_render_blame(self.blame)}\n"
             f"  observed:  {self.observed}\n"
             f"  requested: {self.requested}\n"
             f"  fix:       {self.fix}"
@@ -86,6 +110,23 @@ class SugarNotWritten(SourceTreePanic):
     """
 
     _LABEL = "SUGAR NOT WRITTEN"
+
+
+class UnattributableRefusal(SugarNotWritten):
+    """A construction refusal that this attribution boundary cannot classify.
+
+    Unlike an ordinary ``SugarNotWritten``, consuming this refusal as a
+    completed attribution would hide a prerequisite owned by an outer layer.
+    Callers discriminate on this type, never on the mutable diagnostic owner.
+    """
+
+    _LABEL = "UNATTRIBUTABLE REFUSAL"
+
+
+class OpaqueSourceCallResolutionGap(SugarNotWritten):
+    """A reached source-call obligation whose target stayed unresolved."""
+
+    _LABEL = "OPAQUE SOURCE CALL RESOLUTION GAP"
 
 
 class RuntimeSelectedContextManager(SugarNotWritten):
@@ -150,6 +191,35 @@ class WithConstructionGapKind(str, Enum):
     DYNAMIC_EXPORT = "dynamic-export"
     STATIC_EXPORT_ABSENT = "static-export-absent"
     UNSUPPORTED_STATEMENT = "unsupported-statement"
+    MALFORMED_IMPORT_BINDING = "malformed-import-binding"
+    ARTIFACT_MODULE_ABSENT = "artifact-module-absent"
+    TARGET_OUTSIDE_BINDING = "target-outside-binding"
+    AMBIGUOUS_STATIC_EXPORT = "ambiguous-static-export"
+    OPAQUE_SOURCE = "opaque-source"
+    REEXPORT_CYCLE = "reexport-cycle"
+    # Source-derived preconstruction kinds.  Each is minted by a typed Literal
+    # (`ManagerConstructionGapV1`, `ManagerProtocolConstructionGapV1`,
+    # `DerivedManagerSummaryGapV1`), so this is a closed structural vocabulary,
+    # not a name table -- the derivation layer used to fuse `kind:detail` into
+    # one string and hand the wire decoder a kind it would have REFUSED.
+    INCOMPLETE_CALL_ACTUALS = "incomplete-call-actuals"
+    ARTIFACT_MISMATCH = "artifact-mismatch"
+    DEFINITION_MISSING = "definition-missing"
+    NON_MANAGER_RESULT = "non-manager-result"
+    CALL_BINDING = "call-binding"
+    FORCE_FLOOR = "force-floor"
+    # The four conditions that `opaque-call-target` fused into one name; see
+    # `manager_construction.py` for what decides each.
+    CALL_GRAPH_CYCLE = "call-graph-cycle"
+    VALUE_CALL_TARGET = "value-call-target"
+    CALL_TARGET_SOURCE_ABSENT = "call-target-source-absent"
+    CALL_TARGET_EXPORT_UNRESOLVED = "call-target-export-unresolved"
+    ENTER_MISSING = "enter-missing"
+    EXIT_MISSING = "exit-missing"
+    METHOD_CONSTRUCTION = "method-construction"
+    ENTER_MAY_HALT = "enter-may-halt"
+    EXIT_MAY_HALT = "exit-may-halt"
+    OPAQUE_EXIT_TRUTHINESS = "opaque-exit-truthiness"
     # Catch-all: never crash the census on a newly minted resolution kind.
     # The original string is preserved on ``ContextManagerResolutionConstructionGap.resolution_kind``.
     UNRECOGNIZED_RESOLUTION_KIND = "unrecognized-resolution-kind"
@@ -170,6 +240,7 @@ class WithConstructionGap(SugarNotWritten):
         demand_cid: str | None = None,
         candidate_member_cids: tuple[str, ...] = (),
         member_cid: str | None = None,
+        coordinate: object | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -178,6 +249,7 @@ class WithConstructionGap(SugarNotWritten):
         self.demand_cid = demand_cid
         self.candidate_member_cids = candidate_member_cids
         self.member_cid = member_cid
+        self.coordinate = coordinate
 
 
 class ContextManagerResolutionConstructionGap(WithConstructionGap):
@@ -269,14 +341,24 @@ class BackendDefect(SourceTreePanic):
 
 
 def vocabulary_missing(
-    owner: str, observed: str, requested: str, fix: str
+    *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "VocabularyMissing":
     raise VocabularyMissing(
-        owner=owner, observed=observed, requested=requested, fix=fix
+        blame=blame,
+        owner=owner,
+        observed=observed,
+        requested=requested,
+        fix=fix,
     )
 
 
 def backend_defect(
-    owner: str, observed: str, requested: str, fix: str
+    *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "BackendDefect":
-    raise BackendDefect(owner=owner, observed=observed, requested=requested, fix=fix)
+    raise BackendDefect(
+        blame=blame,
+        owner=owner,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )

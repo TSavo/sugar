@@ -7,6 +7,7 @@ exclude_args=(
   --exclude='target/' --exclude='.git/' --exclude='.jj/' --exclude='.worktrees/'
   --exclude='.claude/' --exclude='.ruff_cache/' --exclude='.venv-test-rust/'
   --exclude='.understand-anything/' --exclude='node_modules/' --exclude='bazel-bin'
+  --exclude='__pycache__/' --exclude='*.py[cod]' --exclude='.pytest_cache/'
   --exclude='bazel-out' --exclude='bazel-sugar' --exclude='bazel-testlogs'
   --exclude='sugar-warnings/' --exclude='sugar-worktrees/'
   --exclude='.sugar/runs/' --exclude='.sugar/witnesses/'
@@ -88,6 +89,7 @@ sugar_bx_init() {
     fi
   fi
   SUGAR_BX_BINARY_CACHE="${BCARGO_REMOTE_BINARY_CACHE:-/home/tsavo/.cache/sugar/binaries}"
+  SUGAR_BX_BINARY_SHELF="${BCARGO_REMOTE_BINARY_SHELF:-/home/tsavo/.cache/sugar/binary-shelf-v2}"
   SUGAR_BX_SSH="${BCARGO_SSH:-ssh}"; SUGAR_BX_RSYNC="${BCARGO_RSYNC:-rsync}"
   SUGAR_BX_CLEAN="${BCARGO_CLEAN_REMOTE_ROOT:-never}"
   case "$SUGAR_BX_CLEAN" in ""|0|false|no|never) SUGAR_BX_CLEAN=never;; 1|true|yes|success) SUGAR_BX_CLEAN=success;; always);; *) echo "sugarbin: BCARGO_CLEAN_REMOTE_ROOT must be never, success, or always" >&2; return 2;; esac
@@ -195,19 +197,29 @@ sugar_bx_docker_bind_source() {
 }
 
 sugar_bx_build_artifacts_docker() {
-  local image="$1" needs="$2" profile="$3"
+  local image="$1" needs="$2" profile="$3" provision_artifacts="${4:-0}"
   local image_digest="${image##*@sha256:}"
   local managed_target="${BCARGO_REMOTE_MANAGED_TARGET:-/home/tsavo/.cache/sugar/managed-targets/$image_digest}"
-  sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_BX_BINARY_CACHE") $(sugar_bx_quote "$managed_target")" || return $?
-  local workspace_source artifacts_source cache_source target_source
+  sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_BX_BINARY_CACHE") $(sugar_bx_quote "$SUGAR_BX_BINARY_SHELF") $(sugar_bx_quote "$managed_target")" || return $?
+  local workspace_source artifacts_source cache_source shelf_source target_source
   workspace_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_REPO")" || return $?
   artifacts_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/artifacts")" || return $?
   cache_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_CACHE")" || return $?
+  shelf_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_SHELF")" || return $?
   target_source="$(sugar_bx_docker_bind_source "$managed_target")" || return $?
   local build_script
-  build_script="set -euo pipefail; cd /workspace/sugar; printf '{\"artifacts\":[' >/out/required-artifacts.json; first=1; needs=$(sugar_bx_quote "$needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR SUGAR_BINARY_PUBLISH=0 bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform linux-x86_64 --bin \"\$b\"); cp \"\$r\" /out/\"\$b\"; cp \"\$r.sugarbin.json\" /out/\"\$b.sugarbin.json\"; sum=\$(sha256sum /out/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>/out/required-artifacts.json; first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>/out/required-artifacts.json; done; printf ']}' >>/out/required-artifacts.json"
+  build_script="set -euo pipefail; cd /workspace/sugar; printf '{\"artifacts\":[' >/out/required-artifacts.json; first=1; needs=$(sugar_bx_quote "$needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform linux-x86_64 --bin \"\$b\"); cp \"\$r\" /out/\"\$b\"; cp \"\$r.sugarbin.json\" /out/\"\$b.sugarbin.json\"; sum=\$(sha256sum /out/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>/out/required-artifacts.json; first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>/out/required-artifacts.json; done; printf ']}' >>/out/required-artifacts.json"
+  local shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly"
+  local name
+  if [[ "$provision_artifacts" == 1 ]]; then
+    for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
+      [[ "$name" != SUGAR_BINARY_PUBLISH || ${!name:-0} != 1 ]] \
+        || shelf_mount="type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2"
+    done
+  fi
   local -a docker_args=(docker run --rm
     --workdir /workspace/sugar
+    --env SUGAR_BINARY_ALLOW_BUILD=0
     --env SUGAR_BINARY_PUBLISH=0
     --env CARGO_TARGET_DIR=/managed-target
     --env SUGAR_BINARY_TARGET_ROOT=/managed-target
@@ -215,8 +227,19 @@ sugar_bx_build_artifacts_docker() {
     --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
     --mount "type=bind,src=$artifacts_source,dst=/out"
     --mount "type=bind,src=$cache_source,dst=/root/.cache/sugar/binaries"
+    --mount "$shelf_mount"
     --mount "type=bind,src=$target_source,dst=/managed-target"
-    "$image" bash -lc "$build_script")
+  )
+  for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
+    case "$name" in
+      SUGAR_BINARY_ALLOW_BUILD|SUGAR_BINARY_PUBLISH|SUGAR_BINARY_REQUIRE_PUBLISH)
+        if [[ "$provision_artifacts" == 1 || ${!name:-0} == 0 ]]; then
+          [[ ${!name+x} != x ]] || docker_args+=(--env "$name=${!name}")
+        fi
+        ;;
+    esac
+  done
+  docker_args+=("$image" bash -lc "$build_script")
   local arg command=""
   for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
   sugar_bx_ssh "exec${command}"
@@ -226,13 +249,16 @@ sugar_bx_run_docker() {
   local image="$1" network="$2" has_artifacts="$3"; shift 3
   local remote_cwd="/workspace/sugar"
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$remote_cwd/$SUGAR_BX_REL_CWD"
-  local workspace_source artifacts_source manifest_source
+  local workspace_source artifacts_source manifest_source shelf_source
   workspace_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_REPO")" || return $?
+  sugar_bx_ssh "mkdir -p $(sugar_bx_quote "$SUGAR_BX_BINARY_SHELF")" || return $?
+  shelf_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_SHELF")" || return $?
   local -a docker_args=(docker run --rm
     --workdir "$remote_cwd"
     --env PATH=/opt/sugar/bin:/opt/java/bin:/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
     --env "SUGAR_BX_MOUNT_PROOF=$SUGAR_BX_MOUNT_PROOF"
-    --mount "type=bind,src=$workspace_source,dst=/workspace/sugar")
+    --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
+    --mount "type=bind,src=$shelf_source,dst=/root/.cache/sugar/binary-shelf-v2,readonly")
   [[ "$network" != none ]] || docker_args+=(--network none)
   if [[ "$has_artifacts" == 1 ]]; then
     artifacts_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/artifacts")" || return $?

@@ -12,6 +12,11 @@ recensus and floor drain share one owner map.
 
 from __future__ import annotations
 
+# Not the board. This module measures its own named denominator; the sole
+# authoritative Python corpus scoreboard is scripts/control_effect_recensus.py.
+# See tests/test_one_authoritative_scoreboard.py.
+SCOREBOARD_AUTHORITY = False
+
 import ast
 import json
 import os
@@ -27,6 +32,44 @@ from sugar_lift_py_tests.idd.construction_panic_fronts import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+
+
+class MeasurementCapabilityLost(RuntimeError):
+    """An instrument names a measurement whose production path no longer exists.
+
+    Distinct from a construction panic (the kit met a shape it cannot build) and
+    from an empty result (the kit looked and found nothing). This is the kit
+    being UNABLE TO LOOK, and it is never absorbed into a row: a broken
+    instrument must not be readable as a measured zero.
+    """
+
+
+def lift_file_payload(src: str, rel: str):
+    """UNRESOLVED. The per-file production lift this instrument measures is gone.
+
+    `lift_rpc.lift_file_payload` was the batch-lift path. `9d3b5c304` deleted it
+    under "one way to lift": the enumeration protocol through the AST parser is
+    now the only lift, and it exposes no "give me one file's payload" entry
+    point. Nothing in the kit has this shape, so there is nothing to repoint at
+    and `R_live_construction_panic_files` has no measurable denominator.
+
+    This stands in for the deleted name so the break is a NAMED refusal instead
+    of the `ImportError` that stood here -- which is not a panic, not a typed
+    refusal, and not a family the census buckets. It is deliberately not caught
+    by the residual-taxonomy `except` below: a lost measurement is not a
+    per-file residual, and recording it as one would report every file as an
+    ordinary "other" failure and hand back a conservation delta of 0 -- a fully
+    green report over zero completed files.
+
+    Rebuild this on the enumeration protocol, or retire the axis. Do not repoint
+    it at a differently-shaped lift.
+    """
+    raise MeasurementCapabilityLost(
+        "live per-file isolation cannot run: the per-file production lift "
+        "`lift_rpc.lift_file_payload` was deleted in 9d3b5c304 with the "
+        "batch-lift path, and the enumeration protocol exposes no single-file "
+        f"payload entry point. Cannot measure {rel} ({len(src)} bytes)."
+    )
 
 
 def assert_bearing_py_files(root: Path) -> list[Path]:
@@ -74,8 +117,6 @@ def live_per_file_isolation_conservation(
     Returns a closed ranking payload including ``R_live_construction_panic_files``,
     ``owner_families``, and ``exact_fronts``.
     """
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
     # Keep isolation telemetry readable; panics still raise, only log noise drops.
     os.environ.setdefault("SUGAR_ENGINE_LOG", os.devnull)
 
@@ -122,6 +163,10 @@ def live_per_file_isolation_conservation(
                         "message": panic_gap.message.splitlines()[0][:200],
                     }
                 )
+        except MeasurementCapabilityLost:
+            # The instrument cannot look. That is not a per-file residual and
+            # must never become one: propagate, do not taxonomize.
+            raise
         except Exception as exc:  # noqa: BLE001 — residual taxonomy, not swallow
             body = account_lift_coverage(disk, engaged).to_json()
             status = "other"

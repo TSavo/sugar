@@ -41,6 +41,17 @@ SCAN_PATHS = (
 
 LIFT_OUTPUT_SPEAKER = "lift-output-backlog"
 
+# Module-level names whose string members declare vendor-owned Python builtin
+# exception identities. Membership here is only half of ownership: every member
+# must still resolve to a real builtin exception class in the running
+# substrate, so adding a name here can never launder lifter-side vocabulary.
+BUILTIN_EXCEPTION_DECLS = frozenset(
+    {
+        "BUILTIN_EXCEPTION_NAMES",
+        "BUILTIN_EXCEPTION_BASES",
+    }
+)
+
 
 @dataclass(frozen=True)
 class Occurrence:
@@ -147,10 +158,10 @@ def git_files() -> list[str]:
 def declared_builtin_exceptions(path: str) -> frozenset[tuple[int, str]]:
     """Find structurally declared Python builtin exception identities.
 
-    Ownership requires both syntax (a string member of the kit's explicit
-    BUILTIN_EXCEPTION_NAMES declaration) and the running Python substrate
-    (the named builtin is an exception class).  A filename alone proves
-    neither.
+    Ownership requires both syntax (a string member of one of the kit's
+    explicit builtin-exception declarations, see BUILTIN_EXCEPTION_DECLS)
+    and the running Python substrate (the named builtin is an exception
+    class).  A filename alone proves neither.
     """
 
     try:
@@ -160,10 +171,16 @@ def declared_builtin_exceptions(path: str) -> frozenset[tuple[int, str]]:
 
     declarations: set[tuple[int, str]] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) or not any(
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if node.value is None or not any(
             isinstance(target, ast.Name)
-            and target.id == "BUILTIN_EXCEPTION_NAMES"
-            for target in node.targets
+            and target.id in BUILTIN_EXCEPTION_DECLS
+            for target in targets
         ):
             continue
         for member in ast.walk(node.value):
@@ -499,6 +516,25 @@ def self_test() -> int:
     if vendor.speaker != "vendor-language-identifier":
         print(
             "FAIL: canonical ConnectionRefusedError was classified as Sugar output",
+            file=sys.stderr,
+        )
+        return 1
+    bases_line = next(
+        line_no
+        for line_no, line in enumerate(
+            (ROOT / vendor_path).read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if '"ConnectionRefusedError":' in line
+    )
+    bases = classify(
+        vendor_path,
+        '"ConnectionRefusedError": (\'ConnectionError\',),',
+        bases_line,
+    )
+    if bases.speaker != "vendor-language-identifier":
+        print(
+            "FAIL: canonical ConnectionRefusedError declared in "
+            "BUILTIN_EXCEPTION_BASES was classified as Sugar output",
             file=sys.stderr,
         )
         return 1
