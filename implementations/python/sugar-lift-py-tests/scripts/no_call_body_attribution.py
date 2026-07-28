@@ -13,6 +13,7 @@ denominator without constructing peer-family sources.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from sugar_lift_py_tests.no_call_body_attribution import (
@@ -36,9 +37,23 @@ def main() -> int:
         else None
     )
     repo_root = Path(__file__).resolve().parents[4]
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+
+    import numpy
+    import pandas
+
+    corpus = authenticated_pandas_corpus()
+    print(
+        "authenticated execution environment: "
+        f"python={sys.implementation.name}-{sys.version_info.major}."
+        f"{sys.version_info.minor}.{sys.version_info.micro} "
+        f"numpy={numpy.__version__} pandas={pandas.__version__} "
+        f"corpusManifestCid={corpus.manifest_cid} fileCount={corpus.file_count}",
+        flush=True,
+    )
     report = run_authenticated_attribution(repo_root, families=families)
     print(report.render(), flush=True)
-    return 0
+    return int(report.loud_failure_count != 0)
 
 
 if __name__ == "__main__":
