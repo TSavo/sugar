@@ -501,6 +501,7 @@ class NativeOperationExitCarrierV1:
     prefix_composition: object | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    short_circuits: tuple = dataclass_field(default=(), compare=False, repr=False)
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
@@ -648,6 +649,32 @@ class NativeOperationExitCarrierV1:
             ),
         )
 
+    def short_circuit(
+        self,
+        *,
+        continuing_guard: Formula,
+        stopped: "ExitSet",
+        continuing_face,
+        stopped_face,
+    ) -> "NativeOperationExitCarrierV1":
+        """Retain this deferred leg beside an already-decided stopping face.
+
+        Compare owns the carrier's operation site and therefore its eventual
+        occurrence.  This composition records only control-flow testimony; it
+        never rebuilds the operation or manufactures an occurrence.
+        """
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if not isinstance(stopped, ExitSet):
+            raise TypeError("short-circuit stopping face must be an ExitSet")
+        return replace(
+            self,
+            short_circuits=(
+                *self.short_circuits,
+                (continuing_guard, stopped, continuing_face, stopped_face),
+            ),
+        )
+
     def discharge(self, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits.
 
@@ -657,7 +684,13 @@ class NativeOperationExitCarrierV1:
         remain undischarged — never a construction panic.
         """
         from sugar_lift_py_tests.floor import RaiseValue
-        from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+        from sugar_lift_py_tests.outcome import (
+            Complete,
+            ExitSet,
+            Halted,
+            Incomplete,
+            true_guard,
+        )
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
         if self.prefix_composition is not None:
@@ -761,6 +794,20 @@ class NativeOperationExitCarrierV1:
         guard = _conjoin_guards(self.guards)
         if guard is not None:
             exits = exits.guarded(guard)
+        for continuing_guard, stopped, continuing_face, stopped_face in self.short_circuits:
+            stopping_exits = []
+            for exit_ in stopped.exits:
+                if isinstance(exit_, Halted):
+                    # A first-leg exception predates the truth-value split and
+                    # bypasses both faces unchanged.
+                    stopping_exits.append(exit_)
+                    continue
+                stopping_exits.extend(
+                    ExitSet((exit_,)).guarded(true_guard(), stopped_face).exits
+                )
+            exits = exits.guarded(continuing_guard, continuing_face).union(
+                ExitSet(tuple(stopping_exits))
+            )
         return exits
 
 
