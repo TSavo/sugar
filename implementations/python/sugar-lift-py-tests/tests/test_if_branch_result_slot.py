@@ -220,14 +220,22 @@ def test_boolean_short_circuit_returns_the_exact_stopping_operand(
 ) -> None:
     from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     literal = TrueBoolLiteralSugar if stopping_type else FalseBoolLiteralSugar
     left = literal("left-occurrence")
 
-    class Skipped:
+    class Skipped(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
         def desugar(self, ctx=None):
             raise AssertionError("short-circuited operand was evaluated")
+
+        def to_term(self, *, owner: str):
+            raise AssertionError("short-circuited operand was projected")
 
     outcome = BoolOpSugar(kind, (left, Skipped()), "boolop-site").desugar(None)
 
@@ -245,17 +253,25 @@ def test_boolean_continuing_face_returns_the_exact_second_operand(
 ) -> None:
     from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     literal = TrueBoolLiteralSugar if continuing_type else FalseBoolLiteralSugar
     left = literal("left-occurrence")
     right = TermValue(7)
 
-    class Right:
+    class Right(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
         def desugar(self, ctx=None):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(right)
+
+        def to_term(self, *, owner: str):
+            return right.to_term(owner=owner)
 
     outcome = BoolOpSugar(kind, (left, Right()), "boolop-site").desugar(None)
 
