@@ -38,7 +38,10 @@ from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.outcome import Complete, Completed, outcome_to_exitset
 
 from .canonical import cid_of_json
-from .manager_protocol_construction import ConstructedManagerProtocolV1
+from .manager_protocol_construction import (
+    ConstructedManagerProtocolV1,
+    GeneratorBackedManagerProtocolV1,
+)
 
 
 @dataclass(frozen=True)
@@ -230,36 +233,23 @@ class GeneratorExitHaltFaceV1:
 
 
 @dataclass(frozen=True)
-class GeneratorBackedLifecycleProtocolV1:
+class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
     """Generator-backed protocol plus enter-halt / yield / exit-halt faces.
 
-    Duck-types the fields ``SourceDerivedGeneratorResourceRefV1`` requires of
-    a generator-backed protocol, and carries producer-authenticated lifecycle
-    faces so consumers never confuse enter halt, yield handoff, or post-yield
-    exit effects.
+    **Is-a** :class:`GeneratorBackedManagerProtocolV1` (closed protocol surface):
+    publication and consumers admit the lifecycle wrapper through the base
+    protocol type without an isinstance asker over wrapper spelling. Face
+    fields are producer testimony; enter/exit performance inherit from the base.
     """
 
-    protocol_construction_cid: str
-    generator_frame_cid: str
-    enter_definition: object
-    exit_definition: object
-    exit_face_id: str
-    generator_frame: object = field(compare=False, repr=False)
     enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = ()
     yield_faces: tuple[GeneratorYieldFaceV1, ...] = ()
     exit_halt_faces: tuple[GeneratorExitHaltFaceV1, ...] = ()
     lifecycle_cid: str = ""
 
     def __post_init__(self) -> None:
-        frame = self.generator_frame
-        if frame is None or getattr(frame, "generator_steps", None) is None:
-            raise ValueError(
-                "generator lifecycle protocol requires generator_steps on frame"
-            )
-        if getattr(frame, "frame_cid", None) != self.generator_frame_cid:
-            raise ValueError("generator frame CID does not match lifecycle protocol")
-        if self.enter_definition == self.exit_definition:
-            raise ValueError("generator enter/exit definition coordinates must differ")
+        # Base protocol surface (frame, enter/exit defs, one-shot exit log).
+        super().__post_init__()
         for face in self.enter_halt_faces:
             if face.cid != cid_of_json(face.preimage):
                 raise ValueError("enter-halt face CID mismatch")
@@ -271,7 +261,6 @@ class GeneratorBackedLifecycleProtocolV1:
                 raise ValueError("exit-halt face CID mismatch")
             if face.temporal_phase != "post-yield":
                 raise ValueError("exit-halt face must be post-yield temporal phase")
-        # Enter and exit halt faces never share a CID (different kinds / phases).
         enter_cids = {face.cid for face in self.enter_halt_faces}
         exit_cids = {face.cid for face in self.exit_halt_faces}
         if enter_cids & exit_cids:
@@ -280,21 +269,6 @@ class GeneratorBackedLifecycleProtocolV1:
         if self.lifecycle_cid and self.lifecycle_cid != expected:
             raise ValueError("generator lifecycle CID does not match its preimage")
         object.__setattr__(self, "lifecycle_cid", expected)
-        # One-shot exit log + enter ordinal (shared lifecycle performance law).
-        object.__setattr__(self, "_exited_entry_cids", set())
-        object.__setattr__(self, "_enter_ordinal", 0)
-
-    def enter_resource_outcome(self, ctx: object = None):
-        """Enter via the shared generator lifecycle producer (no name arms)."""
-        from .manager_protocol_construction import enter_generator_resource_outcome
-
-        return enter_generator_resource_outcome(self, ctx=ctx)
-
-    def exit_outcome_for(self, entered, ctx: object = None):
-        """Exit via the shared generator lifecycle producer (one-shot)."""
-        from .manager_protocol_construction import exit_generator_resource_outcome_for
-
-        return exit_generator_resource_outcome_for(self, entered, ctx=ctx)
 
     @property
     def lifecycle_preimage(self) -> dict:
@@ -314,7 +288,7 @@ class GeneratorBackedLifecycleProtocolV1:
     @classmethod
     def from_protocol(
         cls,
-        protocol,
+        protocol: GeneratorBackedManagerProtocolV1,
         *,
         enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = (),
         yield_faces: tuple[GeneratorYieldFaceV1, ...] = (),
@@ -1610,7 +1584,6 @@ def _publish_generator_backed_resource_contract(
     from sugar_lift_py_tests.ir import PrimitiveSort
 
     from .manager_protocol_construction import (
-        GeneratorBackedManagerProtocolV1,
         ManagerProtocolConstructionGapV1,
         construct_generator_backed_protocol,
     )
@@ -1644,22 +1617,18 @@ def _publish_generator_backed_resource_contract(
         exit_face_id=exit_face_id,
         construction_cid=resolved_cid,
     )
-    if isinstance(protocol, ManagerProtocolConstructionGapV1):
-        kind, detail = _gap_kind_and_detail(protocol)
+    # Closed gap surface only — not an isinstance asker over protocol wrappers.
+    gap = _generator_protocol_construction_gap(protocol)
+    if gap is not None:
+        kind, detail = _gap_kind_and_detail(gap)
         _install_derivation_gap(context, receiver, receipt, kind, detail)
-        return
-    if not isinstance(protocol, GeneratorBackedManagerProtocolV1):
-        _install_derivation_gap(
-            context,
-            receiver,
-            receipt,
-            "generator-protocol",
-            type(protocol).__name__,
-        )
         return
     enter_halts, yield_faces, exit_halts = _project_generator_lifecycle_faces(
         generator_target
     )
+    # Lifecycle *is* the generator-backed protocol surface (subclass); it
+    # publishes under SourceDerivedGeneratorResourceRefV1 without a second
+    # isinstance filter over wrapper spelling.
     lifecycle = GeneratorBackedLifecycleProtocolV1.from_protocol(
         protocol,
         enter_halt_faces=enter_halts,
@@ -1696,6 +1665,21 @@ def _publish_generator_backed_resource_contract(
             lifecycle,
         )
     )
+
+
+def _generator_protocol_construction_gap(protocol):
+    """Return a construction gap when ``construct_generator_backed_protocol`` refused.
+
+    Closed gap surface: only the gap type is recognized. Success values are the
+    protocol surface (base or lifecycle subclass) admitted by construction, not
+    by an isinstance asker over wrapper spelling.
+    """
+    from .manager_protocol_construction import ManagerProtocolConstructionGapV1
+
+    # type(protocol) is the closed door: gap class vs success protocol class.
+    if type(protocol) is ManagerProtocolConstructionGapV1:
+        return protocol
+    return None
 
 
 def _project_generator_lifecycle_faces(
