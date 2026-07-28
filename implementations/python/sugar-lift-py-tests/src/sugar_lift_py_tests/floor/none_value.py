@@ -22,20 +22,52 @@ class NoneValue(FloorValue):
 
         return Complete(FalseBoolLiteralSugar(site=site))
 
+    # Closed NoneType member inventory (CPython 3.12 ``dir(None)``).  Names
+    # outside this set raise AttributeError at runtime; names inside it are
+    # real members whose bodies the lift may still leave as coordinates.
+    _NONETYPE_MEMBERS = frozenset(
+        {
+            "__bool__",
+            "__class__",
+            "__delattr__",
+            "__dir__",
+            "__doc__",
+            "__eq__",
+            "__format__",
+            "__ge__",
+            "__getattribute__",
+            "__getstate__",
+            "__gt__",
+            "__hash__",
+            "__init__",
+            "__init_subclass__",
+            "__le__",
+            "__lt__",
+            "__ne__",
+            "__new__",
+            "__reduce__",
+            "__reduce_ex__",
+            "__repr__",
+            "__setattr__",
+            "__sizeof__",
+            "__str__",
+            "__subclasshook__",
+        }
+    )
+
     def attribute(self, name, site):
-        # ``None.foo`` stands where every other constructed value stands: the
-        # py.getattr coordinate. None owns no field the lift knows and its
-        # methods have no body here, which is exactly the position
-        # StringValue and the constructed containers already occupy.
-        #
-        # NOT a ground AttributeError. `None.foo` raises, but `None.__class__`
-        # and `None.__doc__` do not, so a blanket exit here would be wrong for
-        # every real member -- and deciding which is which would need a
-        # NoneType member table, i.e. a name table read off spelling. The
-        # coordinate is not a claim that the attribute EXISTS; it is an opaque
-        # symbol over the receiver's term and the name, so it stays exact for
-        # both cases and invents neither a field nor an exit.
-        del site
+        # NoneType's member set is closed and source-decided.  A name outside
+        # that set is the authenticated AttributeError partition; a name inside
+        # it stays the py.getattr coordinate until its body is constructed
+        # (so ``None.__class__`` / ``None.__doc__`` are never mis-exited).
+        if name not in self._NONETYPE_MEMBERS:
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="NoneValue.attribute",
+            )
         from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
         return getattr_coordinate(self, name, owner="NoneValue.attribute")

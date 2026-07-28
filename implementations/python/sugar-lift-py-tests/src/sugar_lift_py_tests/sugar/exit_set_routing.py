@@ -12,11 +12,27 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 
 
 def is_hard_raise(entry) -> bool:
-    """True when entry is a raise Incomplete that halts control flow."""
+    """True when entry is a raise that must become a Halted ExitSet face.
+
+    Two producer shapes carry the same exceptional exit:
+
+    - ``Incomplete(RaiseEffect)`` from ``RaiseSugar`` / routed handlers
+    - ``RaiseValue`` from expression floors (BinOp / Subscript / Compare / …)
+
+    Expression producers publish ``Complete(RaiseValue)``; statement reduction
+    then deposits that ``RaiseValue`` as a block entry.  Without promoting it
+    here, assertion boundaries see a completed body and mint
+    ``ExpectationNotMetEffect`` — so every non-``raise`` producer under
+    ``pytest.raises`` stays at zero authenticated exceptional exits even when
+    the floor already constructed the exact effect.
+    """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.floor import RaiseValue
     from sugar_lift_py_tests.outcome import Incomplete
 
+    if isinstance(entry, RaiseValue):
+        return isinstance(entry.effect, (RaiseEffect, GroupedRaiseEffect))
     if not isinstance(entry, Incomplete):
         return False
     if not isinstance(entry.effect, (RaiseEffect, GroupedRaiseEffect)):
@@ -69,7 +85,8 @@ def promote_raise_halts(exits):
         for entry in state.entries:
             if is_hard_raise(entry):
                 saw_halt = True
-                guard = guard_from_conditions(exit_.guard, entry.branch_conditions)
+                branch_conditions = getattr(entry, "branch_conditions", ()) or ()
+                guard = guard_from_conditions(exit_.guard, branch_conditions)
                 # A Halted face carries the state that existed before its
                 # effect.  Keeping the raise entry in that state lets a later
                 # enclosing reducer promote the already-consumed edge again.
