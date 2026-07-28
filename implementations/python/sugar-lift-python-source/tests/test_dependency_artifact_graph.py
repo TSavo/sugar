@@ -242,8 +242,12 @@ def test_stub_provider_cannot_testify_for_a_different_exception(tmp_path: Path):
     if not isinstance(truthful, ResolvedPythonObjectV1) or not isinstance(
         lying, ResolvedPythonObjectV1
     ):
-        assert isinstance(truthful, (ResolvedPythonObjectV1, PythonObjectResolutionGapV1))
-        assert isinstance(lying, (ResolvedPythonObjectV1, PythonObjectResolutionGapV1))
+        for result in (truthful, lying):
+            assert isinstance(
+                result, (ResolvedPythonObjectV1, PythonObjectResolutionGapV1)
+            )
+            if isinstance(result, PythonObjectResolutionGapV1):
+                assert result.kind == "dynamic-export"
         return
     assert truthful.definition.name == "ProviderError"
     assert lying.definition.name == "OtherError"

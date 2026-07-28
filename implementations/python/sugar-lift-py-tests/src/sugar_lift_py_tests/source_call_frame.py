@@ -181,11 +181,38 @@ class SourceVisibleCallFrameV1:
             )
         ):
             if kind == "vararg":
-                bound.append(self._tuple_node(tuple(remaining)))
+                coordinate = self.formal_coordinates[index]
+                bound.append(
+                    self._tuple_node(
+                        tuple(
+                            _same_unit_actual_node(
+                                self.owner.unit,
+                                value,
+                                coordinate.project("variadic", actual_index),
+                            )
+                            for actual_index, value in enumerate(remaining)
+                        )
+                    )
+                )
                 remaining.clear()
                 continue
             if kind == "kwarg":
-                bound.append(self._dict_node(tuple(named.items())))
+                coordinate = self.formal_coordinates[index]
+                bound.append(
+                    self._dict_node(
+                        tuple(
+                            (
+                                key,
+                                _same_unit_actual_node(
+                                    self.owner.unit,
+                                    value,
+                                    coordinate.project("variadic-keyword", actual_index),
+                                ),
+                            )
+                            for actual_index, (key, value) in enumerate(named.items())
+                        )
+                    )
+                )
                 named.clear()
                 continue
             value = None

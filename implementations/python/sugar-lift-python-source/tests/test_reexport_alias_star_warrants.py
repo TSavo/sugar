@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import ast
 import csv
 import importlib.metadata
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -348,6 +352,72 @@ def test_computed_target_all_stays_dynamic(tmp_path: Path) -> None:
     assert result.kind == "dynamic-export"
 
 
+def test_nested_literal_all_stays_dynamic(tmp_path: Path) -> None:
+    """A nested ``__all__`` is not module-body publication testimony."""
+    dist = _dist(
+        tmp_path,
+        name="nested-all-pkg",
+        files={
+            "nested_all_pkg/__init__.py": "from nested_all_pkg.implementation import *\n",
+            "nested_all_pkg/implementation.py": (
+                "def build(value):\n    return value\n"
+                "if flag:\n"
+                "    __all__ = ['build']\n"
+            ),
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import nested_all_pkg\nnested_all_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_two_star_imports_are_ambiguous(tmp_path: Path) -> None:
+    """Two star producers cannot overwrite one another's authority."""
+    dist = _dist(
+        tmp_path,
+        name="two-star-pkg",
+        files={
+            "two_star_pkg/__init__.py": (
+                "from two_star_pkg.first import *\n"
+                "from two_star_pkg.second import *\n"
+            ),
+            "two_star_pkg/first.py": "def build(value):\n    return value\n",
+            "two_star_pkg/second.py": "def build(value):\n    return value + 1\n",
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import two_star_pkg\ntwo_star_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "ambiguous-static-export"
+
+
+def test_nested_alias_locus_refuses_without_suite_reconstruction(tmp_path: Path) -> None:
+    """An inner-suite alias cannot borrow module-body reaching authority."""
+    dist = _dist(
+        tmp_path,
+        name="nested-alias-pkg",
+        files={
+            "nested_alias_pkg/__init__.py": (
+                "from nested_alias_pkg.implementation import build as _build\n"
+                "if flag:\n"
+                "    build = _build\n"
+            ),
+            "nested_alias_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import nested_alias_pkg\nnested_alias_pkg.build(1)\n"),
+        graph=DependencyArtifactGraph.authenticate(dist),
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
 def test_prefix_raise_refuses_binding_via_completed_fallthrough(tmp_path: Path) -> None:
     dist = _dist(
         tmp_path,
@@ -367,6 +437,30 @@ def test_prefix_raise_refuses_binding_via_completed_fallthrough(tmp_path: Path) 
     )
     assert isinstance(result, PythonObjectResolutionGapV1)
     assert result.kind == "dynamic-export"
+
+
+def test_prefix_adapter_propagates_missing_construction_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing producer is loud, never translated into dynamic export."""
+    from sugar_lift_python_source import (
+        dependency_export_adapter,
+        manager_construction,
+    )
+
+    def missing_producer(_module, _locus):
+        raise ImportError("construction producer unavailable")
+
+    monkeypatch.setattr(
+        manager_construction,
+        "prefix_has_completed_fallthrough",
+        missing_producer,
+    )
+    locus = ast.parse("value = 1\n").body[0]
+    with pytest.raises(ImportError, match="construction producer unavailable"):
+        dependency_export_adapter._prefix_has_completed_fallthrough(
+            SimpleNamespace(), locus
+        )
 
 
 def test_prefix_assert_false_refuses_binding(tmp_path: Path) -> None:

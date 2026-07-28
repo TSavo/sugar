@@ -24,7 +24,7 @@ from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
 from sugar_lift_python_source.source_call_preconstruction import (
     populate_source_visible_call_frames,
 )
-from sugar_source_tree.nodes import BindingCoordinateRef, Call, Constant
+from sugar_source_tree.nodes import BindingCoordinateRef, Call, Constant, Dict, FunctionDef, Tuple_
 from sugar_source_tree.tree import SourceFile
 
 
@@ -171,25 +171,102 @@ def test_same_unit_actuals_pass_through_without_rehost(tmp_path: Path) -> None:
     assert state.value == 1
 
 
-def test_lying_foreign_unit_receipt_is_not_seated_on_frame(tmp_path: Path) -> None:
-    """Lying twin: a foreign useSite sourceCid never seats on this frame unit."""
-    frame = _frame_for_box_expected(
-        tmp_path,
-        "from unprivileged.types import ArrayType\n"
-        "def box_expected(expected, box_cls=None):\n"
-        "    default = ArrayType\n"
-        "    return expected if box_cls is None else box_cls\n",
+def test_foreign_variadic_actuals_rehost_with_distinct_coordinates(
+    tmp_path: Path,
+) -> None:
+    """Each nested ``*args`` value retains a distinct formal projection."""
+    owner_source = "def collect(*items):\n    return items\n"
+    owner_file = SourceFile(
+        (owner_source, "owner.py", blake3_512_of(owner_source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
-    owner = frame.owner.unit
-    # Plant a foreign-looking span key that is not a use site of this unit.
-    foreign_key = (9999, 0, 9999, 1)
-    assert owner.import_value_use_resolution(foreign_key) is None
-    # All seated keys must project inside this unit's LineTable.
-    for start_line, start_col, end_line, end_col in owner._import_value_use_resolutions:
-        assert start_line >= 1
-        # Owner source is short; line 9999 would be foreign.
-        assert start_line < 100
-        assert end_line < 100
+    function = next(
+        node for node in owner_file.nodes() if isinstance(node, FunctionDef)
+    )
+    foreign_source = "left = 1\nright = 2\n"
+    foreign_file = SourceFile(
+        (foreign_source, "foreign.py", blake3_512_of(foreign_source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    actuals = tuple(
+        node for node in foreign_file.nodes() if isinstance(node, Constant)
+    )
+    frame = function.source_visible_call_frame().bind_node_actuals(actuals, ())
+    packed = frame.runtime_entries[0].state
+    assert isinstance(packed, Tuple_)
+    assert len(packed.elts) == 2
+    assert all(isinstance(node, BindingCoordinateRef) for node in packed.elts)
+    coordinates = tuple(node.coordinate for node in packed.elts)
+    assert coordinates[0].cid != coordinates[1].cid
+    assert coordinates[0].projection_path[-2:] == ("variadic", 0)
+    assert coordinates[1].projection_path[-2:] == ("variadic", 1)
+
+
+def test_foreign_variadic_keyword_actuals_rehost_with_distinct_coordinates(
+    tmp_path: Path,
+) -> None:
+    """Each nested ``**kwargs`` value retains a distinct formal projection."""
+    owner_source = "def collect(**items):\n    return items\n"
+    owner_file = SourceFile(
+        (owner_source, "owner_kw.py", blake3_512_of(owner_source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(
+        node for node in owner_file.nodes() if isinstance(node, FunctionDef)
+    )
+    foreign_source = "left = 1\nright = 2\n"
+    foreign_file = SourceFile(
+        (foreign_source, "foreign_kw.py", blake3_512_of(foreign_source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    actuals = tuple(
+        node for node in foreign_file.nodes() if isinstance(node, Constant)
+    )
+    frame = function.source_visible_call_frame().bind_node_actuals(
+        (), (("left", actuals[0]), ("right", actuals[1]))
+    )
+    packed = frame.runtime_entries[0].state
+    assert isinstance(packed, Dict)
+    coordinates = tuple(item.value.coordinate for item in packed.items)
+    assert coordinates[0].cid != coordinates[1].cid
+    assert coordinates[0].projection_path[-2:] == ("variadic-keyword", 0)
+    assert coordinates[1].projection_path[-2:] == ("variadic-keyword", 1)
+
+
+def test_lying_foreign_unit_receipt_refuses_with_exact_gap_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lying twin: a genuinely minted foreign receipt cannot seat here."""
+    from sugar_lift_py_tests import import_binding
+    from sugar_lift_python_source.manager_construction import (
+        ImportValueUseSeatingGap,
+    )
+
+    foreign_source = "from unprivileged import ArrayType\nvalue = ArrayType\n"
+    foreign_path = tmp_path / "foreign_consumer.py"
+    foreign_path.write_text(foreign_source, encoding="utf-8")
+    receipts, outcomes = import_binding.authenticated_import_value_use_receipts(
+        tmp_path,
+        foreign_path,
+        foreign_source,
+        blake3_512_of(foreign_source.encode()),
+        module_identities={},
+    )
+    assert len(receipts) == 1
+    monkeypatch.setattr(
+        import_binding,
+        "authenticated_import_value_use_receipts",
+        lambda *_args, **_kwargs: (receipts, outcomes),
+    )
+    with pytest.raises(ImportValueUseSeatingGap) as raised:
+        _frame_for_box_expected(
+            tmp_path,
+            "from unprivileged.types import ArrayType\n"
+            "def box_expected(expected, box_cls=None):\n"
+            "    default = ArrayType\n"
+            "    return expected if box_cls is None else box_cls\n",
+        )
+    assert raised.value.kind == "foreign-source-cid"
 
 
 def test_seat_refuses_foreign_source_cid(tmp_path: Path) -> None:

@@ -239,6 +239,12 @@ def _resolve_export_binding(
         # Follow the binding of the RHS name that *reaches* the assignment —
         # never the RHS name's final module binding after later reassignment.
         assign_node, name_node = binding[1]
+        if not any(statement is assign_node for statement in body):
+            # The reaching suite is not authenticated by this module-body
+            # traversal. Refuse instead of reconstructing an enclosing suite.
+            return _gap(
+                "dynamic-export", binding_cid, graph, module_name, exported_name
+            )
         alias_name = name_node.id
         hop_key = (module_name, alias_name)
         if hop_key in seen:
@@ -626,7 +632,9 @@ def _target_star_published_names(body: list[ast.stmt]) -> frozenset[str]:
 
 
 def _has_nonliteral_all(body: list[ast.stmt]) -> bool:
-    for statement in body:
+    stack: list[ast.AST] = list(body)
+    while stack:
+        statement = stack.pop()
         if isinstance(statement, ast.Assign):
             if any(
                 isinstance(target, ast.Name) and target.id == "__all__"
@@ -645,6 +653,14 @@ def _has_nonliteral_all(body: list[ast.stmt]) -> bool:
                 and statement.target.id == "__all__"
             ):
                 return True
+        # Function/class bodies are separate namespaces, never module
+        # publication testimony. Other compound suites execute in module scope.
+        if isinstance(
+            statement,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(statement))
     return False
 
 
@@ -814,96 +830,15 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state):
 
 
 def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
-    """License one export binding via the advisor's five-step prefix reduction.
+    """Delegate prefix meaning to the construction producer.
 
-    1. Authenticated module source/CID — ``SourceFile`` path_source door only;
-       refuse dual-door / CID mismatch (construction refuses, we map to gap).
-    2. Exact export-binding coordinate — ``locus`` is the unique bind statement
-       (innermost) already established by ``_export_block_with_locus``.
-    3. Reduce statements **strictly before** that locus (module-body order,
-       start line/col < locus start) — never the binding statement itself.
-    4. Exactly one unconditional ``Completed(can_fall_through=True)`` via the
-       same ``reduce_block_to_exitset`` path function bodies use.
-    5. License only then; multi-face / halted / incomplete-sugar / guarded
-       faces stay **named** gaps (``dynamic-export`` at the call site).
-
-    Empty prefix (binding is the first statement) is licensed.  Soft success is
-    forbidden: every refusal path is explicit False so the caller emits the
-    named gap rather than inventing fall-through from AST control shape.
+    The dependency adapter owns export recognition only. It must not import
+    the downstream lift-kit test package or suppress a missing producer as a
+    normal dynamic export.
     """
-    try:
-        from sugar_lift_py_tests.outcome import Completed, true_guard
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            reduce_block_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-        from sugar_lift_python_source.canonical import blake3_512_of
-        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
-        from sugar_source_tree.panic import BackendDefect, SugarNotWritten
-        from sugar_source_tree.tree import SourceFile
-    except ImportError:
-        # Producer substrate unavailable — refuse license (named gap upstream).
-        return False
+    from .manager_construction import prefix_has_completed_fallthrough
 
-    # --- 1. Authenticated module source/CID ---------------------------------
-    expected_cid = blake3_512_of(module.source.encode("utf-8"))
-    if module.source_cid != expected_cid:
-        return False
-    try:
-        source_file = SourceFile(
-            (module.source, module.source_seat, module.source_cid)
-        )
-    except (BackendDefect, ValueError, TypeError):
-        return False
-
-    # --- 2–3. Exact locus; statements strictly before it --------------------
-    # Locus is the AST bind site; typed body rows are matched by start
-    # line/col (same coordinate space the export walk used for lineno).
-    locus_key = (locus.lineno, locus.col_offset)
-    prefix = []
-    for statement in source_file.root.body:
-        span = statement.line_col_span()
-        key = (span.start_line, span.start_col)
-        if key >= locus_key:
-            break
-        prefix.append(statement)
-    # Empty prefix: nothing before the bind → fall-through is vacuous True.
-    if not prefix:
-        return True
-
-    # --- 4. Reduce prefix → one unconditional Completed fall-through --------
-    try:
-        sugars = []
-        for statement in prefix:
-            # Module-level def/class *statements* are definitional: bodies are
-            # deferred.  FunctionDef.sugar() builds FunctionUniverseSugar (the
-            # call-universe value), which reduces the body as if it ran at the
-            # def site — wrong for module sequencing.  Import/Pass already use
-            # InertSugar; def/class match that door for fall-through only.
-            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
-                sugars.append(InertSugar(site=statement.fragment))
-            else:
-                sugars.append(statement.sugar())
-        exits = reduce_block_to_exitset(tuple(sugars))
-    except SugarNotWritten:
-        # Incomplete sugar on the prefix — named unresolved face.
-        return False
-    except (BackendDefect, ValueError, TypeError):
-        return False
-
-    # --- 5. License only the single unconditional Completed fall-through ----
-    if len(exits.exits) != 1:
-        # Multi-face / empty ExitSet — unresolved named gap.
-        return False
-    face = exits.exits[0]
-    if not isinstance(face, Completed):
-        # Halted / refused face — not fall-through.
-        return False
-    if face.guard != true_guard():
-        # Guarded completion is not unconditional.
-        return False
-    value = face.value
-    return bool(getattr(value, "can_fall_through", False))
+    return prefix_has_completed_fallthrough(module, locus)
 
 
 def _absolute_import(
@@ -1039,9 +974,11 @@ def _export_statement(statement: ast.stmt, name: str, state):
             if alias.name == "*":
                 # Star residual only when no explicit static bind already owns
                 # the name.  Literal ``__all__`` publication is resolve-time.
-                if not (
+                if isinstance(state, tuple) and state[0] == "star":
+                    state = ("ambiguous", statement)
+                elif not (
                     isinstance(state, tuple)
-                    and state[0] in {"definition", "import", "alias"}
+                    and state[0] in {"definition", "import", "alias", "ambiguous"}
                 ):
                     state = ("star", statement)
                 continue

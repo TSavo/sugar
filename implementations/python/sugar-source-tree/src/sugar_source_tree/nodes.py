@@ -295,12 +295,7 @@ class SourceUnit:
                 requested="start <= end in unit source",
                 fix="repair authenticated useSite coordinates",
             )
-        try:
-            from sugar_lift_python_source.dependency_artifact import (
-                ResolvedPythonObjectV1,
-            )
-        except ImportError:
-            ResolvedPythonObjectV1 = type(None)  # type: ignore[misc,assignment]
+        from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
         if not isinstance(resolved, ResolvedPythonObjectV1):
             raise BackendDefect(
                 blame=span,

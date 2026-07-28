@@ -56,6 +56,62 @@ from .dependency_artifact import (
 from .resolution_session import SourceResolutionSession, session_or_new
 
 
+class ImportValueUseSeatingGap(ValueError):
+    """Authenticated value-use testimony cannot be seated on this SourceUnit."""
+
+    def __init__(self, kind: str, detail: str) -> None:
+        self.kind = kind
+        super().__init__(f"{kind}: {detail}")
+
+
+def prefix_has_completed_fallthrough(module, locus) -> bool:
+    """Construction-owned five-step prefix meaning for export recognition."""
+    from sugar_lift_py_tests.outcome import Completed, true_guard
+    from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
+    from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+    from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
+    from sugar_source_tree.panic import BackendDefect, SugarNotWritten
+
+    from .canonical import blake3_512_of
+
+    expected_cid = blake3_512_of(module.source.encode("utf-8"))
+    if module.source_cid != expected_cid:
+        return False
+    try:
+        source_file = SourceFile((module.source, module.source_seat, module.source_cid))
+    except (BackendDefect, ValueError, TypeError):
+        return False
+    locus_key = (locus.lineno, locus.col_offset)
+    prefix = []
+    for statement in source_file.root.body:
+        span = statement.line_col_span()
+        if (span.start_line, span.start_col) >= locus_key:
+            break
+        prefix.append(statement)
+    if not prefix:
+        return True
+    try:
+        sugars = tuple(
+            InertSugar(site=statement.fragment)
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef))
+            else statement.sugar()
+            for statement in prefix
+        )
+        exits = reduce_block_to_exitset(sugars)
+    except SugarNotWritten:
+        return False
+    except (BackendDefect, ValueError, TypeError):
+        return False
+    if len(exits.exits) != 1:
+        return False
+    face = exits.exits[0]
+    return (
+        isinstance(face, Completed)
+        and face.guard == true_guard()
+        and bool(getattr(face.value, "can_fall_through", False))
+    )
+
+
 @dataclass(frozen=True)
 class ConstructedCallActualV1:
     node: Node = field(compare=False)
@@ -1817,10 +1873,17 @@ def _seat_import_value_use_receipts(
         module_identities={},
     )
     for receipt in receipts:
+        if receipt.source_cid != module.source_cid:
+            raise ImportValueUseSeatingGap(
+                "foreign-source-cid",
+                "receipt source CID does not match the frame module",
+            )
         site = receipt.use.get("useSite") or {}
         if site.get("sourceCid") != module.source_cid:
-            # Foreign useSite: never seat on this unit.
-            continue
+            raise ImportValueUseSeatingGap(
+                "foreign-use-site-cid",
+                "receipt useSite source CID does not match the frame module",
+            )
         coordinate = SourceFragmentCoordinateV1(
             module.source_cid,
             site["startLine"],
@@ -1834,16 +1897,33 @@ def _seat_import_value_use_receipts(
             site["endLine"],
             site["endCol"],
         )
-        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        # Only pre-authenticated graphs for this publication — no ambient spelling hunt.
+        identity = receipt.import_binding.value["target"]["moduleIdentity"]
+        if identity["kind"] == "authenticated-python-module":
+            dependency_module = identity["moduleName"]
+        elif identity["kind"] == "unavailable-python-module":
+            dependency_module = identity["name"]
+        else:
+            raise ImportValueUseSeatingGap(
+                "malformed-module-identity",
+                f"unsupported receipt module identity {identity['kind']!r}",
+            )
+        top_level = dependency_module.split(".", 1)[0]
+        # Only the receipt's authenticated module identity selects among the
+        # pre-authenticated graphs carried by this publication.
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
-            continue
+            raise ImportValueUseSeatingGap(
+                "dependency-graph-unavailable",
+                f"no pre-authenticated graph for {dependency_module!r}",
+            )
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
-            continue
+            raise ImportValueUseSeatingGap(
+                f"resolution-{imported.kind}",
+                "authenticated value-use receipt did not resolve",
+            )
         context.source_import_value_resolutions[coordinate] = imported
         unit.seat_import_value_use_resolution(
             span_key, imported, source_cid=module.source_cid
