@@ -49,6 +49,50 @@ class LoopRecurrenceSugar(Sugar):
     def witnesses(cls):
         return ()
 
+    def to_term(self, *, owner: str):
+        """Project the authenticated loop construction as one canonical term."""
+        del owner
+        from sugar_lift_py_tests.loop_construction import (
+            LoopWireError,
+            decode_loop_construction_v1,
+        )
+
+        construction = decode_loop_construction_v1(self.construction.wire_graph())
+        if construction.loop_construction_cid != self.loop_construction_cid:
+            raise LoopWireError("loop recurrence construction CID mismatch")
+        if construction.target.target_cid != self.target_cid:
+            raise LoopWireError("loop recurrence target CID mismatch")
+
+        root = construction.wire_graph()["root"]
+        outward_face_cids = tuple(root["outwardHaltedFaceCids"])
+        if len(outward_face_cids) != len(self.outward_faces):
+            raise LoopWireError("loop recurrence outward-face testimony mismatch")
+        coordinates = (*self.binding_coordinate_cids, *outward_face_cids)
+        if any(
+            not isinstance(cid, str) or not cid.startswith("blake3-512:")
+            for cid in coordinates
+        ):
+            raise LoopWireError("loop recurrence testimony must be content-addressed")
+
+        return ctor(
+            "python:loop-recurrence-construction",
+            (
+                str_const(self.target_cid),
+                str_const(self.loop_construction_cid),
+                ctor(
+                    "python:loop-binding-coordinates",
+                    tuple(str_const(cid) for cid in self.binding_coordinate_cids),
+                    symbol_kind="coordinate",
+                ),
+                ctor(
+                    "python:loop-outward-face-testimony",
+                    tuple(str_const(cid) for cid in outward_face_cids),
+                    symbol_kind="coordinate",
+                ),
+            ),
+            symbol_kind="coordinate",
+        )
+
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
