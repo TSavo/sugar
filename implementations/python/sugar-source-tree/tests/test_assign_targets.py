@@ -100,7 +100,7 @@ def test_chained_names_receive_distinct_runtime_binding_coordinates():
 
 def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
     entries = _completed_entries(
-        "def arbitrary(o):\n    renamed = o.field = 5\n    return renamed\n"
+        "def arbitrary():\n    renamed = o.field = 5\n    return renamed\n"
     )
     red = [entry for entry in entries if isinstance(entry, Incomplete)]
     assert len(red) == 1
@@ -110,7 +110,7 @@ def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
 def test_mixed_chain_never_fabricates_a_completed_subscript_store():
     with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
         _fn(
-            "def arbitrary(o, xs):\n"
+            "def arbitrary(xs):\n"
             "    renamed = o.field = xs[0] = 7\n"
             "    return renamed\n"
         ).sugar().desugar()
@@ -202,7 +202,7 @@ def test_mixed_chained_targets_stay_loud():
 
 
 def test_attribute_store_target_lifts_a_typed_red_effect():
-    entries = _completed_entries("def A(o):\n    o.a = 1\n    return o\n")
+    entries = _completed_entries("def A():\n    o.a = 1\n    return 1\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)

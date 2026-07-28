@@ -16,22 +16,21 @@ class AttributeStoreEffectSugar(Sugar):
     method and obligation from the read path ``attribute`` /
     ``__getattr__`` / ``__getattribute__``.
 
-    Projection arms (PARTIAL — dual-face composition instrument preserved):
+    Projection arms:
 
-    1. **Decided runtime type** → ``receiver.setattr(attr, value, site)``
+    1. **Formal receiver** → ``NativeOperationExitCarrierV1`` demand
+       ``setattr_named`` with operands
+       ``(receiver, StringValue(name), value)`` and coordinates
+       ``(receiver.formal_coordinate, None, value_coordinate)``.
+       The n-ary projector (#6614) unwraps the name and calls
+       ``receiver.setattr(name.value, value, site)``.  Helper alone stays
+       undischarged; an ordinary source caller supplies actuals.
+    2. **Decided runtime type** → ``receiver.setattr(attr, value, site)``
        projecting ``Completed`` or ``RaiseValue`` exceptional faces through
        the store path (never the read path).
-    2. **Undecided / formal** → ``AttributeStoreRuntimeEffect`` dual faces
-       under complementary store-outcome guards.  This is the instrument the
-       five named store ExitSet composition laws read; it is **not** replaced
-       by a consumer ``SugarNotWritten``.
-
-    Formal ``setattr_named`` carrier mint (n-ary discharge contract) is the
-    next partial step once composition can consume undischarged carriers
-    without deleting dual-face detectors.  The mint shape is pinned in
-    ``test_attribute_store_desugar`` as the producer-side contract for the
-    n-ary worker: operator ``setattr_named``, operands
-    ``(receiver, StringValue(name), value)``.
+    3. **Undecided non-formal** → ``AttributeStoreRuntimeEffect`` dual faces
+       under complementary store-outcome guards (composition instrument for
+       free undecided receivers — never a consumer ``SugarNotWritten``).
     """
 
     receiver: Sugar
@@ -69,6 +68,16 @@ class AttributeStoreEffectSugar(Sugar):
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Complete
 
+        formal_coordinate = getattr(receiver, "formal_coordinate", None)
+        if formal_coordinate is not None:
+            # Undischarged demand awaiting caller actuals — not a refusal.
+            return self.mint_setattr_named_carrier(
+                site=self.site,
+                receiver=receiver,
+                attr=self.attr,
+                value=value,
+            )
+
         # Decided receivers project through Floor setattr (store path ≠ read).
         if receiver.runtime_type_is_decided():
             projected = receiver.setattr(self.attr, value, self.site)
@@ -78,9 +87,7 @@ class AttributeStoreEffectSugar(Sugar):
                 return Incomplete(projected.value.effect)
             return projected
 
-        # Undecided / formal: retain dual-face AttributeStoreRuntimeEffect.
-        # Do not emit SugarNotWritten from this consumer — that converts
-        # constructed dual-face behaviour into a refusal.
+        # Undecided non-formal: dual-face AttributeStoreRuntimeEffect.
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
             runtime_effect_evidence_from_terms,
@@ -109,10 +116,10 @@ class AttributeStoreEffectSugar(Sugar):
     def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
         """Producer-side contract for n-ary ``setattr_named`` discharge.
 
-        Operand order and operator string are fixed for the n-ary worker:
-        ``receiver.setattr(name.value, value, site)`` after discharge.
-        Not wired into ``_store`` while dual-face composition laws still
-        instrument formal parameters via ``AttributeStoreRuntimeEffect``.
+        Operand order matches the projector table (#6614):
+        ``receiver.setattr(name.value, value, site)`` after unwrap.
+        Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
+        order are load-bearing (#6613 ``__post_init__``).
         """
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
