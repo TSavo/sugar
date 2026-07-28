@@ -9,11 +9,18 @@ FunctionDef._source_visible_generator_steps_from only.
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.claim.sugar_catalog import SugarCatalog
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context_manager_resolution import (
+    SourceFragmentCoordinateV1,
+    TreeConstructionContextV1,
+)
+from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.generator_construction import (
     FinallyStepV1,
     GeneratorConstructionV1,
@@ -26,14 +33,34 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.ir import atomic, not_, str_const
+from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
-from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
-from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
+
+
+@dataclass(frozen=True)
+class _ProducedActualSugar(ConstructedTermSugar):
+    value: object
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        del owner
+        return str_const("test:produced-actual")
 
 
 def _function(source: str):
@@ -51,6 +78,43 @@ def _steps(source: str):
 
 def _steps_of(function):
     return function._source_visible_generator_steps_from(function.body)
+
+
+def _production_machine(source: str, actual: ConstructedTermSugar):
+    construction = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, "manager.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=construction,
+    )
+    function = next(node for node in tree.nodes() if node.kind == "FunctionDef")
+    call = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "Call" and getattr(node.func, "id", None) == function.name
+    )
+    frame = function.source_visible_call_frame().bind_node_actuals(
+        call.args,
+        tuple((kw.arg, kw.value) for kw in call.keywords if kw.arg is not None),
+    )
+    span = call.line_col_span()
+    construction.source_call_frames[
+        SourceFragmentCoordinateV1(
+            call.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    ] = frame
+    outcome = CallSiteSugar(
+        target_name=function.name,
+        args=(actual,),
+        site=call.fragment,
+        source_call_frame=frame,
+    ).desugar(FactoryBuildContext(filename="manager.py", catalog=SugarCatalog()))
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GeneratorConstructionV1)
+    return outcome.value
 
 
 # ---------------------------------------------------------------------------
@@ -163,36 +227,122 @@ def test_ground_false_validation_raise_halts_before_yield() -> None:
 
 
 def test_undecidable_guard_retains_complementary_machines_same_instance() -> None:
-    steps = _steps("def manager(c):\n    if c:\n        yield 1\n    else:\n        yield 2\n")
-    machine = GeneratorConstructionV1.allocate(
-        allocation_coordinate="call:u",
-        frame_coordinate="frame:u",
-        binding_state=(),
-        steps=steps,
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.outcome import exit_set as exit_set_module
+
+    guard = atomic("test.generator.guard", [])
+    machine = _production_machine(
+        "def manager(c):\n"
+        "    if c:\n"
+        "        yield 1\n"
+        "    else:\n"
+        "        yield 2\n"
+        "manager(caller_value)\n",
+        _ProducedActualSugar(PredicateValue(guard, "guard:occurrence")),
     )
-    outcome = machine.resume()
+    minted = []
+    unfactored = []
+    real_partition = exit_set_module.partition
+    real_factor = ExitSet.factor_completed
+
+    def record_partition(owner):
+        minted.append(owner)
+        return real_partition(owner)
+
+    def record_factor(exits):
+        unfactored.extend(exits.exits)
+        return real_factor(exits)
+
+    exit_set_module.partition = record_partition
+    ExitSet.factor_completed = record_factor
+    try:
+        outcome = machine.resume()
+    finally:
+        exit_set_module.partition = real_partition
+        ExitSet.factor_completed = real_factor
     assert isinstance(outcome, ExitSet)
-    # Factor may collapse to one GuardedValue arm; instance stays one.
-    assert machine.instance_coordinate
+    faces = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(faces) == 1
+    guarded = faces[0].value
+    assert isinstance(guarded, GuardedValue)
+    successors = [guarded.when_true, guarded.when_false]
+    assert all(
+        isinstance(successor, GeneratorConstructionV1)
+        for successor in successors
+    )
+    assert {successor.instance_coordinate for successor in successors} == {
+        machine.instance_coordinate
+    }
+    assert guarded.when_true is not guarded.when_false
+    produced = [face for face in unfactored if isinstance(face, Completed)]
+    assert len(produced) == 2
+    assert {face.guard for face in produced} == {
+        guarded.guard,
+        not_(guarded.guard),
+    }
+    assert minted == [(
+        "generator.branch",
+        machine.instance_coordinate,
+        machine.steps[0].fragment_cid,
+    )]
+    # Neither branch executed during guard production: both successors remain
+    # seated at their own first YieldStepV1 with the exact pre-guard bindings.
+    assert all(successor.cursor == machine.cursor for successor in successors)
+    assert all(
+        successor.binding_state == machine.binding_state
+        for successor in successors
+    )
+    assert {
+        successor.steps[successor.cursor].value.value for successor in successors
+    } == {1, 2}
 
 
 def test_guard_halt_bypasses_both_branches_with_pre_halt_state() -> None:
-    steps = _steps("def manager(c):\n    if c:\n        yield 1\n    else:\n        yield 2\n")
+    steps = _steps(
+        "def manager():\n"
+        "    if guard():\n"
+        "        yield 1\n"
+        "    else:\n"
+        "        yield 2\n"
+        "def guard():\n"
+        "    raise RuntimeError('guard halt')\n"
+    )
     machine = GeneratorConstructionV1.allocate(
         allocation_coordinate="call:h",
         frame_coordinate="frame:h",
         binding_state=(),
         steps=steps,
     )
-    halted = machine.throw(
-        RaiseEffect(exception_name="GuardHalt", occurrence="pre:if")
-    )
+    halted = machine.resume()
     assert isinstance(halted, ExitSet)
-    for exit_ in halted.exits:
-        if isinstance(exit_, Halted):
-            assert exit_.state.cursor == machine.cursor
-            assert exit_.state.instance_coordinate == machine.instance_coordinate
-            assert exit_.state.steps == machine.steps
+    faces = [exit_ for exit_ in halted.exits if isinstance(exit_, Halted)]
+    assert len(faces) == 1
+    face = faces[0]
+    assert face.effect.exception_name == "RuntimeError"
+    assert face.effect.occurrence.endswith(":7:4")
+    assert face.state is machine
+    assert face.state.cursor == 0
+    assert face.state.instance_coordinate == machine.instance_coordinate
+    assert face.state.steps is machine.steps
+
+
+def test_nonhalting_guard_twin_executes_only_selected_branch() -> None:
+    steps = _steps(
+        "def manager():\n"
+        "    if True:\n"
+        "        yield 1\n"
+        "    else:\n"
+        "        raise RuntimeError('unselected')\n"
+    )
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:h:twin",
+        frame_coordinate="frame:h:twin",
+        binding_state=(),
+        steps=steps,
+    )
+    selected = machine.resume()
+    assert isinstance(selected, YieldEffect)
+    assert selected.value.value == 1
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +397,96 @@ def test_try_finally_source_order_body_then_finally_then_return() -> None:
     assert "YieldStepV1" in kinds
     assert "FinallyStepV1" in kinds
     assert kinds.index("YieldStepV1") < kinds.index("FinallyStepV1")
+
+
+def test_try_finally_fallthrough_places_cleanup_on_the_outgoing_face() -> None:
+    steps = _steps(
+        "def manager():\n"
+        "    try:\n"
+        "        setup()\n"
+        "    finally:\n"
+        "        cleanup()\n"
+        "    yield 1\n"
+    )
+    kinds = [type(step).__name__ for step in steps]
+    assert kinds[:3] == ["TermStepV1", "FinallyStepV1", "YieldStepV1"]
+
+
+def test_try_finally_return_places_cleanup_before_the_return_face() -> None:
+    steps = _steps(
+        "def manager():\n"
+        "    try:\n"
+        "        return 7\n"
+        "    finally:\n"
+        "        cleanup()\n"
+        "    yield 1\n"
+    )
+    kinds = [type(step).__name__ for step in steps]
+    assert kinds[:2] == ["FinallyStepV1", "ReturnStepV1"]
+
+
+def test_try_finally_halt_places_cleanup_before_the_raise_face() -> None:
+    steps = _steps(
+        "def manager():\n"
+        "    try:\n"
+        "        raise ValueError('body')\n"
+        "    finally:\n"
+        "        cleanup()\n"
+        "    yield 1\n"
+    )
+    kinds = [type(step).__name__ for step in steps]
+    assert kinds[:2] == ["FinallyStepV1", "RaiseStepV1"]
+
+
+def test_return_face_runs_cleanup_and_preserves_return_when_cleanup_falls_through() -> None:
+    steps = _steps(
+        "def manager():\n"
+        "    try:\n"
+        "        return 7\n"
+        "    finally:\n"
+        "        cleanup()\n"
+        "    yield 1\n"
+        "def cleanup():\n"
+        "    pass\n"
+    )
+    outcome = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:return-finally",
+        frame_coordinate="frame:return-finally",
+        binding_state=(),
+        steps=steps,
+    ).resume()
+    assert type(outcome).__name__ == "GeneratorTerminationV1"
+    assert outcome.return_value.value == 7
+
+
+@pytest.mark.parametrize(
+    ("body", "incoming"),
+    (("return 7", "return"), ("raise ValueError('body')", "halt")),
+)
+def test_terminating_cleanup_supersedes_return_and_halt_faces(
+    body: str, incoming: str
+) -> None:
+    steps = _steps(
+        "def manager():\n"
+        "    try:\n"
+        f"        {body}\n"
+        "    finally:\n"
+        "        cleanup()\n"
+        "    yield 1\n"
+        "def cleanup():\n"
+        "    raise RuntimeError('cleanup')\n"
+    )
+    outcome = GeneratorConstructionV1.allocate(
+        allocation_coordinate=f"call:cleanup-supersedes:{incoming}",
+        frame_coordinate=f"frame:cleanup-supersedes:{incoming}",
+        binding_state=(),
+        steps=steps,
+    ).resume()
+    assert isinstance(outcome, ExitSet)
+    halted = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    assert len(halted) == 1
+    assert halted[0].effect.exception_name == "RuntimeError"
+    assert halted[0].effect.occurrence.endswith(":8:4")
 
 
 def test_nested_if_inside_try_body_is_recursive() -> None:
@@ -340,6 +580,29 @@ def test_unnameable_finally_keeps_try_opaque_with_suspension() -> None:
         isinstance(s, OpaqueStepV1) and s.observed == "Try" and s.carries_suspension
         for s in steps
     )
+
+
+def test_cleanup_construction_invariant_failure_stays_loud() -> None:
+    function = _function(
+        "def manager():\n"
+        "    try:\n"
+        "        yield 1\n"
+        "    finally:\n"
+        "        for x in items:\n"
+        "            pass\n"
+    )
+    cleanup_for = next(node for node in function.walk() if node.kind == "For")
+    original = type(cleanup_for).sugar
+
+    def invariant_failure(self):
+        raise RuntimeError("cleanup constructor invariant")
+
+    type(cleanup_for).sugar = invariant_failure
+    try:
+        with pytest.raises(RuntimeError, match="cleanup constructor invariant"):
+            _steps_of(function)
+    finally:
+        type(cleanup_for).sugar = original
 
 
 def test_cleanup_call_is_term_step_when_bare_expr_before_yield() -> None:

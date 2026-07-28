@@ -838,13 +838,39 @@ class GeneratorConstructionV1:
 
         from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, partition
 
-        decided = self._decide_guard(step.guard)
+        from sugar_lift_py_tests.outcome import Complete, Halted, Incomplete
+
+        guard_outcome = self._guard_truth(step.guard)
+        if isinstance(guard_outcome, ExitSet):
+            if guard_outcome.exits and all(
+                isinstance(face, Halted) for face in guard_outcome.exits
+            ):
+                return ExitSet(
+                    tuple(
+                        Halted(
+                            face.guard,
+                            face.effect,
+                            self,
+                            face.faces,
+                            face.pending_contracts,
+                        )
+                        for face in guard_outcome.exits
+                    )
+                )
+            return self._gap(requested, "If guard has mixed completed/halted faces")
+        if isinstance(guard_outcome, Incomplete):
+            return ExitSet.halted(guard_outcome.effect, state=self)
+        if not isinstance(guard_outcome, Complete):
+            return self._gap(requested, "If carrying a suspension")
+
+        truth = guard_outcome.value
+        decided = self._decide_guard(truth)
         if decided is True:
             return self._spliced(step.then_steps)._transition(requested)
         if decided is False:
             return self._spliced(step.else_steps)._transition(requested)
 
-        guard_formula = self._guard_formula(step.guard)
+        guard_formula = self._guard_formula(truth)
         if guard_formula is None:
             return self._gap(requested, "If carrying a suspension")
 
@@ -916,7 +942,7 @@ class GeneratorConstructionV1:
         return base.with_temporal(temporal)
 
     def _guard_truth(self, guard: object):
-        """The guard's TRUTH as a floor value, or None if it cannot stand.
+        """The guard's typed truth outcome, or None if it cannot stand.
 
         A branch guard is not the operand -- it is the operand's truth, which
         is exactly what `FloorValue.truth` already states for every value that
@@ -929,7 +955,7 @@ class GeneratorConstructionV1:
         BindingCoordinateRefSugar resolves binder Floors at the exact
         coordinate CID (and only there).
         """
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -943,6 +969,10 @@ class GeneratorConstructionV1:
                 # Surface as undecided (None) so the branch stays a loud gap or
                 # partition path rather than inventing a default.
                 return None
+            if isinstance(outcome, Incomplete):
+                return outcome
+            if isinstance(outcome, ExitSet):
+                return outcome
             if not isinstance(outcome, Complete):
                 return None
             value = outcome.value
@@ -953,11 +983,11 @@ class GeneratorConstructionV1:
         # handlers cannot silence it. Do not catch BaseException here — that
         # would reclassify incomplete floors as undecided suspension gaps.
         outcome = truth(self.instance_coordinate)
-        if not isinstance(outcome, Complete):
-            return None
-        return outcome.value
+        if isinstance(outcome, (Complete, Incomplete)):
+            return outcome
+        return None
 
-    def _decide_guard(self, guard: object):
+    def _decide_guard(self, truth: object):
         """True/False when the guard's truth is ground, None when it is not."""
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -966,18 +996,16 @@ class GeneratorConstructionV1:
             TrueBoolLiteralSugar,
         )
 
-        truth = self._guard_truth(guard)
         if isinstance(truth, TrueBoolLiteralSugar):
             return True
         if isinstance(truth, FalseBoolLiteralSugar):
             return False
         return None
 
-    def _guard_formula(self, guard: object):
+    def _guard_formula(self, truth: object):
         """The guard's truth as a Formula, or None when it cannot stand."""
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
-        truth = self._guard_truth(guard)
         if isinstance(truth, PredicateValue):
             return truth.formula
         to_formula = getattr(truth, "to_formula", None)

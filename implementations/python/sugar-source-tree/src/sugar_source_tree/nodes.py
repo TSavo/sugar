@@ -83,6 +83,37 @@ _MISSING = object()
 
 
 @dataclass(frozen=True)
+class _GeneratorNamedStepV1:
+    step: object
+
+
+@dataclass(frozen=True)
+class _GeneratorTryFinallyStepsV1:
+    steps: tuple[object, ...]
+
+
+@dataclass(frozen=True)
+class _GeneratorTryFinallyExpansionV1:
+    statement: object
+    cleanup: "_GeneratorCleanupTermsV1 | _GeneratorCleanupAbsentV1"
+
+
+@dataclass(frozen=True)
+class _GeneratorStepAbsentV1:
+    pass
+
+
+@dataclass(frozen=True)
+class _GeneratorCleanupTermsV1:
+    terms: tuple[object, ...]
+
+
+@dataclass(frozen=True)
+class _GeneratorCleanupAbsentV1:
+    pass
+
+
+@dataclass(frozen=True)
 class _ReceiverFieldProjection:
     receiver_coordinate_cid: str
     selector: str
@@ -2510,6 +2541,9 @@ class FunctionDef(Statement):
 
         steps = []
 
+        absent_step = _GeneratorStepAbsentV1()
+        absent_cleanup = _GeneratorCleanupAbsentV1()
+
         def name_statement(statement):
             """One nameable step, or None when the vocabulary cannot perform it.
 
@@ -2523,17 +2557,23 @@ class FunctionDef(Statement):
             """
             if isinstance(statement, Expr) and isinstance(statement.value, Yield):
                 value = statement.value.value
-                return YieldStepV1(None if value is None else value.sugar())
+                return _GeneratorNamedStepV1(
+                    YieldStepV1(None if value is None else value.sugar())
+                )
             if isinstance(statement, Return):
-                return ReturnStepV1(
-                    None if statement.value is None else statement.value.sugar()
+                return _GeneratorNamedStepV1(
+                    ReturnStepV1(
+                        None if statement.value is None else statement.value.sugar()
+                    )
                 )
             if isinstance(statement, Raise) and not self._owns_yield((statement,)):
                 # Validation arms (``if bad: raise …``) and cleanup raises —
                 # RaiseSugar rides the step; transition halts with the effect.
-                return RaiseStepV1(
-                    statement.sugar(),
-                    statement.fragment.seal().cid,
+                return _GeneratorNamedStepV1(
+                    RaiseStepV1(
+                        statement.sugar(),
+                        statement.fragment.seal().cid,
+                    )
                 )
             if (
                 isinstance(statement, Expr)
@@ -2545,9 +2585,9 @@ class FunctionDef(Statement):
                 # binding and no suspension, so calling it opaque made the
                 # machine refuse at a statement that asks for nothing and name
                 # the WRONG blocker. It is stepped, not performed.
-                return InertStepV1(statement.kind)
+                return _GeneratorNamedStepV1(InertStepV1(statement.kind))
             if isinstance(statement, Pass) and not self._owns_yield((statement,)):
-                return InertStepV1(statement.kind)
+                return _GeneratorNamedStepV1(InertStepV1(statement.kind))
             if (
                 isinstance(statement, Expr)
                 and not self._owns_yield((statement,))
@@ -2557,20 +2597,22 @@ class FunctionDef(Statement):
                 # *value* as ConstructedTermSugar — never ExprStatementSugar.
                 value_sugar = statement.value.sugar()
                 if isinstance(value_sugar, ConstructedTermSugar):
-                    return TermStepV1(
-                        value_sugar, statement.fragment.seal().cid
+                    return _GeneratorNamedStepV1(
+                        TermStepV1(value_sugar, statement.fragment.seal().cid)
                     )
-                return None
+                return absent_step
             if (
                 isinstance(statement, Assign)
                 and not self._owns_yield((statement,))
                 and len(statement.targets) == 1
                 and isinstance(statement.targets[0], Name)
             ):
-                return AssignStepV1(
-                    statement.targets[0].id,
-                    statement.value.sugar(),
-                    statement.fragment.seal().cid,
+                return _GeneratorNamedStepV1(
+                    AssignStepV1(
+                        statement.targets[0].id,
+                        statement.value.sugar(),
+                        statement.fragment.seal().cid,
+                    )
                 )
             if (
                 isinstance(statement, AnnAssign)
@@ -2578,10 +2620,12 @@ class FunctionDef(Statement):
                 and isinstance(statement.target, Name)
                 and statement.value is not None
             ):
-                return AssignStepV1(
-                    statement.target.id,
-                    statement.value.sugar(),
-                    statement.fragment.seal().cid,
+                return _GeneratorNamedStepV1(
+                    AssignStepV1(
+                        statement.target.id,
+                        statement.value.sugar(),
+                        statement.fragment.seal().cid,
+                    )
                 )
             if isinstance(statement, If):
                 # Suspension-owning and pre-yield guarded If: both sides fully
@@ -2590,12 +2634,14 @@ class FunctionDef(Statement):
                 then_body = branch_steps(statement.body)
                 else_body = branch_steps(statement.orelse)
                 if then_body is None or else_body is None:
-                    return None
-                return IfStepV1(
-                    statement.test.sugar(),
-                    then_body,
-                    else_body,
-                    statement.fragment.seal().cid,
+                    return absent_step
+                return _GeneratorNamedStepV1(
+                    IfStepV1(
+                        statement.test.sugar(),
+                        then_body,
+                        else_body,
+                        statement.fragment.seal().cid,
+                    )
                 )
             if (
                 isinstance(statement, Try)
@@ -2609,12 +2655,17 @@ class FunctionDef(Statement):
                 # single Opaque Try when only a peer loop is unnameable.
                 body_steps = branch_steps(statement.body)
                 cleanup = cleanup_terms(statement.finalbody)
-                if body_steps is not None and cleanup is not None:
-                    return ("try-finally", body_steps, FinallyStepV1(cleanup))
+                if body_steps is not None and isinstance(
+                    cleanup, _GeneratorCleanupTermsV1
+                ):
+                    cleanup_step = FinallyStepV1(cleanup.terms)
+                    return _GeneratorTryFinallyStepsV1(
+                        compose_finally(body_steps, cleanup_step)
+                    )
                 if body_steps is None and self._owns_yield(statement.body):
-                    return ("try-finally-expand", statement, cleanup)
-                return None
-            return None
+                    return _GeneratorTryFinallyExpansionV1(statement, cleanup)
+                return absent_step
+            return absent_step
 
         def branch_steps(body):
             """Steps for one branch/suite, or None if any shape is unnameable.
@@ -2624,16 +2675,50 @@ class FunctionDef(Statement):
             """
             collected = []
             for nested in body:
-                step = name_statement(nested)
-                if step is None:
+                produced = name_statement(nested)
+                if isinstance(produced, _GeneratorStepAbsentV1):
                     return None
-                if isinstance(step, tuple) and step and step[0] == "try-finally":
-                    _, body_steps, finally_step = step
-                    collected.extend(body_steps)
-                    collected.append(finally_step)
+                if isinstance(produced, _GeneratorTryFinallyStepsV1):
+                    collected.extend(produced.steps)
                     continue
-                collected.append(step)
+                if isinstance(produced, _GeneratorNamedStepV1):
+                    collected.append(produced.step)
+                    continue
+                return None
             return tuple(collected)
+
+        def compose_finally(body_steps, cleanup_step):
+            """Seat cleanup before every terminal face and on fall-through."""
+            composed = []
+            for step in body_steps:
+                if isinstance(step, IfStepV1):
+                    step = IfStepV1(
+                        step.guard,
+                        compose_finally_exits(step.then_steps, cleanup_step),
+                        compose_finally_exits(step.else_steps, cleanup_step),
+                        step.fragment_cid,
+                    )
+                if isinstance(step, (ReturnStepV1, RaiseStepV1)):
+                    composed.append(cleanup_step)
+                composed.append(step)
+            composed.append(cleanup_step)
+            return tuple(composed)
+
+        def compose_finally_exits(branch, cleanup_step):
+            """Compose only exits in a branch; branch fall-through stays in try."""
+            composed = []
+            for step in branch:
+                if isinstance(step, IfStepV1):
+                    step = IfStepV1(
+                        step.guard,
+                        compose_finally_exits(step.then_steps, cleanup_step),
+                        compose_finally_exits(step.else_steps, cleanup_step),
+                        step.fragment_cid,
+                    )
+                if isinstance(step, (ReturnStepV1, RaiseStepV1)):
+                    composed.append(cleanup_step)
+                composed.append(step)
+            return tuple(composed)
 
         def cleanup_terms(finalbody):
             """Finally payloads: ConstructedTermSugar only (no ExprStatementSugar)."""
@@ -2646,33 +2731,30 @@ class FunctionDef(Statement):
                     if isinstance(value_sugar, ConstructedTermSugar):
                         terms.append(value_sugar)
                         continue
-                    return None
+                    return absent_cleanup
                 if isinstance(item, Raise) and not self._owns_yield((item,)):
                     # Raise is a step, not a Finally term; refuse pure-term suite.
-                    return None
+                    return absent_cleanup
                 try:
                     sugar = item.sugar()
-                except Exception:
-                    return None
+                except SugarNotWritten:
+                    return absent_cleanup
                 if isinstance(sugar, ConstructedTermSugar):
                     terms.append(sugar)
                     continue
-                return None
-            return tuple(terms)
+                return absent_cleanup
+            return _GeneratorCleanupTermsV1(tuple(terms))
 
         def append_statement(statement):
-            named = name_statement(statement)
-            if isinstance(named, tuple) and named and named[0] == "try-finally":
-                _, body_steps, finally_step = named
-                steps.extend(body_steps)
-                steps.append(finally_step)
+            produced = name_statement(statement)
+            if isinstance(produced, _GeneratorTryFinallyStepsV1):
+                steps.extend(produced.steps)
                 return
-            if isinstance(named, tuple) and named and named[0] == "try-finally-expand":
-                _, try_stmt, cleanup = named
-                for nested in try_stmt.body:
+            if isinstance(produced, _GeneratorTryFinallyExpansionV1):
+                for nested in produced.statement.body:
                     append_statement(nested)
-                if cleanup is not None:
-                    steps.append(FinallyStepV1(cleanup))
+                if isinstance(produced.cleanup, _GeneratorCleanupTermsV1):
+                    steps.append(FinallyStepV1(produced.cleanup.terms))
                 else:
                     steps.append(
                         OpaqueStepV1(
@@ -2681,8 +2763,8 @@ class FunctionDef(Statement):
                         )
                     )
                 return
-            if named is not None:
-                steps.append(named)
+            if isinstance(produced, _GeneratorNamedStepV1):
+                steps.append(produced.step)
                 return
             if isinstance(statement, If):
                 # Branch held an unnameable shape. Keep the whole If opaque,
