@@ -348,3 +348,61 @@ def test_ifexp_condition_halt_bypasses_both_operands_with_effect_identity() -> N
 
     assert isinstance(outcome, Incomplete)
     assert outcome.effect is effect
+
+
+@pytest.mark.parametrize(
+    ("condition_is_true", "selected_index"),
+    ((True, 0), (False, 1)),
+    ids=("body-halts", "orelse-halts-arm-swap"),
+)
+def test_ifexp_selected_halt_preserves_its_occurrence_and_skips_peer(
+    condition_is_true: bool, selected_index: int
+) -> None:
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    condition_type = (
+        TrueBoolLiteralSugar if condition_is_true else FalseBoolLiteralSugar
+    )
+    selected_effect = ExpectationNotMetEffect(
+        "selected-ifexp-arm", f"arm-{selected_index}-occurrence"
+    )
+
+    class SelectedHalt(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            return Incomplete(selected_effect)
+
+        def to_term(self, *, owner: str):
+            raise AssertionError("selected halting arm was projected as a value")
+
+    class Skipped(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            raise AssertionError("unchosen IfExp arm emitted an occurrence")
+
+        def to_term(self, *, owner: str):
+            raise AssertionError("unchosen IfExp arm was projected")
+
+    arms = (
+        (SelectedHalt(), Skipped())
+        if selected_index == 0
+        else (Skipped(), SelectedHalt())
+    )
+    outcome = IfExpSugar(
+        condition_type("ifexp-condition"), arms[0], arms[1], "ifexp-site"
+    ).desugar(None)
+
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect is selected_effect
+    assert outcome.effect.site == f"arm-{selected_index}-occurrence"
