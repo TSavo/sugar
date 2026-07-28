@@ -428,6 +428,7 @@ class LoopConstructionV1:
     loop_construction_cid: str
     _graph: dict[str, Any]
     iterable_sugar: object | None = field(default=None, compare=False, repr=False)
+    loop_runtime: object | None = field(default=None, compare=False, repr=False)
 
     def wire_graph(self) -> dict[str, Any]:
         return deepcopy(self._graph)
