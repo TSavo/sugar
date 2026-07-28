@@ -30,6 +30,10 @@ class MethodCallSugar(Sugar):
     site: object = dataclass_field(compare=False)
     keywords: tuple = ()  # (name, sugar) pairs, in source order
     source_call_frame: object = dataclass_field(default=None, compare=False)
+    # Exception construction only: when Raise authenticates an Attribute
+    # exception-class path, the resulting CallSiteValue carries that identity.
+    exception_type_coordinate: object = dataclass_field(default=None, compare=False)
+    exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -138,5 +142,7 @@ class MethodCallSugar(Sugar):
                 body=None,
                 site=self.site,
                 runtime_dispatch_receiver=receiver,
+                exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
             )
         )

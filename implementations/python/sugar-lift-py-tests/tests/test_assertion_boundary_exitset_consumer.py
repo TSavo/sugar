@@ -98,8 +98,17 @@ class _ProducerExpression:
         return ExitSet((self.authenticated_exit,))
 
 
-@pytest.mark.parametrize("producer", ["BinOp", "Subscript", "Compare"])
-def test_matching_noncall_producer_halt_is_consumed(producer):
+@pytest.mark.parametrize(
+    "producer",
+    ["BinOp", "Subscript", "Compare", "Attribute", "UnaryOp", "BoolOp", "Call"],
+)
+def test_matching_arbitrary_body_producer_halt_is_consumed(producer):
+    """The boundary consumes ExitSet effects from any body producer shape.
+
+    Never by searching for a Call. BinOp / Subscript / Compare / Attribute /
+    UnaryOp / BoolOp / Call all publish the same authenticated RaiseEffect
+    edge; the consumer is shape-blind.
+    """
     routed = _route(ExitSet((_raise("ValueError", producer),)))
 
     assert [(type(face).__name__, _marker(face)) for face in routed.exits] == [

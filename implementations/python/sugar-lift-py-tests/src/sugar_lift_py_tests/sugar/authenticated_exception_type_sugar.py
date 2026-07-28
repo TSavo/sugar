@@ -28,9 +28,20 @@ class AuthenticatedExceptionTypeSugar(Sugar):
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
             AuthenticatedExceptionTypeValue,
         )
-
         from sugar_lift_py_tests.outcome import Complete
 
+        # When construction already projected the exception-class floor (import
+        # Attribute paths, source ClassDef graphs), do not re-enter Attribute
+        # or other receivers that only exist to name the same identity.
+        if self.class_value is not None:
+            return Complete(
+                AuthenticatedExceptionTypeValue(
+                    self.class_value,
+                    self.identity,
+                    self.mro,
+                    self.class_value,
+                )
+            )
         return self.value.desugar(ctx).and_then(
             lambda value: Complete(
                 AuthenticatedExceptionTypeValue(

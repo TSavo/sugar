@@ -2579,3 +2579,255 @@ def test_as_binding_requires_a_contract_that_declares_one(tmp_path):
 
     with pytest.raises(UnsupportedWithBindingTarget):
         next(node for node in tree.nodes() if node.kind == "With").sugar()
+
+
+# --- computed exception class paths (Attribute / import identity) ------------
+#
+# ``raises(pkg.Error)`` is an Attribute path, not a bare Name. Construction
+# projects the import identity without re-entering AttributeSugar on a
+# SymbolicValue module receiver. A factory() call stays typed opaque.
+
+
+_ATTRIBUTE_EXCEPTION_BOUNDARY = (
+    "class Boundary:\n"
+    "    def __init__(self, expected, match=None):\n"
+    "        self.expected = expected\n"
+    "        self.match = match\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "    def __exit__(self, effect_type, effect, traceback):\n"
+    "        if effect_type is None:\n"
+    "            raise RuntimeError()\n"
+    "        return effect_type is self.expected\n\n"
+    "def boundary(expected, match=None):\n"
+    "    return Boundary(expected, match)\n\n"
+    "class MyError(Exception):\n"
+    "    pass\n"
+)
+
+# Exit must mention the message formal for match= to derive; keep it separate
+# so the type-only Attribute path stays a single-predicate derivation.
+_ATTRIBUTE_EXCEPTION_BOUNDARY_WITH_MATCH = (
+    "class Boundary:\n"
+    "    def __init__(self, expected, match=None):\n"
+    "        self.expected = expected\n"
+    "        self.match = match\n"
+    "    def __enter__(self):\n"
+    "        return self\n"
+    "    def __exit__(self, effect_type, effect, traceback):\n"
+    "        if effect_type is None:\n"
+    "            raise RuntimeError()\n"
+    "        return (effect_type is self.expected) and (\n"
+    "            effect.message == self.match\n"
+    "        )\n\n"
+    "def boundary(expected, match=None):\n"
+    "    return Boundary(expected, match)\n\n"
+    "class MyError(Exception):\n"
+    "    pass\n"
+)
+
+
+def _attribute_exception_tree(
+    tmp_path,
+    *,
+    manager: str,
+    body: str,
+    as_clause: str = "",
+    implementation: str = _ATTRIBUTE_EXCEPTION_BOUNDARY,
+):
+    tmp_path = Path(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    distribution = _distribution(tmp_path, implementation, exported="boundary")
+    (tmp_path / "arbitrary" / "__init__.py").write_text(
+        "from arbitrary.manager import boundary, MyError\n",
+        encoding="utf-8",
+    )
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        f"    with {manager}{as_clause}:\n"
+        f"{textwrap.indent(textwrap.dedent(body), '        ')}\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    return tree, context
+
+
+def test_attribute_exception_class_path_constructs_effect_boundary(tmp_path):
+    """Truthful twin: ``boundary(arbitrary.MyError)`` is EffectBoundary, not gap."""
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    tree, context = _attribute_exception_tree(
+        tmp_path,
+        manager="arbitrary.boundary(arbitrary.MyError)",
+        body='raise arbitrary.MyError("boom")',
+    )
+    assert len(context.source_derived_contract_refs) == 1
+    sugar = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(sugar, WithEffectBoundarySugar)
+
+
+def test_attribute_exception_class_path_consumes_matching_raise(tmp_path):
+    """Attribute expected type and Attribute raise share one import identity."""
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    tree, _context = _attribute_exception_tree(
+        tmp_path,
+        manager="arbitrary.boundary(arbitrary.MyError)",
+        body='raise arbitrary.MyError("boom")',
+    )
+    exits = outcome_to_exitset(
+        next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
+    )
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+
+
+def test_attribute_exception_class_path_restores_wrong_raise(tmp_path):
+    """Lying twin: wrong type is restored, never borrowed from sibling identity."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+    tree, _context = _attribute_exception_tree(
+        tmp_path,
+        manager="arbitrary.boundary(arbitrary.MyError)",
+        body='raise ValueError("boom")',
+    )
+    exits = outcome_to_exitset(
+        next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
+    )
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+    assert face.effect.exception_name == "ValueError"
+
+
+def test_attribute_exception_class_with_match_consumes_and_misses(tmp_path):
+    """Attribute class path + match= predicate: hit completes, miss restores.
+
+    Regex empty-pattern / alternation semantics are pinned at the ExitSet
+    consumer. Here the manager derives an exact message formal so the
+    Attribute class path is exercised end-to-end with a message obligation.
+    """
+    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+
+    tree, _context = _attribute_exception_tree(
+        tmp_path / "match-hit",
+        manager='arbitrary.boundary(arbitrary.MyError, match="boom")',
+        body='raise arbitrary.MyError("boom")',
+        implementation=_ATTRIBUTE_EXCEPTION_BOUNDARY_WITH_MATCH,
+    )
+    exits = outcome_to_exitset(
+        next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
+    )
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+
+    tree, _context = _attribute_exception_tree(
+        tmp_path / "match-miss",
+        manager='arbitrary.boundary(arbitrary.MyError, match="boom")',
+        body='raise arbitrary.MyError("other")',
+        implementation=_ATTRIBUTE_EXCEPTION_BOUNDARY_WITH_MATCH,
+    )
+    exits = outcome_to_exitset(
+        next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
+    )
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Halted)
+
+
+def test_attribute_exception_class_as_binding_projects_consumed_effect(tmp_path):
+    """``as info`` on an Attribute class path authenticates the observation slot."""
+    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+
+    tree, _context = _attribute_exception_tree(
+        tmp_path,
+        manager="arbitrary.boundary(arbitrary.MyError)",
+        body='raise arbitrary.MyError("boom")',
+        as_clause=" as info",
+    )
+    exits = outcome_to_exitset(
+        next(node for node in tree.nodes() if node.kind == "With").sugar().desugar()
+    )
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Completed)
+    assert len(_effect_binding_facts(face)) == 3
+
+
+def test_computed_exception_class_factory_stays_typed_opaque(tmp_path):
+    """Lying twin: ``boundary(factory())`` cannot borrow Attribute-path proof."""
+    from sugar_source_tree.panic import WithConstructionGap, WithConstructionGapKind
+
+    distribution = _distribution(
+        tmp_path,
+        _ATTRIBUTE_EXCEPTION_BOUNDARY + "def factory():\n    return MyError\n",
+        exported="boundary",
+    )
+    (tmp_path / "arbitrary" / "__init__.py").write_text(
+        "from arbitrary.manager import boundary, MyError, factory\n",
+        encoding="utf-8",
+    )
+    consumer = (
+        "import arbitrary\n"
+        "def use_boundary():\n"
+        "    with arbitrary.boundary(arbitrary.factory()):\n"
+        "        raise arbitrary.MyError('boom')\n"
+    )
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
+        construction_context=context,
+    )
+    populate_source_derived_resource_refs(
+        tree,
+        root=tmp_path,
+        path=path,
+        distribution_index={"arbitrary": distribution},
+    )
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    # Either preconstruction refuses the call actual, or With stays force-floor /
+    # resolution-gap. Never silently constructs EffectBoundary without identity.
+    try:
+        sugar = with_node.sugar()
+    except Exception as caught:
+        assert type(caught).__name__ in {
+            "WithConstructionGap",
+            "ContextManagerResolutionConstructionGap",
+            "SugarNotWritten",
+        }, type(caught).__name__
+        return
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    # If sugar constructs, desugar must not consume via a fabricated identity.
+    if isinstance(sugar, WithEffectBoundarySugar):
+        from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+
+        exits = outcome_to_exitset(sugar.desugar())
+        # Without authenticated expected type, match is retained or restored —
+        # never a sole Completed face claiming a decided identity match.
+        assert not (
+            len(exits.exits) == 1 and type(exits.exits[0]).__name__ == "Completed"
+        )
