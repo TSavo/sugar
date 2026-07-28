@@ -43,6 +43,13 @@ class DictValue(FloorValue):
 
         return Complete(TermValue(len(self.entries)))
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Project insertion-ordered authenticated keys for slice assignment."""
+        del operation, ctx
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(tuple(key for key, _value in self.entries))
+
     def contains(self, item, site):
         # A guarded needle is not one needle: distribute into its faces and
         # rejoin under the same guard before this receiver's own law runs.

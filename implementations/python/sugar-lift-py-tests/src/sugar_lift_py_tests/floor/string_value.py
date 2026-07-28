@@ -138,6 +138,13 @@ class StringValue(GuardStableValue):
 
         return Complete(TermValue(len(self.value)))
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Project the string's authenticated characters for slice assignment."""
+        del operation, ctx
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(tuple(StringValue(character) for character in self.value))
+
     def attribute(self, name, site):
         # Bound methods and fields on a constructed string (``"{:.2f}".format``,
         # ``"%.5f".__mod__``, …) stay the py.getattr coordinate — same EUF

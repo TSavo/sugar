@@ -23,7 +23,16 @@ import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import ListValue, SliceValue, TermValue, TupleValue
+from sugar_lift_py_tests.floor import (
+    BytesValue,
+    DictValue,
+    ListValue,
+    SetValue,
+    SliceValue,
+    StringValue,
+    TermValue,
+    TupleValue,
+)
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
 from sugar_lift_py_tests.sugar.slice_sugar import SliceSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
@@ -284,6 +293,98 @@ def test_tuple_rhs_is_accepted_for_slice_store() -> None:
         site,
     )
     assert out.value == ListValue((TermValue(8), TermValue(8), TermValue(2)))
+
+
+def test_string_rhs_projects_authenticated_characters() -> None:
+    site = _site()
+    out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, None), StringValue("ab"), site
+    )
+    assert out == Complete(ListValue((StringValue("a"), StringValue("b"))))
+
+
+def test_string_rhs_is_not_one_unsplit_string_or_typeerror() -> None:
+    site = _site()
+    out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, None), StringValue("ab"), site
+    )
+    assert out != Complete(ListValue((StringValue("ab"),)))
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    assert not (isinstance(out, Complete) and isinstance(out.value, RaiseValue))
+
+
+def test_bytes_rhs_projects_authenticated_integer_bytes() -> None:
+    site = _site()
+    out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, None), BytesValue(b"AB"), site
+    )
+    assert out == Complete(ListValue((TermValue(65), TermValue(66))))
+
+
+def test_bytes_rhs_is_not_bytes_singletons_or_typeerror() -> None:
+    site = _site()
+    out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, None), BytesValue(b"AB"), site
+    )
+    assert out != Complete(ListValue((BytesValue(b"A"), BytesValue(b"B"))))
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    assert not (isinstance(out, Complete) and isinstance(out.value, RaiseValue))
+
+
+def test_dict_rhs_projects_authenticated_insertion_order_keys() -> None:
+    site = _site()
+    rhs = DictValue(
+        ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
+    )
+    out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, None), rhs, site
+    )
+    assert out == Complete(ListValue((StringValue("a"), StringValue("b"))))
+
+
+def test_dict_rhs_is_not_values_or_typeerror() -> None:
+    site = _site()
+    rhs = DictValue(
+        ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
+    )
+    out = ListValue((TermValue(0),)).setitem(
+        SliceValue(None, None, None), rhs, site
+    )
+    assert out != Complete(ListValue((TermValue(1), TermValue(2))))
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    assert not (isinstance(out, Complete) and isinstance(out.value, RaiseValue))
+
+
+def test_set_rhs_keeps_unowned_runtime_iteration_order_loud() -> None:
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    site = _site()
+    with pytest.raises(ConstructionPanic) as raised:
+        ListValue((TermValue(0),)).setitem(
+            SliceValue(None, None, None),
+            SetValue(
+                (StringValue("constructed-first"), StringValue("constructed-second"))
+            ),
+            site,
+        )
+    assert raised.value.info.owner == "SetValue.slice_assign_iterable_with"
+    assert "iteration order" in raised.value.info.observed
+    assert "producer-owned" in raised.value.info.fix
+
+
+def test_set_rhs_does_not_fabricate_construction_order_or_typeerror() -> None:
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    site = _site()
+    constructed = (StringValue("constructed-first"), StringValue("constructed-second"))
+    with pytest.raises(ConstructionPanic):
+        fabricated = ListValue((TermValue(0),)).setitem(
+            SliceValue(None, None, None), SetValue(constructed), site
+        )
+        assert fabricated == Complete(ListValue(constructed))
 
 
 # ---------------------------------------------------------------------------

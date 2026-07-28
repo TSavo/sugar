@@ -54,6 +54,14 @@ class BytesValue(FloorValue):
             )
         return super().equals(other, site)
 
+    def slice_assign_iterable_with(self, operation, ctx):
+        """Project the bytes object's authenticated integer members."""
+        del operation, ctx
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(tuple(TermValue(byte) for byte in self.value))
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
