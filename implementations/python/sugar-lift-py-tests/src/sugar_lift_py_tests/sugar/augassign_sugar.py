@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.caller_parameter_contract import (
-    InplaceThenBinaryProjector,
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
 )
@@ -33,9 +33,6 @@ class AugAssignSugar(Sugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Complete
 
-        # Evaluate the read-op child for its real effects, then discard its
-        # ordinary value: the lexical store is already carried by BindingEntryV1.
-        # Incomplete/Halted faces bypass this continuation and remain loud.
         return self.operation.desugar(ctx).and_then(
             lambda _value: Complete(BlockValue((), can_fall_through=True))
         )
@@ -44,19 +41,21 @@ class AugAssignSugar(Sugar):
 def project_augmented(
     left,
     right,
-    operation: InplaceThenBinaryProjector,
+    *,
+    operator: str,
+    projector: Callable,
     site,
 ) -> Outcome:
     """Mint formal i* demand, or project ground through the explicit projector.
 
-    Formal operands always mint ``operation.operator`` (e.g. ``iadd``).
-    Projector absence is an honorable red — never mint ordinary binary as a
-    stand-in.  Ground projection is ``operation(left, right, site)``.
+    ``operator`` is the carrier name from ``BinaryOperator.inplace_operator``
+    (e.g. ``iadd``).  ``projector`` is the explicit ``project_iadd`` function.
+    Projector absence is an honorable red — never mint ordinary binary.
     """
     left_coord = getattr(left, "formal_coordinate", None)
     right_coord = getattr(right, "formal_coordinate", None)
     if left_coord is not None or right_coord is not None:
-        if operation.operator not in _NATIVE_OPERATION_PROJECTORS:
+        if operator not in _NATIVE_OPERATION_PROJECTORS:
             from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
             from sugar_lift_py_tests.gap.panic import construction_panic
 
@@ -66,16 +65,12 @@ def project_augmented(
                     blame=str(site),
                     observed=(
                         f"formal AugAssign requires enrolled projector "
-                        f"operator={operation.operator!r}; projector is ABSENT"
+                        f"operator={operator!r}; projector is ABSENT"
                     ),
-                    requested=(
-                        f"InplaceThenBinaryProjector enrolled as "
-                        f"operator={operation.operator!r}"
-                    ),
+                    requested=f"explicit project_* enrolled as operator={operator!r}",
                     fix=(
-                        f"enroll {operation.operator!r} on "
-                        "_NATIVE_OPERATION_PROJECTORS; do not mint ordinary "
-                        "binary as a silent stand-in for missing i*"
+                        f"enroll {operator!r} on _NATIVE_OPERATION_PROJECTORS; "
+                        "do not mint ordinary binary as a silent stand-in"
                     ),
                     gap_kind=GapKind.FLOOR,
                     gap_locus=GapLocus.CONSTRUCTION,
@@ -83,38 +78,28 @@ def project_augmented(
             )
         return NativeOperationExitCarrierV1.mint(
             site=site,
-            operator=operation.operator,
+            operator=operator,
             operands=(left, right),
             coordinates=(left_coord, right_coord),
         )
-    return operation(left, right, site)
+    return projector(left, right, site)
 
 
 @dataclass(frozen=True)
 class SubscriptAugAssignSugar(Sugar):
     """``receiver[index] OP= rhs`` — get once, operate, setitem last.
 
-    Python evaluation law (load-bearing):
-
-      1. Evaluate ``receiver`` once
-      2. Evaluate ``index`` once
-      3. ``current = receiver.subscript(index)``  (getitem) — **before** RHS
-      4. Evaluate ``rhs``
-      5. ``result = current OP rhs`` via explicit ``InplaceThenBinaryProjector``
-      6. ``receiver.setitem(index, result)`` last
-
-    Composition uses the outcome/carrier ``and_then`` law directly
-    (``Complete`` short-circuits RaiseValue; ``Incomplete``/carriers/ExitSet
-    compose themselves).  No bespoke control-kind ladder.
-
-    Read, arithmetic, and write use **distinct** occurrence sites
-    (``get_site``, ``op_site`` = operator-token interval, ``set_site``).
+    Composition uses the outcome/carrier ``and_then`` law directly.
+    ``operation`` is an explicit ``project_*`` function; ``operator`` is the
+    carrier name from the source BinaryOperator class.
+    ``op_site`` is the structural operator gap minted before substitute.
     """
 
     receiver: Sugar
     index: Sugar
     rhs: Sugar
-    operation: InplaceThenBinaryProjector
+    operator: str
+    operation: Callable
     get_site: object = dataclass_field(compare=False)
     op_site: object = dataclass_field(compare=False)
     set_site: object = dataclass_field(compare=False)
@@ -125,14 +110,16 @@ class SubscriptAugAssignSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Receiver and index once each — closed over for get and setitem.
-        # Outcome composition law owns control: no isinstance ladder on faces.
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
                 lambda index: receiver.subscript(index, self.get_site).and_then(
                     lambda current: self.rhs.desugar(ctx).and_then(
                         lambda right: project_augmented(
-                            current, right, self.operation, self.op_site
+                            current,
+                            right,
+                            operator=self.operator,
+                            projector=self.operation,
+                            site=self.op_site,
                         ).and_then(
                             lambda result: self._store(receiver, index, result)
                         )
@@ -142,13 +129,6 @@ class SubscriptAugAssignSugar(Sugar):
         )
 
     def _store(self, receiver, index, result) -> Outcome:
-        """setitem last — formal operands stay undischarged carriers.
-
-        Matches ``SubscriptStoreEffectSugar``: any formal among receiver /
-        index / result mints the n-ary ``setitem`` demand so caller actuals
-        can discharge it.  Decided ground receivers call Floor ``setitem``
-        directly.  No receiver-type spelling arms.
-        """
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None)
             for operand in (receiver, index, result)

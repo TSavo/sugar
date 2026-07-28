@@ -4276,10 +4276,20 @@ class AugAssign(Statement):
 
         Subscript targets are runtime stores — receivers and indices are load
         expressions and must substitute so formals become ``FormalRefSugar``
-        (same door as Assign).  Attribute targets stay value-only here until
-        Attribute AugAssign production owns that substitute tooth.
+        (same door as Assign).  The operator occurrence is minted from the
+        **pre-substitute** target/value structure and carried as
+        ``operator_site`` so formal declaration spans cannot steal it.
+        Attribute targets stay value-only until Attribute AugAssign production.
         """
-        from .shadow import rewrite
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of, rewrite
+
+        # Structural operator site before any rewrite (Compare-style gap).
+        pre_sub_operator_site = None
+        if isinstance(self.target, Subscript):
+            pre_sub_operator_site = getattr(self, "operator_site", None)
+            if pre_sub_operator_site is None:
+                pre_sub_operator_site = self._mint_operator_site_from_structure()
 
         new_value, value_changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if value_changed else {}
@@ -4287,13 +4297,23 @@ class AugAssign(Statement):
             new_target = _substituted_store_target(self, self.target, scope)
             if new_target is not None:
                 changes["target"] = new_target
-            if not changes:
-                return self
-            return rewrite(self, **changes)
+            rewritten = self if not changes else rewrite(self, **changes)
+            # Always carry pre-sub operator_site through substitute.
+            desc = rewritten.ref.describe()
+            return materialize(
+                self.unit,
+                ShadowNode(
+                    desc.kind,
+                    desc.raw_span or rewritten.span,
+                    (
+                        *desc.slots,
+                        ("operator_site", Leaf(pre_sub_operator_site)),
+                    ),
+                ),
+                self.reporter,
+            )
         rewritten = self if not changes else rewrite(self, **changes)
         if not isinstance(rewritten.target, Name):
-            # Attribute (and any other non-Name non-Subscript) keeps value-only
-            # rewrite until its production path enrolls store-target substitute.
             return rewritten
         name = rewritten.target.id
         old_state = unwrap_binding_state(scope.get(name, rewritten.target))
@@ -4302,9 +4322,6 @@ class AugAssign(Statement):
             make_read=rewritten.target._make_binding_read,
         )
         operation = rewritten._make_binop(old_read, rewritten.op, rewritten.value)
-        from .backend import Child, materialize
-        from .shadow import ShadowNode, _handle_of
-
         desc = rewritten.ref.describe()
         return materialize(
             self.unit,
@@ -4316,56 +4333,49 @@ class AugAssign(Statement):
             self.reporter,
         )
 
-    def _augassign_operator_site(self):
-        """Source-authenticated operator-token interval (``+=``, ``-=``, …).
+    def _mint_operator_site_from_structure(self):
+        """Authenticated operator occurrence: gap between target and RHS spans.
 
-        The arithmetic occurrence is the operator token itself — not the RHS
-        fragment and not the whole statement.  After formal substitute the RHS
-        node may carry a declaration span, so we locate the token in source
-        after the target span (when that span still sits inside the statement)
-        using the operator's surface spelling plus ``=``.
+        Same law as ``Compare._comparison_leg_site``: the operator token lives
+        in the non-empty source interval between adjacent structural children.
+        ``self.op`` testifies which operator occupies the gap — no text scan
+        that could match a same-spelling string literal in the target
+        (``obj['+='] += rhs``).
         """
         from sugar_source_tree.panic import SugarNotWritten
         from .fragment import SourceFragment
         from .spans import Span
 
-        aug_token = f"{self.op.symbol}="
-        source = self.unit.source
         target = self.target
+        value = self.value
 
-        def reject(observed):
+        def reject():
             raise SugarNotWritten(
                 blame=self.fragment,
-                owner="AugAssign._augassign_operator_site",
-                observed=observed,
+                owner="AugAssign._mint_operator_site_from_structure",
+                observed=(target.span, value.span, self.span),
                 requested=(
-                    f"the source-authenticated operator-token interval for "
-                    f"{aug_token!r} in this AugAssign"
+                    "the source-authenticated operator interval between the "
+                    "AugAssign target and its RHS (pre-substitute structure)"
                 ),
                 fix=(
-                    "preserve the AugAssign statement span and target span so "
-                    f"{aug_token!r} is findable in source after the target"
+                    "mint operator_site from target/value spans before "
+                    "substitute and carry it forward; never text-scan for +="
                 ),
             )
 
-        if (
-            self.span.start <= target.span.start
-            and target.span.end <= self.span.end
+        if not (
+            self.span.start <= target.span.start < target.span.end
+            and target.span.end < value.span.start
+            and value.span.end <= self.span.end
         ):
-            search_start = target.span.end
-        else:
-            search_start = self.span.start
-        region = source[search_start : self.span.end]
-        idx = region.find(aug_token)
-        if idx < 0:
-            reject((aug_token, self.span, target.span, region))
-        start = search_start + idx
-        end = start + len(aug_token)
-        if source[start:end] != aug_token:
-            reject((aug_token, start, end, source[start:end]))
+            reject()
+        gap = Span(target.span.end, value.span.start)
+        if not gap.slice(self.unit.source).strip():
+            reject()
         return SourceFragment(
             unit=self.unit,
-            span=Span(start, end),
+            span=gap,
             node=self,
         )
 
@@ -4424,16 +4434,20 @@ class AugAssign(Statement):
                 SubscriptAugAssignSugar,
             )
 
-            # Distinct occurrence sites for get / arithmetic / store.
-            # Receiver+index evaluated once inside SubscriptAugAssignSugar.
-            # op_site is the operator-token interval, not the RHS occurrence.
+            # op_site: carried pre-substitute structure, or mint now if no sub.
+            op_site = getattr(self, "operator_site", None)
+            if op_site is None:
+                op_site = self._mint_operator_site_from_structure()
+            projector = inplace_projector_for(self.op)
+            operator = type(self.op).inplace_operator
             return SubscriptAugAssignSugar(
                 receiver=self.target.value.sugar(),
                 index=self.target.slice_.sugar(),
                 rhs=self.value.sugar(),
-                operation=inplace_projector_for(self.op),
+                operator=operator,
+                operation=projector,
                 get_site=self.target.fragment,
-                op_site=self._augassign_operator_site(),
+                op_site=op_site,
                 set_site=self.fragment,
                 site=self.fragment,
             )
