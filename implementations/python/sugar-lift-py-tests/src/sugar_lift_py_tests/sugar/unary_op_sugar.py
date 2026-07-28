@@ -35,12 +35,25 @@ def refuse_undecided_unary_truth(value, site) -> None:
     ``ValueError``).  Emitting ``py.truthy`` invents a total completion; inventing
     an exception identity invents the failure.  Both stay refused until
     source-visible type testimony decides.
+
+    ``CallSiteValue`` is the established exception: its ``truth`` floor already
+    emits ``PredicateValue(py.truthy(term))`` over the authenticated call term
+    (#4993 / #5147).  That is coordinate testimony, not an invented native
+    ``bool`` completion.  Refusing it here collapses installed-source manager
+    derivation (``pytest.raises`` ``__exit__`` uses ``not self.…`` over call
+    coordinates) and zeroes every producer → ExitSet → assertion-boundary route.
     """
     denotes = getattr(value, "denotes_value", None)
     decided = getattr(value, "runtime_type_is_decided", None)
     if not callable(denotes) or not callable(decided):
         return
     if not denotes() or decided():
+        return
+
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    # Authenticated call coordinates own a lawful truth floor; do not refuse them.
+    if isinstance(value, CallSiteValue):
         return
 
     from sugar_source_tree.panic import SugarNotWritten
