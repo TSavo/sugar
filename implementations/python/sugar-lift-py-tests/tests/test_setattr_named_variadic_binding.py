@@ -209,7 +209,7 @@ def test_bind_actuals_packs_star_without_self_name_shift() -> None:
         (ListValue((TermValue(0),)), TermValue(1), TermValue(2), TermValue(3)),
         (),
     )
-    assert bound == (
+    assert bound.actuals == (
         ListValue((TermValue(0),)),
         TupleValue((TermValue(1), TermValue(2), TermValue(3))),
     )
@@ -230,7 +230,7 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
         (ListValue((TermValue(0),)),),
         (("a", TermValue(1)), ("b", TermValue(2))),
     )
-    assert bound == (
+    assert bound.actuals == (
         ListValue((TermValue(0),)),
         DictValue(
             (

@@ -131,8 +131,6 @@ class BoundSourceCallActualsV1(Sequence):
                 and self.formal_coordinates == other.formal_coordinates
                 and self.native_formal_coordinates == other.native_formal_coordinates
             )
-        if isinstance(other, tuple):
-            return self.actuals == other
         return NotImplemented
 
     @property
