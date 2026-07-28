@@ -60,6 +60,24 @@ class EllipsisValue(FloorValue):
             return Complete(TrueBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
+    def setitem(self, index, value, site):
+        """Ellipsis rejects subscript store with exact TypeError."""
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="EllipsisValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        """Ellipsis rejects subscript delete with exact TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="EllipsisValue.delitem"
+        )
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor
