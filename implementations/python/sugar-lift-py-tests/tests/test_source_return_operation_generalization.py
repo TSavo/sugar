@@ -41,6 +41,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     Assign,
@@ -466,3 +467,55 @@ def test_dig_of_scalar_return_must_not_stop_at_blockvalue_for_binop() -> None:
     assert dug == TermValue(3) or (
         isinstance(dug, ReturnValue) and dug.value == TermValue(3)
     )
+
+
+def test_keyword_bound_source_return_flows_into_binop() -> None:
+    tree, _, _ = _tree(
+        "def combine(left, right):\n"
+        "    return left + right\n\n"
+        "result = combine(2, right=3) + 1\n",
+        bind=frozenset({"combine"}),
+    )
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    assert _completed_value(outer.sugar().desugar(None)) == TermValue(6)
+
+
+def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
+    tree, _, _ = _tree(
+        "def combine(left, right):\n"
+        "    return left + right\n\n"
+        "result = combine(2, stranger=3) + 1\n",
+        bind=frozenset({"combine"}),
+    )
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    with pytest.raises(SourceCallBindingGap, match="missing required formal|unconsumed"):
+        outer.sugar().desugar(None)
+
+
+@pytest.mark.parametrize(("call", "expected"), (("choose(2)", 7), ("choose(2, 8)", 10)))
+def test_default_and_explicit_source_return_values_stay_distinct_actuals(
+    call: str, expected: int
+) -> None:
+    tree, _, _ = _tree(
+        "def choose(left, right=5):\n"
+        "    return left + right\n\n"
+        f"result = {call} + 0\n",
+        bind=frozenset({"choose"}),
+    )
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
+    )
+
+    assert _completed_value(outer.sugar().desugar(None)) == TermValue(expected)
