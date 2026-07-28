@@ -26,6 +26,26 @@ class TupleLiteralValue(FloorValue):
             exception_name="TypeError", site=site, owner="TupleLiteralValue.delitem"
         )
 
+    def setattr(self, name, value, site):
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="TupleLiteralValue.setattr",
+        )
+
+    def delattr(self, name, site):
+        del name
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError",
+            site=site,
+            owner="TupleLiteralValue.delattr",
+        )
+
     def __post_init__(self) -> None:
         if not all(isinstance(item, FloorValue) for item in self.items):
             raise TypeError("TupleLiteralValue items must be floor values")
