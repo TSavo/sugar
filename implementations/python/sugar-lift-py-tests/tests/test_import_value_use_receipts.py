@@ -267,82 +267,156 @@ def test_nearby_call_receipt_does_not_authorize_value_use(tmp_path: Path) -> Non
         assert _site_key(value) != call_key
 
 
-def test_call_receipt_cannot_substitute_for_value_use(tmp_path: Path) -> None:
-    """Lying twin: minting a value-use demand from a call row is refused."""
-    path = tmp_path / "sub_call.py"
-    source, source_cid = _write(path, "from pkg import f\nf(1)\n")
-    call_receipts, _ = authenticated_import_use_receipts(
+def test_value_relabeled_as_call_contract_refused_with_real_authority(
+    tmp_path: Path,
+) -> None:
+    """Lying twin: value receipt → call-contract-demand (roles stripped, CID recomputed).
+
+    Must refuse under real mint authority — observing output-set disjointness
+    is not enough; substitution is attempted at __post_init__.
+    """
+    from sugar_lift_py_tests import import_binding as ib
+
+    path = tmp_path / "sub_value_as_call.py"
+    source, source_cid = _write(path, "from pkg import f\nx = f\n")
+    value_receipts, _ = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
     )
-    call = call_receipts[0]
-    # Strip call-only fields and claim value-use role — must not mint.
+    value = value_receipts[0]
+    # Strip value-only fields; recompute use CID — the advisor hole shape.
     forged_use = {
-        key: value
-        for key, value in call.use.items()
-        if key != "cid"
+        key: val
+        for key, val in value.use.items()
+        if key not in {"cid", "role", "sourceCid", "exportedMemberPath"}
     }
-    forged_use["role"] = "value-use"
-    forged_use["sourceCid"] = source_cid
-    forged_use["exportedMemberPath"] = []
-    from sugar_lift_py_tests.import_binding import _hash
-
-    forged_use_with_cid = {**forged_use, "cid": _hash(forged_use)}
+    forged_use_cid = {**forged_use, "cid": ib._hash(forged_use)}
     forged_demand = {
-        "schemaVersion": "1",
-        "kind": "import-value-use-demand",
-        "role": "value-use",
-        "sourceCid": source_cid,
-        "authenticatedImportUse": forged_use_with_cid,
-        "importBinding": call.import_binding.to_value(),
-        "targetSymbol": call.target_symbol,
-        "exportedMemberPath": [],
-        "importBindingCid": call.import_binding.cid,
-        "useSite": call.use["useSite"],
+        key: val
+        for key, val in value.demand.items()
+        if key
+        not in {
+            "role",
+            "sourceCid",
+            "exportedMemberPath",
+            "authenticatedImportUse",
+            "kind",
+        }
     }
-    # Authority token is private — public construction without mint authority fails.
-    with pytest.raises(ValueError, match="not minted by the lexical pass"):
+    forged_demand["kind"] = "call-contract-demand"
+    forged_demand["authenticatedImportUse"] = forged_use_cid
+    # No importSignature added — pure relabel of a value receipt.
+    with pytest.raises(ValueError, match="requires importSignature|unadmitted kind"):
         AuthenticatedImportUseV1(
-            import_binding=call.import_binding,
-            target_symbol=call.target_symbol,
-            use=forged_use_with_cid,
+            import_binding=value.import_binding,
+            target_symbol=value.target_symbol,
+            use=forged_use_cid,
             demand=forged_demand,
             root=tmp_path,
             path=path,
             source=source,
             source_cid=source_cid,
             module_identities={},
-            _authority=object(),
+            _authority=ib._IMPORT_AUTHORITY,
         )
-    # Even with the real binding, value revalidation does not contain the call row.
-    call.revalidate()
-    value_receipts, value_outcomes = authenticated_import_value_use_receipts(
+
+
+def test_call_relabeled_as_value_use_refused_with_real_authority(
+    tmp_path: Path,
+) -> None:
+    """Lying twin: call receipt → import-value-use-demand without value role fields."""
+    from sugar_lift_py_tests import import_binding as ib
+
+    path = tmp_path / "sub_call_as_value.py"
+    source, source_cid = _write(path, "from pkg import f\nf(1)\n")
+    call_receipts, _ = authenticated_import_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
     )
-    assert _site_key(call) not in value_outcomes
-    assert all(r.demand != call.demand for r in value_receipts)
+    call = call_receipts[0]
+    forged_demand = dict(call.demand)
+    forged_demand["kind"] = "import-value-use-demand"
+    # Keep call use shape (no role / exportedMemberPath / sourceCid on use).
+    with pytest.raises(ValueError, match="requires value-use role"):
+        AuthenticatedImportUseV1(
+            import_binding=call.import_binding,
+            target_symbol=call.target_symbol,
+            use=call.use,
+            demand=forged_demand,
+            root=tmp_path,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities={},
+            _authority=ib._IMPORT_AUTHORITY,
+        )
 
 
-def test_value_receipt_cannot_substitute_for_call_target(tmp_path: Path) -> None:
-    """Lying twin: a value-use receipt is not a call-contract demand."""
-    path = tmp_path / "sub_value.py"
+def test_forged_binding_head_with_real_authority_refused(tmp_path: Path) -> None:
+    """Lying twin: targetSymbol head forged; real binding CID + path still refuse.
+
+    endswith(exportedMemberPath) would accept python:other.box_expected with a
+    binding for python:pkg — exact composition must not.
+    """
+    from sugar_lift_py_tests import import_binding as ib
+
+    path = tmp_path / "forge_head.py"
+    source, source_cid = _write(
+        path,
+        "import pkg as tm\nactual = tm.box_expected\n",
+    )
+    receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+    attr = [r for r in receipts if r.target_symbol == "python:pkg.box_expected"]
+    assert len(attr) == 1
+    honest = attr[0]
+    # Change only the binding head in targetSymbol; keep real binding + path.
+    forged_target = "python:other.box_expected"
+    assert forged_target.endswith(".box_expected")
+    assert forged_target != honest.target_symbol
+    forged_demand = dict(honest.demand)
+    forged_demand["targetSymbol"] = forged_target
+    with pytest.raises(
+        ValueError,
+        match="targetSymbol disagrees with binding target and exportedMemberPath",
+    ):
+        AuthenticatedImportUseV1(
+            import_binding=honest.import_binding,
+            target_symbol=forged_target,
+            use=honest.use,
+            demand=forged_demand,
+            root=tmp_path,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities={},
+            _authority=ib._IMPORT_AUTHORITY,
+        )
+
+
+def test_unadmitted_demand_kind_refused_with_real_authority(tmp_path: Path) -> None:
+    """Unknown demand kinds fall through no longer — closed admission only."""
+    from sugar_lift_py_tests import import_binding as ib
+
+    path = tmp_path / "unknown_kind.py"
     source, source_cid = _write(path, "from pkg import f\nx = f\n")
-    value_receipts, value_outcomes = authenticated_import_value_use_receipts(
+    value = authenticated_import_value_use_receipts(
         tmp_path, path, source, source_cid, module_identities={}
-    )
-    call_receipts, call_outcomes = authenticated_import_use_receipts(
-        tmp_path, path, source, source_cid, module_identities={}
-    )
-    assert value_receipts
-    assert call_receipts == []
-    value = value_receipts[0]
-    value_key = _site_key(value)
-    assert value_key in value_outcomes
-    assert value_key not in call_outcomes
-    assert value.demand["kind"] == "import-value-use-demand"
-    assert value.use["role"] == "value-use"
-    # Call surface has no receipt for a pure value load.
-    assert all(r.demand["kind"] != "import-value-use-demand" for r in call_receipts)
-    value.revalidate()
+    )[0][0]
+    forged_demand = dict(value.demand)
+    forged_demand["kind"] = "forged-third-surface-demand"
+    with pytest.raises(ValueError, match="unadmitted kind"):
+        AuthenticatedImportUseV1(
+            import_binding=value.import_binding,
+            target_symbol=value.target_symbol,
+            use=value.use,
+            demand=forged_demand,
+            root=tmp_path,
+            path=path,
+            source=source,
+            source_cid=source_cid,
+            module_identities={},
+            _authority=ib._IMPORT_AUTHORITY,
+        )
 
 
 def test_forged_value_role_on_call_shape_is_refused_at_mint(tmp_path: Path) -> None:
@@ -361,7 +435,7 @@ def test_forged_value_role_on_call_shape_is_refused_at_mint(tmp_path: Path) -> N
     forged_demand = dict(call.demand)
     forged_demand["authenticatedImportUse"] = forged_use_cid
     forged_demand["role"] = "value-use"
-    with pytest.raises(ValueError, match="cannot carry value-use role"):
+    with pytest.raises(ValueError, match="cannot carry value-use role|cannot carry a use role"):
         AuthenticatedImportUseV1(
             import_binding=call.import_binding,
             target_symbol=call.target_symbol,

@@ -120,6 +120,15 @@ class _ModuleFunctionDef:
 
 _IMPORT_AUTHORITY = object()
 
+# Closed demand-kind admission for AuthenticatedImportUseV1.  Unknown kinds
+# must refuse — there is no fallthrough third surface.
+_ADMITTED_IMPORT_DEMAND_KINDS = frozenset(
+    {
+        "call-contract-demand",
+        "import-value-use-demand",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ImportBindingV1:
@@ -182,18 +191,18 @@ class AuthenticatedImportUseV1:
         ):
             if self.demand.get(key) != value:
                 raise ValueError(f"authenticated demand has stale {key}")
-        # Role-bound surfaces stay disjoint: value-use and call-target cannot
-        # substitute for each other even at a nearby coordinate.
+        # Closed kind admission: exactly two surfaces.  Unknown kinds and
+        # cross-surface relabeling refuse at mint — not by observing output sets.
         demand_kind = self.demand.get("kind")
+        if demand_kind not in _ADMITTED_IMPORT_DEMAND_KINDS:
+            raise ValueError(
+                f"authenticated import demand has unadmitted kind {demand_kind!r}"
+            )
         if demand_kind == "import-value-use-demand":
             _require_value_use_role(self)
-        elif demand_kind == "call-contract-demand":
-            if self.use.get("role") == "value-use" or self.demand.get("role") == (
-                "value-use"
-            ):
-                raise ValueError(
-                    "call-contract-demand cannot carry value-use role"
-                )
+        else:
+            # call-contract-demand — closed call shape only.
+            _require_call_contract_demand(self)
 
     def revalidate(self) -> None:
         """Demand byte identity against one shared #6090 snapshot per module.
@@ -240,19 +249,71 @@ class AuthenticatedImportUseV1:
             )
 
 
+def _authenticated_binding_target_symbol(binding: ImportBindingV1) -> str:
+    """Closed target coordinate of an authenticated import binding.
+
+    Recovered only from the binding preimage (module identity + binding
+    exportedPath) — never from the receipt's targetSymbol string.
+    """
+    value = binding.to_value()
+    if value.get("kind") != "python-import-binding":
+        raise ValueError("authenticated import binding has the wrong kind")
+    target = value.get("target")
+    if not isinstance(target, dict):
+        raise ValueError("authenticated import binding target is missing")
+    identity = target.get("moduleIdentity")
+    if not isinstance(identity, dict):
+        raise ValueError("authenticated import binding module identity is missing")
+    kind = identity.get("kind")
+    if kind == "unavailable-python-module":
+        module_name = identity.get("name")
+    elif kind == "authenticated-python-module":
+        module_name = identity.get("moduleName")
+    else:
+        raise ValueError(
+            "authenticated import binding module identity kind is unsupported"
+        )
+    if not isinstance(module_name, str) or not module_name:
+        raise ValueError("authenticated import binding module name is invalid")
+    path = target.get("exportedPath")
+    if not isinstance(path, list) or any(
+        not isinstance(part, str) or not part for part in path
+    ):
+        raise ValueError("authenticated import binding exportedPath is invalid")
+    return "python:" + module_name + "".join(f".{part}" for part in path)
+
+
+def _require_call_contract_demand(receipt: AuthenticatedImportUseV1) -> None:
+    """Final-check a call-target demand: closed shape, no value-use fields."""
+    use = receipt.use
+    demand = receipt.demand
+    if use.get("role") == "value-use" or demand.get("role") == "value-use":
+        raise ValueError("call-contract-demand cannot carry value-use role")
+    if "role" in use or "role" in demand:
+        raise ValueError("call-contract-demand cannot carry a use role")
+    if "exportedMemberPath" in use or "exportedMemberPath" in demand:
+        raise ValueError("call-contract-demand cannot carry exportedMemberPath")
+    if "sourceCid" in use:
+        raise ValueError("call-contract-demand use cannot carry sourceCid")
+    if demand.get("importSignature") is None:
+        raise ValueError("call-contract-demand requires importSignature")
+
+
 def _require_value_use_role(receipt: AuthenticatedImportUseV1) -> None:
     """Final-check the value-use role and its bound identity fields.
 
     A value-use receipt authenticates together: exact source occurrence,
     import binding CID, exported member path, consumer source CID, and the
-    value-use role.  Missing any field, or borrowing a call-target shape, is
-    refusal — not repair.  No AST-scan fallback, first-candidate, or spelling
-    resolver may reconstruct what the lexical pass did not pin.
+    value-use role.  ``targetSymbol`` must equal the authenticated binding
+    target composed with structural ``exportedMemberPath`` exactly — suffix
+    checks are not enough (a forged head can endswith the same path).
     """
     use = receipt.use
     demand = receipt.demand
     if use.get("role") != "value-use" or demand.get("role") != "value-use":
         raise ValueError("import-value-use-demand requires value-use role")
+    if "importSignature" in demand:
+        raise ValueError("import-value-use-demand cannot carry importSignature")
     if use.get("sourceCid") != receipt.source_cid:
         raise ValueError("authenticated import value-use sourceCid is stale")
     if demand.get("sourceCid") != receipt.source_cid:
@@ -276,21 +337,15 @@ def _require_value_use_role(receipt: AuthenticatedImportUseV1) -> None:
         raise ValueError("authenticated import value-use binding sourceCid is stale")
     if use.get("importBindingCid") != receipt.import_binding.cid:
         raise ValueError("authenticated import value-use cites another binding")
-    # Composition law: targetSymbol is binding head + structural Attribute
-    # segments only (exportedMemberPath), never a spelling-resolved rewrite.
-    target = receipt.target_symbol
-    if exported:
-        suffix = "".join(f".{part}" for part in exported)
-        if not target.endswith(suffix):
-            raise ValueError(
-                "authenticated import value-use targetSymbol disagrees with "
-                "exportedMemberPath"
-            )
-        head = target[: -len(suffix)]
-    else:
-        head = target
-    if not head.startswith("python:") or head == "python:":
-        raise ValueError("authenticated import value-use targetSymbol is incomplete")
+    # Exact composition: binding target (from binding preimage only) + structural
+    # Attribute segments.  endswith(exportedMemberPath) is not authentication.
+    binding_target = _authenticated_binding_target_symbol(receipt.import_binding)
+    expected = binding_target + "".join(f".{part}" for part in exported)
+    if receipt.target_symbol != expected:
+        raise ValueError(
+            "authenticated import value-use targetSymbol disagrees with "
+            "binding target and exportedMemberPath"
+        )
 
 
 _NON_IMPORT = "non-import"
