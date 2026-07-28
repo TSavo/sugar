@@ -66,7 +66,9 @@ class _OutcomeSugar(Sugar):
 
 
 def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
-    entries = _entries("def A(o, v):\n    o.a = v\n    return v\n")
+    # Free undecided ``o`` retains dual-face AttributeStoreRuntimeEffect.
+    # Formal receivers mint setattr_named (see formal-caller twins).
+    entries = _entries("def A(v):\n    o.a = v\n    return v\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
@@ -76,7 +78,7 @@ def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
 
 def test_attribute_store_post_out_equals_the_returned_value():
     v = _completed(
-        _fn("def A(o, v):\n    o.a = v\n    return v\n").sugar().desugar()
+        _fn("def A(v):\n    o.a = v\n    return v\n").sugar().desugar()
     ).value
     post = v.post()
     assert post.name == "="
@@ -99,7 +101,7 @@ def test_attribute_store_witness_site_is_the_tree_fragment():
     right target -- the witness address is the TREE's own fragment
     currency, not a reconstructed/factory one, and the operand cites the
     attribute actually stored."""
-    entries = _entries("def A(o, v):\n    o.a = v\n    return v\n")
+    entries = _entries("def A(v):\n    o.a = v\n    return v\n")
     (red,) = [e for e in entries if isinstance(e, Incomplete)]
     witness = red.effect.witness
     assert isinstance(witness.site, TreeSourceFragment)
@@ -118,7 +120,7 @@ def test_subscript_store_refusal_names_the_missing_nary_carrier():
 
 
 def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
-    entries = _entries("def A(o, v, w):\n    o.a = v\n    o.b = w\n    return v\n")
+    entries = _entries("def A(v, w):\n    o.a = v\n    o.b = w\n    return v\n")
     red = [e for e in entries if isinstance(e, Incomplete)]
     assert len(red) == 2
     operands = {repr(e.effect.witness.runtime_operand.term) for e in red}
@@ -129,7 +131,7 @@ def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
 
 def test_symbolic_attribute_store_owns_real_receiver_and_value_children():
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    symbolic_receiver.payload = constructed_value\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")
@@ -140,8 +142,9 @@ def test_symbolic_attribute_store_owns_real_receiver_and_value_children():
 
 
 def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
+    # Free undecided receiver keeps AttributeStoreRuntimeEffect dual faces.
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    symbolic_receiver.payload = constructed_value\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")
@@ -157,7 +160,7 @@ def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
 
 def test_chained_attribute_store_reuses_one_constructed_rhs():
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    renamed = symbolic_receiver.payload = constructed_value\n"
         "    return renamed\n"
     )
@@ -177,7 +180,7 @@ def test_chained_attribute_store_reuses_one_constructed_rhs():
 
 def test_rhs_constructs_before_halted_receiver_and_store_does_not_continue():
     function = _fn(
-        "def arbitrary(symbolic_receiver, constructed_value):\n"
+        "def arbitrary(constructed_value):\n"
         "    symbolic_receiver.payload = constructed_value\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")

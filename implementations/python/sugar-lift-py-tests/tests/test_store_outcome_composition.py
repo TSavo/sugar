@@ -131,18 +131,21 @@ def _store_entries(state):
     ]
 
 
-SEQUENTIAL = """def target(o, p, q):
+# Free undecided receiver ``o`` (not a formal) retains dual-face
+# AttributeStoreRuntimeEffect. Formal receivers now mint setattr_named carriers
+# (vertical completion); dual-face composition laws stay on this free shape.
+SEQUENTIAL = """def target(p, q):
     o.x = p
     o.y = q
     return q
 """
 
-ONE_STORE = """def target(o, p):
+ONE_STORE = """def target(p):
     o.x = p
     return p
 """
 
-OTHER_STORE = """def target(o, q):
+OTHER_STORE = """def target(q):
     o.y = q
     return q
 """

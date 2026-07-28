@@ -272,23 +272,19 @@ def test_undecided_retains_dual_face_runtime_effect(tmp_path):
     assert isinstance(outcome.effect, AttributeStoreRuntimeEffect)
 
 
-def test_formal_parameter_store_still_emits_dual_face_runtime_effect(tmp_path):
-    """Formal parameters keep dual-face RuntimeEffect so composition laws stay green.
-
-    The setattr_named mint helper pins the n-ary contract without displacing
-    this instrument yet.
-    """
+def test_formal_parameter_store_mints_setattr_named_carrier(tmp_path):
+    """Formal parameters mint setattr_named (undischarged until caller)."""
     path = tmp_path / "formal_store.py"
     path.write_text("def target(o, p):\n    o.x = p\n    return p\n")
     from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
 
     fn = next(SourceFile(path_source(str(path))).functions())
     outcome = fn.sugar().desugar(None)
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    assert isinstance(outcome, ExitSet)
-    # Dual faces: completed + halted under store guards
-    assert len(outcome.exits) >= 2
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "setattr_named"
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +407,11 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     store = unpack.stores[0]
     assert isinstance(store, AttributeStoreEffectSugar)
     assert store.attr == "name"
-    # Undecided formal path: dual-face RuntimeEffect (composition instrument).
+    # Formal ``index`` mints setattr_named (undischarged until caller).
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
     outcome = store.desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, AttributeStoreRuntimeEffect)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "setattr_named"

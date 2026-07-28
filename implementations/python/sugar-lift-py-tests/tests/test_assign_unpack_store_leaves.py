@@ -164,7 +164,9 @@ def _post(tmp_path: Path, source: str, stem: str = "assign_case"):
     return _completed_value(tmp_path, source, stem).post()
 
 
-TWO_ATTRIBUTE = "def f(o, p, q):\n    o.x, o.y = p, q\n    return o\n"
+# Free undecided ``o`` keeps dual-face AttributeStoreRuntimeEffect arms.
+# Formal receivers mint setattr_named (vertical completion).
+TWO_ATTRIBUTE = "def f(p, q):\n    o.x, o.y = p, q\n    return p\n"
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +182,7 @@ def test_rhs_member_is_one_retained_occurrence(tmp_path: Path) -> None:
     re-evaluated (reconstructed) per target, the two stores would hold two
     distinct constructed objects.
     """
-    shared = "def f(o, p):\n    o.x, o.y = p, p\n    return o\n"
+    shared = "def f(p):\n    o.x, o.y = p, p\n    return p\n"
     unpack = _unpack(tmp_path, shared)
     first, second = unpack.stores[0].value, unpack.stores[1].value
     assert first is second, (first, second)
@@ -240,7 +242,7 @@ def test_positional_correspondence_binds_each_target_to_its_own_member(
 
     # Discrimination arm: swap the two RHS members. The pairing -- and only the
     # pairing -- changes, so the projection must differ.
-    swapped_source = "def f(o, p, q):\n    o.x, o.y = q, p\n    return o\n"
+    swapped_source = "def f(p, q):\n    o.x, o.y = q, p\n    return p\n"
     swapped = _projection(tmp_path, swapped_source, stem="swapped")
     assert swapped != rows
     assert [row[1] for row in swapped] == [row[1] for row in rows]
@@ -266,7 +268,7 @@ def test_store_effects_retain_left_to_right_order(tmp_path: Path) -> None:
     store ``k`` carries exactly stores ``0..k-1``, so ``k+1`` cannot have run.
     That is law 3 and law 7 in one artifact.
     """
-    three = "def f(o, p, q, r):\n    o.x, o.y, o.z = p, q, r\n    return o\n"
+    three = "def f(p, q, r):\n    o.x, o.y, o.z = p, q, r\n    return p\n"
     rows = _projection(tmp_path, three)
     assert _targets(rows) == ["x", "y", "z"], rows
 
@@ -286,7 +288,7 @@ def test_store_effects_retain_left_to_right_order(tmp_path: Path) -> None:
 
     # Discrimination arm: the same three stores written in a different order
     # project in that different order -- order is carried, not normalized away.
-    reversed_source = "def f(o, p, q, r):\n    o.z, o.y, o.x = r, q, p\n    return o\n"
+    reversed_source = "def f(p, q, r):\n    o.z, o.y, o.x = r, q, p\n    return p\n"
     reversed_rows = _projection(tmp_path, reversed_source, stem="reversed")
     assert _targets(reversed_rows) == ["z", "y", "x"], reversed_rows
     assert reversed_rows != rows
@@ -311,7 +313,7 @@ def test_attribute_receiver_and_name_retain_exact_coordinates(
     tmp_path: Path,
 ) -> None:
     """Not "an attribute store happened" -- the exact receiver and attr terms."""
-    source = "def f(o, n, p, q):\n    o.x, n.y = p, q\n    return p\n"
+    source = "def f(p, q):\n    o.x, n.y = p, q\n    return p\n"
     rows = _projection(tmp_path, source)
     assert "_Var(name='o')" in rows[0][2] and "value='x'" in rows[0][2], rows[0]
     assert "_Var(name='n')" in rows[1][2] and "value='y'" in rows[1][2], rows[1]
@@ -325,7 +327,7 @@ def test_attribute_receiver_and_name_retain_exact_coordinates(
     assert "_Var(name='o')" in partial_row[2] and "value='x'" in partial_row[2], partial
 
     # Discrimination arm 1: swap the receivers, keep everything else.
-    recv_source = "def f(o, n, p, q):\n    n.x, o.y = p, q\n    return p\n"
+    recv_source = "def f(p, q):\n    n.x, o.y = p, q\n    return p\n"
     other_receiver = _projection(tmp_path, recv_source, stem="recv")
     assert other_receiver != rows
 
@@ -335,7 +337,7 @@ def test_attribute_receiver_and_name_retain_exact_coordinates(
     assert _store_rows(recv_partial) != _store_rows(partial)
 
     # Discrimination arm 2: keep the receivers, change one attribute name.
-    attr_source = "def f(o, n, p, q):\n    o.x, n.z = p, q\n    return p\n"
+    attr_source = "def f(p, q):\n    o.x, n.z = p, q\n    return p\n"
     other_attr = _projection(tmp_path, attr_source, stem="attr")
     assert other_attr != rows
 
@@ -358,17 +360,17 @@ def test_lying_variants_are_distinguished_on_all_three_axes(tmp_path: Path) -> N
     truthful = _projection(tmp_path, TWO_ATTRIBUTE)
     wrong_receiver = _projection(
         tmp_path,
-        "def f(o, n, p, q):\n    n.x, o.y = p, q\n    return o\n",
+        "def f(p, q):\n    n.x, o.y = p, q\n    return p\n",
         stem="wr",
     )
     wrong_attribute = _projection(
         tmp_path,
-        "def f(o, p, q):\n    o.x, o.z = p, q\n    return o\n",
+        "def f(p, q):\n    o.x, o.z = p, q\n    return p\n",
         stem="wa",
     )
     reversed_order = _projection(
         tmp_path,
-        "def f(o, p, q):\n    o.y, o.x = q, p\n    return o\n",
+        "def f(p, q):\n    o.y, o.x = q, p\n    return p\n",
         stem="ro",
     )
     for label, lying in (
@@ -389,17 +391,17 @@ def test_lying_variants_are_distinguished_on_all_three_axes(tmp_path: Path) -> N
     lying_arms = {
         "wrong receiver": _arm_projections(
             tmp_path,
-            "def f(o, n, p, q):\n    n.x, o.y = p, q\n    return o\n",
+            "def f(p, q):\n    n.x, o.y = p, q\n    return p\n",
             stem="wrarm",
         ),
         "wrong attribute": _arm_projections(
             tmp_path,
-            "def f(o, p, q):\n    o.x, o.z = p, q\n    return o\n",
+            "def f(p, q):\n    o.x, o.z = p, q\n    return p\n",
             stem="waarm",
         ),
         "reversed store order": _arm_projections(
             tmp_path,
-            "def f(o, p, q):\n    o.y, o.x = q, p\n    return o\n",
+            "def f(p, q):\n    o.y, o.x = q, p\n    return p\n",
             stem="roarm",
         ),
     }
@@ -425,7 +427,7 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
     the store" is carried as: the store is the first record entry, and the
     continuation's post already reads `p`.
     """
-    source = "def f(o, p, q):\n    x, o.a = p, q\n    return x\n"
+    source = "def f(p, q):\n    x, o.a = p, q\n    return x\n"
     unpack = _unpack(tmp_path, source)
     assert [name for name, _ in unpack.bindings] == ["x"]
     assert len(unpack.stores) == 1
@@ -439,7 +441,7 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 
     # Discrimination arm: swap the members. x must now carry q, and the store
     # must now carry p -- both halves flip together.
-    swapped = "def f(o, p, q):\n    x, o.a = q, p\n    return x\n"
+    swapped = "def f(p, q):\n    x, o.a = q, p\n    return x\n"
     swapped_rows = _projection(tmp_path, swapped, stem="mixswap")
     assert "_Var(name='p')" in swapped_rows[0][2], swapped_rows[0]
     assert str(_post(tmp_path, swapped, stem="swpost")) == (
@@ -457,7 +459,7 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
     # here a preceding store on `o.z`. It must be present, in full, on the arm
     # where the later store halted.
     # ------------------------------------------------------------------
-    partial = "def f(o, p, q):\n    o.z = p\n    x, o.a = p, q\n    return x\n"
+    partial = "def f(p, q):\n    o.z = p\n    x, o.a = p, q\n    return x\n"
     arms = _arm_projections(tmp_path, partial, stem="partial")
     assert [_targets(arm) for arm in arms] == [[], ["z"], ["z", "a"]], [
         _targets(arm) for arm in arms
@@ -538,7 +540,7 @@ def test_pure_name_multi_assign_construction_is_unchanged(tmp_path: Path) -> Non
 
     # Discrimination arm: an unpack-with-store shape is a different sugar kind.
     store_shape = _function_sugar(
-        tmp_path, "def f(o, p, q):\n    x, o.a = p, q\n    return x\n", stem="disc"
+        tmp_path, "def f(p, q):\n    x, o.a = p, q\n    return x\n", stem="disc"
     )
     assert any(
         isinstance(stmt, UnpackStoreAssignSugar) for stmt in store_shape.statements
@@ -602,7 +604,7 @@ def test_source_visible_subscript_leaves_construct_after_store_coordinate_law(
 
     # Discrimination arm: Attribute sibling remains admitted.
     unpack = _unpack(
-        tmp_path, "def f(o, p, q):\n    x, o.a = p, q\n    return x\n", stem="nameattr"
+        tmp_path, "def f(p, q):\n    x, o.a = p, q\n    return x\n", stem="nameattr"
     )
     assert len(unpack.stores) == 1
 
