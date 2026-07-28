@@ -551,31 +551,160 @@ def export_statement_coverage() -> tuple[list[str], list[str]]:
 
 
 def _export_block(statements, name, initial):
+    """Transfer export bindings only through authenticated fall-through.
+
+    Each statement must carry constructive fall-through testimony before a
+    later export bind is treated as normally reached.  Fall-through is never
+    inferred from raise-nesting shape alone (a raise inside ``for`` does not
+    mint a residual success path past the loop).
+    """
     state = initial
     for index, statement in enumerate(statements):
         rest = statements[index + 1 :]
-        # Suppressible exceptional prefixes only.  A hard-abort raise inside
-        # for/if/try that terminates module init does not make a later
-        # source-visible import/definition dynamic: the success path is the
-        # residual suite.  With/AsyncWith may swallow a raise and still run
-        # later suite statements — that residual must stay dynamic.
-        if (
-            isinstance(statement, (ast.With, ast.AsyncWith))
-            and _statement_contains_module_init_raise(statement)
-            and _suite_binds_export(rest, name)
-        ):
-            return ("dynamic", statement)
-        # Same suite: bare raise then a later bind is unreachable on the
-        # aborting path; do not authenticate the textual residual as the export.
-        if isinstance(statement, ast.Raise) and _suite_binds_export(rest, name):
-            return ("dynamic", statement)
         state = _export_statement(statement, name, state)
+        if not _authenticated_fallthrough(statement) and _suite_binds_export(
+            rest, name
+        ):
+            # Prefix lacks fall-through authority into a residual that binds
+            # the export — refuse static authentication of that residual.
+            return ("dynamic", statement)
     return state
 
 
 def _suite_binds_export(statements, name: str) -> bool:
     marker = object()
     return _export_block(statements, name, marker) is not marker
+
+
+def _authenticated_fallthrough(statement: ast.stmt) -> bool:
+    """Constructive testimony that module init continues after ``statement``.
+
+    Fall-through is control-completion authority, not "might this call raise".
+    Module-init ``Raise`` (not deferred function/class bodies), loops/ifs/with
+    whose live paths include such a raise, and incomplete try paths refuse.
+    Sequential imports/defs/classes without a module-init raise fall through.
+    """
+    if isinstance(statement, ast.Raise):
+        return False
+    if isinstance(statement, (ast.Return, ast.Break, ast.Continue)):
+        return False
+    if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+        return _loop_authenticated_fallthrough(statement)
+    if isinstance(statement, ast.If):
+        return _if_authenticated_fallthrough(statement)
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        # ``__exit__`` may suppress; a raise in the with suite refuses fall-through
+        # past the With (and inside, raise-then-bind is handled by nested transfer).
+        if _statement_contains_module_init_raise(statement):
+            return False
+        return _suite_authenticated_fallthrough(statement.body)
+    if isinstance(statement, _TRY_TYPES):
+        return _try_authenticated_fallthrough(statement)
+    if isinstance(statement, ast.Match):
+        return _match_authenticated_fallthrough(statement)
+    # Function/class bodies are deferred; a Raise inside them is not module-init.
+    # Other sequential statements fall through unless they embed a module-init raise.
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return True
+    return not _statement_contains_module_init_raise(statement)
+
+
+def _suite_authenticated_fallthrough(statements) -> bool:
+    for statement in statements:
+        if not _authenticated_fallthrough(statement):
+            return False
+    return True
+
+
+def _if_authenticated_fallthrough(statement: ast.If) -> bool:
+    """Fall-through past ``if`` requires every live branch to fall through.
+
+    Constant tests take one branch.  Unresolved tests require *both* branches
+    to authenticate fall-through (a raise on either path refuses).
+    """
+    taken = _literal_bool(statement.test)
+    if taken is True:
+        return _suite_authenticated_fallthrough(statement.body)
+    if taken is False:
+        return _suite_authenticated_fallthrough(statement.orelse)
+    return _suite_authenticated_fallthrough(
+        statement.body
+    ) and _suite_authenticated_fallthrough(statement.orelse)
+
+
+def _loop_authenticated_fallthrough(statement: ast.stmt) -> bool:
+    """Fall-through past a loop requires completion on every trip that can run.
+
+    Proven-empty iterators skip the body.  Otherwise a module-init raise in the
+    body refuses later suite binds — no residual success path past the loop.
+    """
+    orelse = getattr(statement, "orelse", [])
+    if _loop_proven_empty(statement):
+        return _suite_authenticated_fallthrough(orelse)
+    if not _suite_authenticated_fallthrough(statement.body):
+        return False
+    return _suite_authenticated_fallthrough(orelse)
+
+
+def _try_authenticated_fallthrough(statement: ast.stmt) -> bool:
+    body = statement.body
+    body_has_raise = any(
+        _statement_contains_module_init_raise(item) for item in body
+    )
+    if not body_has_raise:
+        return (
+            _suite_authenticated_fallthrough(body)
+            and _suite_authenticated_fallthrough(statement.orelse)
+            and _suite_authenticated_fallthrough(statement.finalbody)
+        )
+    # Raise in body is only fall-through when handlers exist and complete.
+    if not statement.handlers:
+        return False
+    if not all(
+        _suite_authenticated_fallthrough(handler.body)
+        for handler in statement.handlers
+    ):
+        return False
+    return _suite_authenticated_fallthrough(statement.finalbody)
+
+
+def _match_authenticated_fallthrough(statement: ast.Match) -> bool:
+    if not statement.cases:
+        return False
+    if not all(
+        _suite_authenticated_fallthrough(case.body) for case in statement.cases
+    ):
+        return False
+    exhaustive = (
+        isinstance(statement.cases[-1].pattern, ast.MatchAs)
+        and statement.cases[-1].pattern.pattern is None
+        and statement.cases[-1].guard is None
+    )
+    return exhaustive
+
+
+def _loop_proven_empty(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.While):
+        return _literal_bool(statement.test) is False
+    if isinstance(statement, (ast.For, ast.AsyncFor)):
+        return _iterable_proven_empty(statement.iter)
+    return False
+
+
+def _iterable_proven_empty(node: ast.AST) -> bool:
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return len(node.elts) == 0
+    if isinstance(node, ast.Dict):
+        return len(node.keys) == 0
+    if isinstance(node, ast.Constant) and node.value in ("", b"", None):
+        return True
+    return False
+
+
+def _literal_bool(node: ast.AST) -> bool | None:
+    if isinstance(node, ast.Constant) and type(node.value) is bool:
+        return node.value
+    return None
 
 
 def _statement_contains_module_init_raise(statement: ast.AST) -> bool:

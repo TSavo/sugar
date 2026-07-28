@@ -245,33 +245,103 @@ def test_genuinely_dynamic_assignment_stays_dynamic(tmp_path: Path) -> None:
     assert result.kind == "dynamic-export"
 
 
-def test_hard_abort_raise_before_source_visible_reexport_still_resolves(
-    tmp_path: Path,
-) -> None:
-    """Dependency-check raises that abort module init do not poison later imports.
-
-    Success path is the residual suite; only suppressible With prefixes stay dynamic.
-    """
+def test_unconditional_nested_raise_refuses_later_reexport(tmp_path: Path) -> None:
+    """Raise then source-visible import is not normally reached — no residual inference."""
     dist = _dist(
         tmp_path,
-        name="gate-pkg",
+        name="raise-pkg",
         files={
-            "gate_pkg/__init__.py": (
-                "for _missing in ():\n"
-                "    raise ImportError('missing dep')\n"
-                "from gate_pkg.implementation import build\n"
+            "raise_pkg/__init__.py": (
+                "raise RuntimeError('abort')\n"
+                "from raise_pkg.implementation import build\n"
             ),
-            "gate_pkg/implementation.py": "def build(value):\n    return value\n",
+            "raise_pkg/implementation.py": "def build(value):\n    return value\n",
         },
     )
     graph = DependencyArtifactGraph.authenticate(dist)
     result = resolve_import_binding(
-        _call_demand(tmp_path, "import gate_pkg\ngate_pkg.build(1)\n"),
+        _call_demand(tmp_path, "import raise_pkg\nraise_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_non_empty_loop_refuses_later_reexport(tmp_path: Path) -> None:
+    """Non-empty loop (raise inside or not) does not authenticate fall-through."""
+    dist = _dist(
+        tmp_path,
+        name="loop-pkg",
+        files={
+            "loop_pkg/__init__.py": (
+                "for _item in (1,):\n"
+                "    raise ImportError('missing')\n"
+                "from loop_pkg.implementation import build\n"
+            ),
+            "loop_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import loop_pkg\nloop_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_unresolved_condition_refuses_later_reexport(tmp_path: Path) -> None:
+    """Unresolved if with a non-falling branch refuses later re-export.
+
+    Both branches must authenticate fall-through; a raise on either path is
+    enough — no residual-suite inference that the raise is not taken.
+    """
+    dist = _dist(
+        tmp_path,
+        name="cond-pkg",
+        files={
+            "cond_pkg/__init__.py": (
+                "flag = True\n"
+                "if flag:\n"
+                "    raise ImportError('missing')\n"
+                "from cond_pkg.implementation import build\n"
+            ),
+            "cond_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import cond_pkg\ncond_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_authenticated_normal_fallthrough_positive(tmp_path: Path) -> None:
+    """Prefix with constructive fall-through (bare def + pass) then re-export resolves."""
+    dist = _dist(
+        tmp_path,
+        name="ok-pkg",
+        files={
+            "ok_pkg/__init__.py": (
+                "def _helper():\n"
+                "    raise RuntimeError('deferred')\n"
+                "pass\n"
+                "from ok_pkg.implementation import build\n"
+            ),
+            "ok_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import ok_pkg\nok_pkg.build(1)\n"),
         graph=graph,
     )
     assert isinstance(result, ResolvedPythonObjectV1)
     assert result.definition.name == "build"
-    assert result.module_name == "gate_pkg.implementation"
+    assert result.module_name == "ok_pkg.implementation"
+    assert len(result.reexport_warrants) == 1
 
 
 def test_with_suppressible_raise_still_refuses_unreachable_export(
