@@ -725,9 +725,7 @@ def populate_source_derived_resource_refs(
                 if builtin is not None:
                     return _Complete(builtin)
             # Exception-type formals: seal import / provider-gated identity.
-            if formal_name in _EXCEPTION_TYPE_FORMALS and isinstance(
-                node, (Name, Attribute)
-            ):
+            if formal_name in _EXCEPTION_TYPE_FORMALS and isinstance(node, Name):
                 identity = None
                 mro = None
                 class_value = None
@@ -741,8 +739,6 @@ def populate_source_derived_resource_refs(
                             class_value = node.unit.exception_class_value(node)
                         except Exception:
                             class_value = None
-                else:
-                    identity = node.unit.imported_exception_type_identity(node)
                 if identity is not None:
                     return AuthenticatedExceptionTypeSugar(
                         node.sugar(),
@@ -752,6 +748,43 @@ def populate_source_derived_resource_refs(
                         class_value=class_value,
                     ).desugar(actual_ctx)
             if isinstance(node, Attribute):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                from .external_exception_construction import (
+                    ExternalExceptionConstructionGap,
+                    construct_provider_exception_attribute,
+                )
+
+                try:
+                    testimony = construct_provider_exception_attribute(
+                        node,
+                        root=Path(root),
+                        path=Path(path),
+                        graph_cache=graphs,
+                        session=session,
+                        distribution_index=distribution_index,
+                    )
+                except ExternalExceptionConstructionGap as exc:
+                    raise SugarNotWritten(
+                        owner="provider_exception_type_construction",
+                        blame=node.fragment,
+                        observed=str(exc),
+                        requested="provider-defined exception class testimony",
+                        fix=(
+                            "publish the named provider artifact source; never "
+                            "replace it with an attribute spelling"
+                        ),
+                    ) from exc
+                if testimony is not None:
+                    class_value = testimony.class_value()
+                    return _Complete(
+                        AuthenticatedExceptionTypeValue(
+                            class_value,
+                            testimony.identity,
+                            testimony.ancestry,
+                            class_value,
+                        )
+                    )
                 identity = node.unit.imported_exception_type_identity(node)
                 if identity is not None:
                     qualified = getattr(identity.args[1], "value", None)
@@ -790,9 +823,7 @@ def populate_source_derived_resource_refs(
                     keyword_actuals = []
                     actuals = []
                     break
-                outcome = _actual_outcome(
-                    keyword.value, formal_name=keyword.arg
-                )
+                outcome = _actual_outcome(keyword.value, formal_name=keyword.arg)
                 if not isinstance(outcome, Complete):
                     keyword_actuals = []
                     actuals = []

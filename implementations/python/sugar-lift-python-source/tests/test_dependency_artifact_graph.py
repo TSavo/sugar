@@ -22,6 +22,10 @@ from sugar_lift_python_source.dependency_artifact import (
     export_statement_coverage,
 )
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
+from sugar_lift_python_source.external_exception_construction import (
+    AuthenticatedProviderExceptionTypeV1,
+    ExternalExceptionConstructionGap,
+)
 
 
 def _install_distribution(
@@ -50,6 +54,168 @@ def _install_distribution(
         for path in recorded:
             writer.writerow((path, "", ""))
     return importlib.metadata.Distribution.at(metadata)
+
+
+def _install_stub_defined_distribution(root: Path) -> importlib.metadata.Distribution:
+    package = root / "provider_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from provider_pkg.lib import ProviderError, OtherError\n",
+        encoding="utf-8",
+    )
+    (package / "lib.pyi").write_text(
+        "class ProviderError(Exception): ...\n" "class OtherError(Exception): ...\n",
+        encoding="utf-8",
+    )
+    metadata = root / "provider_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: provider-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    (metadata / "top_level.txt").write_text("provider_pkg\n", encoding="utf-8")
+    recorded = (
+        "provider_pkg/__init__.py",
+        "provider_pkg/lib.pyi",
+        "provider_dist-1.0.dist-info/METADATA",
+        "provider_dist-1.0.dist-info/top_level.txt",
+        "provider_dist-1.0.dist-info/RECORD",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for path in recorded:
+            writer.writerow((path, "", ""))
+    return importlib.metadata.Distribution.at(metadata)
+
+
+def _install_returned_module_gate(root: Path) -> importlib.metadata.Distribution:
+    package = root / "gate_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "import sys\n"
+        "def load(module_name):\n"
+        "    loaded = sys.modules[module_name]\n"
+        "    return loaded\n",
+        encoding="utf-8",
+    )
+    metadata = root / "gate_dist-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: gate-dist\nVersion: 1.0\n",
+        encoding="utf-8",
+    )
+    (metadata / "top_level.txt").write_text("gate_pkg\n", encoding="utf-8")
+    recorded = (
+        "gate_pkg/__init__.py",
+        "gate_dist-1.0.dist-info/METADATA",
+        "gate_dist-1.0.dist-info/top_level.txt",
+        "gate_dist-1.0.dist-info/RECORD",
+    )
+    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        for path in recorded:
+            writer.writerow((path, "", ""))
+    return importlib.metadata.Distribution.at(metadata)
+
+
+def test_stub_defined_provider_exception_resolves_to_its_definition(tmp_path: Path):
+    """Truthful: an authenticated .pyi class is defining source, not opacity."""
+    graph = DependencyArtifactGraph.authenticate(
+        _install_stub_defined_distribution(tmp_path)
+    )
+    demand = _demand(
+        tmp_path,
+        "import provider_pkg\nprovider_pkg.ProviderError()\n",
+    )
+
+    result = resolve_import_binding(demand, graph=graph)
+
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "provider_pkg.lib"
+    assert result.definition.kind == "class"
+    assert result.definition.name == "ProviderError"
+    assert graph.modules["provider_pkg.lib"].source_seat == "provider_pkg/lib.pyi"
+    testimony = AuthenticatedProviderExceptionTypeV1.from_resolved(
+        graph=graph,
+        source_attribute="ProviderError",
+        resolved=result,
+    )
+    assert testimony.resolved is result
+    assert testimony.source_attribute == "ProviderError"
+    assert testimony.ancestry
+
+
+def test_stub_provider_cannot_testify_for_a_different_exception(tmp_path: Path):
+    """Lying: ProviderError testimony cannot authenticate OtherError."""
+    graph = DependencyArtifactGraph.authenticate(
+        _install_stub_defined_distribution(tmp_path)
+    )
+    truthful = resolve_import_binding(
+        _demand(tmp_path, "import provider_pkg\nprovider_pkg.ProviderError()\n"),
+        graph=graph,
+    )
+    lying = resolve_import_binding(
+        _demand(tmp_path, "import provider_pkg\nprovider_pkg.OtherError()\n"),
+        graph=graph,
+    )
+
+    assert isinstance(truthful, ResolvedPythonObjectV1)
+    assert isinstance(lying, ResolvedPythonObjectV1)
+    assert truthful.definition.name == "ProviderError"
+    assert lying.definition.name == "OtherError"
+    assert truthful.cid != lying.cid
+    with pytest.raises(
+        ExternalExceptionConstructionGap,
+        match="source binds ProviderError, provider resolved OtherError",
+    ):
+        AuthenticatedProviderExceptionTypeV1.from_resolved(
+            graph=graph,
+            source_attribute="ProviderError",
+            resolved=lying,
+        )
+
+
+def test_returned_module_binding_constructs_provider_exception_without_vendor_name(
+    tmp_path: Path,
+):
+    """A source-returned module carries its provider class definition through."""
+    from sugar_lift_python_source.external_exception_construction import (
+        construct_provider_exception_attribute,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.tree import SourceFile
+
+    provider = _install_stub_defined_distribution(tmp_path)
+    gate = _install_returned_module_gate(tmp_path)
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "import gate_pkg\n"
+        'provider = gate_pkg.load("provider_pkg")\n'
+        "def expected():\n"
+        "    return provider.ProviderError\n",
+        encoding="utf-8",
+    )
+    tree = SourceFile(path_source(str(consumer)))
+    attribute = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "Attribute" and node.attr == "ProviderError"
+    )
+
+    testimony = construct_provider_exception_attribute(
+        attribute,
+        root=tmp_path,
+        path=consumer,
+        graph_cache={},
+        session=SourceResolutionSession(),
+        distribution_index={"gate_pkg": gate, "provider_pkg": provider},
+    )
+
+    assert testimony is not None
+    assert testimony.resolved.definition.name == "ProviderError"
+    assert testimony.resolved.module_name == "provider_pkg.lib"
+    assert testimony.class_value().name == "provider_pkg.lib.ProviderError"
 
 
 def _demand(
