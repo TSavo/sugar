@@ -4274,26 +4274,28 @@ class AugAssign(Statement):
         A plain Name target is a binding site: the rebind (target OP value) is
         threaded by ``substitution_binding`` / the ``operation`` slot.
 
-        Subscript targets are runtime stores — receivers and indices are load
-        expressions and must substitute so formals become ``FormalRefSugar``
-        (same door as Assign).  The operator occurrence is minted from the
-        **pre-substitute** target/value structure and carried as
-        ``operator_site`` so formal declaration spans cannot steal it.
-        Attribute targets stay value-only until Attribute AugAssign production.
+        Attribute and Subscript targets are runtime stores — receivers (and
+        subscript indices) are load expressions and must substitute so formals
+        become ``FormalRefSugar`` (same door as Assign).  The operator
+        occurrence is minted from the **pre-substitute** target/value structure
+        and carried as ``operator_site`` so formal declaration spans cannot
+        steal it.
         """
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of, rewrite
 
-        # Structural operator site before any rewrite (Compare-style gap).
+        # Structural operator site before any rewrite (Attribute/Subscript only).
+        # Name targets rebind via _make_binop; operator_site for Name is owned by
+        # the separate Name AugAssign vertical (must not dual-eval project_inplace).
         pre_sub_operator_site = None
-        if isinstance(self.target, Subscript):
+        if isinstance(self.target, (Attribute, Subscript)):
             pre_sub_operator_site = getattr(self, "operator_site", None)
             if pre_sub_operator_site is None:
                 pre_sub_operator_site = self._mint_operator_site_from_structure()
 
         new_value, value_changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if value_changed else {}
-        if isinstance(self.target, Subscript):
+        if isinstance(self.target, (Attribute, Subscript)):
             new_target = _substituted_store_target(self, self.target, scope)
             if new_target is not None:
                 changes["target"] = new_target
@@ -4411,19 +4413,30 @@ class AugAssign(Statement):
             operation = getattr(self, "operation", None)
             if not isinstance(operation, Node):
                 return super()._construct_sugar()
+            # Name rebind owns the BinOp binding; do not dual-eval project_inplace
+            # here while discard-the-result would leave __add__ as the rebind.
             return AugAssignSugar(
                 operation=operation.sugar(),
                 site=self.fragment,
             )
         if isinstance(self.target, Attribute):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                AttributeStoreEffectSugar,
+            from sugar_lift_py_tests.sugar.augassign_sugar import (
+                AttributeAugAssignSugar,
             )
 
-            return AttributeStoreEffectSugar(
+            op_site = getattr(self, "operator_site", None)
+            if op_site is None:
+                op_site = self._mint_operator_site_from_structure()
+            # Same substrate as subscript: get → project_inplace → setattr.
+            return AttributeAugAssignSugar(
                 receiver=self.target.value.sugar(),
-                value=self.value.sugar(),
                 attr=self.target.attr,
+                rhs=self.value.sugar(),
+                operator=type(self.op).inplace_operator,
+                operation=self.op.project_inplace,
+                get_site=self.target.fragment,
+                op_site=op_site,
+                set_site=self.fragment,
                 site=self.fragment,
             )
         if isinstance(self.target, Subscript):

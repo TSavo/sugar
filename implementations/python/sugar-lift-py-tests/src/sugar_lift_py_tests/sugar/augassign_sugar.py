@@ -14,7 +14,13 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class AugAssignSugar(Sugar):
-    """The already-constructed read-op-store value of a lexical Name AugAssign."""
+    """Lexical Name ``x OP= rhs`` — rebind threaded by substitute; effects from operation.
+
+    Name-target AugAssign ownership of authenticated ``project_inplace`` as the
+    **binding** (not a discarded side evaluation) is a separate vertical —
+    do not fold partial iadd evaluation here while substitute still binds
+    ordinary ``_make_binop`` (__add__).  See banked Name AugAssign backlog.
+    """
 
     operation: Sugar
     site: object = dataclass_field(compare=False)
@@ -33,6 +39,7 @@ class AugAssignSugar(Sugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Complete
 
+        # Evaluate the threaded read-op for effects; rebind already owns the tail.
         return self.operation.desugar(ctx).and_then(
             lambda _value: Complete(BlockValue((), can_fall_through=True))
         )
@@ -161,3 +168,61 @@ class SubscriptAugAssignSugar(Sugar):
                 ),
             )
         return receiver.setitem(index, result, self.set_site)
+
+
+@dataclass(frozen=True)
+class AttributeAugAssignSugar(Sugar):
+    """``receiver.attr OP= rhs`` — get once, operate, setattr last.
+
+    Same substrate as ``SubscriptAugAssignSugar``:
+
+      1. Evaluate ``receiver`` once
+      2. ``current = attribute_named / attribute`` **before** RHS
+      3. Evaluate ``rhs``
+      4. ``result = current OP rhs`` via ``project_augmented`` / inplace edge
+      5. ``setattr`` last (formal ``setattr_named`` mint or Floor setattr)
+
+    Composition is outcome/carrier ``and_then`` only — no control-kind ladder.
+    """
+
+    receiver: Sugar
+    attr: str
+    rhs: Sugar
+    operator: str
+    operation: Callable
+    get_site: object = dataclass_field(compare=False)
+    op_site: object = dataclass_field(compare=False)
+    set_site: object = dataclass_field(compare=False)
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        # Ordering: receiver → producer-owned get → RHS → inplace → producer-owned setattr.
+        # Get/store are AttributeSugar / AttributeStoreEffectSugar doors only.
+        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            AttributeStoreEffectSugar,
+        )
+
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: AttributeSugar.project_attribute(
+                receiver, self.attr, self.get_site, ctx
+            ).and_then(
+                lambda current: self.rhs.desugar(ctx).and_then(
+                    lambda right: project_augmented(
+                        current,
+                        right,
+                        operator=self.operator,
+                        projector=self.operation,
+                        site=self.op_site,
+                    ).and_then(
+                        lambda result: AttributeStoreEffectSugar.project_setattr(
+                            receiver, self.attr, result, self.set_site
+                        )
+                    )
+                )
+            )
+        )

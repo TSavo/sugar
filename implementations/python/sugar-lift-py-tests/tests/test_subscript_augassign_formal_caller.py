@@ -662,12 +662,13 @@ def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
     assert exits.exits[0].effect.exception_name == "IndexError"
 
 
-def test_attribute_augassign_still_attribute_store_effect_not_subscript_path() -> None:
-    from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:
+    """Attribute OP= uses AttributeAugAssignSugar — same substrate, distinct sugar."""
+    from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
 
     tree = _tree("def helper(obj, rhs):\n    obj.field += rhs\n", "attr_aug.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     aug = next(node for node in function.body if isinstance(node, AugAssign))
     sugar = aug.sugar()
-    assert isinstance(sugar, AttributeStoreEffectSugar)
+    assert isinstance(sugar, AttributeAugAssignSugar)
     assert not isinstance(sugar, SubscriptAugAssignSugar)

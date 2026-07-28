@@ -35,34 +35,50 @@ class AttributeSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
+    @staticmethod
+    def project_attribute(receiver, name: str, site, ctx: object = None) -> Outcome:
+        """Producer-owned attribute **read** projection (one door).
+
+        Complete law shared by ordinary AttributeSugar and Attribute AugAssign:
+
+        1. Formal receiver → undischarged ``attribute_named`` carrier
+        2. Authenticated CallSiteValue body → ``force_floor`` then attribute
+        3. Else Floor ``receiver.attribute(name, site)``
+
+        Callers that already hold a reduced receiver (AugAssign) enter here
+        without re-evaluating the receiver expression.
+        """
+        from sugar_lift_py_tests.floor import CallSiteValue
+
+        formal_coordinate = getattr(receiver, "formal_coordinate", None)
+        if formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+            from sugar_lift_py_tests.floor import StringValue
+
+            return NativeOperationExitCarrierV1.mint(
+                site=site,
+                operator="attribute_named",
+                operands=(receiver, StringValue(name)),
+                coordinates=(formal_coordinate, None),
+            )
+
+        if (
+            isinstance(receiver, CallSiteValue)
+            and receiver.body is not None
+            and receiver.source_call_frame_cid is not None
+        ):
+            receiver = receiver.force_floor(
+                ctx,
+                owner="authenticated attribute receiver",
+                project_callsite=False,
+            )
+        return receiver.attribute(name, site)
+
     def desugar(self, ctx: object = None) -> Outcome:
-        def project(receiver):
-            from sugar_lift_py_tests.floor import CallSiteValue
-
-            formal_coordinate = getattr(receiver, "formal_coordinate", None)
-            if formal_coordinate is not None:
-                from sugar_lift_py_tests.caller_parameter_contract import (
-                    NativeOperationExitCarrierV1,
-                )
-                from sugar_lift_py_tests.floor import StringValue
-
-                return NativeOperationExitCarrierV1.mint(
-                    site=self.site,
-                    operator="attribute_named",
-                    operands=(receiver, StringValue(self.name)),
-                    coordinates=(formal_coordinate, None),
-                )
-
-            if (
-                isinstance(receiver, CallSiteValue)
-                and receiver.body is not None
-                and receiver.source_call_frame_cid is not None
-            ):
-                receiver = receiver.force_floor(
-                    ctx,
-                    owner="authenticated attribute receiver",
-                    project_callsite=False,
-                )
-            return receiver.attribute(self.name, self.site)
-
-        return self.receiver.desugar(ctx).and_then(project)
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: self.project_attribute(
+                receiver, self.name, self.site, ctx
+            )
+        )
