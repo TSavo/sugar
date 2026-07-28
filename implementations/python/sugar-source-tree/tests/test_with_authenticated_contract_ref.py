@@ -137,7 +137,10 @@ def _native_protocol_definitions(use_site):
 
 def test_native_resource_requires_both_authenticated_definition_coordinates():
     source = (
-        "def f(path):\n    with acquire(path) as resource:\n        return resource\n"
+        "from pandas import option_context\n"
+        "def f():\n"
+        "    with option_context('display.max_rows', 10) as resource:\n"
+        "        return resource\n"
     )
     tree = _source_with_resolution(
         (source, "native-resource.py", _cid("q")),
