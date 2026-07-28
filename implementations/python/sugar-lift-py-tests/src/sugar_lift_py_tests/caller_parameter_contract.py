@@ -576,11 +576,32 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
 #   ordinary ``add``.
 #
 # Key set must equal :func:`production_native_operation_operators` exactly.
+def _project_unary_minus(value, site):
+    """Python ``-x`` — unary Floor method; discharge arity 1."""
+    return value.unary_minus(site)
+
+
+def _project_unary_plus(value, site):
+    """Python ``+x`` — unary Floor method; discharge arity 1."""
+    return value.unary_plus(site)
+
+
+def _project_bitwise_invert(value, site):
+    """Python ``~x`` — unary Floor method; discharge arity 1."""
+    return value.bitwise_invert(site)
+
+
 _NATIVE_OPERATION_PROJECTORS = {
     # Unary / adapter Floor methods.
     "truth": lambda value, site: value.truth(site),
     "boolop_truth": lambda value, site: value.boolop_truth(site),
     "unary_truth": lambda value, unit, site: value.unary_truth(unit, site),
+    # Formal arithmetic / bitwise unary (``-x`` / ``+x`` / ``~x``).
+    # Production mints from SymbolicValue when formal_coordinate is present;
+    # ground TermValue folds on the free Floor methods these projectors call.
+    "unary_minus": _project_unary_minus,
+    "unary_plus": _project_unary_plus,
+    "bitwise_invert": _project_bitwise_invert,
     "attribute_named": lambda receiver, name, site: receiver.attribute_named(
         name, site
     ),
