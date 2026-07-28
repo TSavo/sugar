@@ -206,6 +206,40 @@ def test_guard_preserves_carrier_demand_until_authenticated_discharge():
     assert exits.exits[0].guard is not None
 
 
+def test_nested_carrier_continuation_reuses_original_actual_map():
+    outer, left, right = _carrier()
+    inner, inner_left, inner_right = _carrier()
+    chained = outer.and_then(lambda _value: inner)
+    exits = chained.discharge(
+        {
+            left.coordinate_cid: TermValue(1),
+            right.coordinate_cid: TermValue(2),
+            inner_left.coordinate_cid: TermValue(3),
+            inner_right.coordinate_cid: TermValue(4),
+        }
+    )
+    assert exits.exits[0].value == TermValue(7)
+
+
+def test_nested_carrier_missing_its_formal_actual_stays_undischarged():
+    outer, left, right = _carrier()
+    inner_left = _coordinate("inner_left", 2)
+    inner_right = _coordinate("inner_right", 3)
+    inner = NativeOperationExitCarrierV1.mint(
+        site=_site(),
+        operator="add",
+        operands=(
+            SymbolicValue(make_var("inner_left"), inner_left),
+            SymbolicValue(make_var("inner_right"), inner_right),
+        ),
+        coordinates=(inner_left, inner_right),
+    )
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        outer.and_then(lambda _value: inner).discharge(
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        )
+
+
 def test_guarded_but_undischarged_carrier_cannot_report_completion():
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic, match="native operation"):
