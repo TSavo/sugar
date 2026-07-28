@@ -29,6 +29,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import AugAssign, FunctionDef
 from sugar_source_tree.operators import (
     Add,
+    BinaryOperator,
     production_augassign_inplace_operators,
 )
 from sugar_source_tree.panic import SugarNotWritten
@@ -466,73 +467,95 @@ def test_production_readability_does_not_authorize_writability() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Floor protocol iadd + operator-owned project_inplace
+# Established inplace_binary_operator_with edge + NotImplemented fallback
 # ---------------------------------------------------------------------------
 
 
-def test_operator_owned_project_inplace_dispatches_to_floor_iadd() -> None:
-    """Add.project_inplace → left.iadd; no caller isinstance ladder."""
-    assert Add.instance().project_inplace is not None
-    # Bound method on the singleton operator.
+def test_operator_owned_project_inplace_uses_inplace_binary_edge() -> None:
+    """Add.project_inplace → discharge_inplace → inplace_binary_operator_with."""
     bound = Add.instance().project_inplace
-    assert bound.__func__ is Add.project_inplace
+    assert bound.__func__ is BinaryOperator.project_inplace
     assert Add.inplace_operator == "iadd"
+    out = bound(TermValue(1), TermValue(2), _production_sites()[1])
+    assert isinstance(out, Complete)
+    assert out.value == TermValue(3)
 
 
-def test_floor_iadd_default_falls_through_to_ordinary_add() -> None:
-    """Absent species override: FloorValue.iadd is ordinary add (protocol)."""
-    # TermValue inherits FloorValue.iadd → add; project_iadd only dispatches.
+def test_production_projector_default_floor_is_ordinary_binary() -> None:
+    """FloorValue.inplace_default → add when species has no inplace override."""
     out = project_iadd(TermValue(1), TermValue(2), _production_sites()[1])
     assert isinstance(out, Complete)
     assert out.value == TermValue(3)
 
 
-def test_floor_species_iadd_override_wins_over_add() -> None:
-    """True inplace override on Floor species is preferred — projector does not probe."""
-    calls: list[str] = []
+def test_production_projector_raw_notimplemented_falls_through_to_binary() -> None:
+    """Twin: raw NotImplemented from floor edge → ordinary add."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        InplaceBinaryOperatorOperation,
+    )
 
-    class _IAddSpecies(FloorValue):
-        def __init__(self, n: int):
-            self.n = n
+    calls: list[str] = []
 
-        def iadd(self, other, site):
-            calls.append("iadd")
-            return Complete(TermValue(self.n + other.value))
+    class _RawNotImpl(FloorValue):
+        def inplace_binary_operator_with(self, operation, ctx):
+            del operation, ctx
+            calls.append("inplace")
+            return NotImplemented
 
         def add(self, other, site):
             calls.append("add")
-            return Complete(TermValue(self.n + other.value))
+            return Complete(TermValue(7))
 
-    out = project_iadd(_IAddSpecies(1), TermValue(2), "op")
+    out = project_iadd(_RawNotImpl(), TermValue(1), "op")
     assert isinstance(out, Complete)
-    assert calls == ["iadd"]
-    with pytest.raises(AssertionError):
-        assert calls == ["add"]
+    assert out.value == TermValue(7)
+    assert calls == ["inplace", "add"]
 
 
-def test_floor_iadd_incomplete_surfaces_without_projector_probe() -> None:
-    """Unresolved Incomplete from Floor iadd surfaces; projector does not rewrite."""
+def test_production_projector_completed_notimplemented_falls_through_to_binary() -> (
+    None
+):
+    """Twin: Complete(NotImplemented) from floor edge → ordinary add."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    calls: list[str] = []
+
+    class _CompleteNotImpl(FloorValue):
+        def inplace_binary_operator_with(self, operation, ctx):
+            del operation, ctx
+            calls.append("inplace")
+            return Complete(NotImplemented)  # type: ignore[arg-type]
+
+        def add(self, other, site):
+            calls.append("add")
+            return Complete(TermValue(9))
+
+    out = project_iadd(_CompleteNotImpl(), TermValue(1), "op")
+    assert isinstance(out, Complete)
+    assert out.value == TermValue(9)
+    assert calls == ["inplace", "add"]
+
+
+def test_production_projector_incomplete_does_not_fall_through_to_binary() -> None:
+    """Incomplete surfaces unchanged — never authorizes binary fallback."""
     from sugar_lift_py_tests.effect import CoverageGapEffect
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
     incomplete_face = Incomplete(
-        CoverageGapEffect(
-            boundary="iadd",
-            reason="inplace unresolved face",
-        )
+        CoverageGapEffect(boundary="iadd", reason="inplace unresolved face")
     )
 
-    class _IncompleteSpecies(FloorValue):
-        def iadd(self, other, site):
-            del other, site
+    class _IncompleteInplace(FloorValue):
+        def inplace_binary_operator_with(self, operation, ctx):
+            del operation, ctx
             return incomplete_face
 
         def add(self, other, site):
             del other, site
             return Complete(TermValue(0))
 
-    out = project_iadd(_IncompleteSpecies(), TermValue(1), "op")
+    out = project_iadd(_IncompleteInplace(), TermValue(1), "op")
     assert out is incomplete_face
 
 

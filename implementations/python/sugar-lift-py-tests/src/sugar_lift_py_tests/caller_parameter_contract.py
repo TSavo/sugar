@@ -426,56 +426,108 @@ def _project_delattr_named(receiver, name, site):
 
 
 def project_iadd(left, right, site):
-    """Discharge ``iadd``: dispatch to Floor; default binary lives on FloorValue."""
-    return left.iadd(right, site)
+    """Discharge ``iadd`` via established ``inplace_binary_operator_with`` edge."""
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="+")
 
 
 def project_isub(left, right, site):
-    return left.isub(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="-")
 
 
 def project_imul(left, right, site):
-    return left.imul(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="*")
 
 
 def project_itruediv(left, right, site):
-    return left.itruediv(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="/")
 
 
 def project_ifloordiv(left, right, site):
-    return left.ifloordiv(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="//")
 
 
 def project_imod(left, right, site):
-    return left.imod(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="%")
 
 
 def project_ipow(left, right, site):
-    return left.ipow(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="**")
 
 
 def project_iand(left, right, site):
-    return left.iand(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="&")
 
 
 def project_ior(left, right, site):
-    return left.ior(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="|")
 
 
 def project_ixor(left, right, site):
-    return left.ixor(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="^")
 
 
 def project_ilshift(left, right, site):
-    return left.ilshift(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="<<")
 
 
 def project_irshift(left, right, site):
-    return left.irshift(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface=">>")
 
 
 def project_imatmul(left, right, site):
-    return left.imatmul(right, site)
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, surface="@")
 
 
 # Enrolled i* projectors — keys must equal production_augassign_inplace_operators().
