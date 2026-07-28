@@ -666,6 +666,8 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     )
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
+    if isinstance(loop, For):
+        construction = replace(construction, iterable_sugar=loop.iter.sugar())
 
     bindings = {}
     for name, entry in zip(carried_names, pre_entries, strict=True):
