@@ -191,7 +191,18 @@ class ConstructedValueTestimonyV1:
 
 @dataclass(frozen=True)
 class BoundBindingStateV1:
-    testimony: ConstructedValueTestimonyV1 | None
+    """Sealed bound state: constructed-value testimony is mandatory.
+
+    Unsealed intermediate bindings use ``sealed_state=None`` on the runtime
+    carrier. A bound sealed projection without testimony is unrepresentable.
+    """
+
+    testimony: ConstructedValueTestimonyV1
+
+    def __post_init__(self) -> None:
+        if self.testimony is None:
+            raise BindingProvenanceGap("constructed-value testimony unavailable")
+        ConstructedValueTestimonyV1.decode(self.testimony.wire())
 
 
 @dataclass(frozen=True)
@@ -267,8 +278,6 @@ class BindingEntryV1:
     def constructed_value_testimony_cid(self) -> str:
         if not isinstance(self.state, BoundBindingStateV1):
             raise BindingProvenanceGap("binding entry is not a bound value")
-        if self.state.testimony is None:
-            raise BindingProvenanceGap("constructed-value testimony unavailable")
         ConstructedValueTestimonyV1.decode(self.state.testimony.wire())
         return self.state.testimony.cid
 
@@ -406,8 +415,6 @@ def _decode_source_memento(raw: object) -> dict[str, Any]:
 
 def _state_wire(state: BindingStateV1) -> dict[str, Any]:
     if isinstance(state, BoundBindingStateV1):
-        if state.testimony is None:
-            raise BindingProvenanceGap("constructed-value testimony unavailable")
         return {"kind": "bound", "testimony": state.testimony.wire()}
     if isinstance(state, UnboundBindingStateV1):
         return {

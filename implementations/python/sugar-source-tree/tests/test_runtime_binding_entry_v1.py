@@ -48,7 +48,9 @@ def test_runtime_entry_keeps_live_node_and_projects_only_pure_wire():
     assignment, live_state, entry = _entry()
     assert entry.state is live_state
     assert "renamed" not in entry.coordinate.preimage
-    with pytest.raises(RuntimeBindingEntryGap, match="testimony unavailable"):
+    # Unsealed bound entry: sealed_state is None until producer testimony seals.
+    assert entry.sealed_state is None
+    with pytest.raises(RuntimeBindingEntryGap, match="no authenticated sealed"):
         entry.wire()
 
     testimony = ConstructedValueTestimonyV1.mint(

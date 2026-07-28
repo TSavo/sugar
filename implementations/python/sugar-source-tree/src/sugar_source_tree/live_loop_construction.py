@@ -311,7 +311,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             replace(
                 entry,
                 state=_make_loop_ref(loop, entry, completion_kind),
-                sealed_state=BoundBindingStateV1(None),
+                sealed_state=None,  # unsealed until face testimony is sealed
             )
             for entry in pre_entries
         )
@@ -346,7 +346,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             replace(
                 halted_scope.get(name, entry),
                 coordinate=entry.coordinate,
-                sealed_state=BoundBindingStateV1(None),
+                sealed_state=None,  # unsealed until face testimony is sealed
             )
             for name, entry in zip(carried_names, pre_entries, strict=True)
         )

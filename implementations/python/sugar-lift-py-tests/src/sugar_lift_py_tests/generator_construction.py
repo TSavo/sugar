@@ -122,6 +122,18 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "resumeCoordinate": value.resume_coordinate,
             "value": _generator_value_testimony(value.resume_value, owner=owner),
         }
+    # Sealed BindingEntryV1: require producer-minted ConstructedValueTestimonyV1.
+    # Consumer never fabricates testimony; unsealed entries refuse here.
+    from sugar_source_tree.binding_state import BindingEntryV1
+
+    if isinstance(value, BindingEntryV1):
+        testimony = value.require_constructed_value_testimony()
+        return {
+            "kind": "sealed-bound-binding",
+            "coordinateCid": value.coordinate.cid,
+            "constructedValueTestimonyCid": testimony.cid,
+            "entry": value.wire(),
+        }
     to_term = getattr(value, "to_term", None)
     if callable(to_term):
         from sugar_lift_py_tests.ir import _term_content_cid
@@ -156,11 +168,6 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
         return {"kind": "wire", "payload": wire()}
     if isinstance(value, (str, int, bool)):
         return {"kind": "primitive", "value": value}
-    # Typed binding entries may project through coordinate CID.
-    coordinate = getattr(value, "coordinate", None)
-    coordinate_cid = getattr(coordinate, "cid", None)
-    if isinstance(coordinate_cid, str):
-        return {"kind": "binding-coordinate", "coordinateCid": coordinate_cid}
     raise TypeError(
         f"{owner} cannot content-address value of type {type(value).__name__}; "
         "project authenticated construction testimony, never object identity"
@@ -260,6 +267,12 @@ class GeneratorConstructionV1:
         binding_state: tuple[object, ...],
         steps: tuple[GeneratorStepV1, ...],
     ) -> "GeneratorConstructionV1":
+        from sugar_source_tree.binding_state import seal_generator_binding_state_v1
+
+        # Producer seal: every BindingEntryV1 carries ConstructedValueTestimonyV1
+        # before the instance exists. Unavailable testimony gaps here, never as
+        # a delayed BindingStateWireGap on a "successfully" sealed state.
+        binding_state = seal_generator_binding_state_v1(binding_state)
         instance_coordinate = cid_of_json(
             {
                 "kind": "python-generator-instance",

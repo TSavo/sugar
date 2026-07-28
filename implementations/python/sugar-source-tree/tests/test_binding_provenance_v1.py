@@ -59,15 +59,21 @@ def test_constructed_value_testimony_is_authenticated_and_unavailable_is_loud():
         value.fragment, cid_of_json({"kind": "IntLiteralSugar", "value": 1})
     )
     assert ConstructedValueTestimonyV1.decode(testimony.wire()) == testimony
+    # Bound sealed state requires testimony at construction; None is unrepresentable.
+    with pytest.raises(BindingProvenanceGap, match="testimony unavailable"):
+        BoundBindingStateV1(None)
+    # Sealed wire entry without a bound state cannot project testimony.
+    from sugar_source_tree.binding_provenance import UnboundBindingStateV1
+
     entry = BindingEntryV1(
         BindingCoordinateV1.mint(
             cid_of_json({"scope": "arbitrary"}),
             assignments[0].targets[0].fragment,
             ("targets", 0),
         ),
-        BoundBindingStateV1(None),
+        UnboundBindingStateV1(value.fragment.seal().cid),
     )
-    with pytest.raises(BindingProvenanceGap, match="testimony unavailable"):
+    with pytest.raises(BindingProvenanceGap, match="not a bound value"):
         entry.constructed_value_testimony_cid()
 
 
