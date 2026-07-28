@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 from collections import Counter, defaultdict
-from dataclasses import fields, is_dataclass
+import copy
+import pickle
+from dataclasses import is_dataclass
 import inspect
 from pathlib import Path
 from typing import Callable
@@ -113,23 +115,6 @@ def audit_law_of_one(
     }
     assert len(graph_modules) == len(parsed), "cross-root duplicate module identity"
     graph = SymbolGraph(graph_modules)
-    law_symbols = {
-        "materialize_module",
-        "project_constructed_module",
-        "constructed_module",
-        "closed_roll_call",
-        "reporting_projection",
-    }
-    relevant_dynamic = tuple(
-        edge for edge in graph.calls
-        if edge.dynamic and edge.expression.rsplit(".", 1)[-1] in law_symbols
-    )
-    errors.extend(
-        f"{edge.path}:{edge.line}: unresolved LAW_OF_ONE edge "
-        f"{edge.expression!r} in {edge.caller.qualified}"
-        for edge in relevant_dynamic
-    )
-
     contract_reds: list[str] = []
     door = SourceFile.__init__
     door_file = Path(inspect.getsourcefile(door) or "").resolve()
@@ -178,24 +163,32 @@ def audit_law_of_one(
             "R_from_path_constructor_edges="
             f"{len(from_path_construction_edges)}: expected exactly one cls(identity) edge"
         )
-    forbidden_from_path_targets = {
-        "materialize", "root", "walk", "sugar", "register", "present_fact",
-        "present_inert", "report_gap",
+    runtime_owner_types = (Backend, Node, AuditReporter, SourceFragment)
+    runtime_owner_locations = {
+        Path(inspect.getsourcefile(owner_type) or "").resolve()
+        for owner_type in runtime_owner_types
+    }
+    runtime_symbols = {
+        symbol
+        for symbol in graph.definitions.values()
+        if symbol.path.resolve() in runtime_owner_locations
+        and symbol.lexical
     }
     forbidden_from_path_edges = tuple(
         edge
         for edge in from_path_edges
-        if edge.expression.rsplit(".", 1)[-1] in forbidden_from_path_targets
+        if set(edge.targets) & runtime_symbols
     )
     if forbidden_from_path_edges:
         contract_reds.append(
             f"R_from_path_work_edges={len(forbidden_from_path_edges)}"
         )
 
-    # Observe the selected direct entry independently. Construction performs
-    # one backend root query and one root materialization; sealing is then a
-    # separate read which must not repeat either work event.
+    # Observe the canonical from_path entry independently. No backend or
+    # materialization work may occur before its one cls(identity) edge enters
+    # SourceFile.__init__.
     observed_work: Counter[str] = Counter()
+    premature_work: list[str] = []
     observation_path = temporary_root / "entry-observation.py"
     observation_path.write_text("VALUE = 1\n", encoding="utf-8")
     with monkeypatch.context() as observation_patch:
@@ -203,39 +196,43 @@ def audit_law_of_one(
         backend_type = type(backend_instance)
         original_root = backend_type.root
         original_materialize = tree_module.materialize
-        original_seal = SourceFragment.seal
+        original_init = SourceFile.__init__
+        entered_init = False
+
+        def observed_init(self, *args, **kwargs):
+            nonlocal entered_init
+            entered_init = True
+            observed_work["constructor"] += 1
+            return original_init(self, *args, **kwargs)
 
         def observed_root(self, *args, **kwargs):
+            if not entered_init:
+                premature_work.append("backend_root")
             observed_work["backend_root"] += 1
             return original_root(self, *args, **kwargs)
 
         def observed_materialize(*args, **kwargs):
+            if not entered_init:
+                premature_work.append("materialize")
             observed_work["materialize"] += 1
             return original_materialize(*args, **kwargs)
 
-        def observed_seal(self, *args, **kwargs):
-            observed_work["seal"] += 1
-            return original_seal(self, *args, **kwargs)
-
+        observation_patch.setattr(SourceFile, "__init__", observed_init)
         observation_patch.setattr(backend_type, "root", observed_root)
         observation_patch.setattr(tree_module, "materialize", observed_materialize)
-        observation_patch.setattr(SourceFragment, "seal", observed_seal)
         observed_reporter = CollectingReporter()
-        observed_file = source_file_entry(
+        source_file_entry(
             observation_path, backend_instance, observed_reporter
         )
         construction_snapshot = observed_work.copy()
-        observed_file.fragment.seal()
 
-    if construction_snapshot != Counter({"backend_root": 1, "materialize": 1}):
+    expected_entry_work = Counter(
+        {"constructor": 1, "backend_root": 1, "materialize": 1}
+    )
+    if construction_snapshot != expected_entry_work or premature_work:
         contract_reds.append(
-            f"R_sourcefile_entry_work_mismatch=1: {dict(construction_snapshot)}"
-        )
-    if observed_work != Counter(
-        {"backend_root": 1, "materialize": 1, "seal": 1}
-    ):
-        contract_reds.append(
-            f"R_observed_seal_work_mismatch=1: {dict(observed_work)}"
+            "R_sourcefile_entry_work_mismatch=1: "
+            f"work={dict(construction_snapshot)} premature={premature_work}"
         )
     if "constructed_module" not in SourceFile.__dict__:
         contract_reds.append(
@@ -269,10 +266,107 @@ def audit_law_of_one(
         contract_reds.append(
             "R_missing_projection_body=1: no semantic projection definition to audit"
         )
+    elif len(projection_symbols) != 1:
+        contract_reds.append(
+            "R_projection_definition_count="
+            f"{len(projection_symbols)}: expected exactly one canonical body"
+        )
+    projection_bindings = tuple(
+        binding
+        for binding in graph.bindings
+        if set(binding.targets) & set(projection_symbols)
+        and binding.kind in {"alias", "reexport"}
+    )
+    if projection_bindings:
+        contract_reds.append(
+            f"R_projection_alias_or_reexport={len(projection_bindings)}"
+        )
     if not projection_call_edges:
         contract_reds.append(
             "R_missing_projection_callers=1: no resolved caller routes through projection"
         )
+    backend_door = Backend.__dict__.get("materialize_module")
+    backend_door_symbols = ()
+    if backend_door is None:
+        contract_reds.append(
+            "R_missing_backend_materialize_owner=1: Backend.materialize_module"
+        )
+    else:
+        backend_door_file = Path(inspect.getsourcefile(backend_door) or "").resolve()
+        backend_door_line = inspect.getsourcelines(backend_door)[1]
+        backend_door_symbols = tuple(
+            symbol
+            for symbol in graph.definitions.values()
+            if symbol.path.resolve() == backend_door_file
+            and symbol.line == backend_door_line
+        )
+        if len(backend_door_symbols) != 1:
+            contract_reds.append(
+                "R_backend_materialize_owner_definitions="
+                f"{len(backend_door_symbols)}: expected exactly one"
+            )
+    legacy_materialize = backend_module.materialize
+    legacy_materialize_file = Path(
+        inspect.getsourcefile(legacy_materialize) or ""
+    ).resolve()
+    legacy_materialize_line = inspect.getsourcelines(legacy_materialize)[1]
+    legacy_materialize_symbols = {
+        symbol
+        for symbol in graph.definitions.values()
+        if symbol.path.resolve() == legacy_materialize_file
+        and symbol.line == legacy_materialize_line
+    }
+    permitted_materialize_owners = {*init_symbols, *backend_door_symbols}
+    legacy_materialize_wrappers = tuple(
+        edge
+        for edge in graph.calls
+        if set(edge.targets) & legacy_materialize_symbols
+        and edge.caller not in permitted_materialize_owners
+    )
+    if legacy_materialize_wrappers:
+        contract_reds.append(
+            "R_legacy_materialize_wrappers="
+            f"{len(legacy_materialize_wrappers)}: "
+            + ", ".join(
+                f"{edge.path}:{edge.line}" for edge in legacy_materialize_wrappers
+            )
+        )
+
+    semantic_roots = {
+        symbol
+        for symbol in (
+            source_file_symbol,
+            from_path_symbol,
+            *init_symbols,
+            *backend_door_symbols,
+            *projection_symbols,
+        )
+        if symbol is not None
+    }
+    semantic_slice = set(semantic_roots)
+    changed = True
+    while changed:
+        changed = False
+        for edge in graph.calls:
+            if edge.caller in semantic_slice and not set(edge.targets) <= semantic_slice:
+                semantic_slice.update(edge.targets)
+                changed = True
+    relevant_dynamic = tuple(
+        edge for edge in graph.calls
+        if edge.dynamic
+        and (
+            edge.caller in semantic_slice
+            or any(
+                set(producers) & semantic_roots
+                for producers in edge.argument_producers
+            )
+        )
+    )
+    errors.extend(
+        f"{edge.path}:{edge.line}: unresolved semantic LAW_OF_ONE edge "
+        f"{edge.expression!r} in {edge.caller.qualified}"
+        for edge in relevant_dynamic
+    )
     legacy_paths = tuple(sorted(repository_root.rglob(
         "test_roll_call_law_of_one_instrument.py"
     )))
@@ -285,6 +379,12 @@ def audit_law_of_one(
         contract_reds.append(
             "R_unobserved_privacy_closure=1: opaque product types are unavailable"
         )
+        contract_reds.extend((
+            "R_protocol_closure_dormant=1: constructed product unavailable",
+            "R_privacy_roster_dormant=1: constructed product unavailable",
+            "R_projection_alias_closure_dormant=1: projection unavailable",
+            "R_cross_product_refusal_dormant=1: projection unavailable",
+        ))
     if relevant_dynamic:
         contract_reds.append(
             f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}"
@@ -299,12 +399,19 @@ def audit_law_of_one(
         f"R_from_path_constructor_edge_gap={abs(1 - len(from_path_construction_edges))}",
         f"R_from_path_work_edges={len(forbidden_from_path_edges)}",
         "R_sourcefile_entry_work_mismatch="
-        f"{int(construction_snapshot != Counter({'backend_root': 1, 'materialize': 1}))}",
-        "R_observed_seal_work_mismatch="
-        f"{int(observed_work != Counter({'backend_root': 1, 'materialize': 1, 'seal': 1}))}",
+        f"{int(construction_snapshot != expected_entry_work or bool(premature_work))}",
+        f"R_backend_materialize_owner_gap={int(len(backend_door_symbols) != 1)}",
+        f"R_legacy_materialize_wrappers={len(legacy_materialize_wrappers)}",
         f"R_dynamic_or_unresolved_edges={len(relevant_dynamic)}",
         f"R_legacy_leaf_name_doors={len(legacy_paths)}",
         f"R_sourcefile_leaf_assertion_projection={source_file_leaf_projection}",
+        f"R_projection_alias_or_reexport={len(projection_bindings)}",
+        "R_protocol_closure_dormant="
+        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        "R_privacy_roster_dormant="
+        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        "R_projection_closure_dormant="
+        f"{int(project_constructed_module is None)}",
     )
     if contract_reds:
         raise AssertionError(
@@ -341,10 +448,21 @@ def audit_law_of_one(
     ]
     door_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in door_edges]
     projection_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in projection_edges]
+    projection_semantic_owners = set(projection_symbols)
+    changed = True
+    while changed:
+        changed = False
+        for edge in graph.calls:
+            if (
+                edge.caller in projection_semantic_owners
+                and not set(edge.targets) <= projection_semantic_owners
+            ):
+                projection_semantic_owners.update(edge.targets)
+                changed = True
     projection_dynamic = tuple(
         EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
         for edge in relevant_dynamic
-        if edge.expression.rsplit(".", 1)[-1] == project_constructed_module.__name__
+        if edge.caller in projection_semantic_owners
     )
     overrides = []
     for source_file_type in subclasses(SourceFile):
@@ -358,8 +476,22 @@ def audit_law_of_one(
                 override_file, override_line, (source_file_type.__name__,), door.__name__
             )
         )
-    forwarders = []
-    source_methods: dict[object, tuple[EvidenceSite, set[object]]] = {}
+    canonical_owner_symbols = set(init_symbols)
+    door_target_symbols = {
+        symbol for symbol in (source_file_symbol, *backend_door_symbols)
+        if symbol is not None
+    }
+    forwarder_edges = tuple(
+        edge
+        for edge in graph.calls
+        if edge.caller not in canonical_owner_symbols
+        and set(edge.targets) & door_target_symbols
+        and edge != from_path_construction_edges[0]
+    )
+    forwarders = [
+        EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
+        for edge in forwarder_edges
+    ]
     assert len(owner_defs) == 1
     assert door_calls
     assert len(projection_calls) > 0
@@ -377,19 +509,6 @@ def audit_law_of_one(
         from_path_symbol.lexical,
         from_path_symbol.name,
     )
-    source_file_path = Path(inspect.getsourcefile(SourceFile) or "").resolve()
-    for symbol in graph.definitions.values():
-        if symbol.path.resolve() != source_file_path or SourceFile.__name__ not in symbol.lexical:
-            continue
-        targets = {
-            target for edge in graph.calls if edge.caller == symbol for target in edge.targets
-        }
-        source_methods[symbol] = (
-            EvidenceSite(symbol.path, symbol.line, symbol.lexical[:-1], symbol.name),
-            targets,
-        )
-    door_symbols = {source_file_symbol} if source_file_symbol is not None else set()
-
     work = Counter()
     original_seal = SourceFragment.seal
 
@@ -404,6 +523,12 @@ def audit_law_of_one(
         return original_door(self, *args, **kwargs)
     monkeypatch.setattr(SourceFile, "__init__", counted_door)
 
+    original_backend_door = Backend.materialize_module
+    def counted_backend_door(self, *args, **kwargs):
+        work["backend_materialize_module"] += 1
+        return original_backend_door(self, *args, **kwargs)
+    monkeypatch.setattr(Backend, "materialize_module", counted_backend_door)
+
     for cls in subclasses(Node) | {Node}:
         method = cls.__dict__.get("sugar")
         if not inspect.isfunction(method):
@@ -413,12 +538,14 @@ def audit_law_of_one(
             return __method(self, *args, **kwargs)
         monkeypatch.setattr(cls, "sugar", counted_sugar)
 
-    for cls in (SourceFile, Node):
+    protocol_classes = {SourceFile, Node, *subclasses(Node)}
+    for cls in protocol_classes:
         for name, method in tuple(cls.__dict__.items()):
             if not inspect.isfunction(method) or not inspect.isgeneratorfunction(method):
                 continue
             def counted_enumeration(self, *args, __name=name, __method=method, **kwargs):
-                work[f"enumeration:{__name}"] += 1
+                work["enumeration"] += 1
+                work[f"enumeration-operation:{__name}"] += 1
                 yield from __method(self, *args, **kwargs)
             monkeypatch.setattr(cls, name, counted_enumeration)
 
@@ -450,7 +577,7 @@ def audit_law_of_one(
         method = getattr(Reporter, name)
         def observed(self, *args, __name=name, __method=method, **kwargs):
             self.events.append((__name, args[0] if args else None))
-            work["protocol"] += 1
+            work[f"reporter:{__name}"] += 1
             return __method(self, *args, **kwargs)
         monkeypatch.setattr(Reporter, name, observed)
 
@@ -502,35 +629,62 @@ def audit_law_of_one(
     product_type = type(product)
     assert dict(truthful_protocol)["backend_root"] == 1
     assert dict(foreign_protocol)["backend_root"] == 1
-    assert work["internal_materialize"] > 0
+    assert dict(truthful_protocol)["backend_materialize_module"] == 1
+    assert dict(foreign_protocol)["backend_materialize_module"] == 1
+    assert dict(truthful_protocol).get("internal_materialize", 0) == 0
+    assert dict(foreign_protocol).get("internal_materialize", 0) == 0
     assert work["sugar"] > 0
-    assert work["protocol"] > 0
-    assert dict(truthful_protocol)["seal"] > 0
-    assert dict(foreign_protocol)["seal"] > 0
+    assert dict(truthful_protocol)["enumeration"] == 1
+    assert dict(foreign_protocol)["enumeration"] == 1
+    assert dict(truthful_protocol)["seal"] == 1
+    assert dict(foreign_protocol)["seal"] == 1
+    assert any(name.startswith("reporter:") for name, _ in truthful_protocol)
+    assert any(name.startswith("reporter:") for name, _ in foreign_protocol)
 
     assert is_dataclass(product), "constructed product must expose closed fields"
 
-    def authentic_relation_types(container: object) -> tuple[type, ...]:
-        assert is_dataclass(container)
-        found = {
-            type(item)
-            for field in fields(container)
-            for value in (getattr(container, field.name),)
-            if isinstance(value, tuple)
-            for item in value
-            if type(item).__module__ == product_type.__module__
-        }
-        return tuple(
-            sorted(
-                found,
-                key=lambda runtime_type: (
-                    runtime_type.__module__, runtime_type.__qualname__
-                ),
-            )
-        )
+    producer_reachable = set(backend_door_symbols)
+    changed = True
+    while changed:
+        changed = False
+        for edge in graph.calls:
+            if edge.caller in producer_reachable and not set(edge.targets) <= producer_reachable:
+                producer_reachable.update(edge.targets)
+                changed = True
+    producer_roster = graph.class_symbols & producer_reachable
 
-    product_relation_types = authentic_relation_types(product)
-    receipt_relation_types = authentic_relation_types(receipt)
+    def authentic_runtime_types(container: object) -> tuple[type, ...]:
+        pending = [container]
+        seen: set[int] = set()
+        found: set[type] = set()
+        while pending:
+            value = pending.pop()
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            value_type = type(value)
+            location = Path(inspect.getsourcefile(value_type) or "").resolve()
+            if any(
+                symbol.path.resolve() == location
+                and symbol.line == inspect.getsourcelines(value_type)[1]
+                for symbol in producer_roster
+            ):
+                found.add(value_type)
+            if isinstance(value, dict):
+                pending.extend(value.keys())
+                pending.extend(value.values())
+            elif isinstance(value, (tuple, list, set, frozenset)):
+                pending.extend(value)
+            elif hasattr(value, "__dict__"):
+                pending.extend(vars(value).values())
+        return tuple(sorted(found, key=lambda item: (item.__module__, item.__qualname__)))
+
+    product_relation_types = tuple(
+        runtime_type
+        for runtime_type in authentic_runtime_types(product)
+        if runtime_type is not product_type
+    )
+    receipt_relation_types = authentic_runtime_types(receipt)
     discovered_closed_type_set = {
         product_type,
         *product_relation_types,
@@ -561,12 +715,17 @@ def audit_law_of_one(
     second_product_doors = []
     public = []
     serializers = []
-    opaque_symbols = {
-        symbol for symbol in graph.definitions.values()
-        if any(symbol.path.resolve() == location[0] and symbol.line == location[1] for location in type_locations.values())
-    }
+    opaque_symbols = set(producer_roster)
     definitions.extend(EvidenceSite(s.path, s.line, s.lexical, s.name) for s in opaque_symbols)
-    opaque_edges = [edge for edge in graph.calls if set(edge.targets) & opaque_symbols]
+    closed_factories = {
+        symbol
+        for symbol, producers in graph.return_producers.items()
+        if set(producers) & opaque_symbols
+    }
+    closed_producers = opaque_symbols | closed_factories
+    opaque_edges = [
+        edge for edge in graph.calls if set(edge.targets) & closed_producers
+    ]
     constructions.extend(EvidenceSite(e.path, e.line, e.caller.lexical, e.caller.name) for e in opaque_edges)
     function_owners = {
         binding.owner
@@ -578,12 +737,6 @@ def audit_law_of_one(
         for binding in graph.bindings
         if set(binding.targets) & opaque_symbols
     )
-    opaque_read_targets = {
-        target
-        for edge in graph.calls
-        for target in edge.targets
-        if target in opaque_symbols
-    }
     for binding in opaque_bindings:
         site = EvidenceSite(
             binding.path, binding.line, binding.owner.lexical, binding.name
@@ -593,9 +746,13 @@ def audit_law_of_one(
         elif binding.kind == "reexport":
             reexports.append(site)
         if (
-            binding.kind == "alias"
-            and binding.owner not in function_owners
-            and bool(set(binding.targets) & opaque_read_targets)
+            binding.owner not in function_owners
+            and any(
+                read.owner != binding.owner
+                and read.name == binding.name
+                and set(read.producers) & opaque_symbols
+                for read in graph.reads
+            )
         ):
             caches.append(site)
     for symbol in opaque_symbols:
@@ -618,24 +775,42 @@ def audit_law_of_one(
             )
             second_product_doors.append(site)
             wrappers.append(site)
-    serializer_names = {
-        "asdict", "dict", "json", "model_dump", "model_dump_json",
-        "serialize", "to_dict", "to_json",
-    }
-    opaque_lexical_owners = {
-        (*symbol.lexical, symbol.name) for symbol in opaque_symbols
-    }
-    for symbol in graph.definitions.values():
-        if (
-            symbol.name in serializer_names
-            and any(
-                symbol.lexical[: len(owner)] == owner
-                for owner in opaque_lexical_owners
+    projection_alias_sites = tuple(
+        EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.name)
+        for binding in projection_bindings
+        if binding.kind == "alias"
+    )
+    projection_reexport_sites = tuple(
+        EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.name)
+        for binding in projection_bindings
+        if binding.kind == "reexport"
+    )
+    projection_wrapper_sites = []
+    for edge in projection_edges:
+        tree = parsed[edge.path]
+        parents = _parents(tree)
+        matching_calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and node.lineno == edge.line
+        ]
+        if any(isinstance(parents.get(node), ast.Return) for node in matching_calls):
+            projection_wrapper_sites.append(
+                EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
             )
-        ):
-            serializers.append(
-                EvidenceSite(symbol.path, symbol.line, symbol.lexical, symbol.name)
-            )
+    non_product_projection_callers = tuple(
+        EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name)
+        for edge in projection_edges
+        if len(edge.argument_producers) != 1
+        or not (set(edge.argument_producers[0]) & product_symbols)
+    )
+    for operation in (copy.copy, copy.deepcopy, pickle.dumps):
+        try:
+            operation(product)
+        except Exception:
+            continue
+        serializers.append(
+            EvidenceSite(Path(__file__).resolve(), inspect.currentframe().f_lineno, (), operation.__qualname__)
+        )
     discovered_opaque_reference_count = (
         len(opaque_symbols) + len(opaque_edges) + len(opaque_bindings)
     )
@@ -677,6 +852,8 @@ def audit_law_of_one(
     stored = product.reporting_projection
     results = tuple(project_constructed_module(product) for _ in range(3))
     foreign_projection = project_constructed_module(foreign_product)
+    with pytest.raises(TypeError):
+        project_constructed_module(product, foreign_product.closed_roll_call)
     after_events = tuple(reporter.events)
     after_work = tuple(sorted(work.items()))
 
@@ -695,7 +872,7 @@ def audit_law_of_one(
             dynamic_calls=tuple(
                 EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
                 for edge in relevant_dynamic
-                if edge.expression.rsplit(".", 1)[-1] in {"SourceFile", "cls"}
+                if edge.caller in {from_path_symbol, *init_symbols}
             ),
             forwarders=tuple(forwarders),
             adapter_overrides=tuple(overrides),
@@ -733,6 +910,10 @@ def audit_law_of_one(
             definition=projection_def,
             callers=tuple(projection_calls),
             dynamic_edges=projection_dynamic,
+            aliases=projection_alias_sites,
+            reexports=projection_reexport_sites,
+            wrappers=tuple(projection_wrapper_sites),
+            non_product_callers=non_product_projection_callers,
             legacy_doors=tuple(
                 EvidenceSite(path, 1, (), path.name) for path in legacy_paths
             ),

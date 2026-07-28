@@ -28,6 +28,7 @@ class CallEdge:
     targets: tuple[Symbol, ...]
     dynamic: bool
     expression: str
+    argument_producers: tuple[tuple[Symbol, ...], ...]
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,15 @@ class BindingEdge:
     name: str
     targets: tuple[Symbol, ...]
     kind: str
+
+
+@dataclass(frozen=True)
+class ReadEdge:
+    owner: Symbol
+    path: Path
+    line: int
+    name: str
+    producers: tuple[Symbol, ...]
 
 
 class SymbolGraph:
@@ -53,14 +63,32 @@ class SymbolGraph:
         self.definitions: dict[str, Symbol] = {}
         self.calls: list[CallEdge] = []
         self.bindings: list[BindingEdge] = []
+        self.reads: list[ReadEdge] = []
         self.discovery_errors: list[str] = []
         self._node_symbols: dict[ast.AST, Symbol] = {}
         self._class_symbols: set[Symbol] = set()
         self._module_symbols: dict[str, Symbol] = {}
         self._exports: dict[str, dict[str, set[Symbol]]] = {}
+        self._package_modules = {
+            module
+            for module, (path, _) in modules.items()
+            if path.name == "__init__.py"
+        }
+        self._return_producers: dict[Symbol, set[Symbol]] = {}
         self._index_definitions()
         self._resolve_imports_to_fixed_point()
         self._walk_programs()
+
+    @property
+    def class_symbols(self) -> frozenset[Symbol]:
+        return frozenset(self._class_symbols)
+
+    @property
+    def return_producers(self) -> dict[Symbol, frozenset[Symbol]]:
+        return {
+            symbol: frozenset(values)
+            for symbol, values in self._return_producers.items()
+        }
 
     def _index_definitions(self) -> None:
         def visit(module: str, path: Path, body: list[ast.stmt], lexical: tuple[str, ...]) -> None:
@@ -94,7 +122,7 @@ class SymbolGraph:
     def _absolute_import(self, current: str, node: ast.ImportFrom) -> str:
         if node.level == 0:
             return node.module or ""
-        package = current.split(".")[:-1]
+        package = current.split(".") if current in self._package_modules else current.split(".")[:-1]
         package = package[: max(0, len(package) - (node.level - 1))]
         suffix = (node.module or "").split(".") if node.module else []
         return ".".join((*package, *suffix))
@@ -162,18 +190,35 @@ class SymbolGraph:
                     found.add(target)
             return found
         if isinstance(expr, ast.Call):
-            # Preserve constructor/factory provenance across a write.  The
-            # graph does not claim the runtime return type; it records the
-            # authenticated callable that produced the stored value so later
-            # scope/read auditing can identify cached construction doors.
-            return self._resolve_expr(expr.func, env)
+            produced: set[Symbol] = set()
+            for callable_symbol in self._resolve_expr(expr.func, env):
+                if callable_symbol in self._class_symbols:
+                    produced.add(callable_symbol)
+                else:
+                    produced.update(self._return_producers.get(callable_symbol, ()))
+            return produced
         return set()
 
     def _record_call(self, node: ast.Call, owner: Symbol, env: dict[str, set[Symbol]]) -> None:
         targets = tuple(sorted(self._resolve_expr(node.func, env)))
         expression = ast.unparse(node.func)
         dynamic = not targets
-        self.calls.append(CallEdge(owner, owner.path, node.lineno, targets, dynamic, expression))
+        arguments = (*node.args, *(keyword.value for keyword in node.keywords))
+        argument_producers = tuple(
+            tuple(sorted(self._resolve_expr(argument, env)))
+            for argument in arguments
+        )
+        self.calls.append(
+            CallEdge(
+                owner,
+                owner.path,
+                node.lineno,
+                targets,
+                dynamic,
+                expression,
+                argument_producers,
+            )
+        )
         if dynamic:
             self.discovery_errors.append(
                 f"{owner.path}:{node.lineno}: unresolved call edge {expression!r} in {owner.qualified}"
@@ -183,6 +228,26 @@ class SymbolGraph:
         # ast.walk is safe for expression children because bindings cannot
         # change between them; statement order is handled only by _walk_body.
         for child in ast.walk(node):
+            if isinstance(child, ast.Attribute) and isinstance(child.ctx, ast.Load):
+                self.reads.append(
+                    ReadEdge(
+                        owner,
+                        owner.path,
+                        child.lineno,
+                        ast.unparse(child),
+                        tuple(sorted(self._resolve_expr(child, env))),
+                    )
+                )
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                self.reads.append(
+                    ReadEdge(
+                        owner,
+                        owner.path,
+                        child.lineno,
+                        child.id,
+                        tuple(sorted(env.get(child.id, ()))),
+                    )
+                )
             if isinstance(child, ast.Call):
                 self._record_call(child, owner, env)
 
@@ -281,6 +346,17 @@ class SymbolGraph:
                 values = self._resolve_expr(value, env)
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
+                    if isinstance(target, (ast.Attribute, ast.Subscript)):
+                        self.bindings.append(
+                            BindingEdge(
+                                owner,
+                                owner.path,
+                                getattr(target, "lineno", 1),
+                                ast.unparse(target),
+                                tuple(sorted(values)),
+                                "storage-write",
+                            )
+                        )
                     for name_node in ast.walk(target):
                         if isinstance(name_node, ast.Name) and isinstance(name_node.ctx, ast.Store):
                             self._bind(owner, node, name_node.id, values, "alias" if values else "assignment", env)
@@ -307,9 +383,15 @@ class SymbolGraph:
                 else:
                     self._walk_expr(node.test, owner, env)
                     loop_env = env
-                body_env = self._walk_body(node.body, owner, loop_env)
-                else_env = self._walk_body(node.orelse, owner, self._join([env, body_env]))
-                env = self._join([env, body_env, else_env])
+                head = self._join([env, loop_env])
+                while True:
+                    body_env = self._walk_body(node.body, owner, head)
+                    next_head = self._join([env, body_env])
+                    if next_head == head:
+                        break
+                    head = next_head
+                else_env = self._walk_body(node.orelse, owner, head)
+                env = self._join([head, else_env])
                 continue
             if isinstance(node, (ast.With, ast.AsyncWith)):
                 with_env = {name: set(values) for name, values in env.items()}
@@ -322,23 +404,59 @@ class SymbolGraph:
                 env = self._walk_body(node.body, owner, with_env)
                 continue
             if isinstance(node, (ast.Try, ast.TryStar)):
-                arms = [self._walk_body(node.body, owner, env)]
-                for handler in node.handlers:
-                    handler_env = {name: set(values) for name, values in env.items()}
-                    if handler.name:
-                        self._bind(owner, handler, handler.name, set(), "except-target", handler_env)
-                    arm = self._walk_body(handler.body, owner, handler_env)
-                    if handler.name:
-                        arm[handler.name] = set()
-                    arms.append(arm)
-                joined = self._join(arms)
-                joined = self._walk_body(node.orelse, owner, joined)
-                env = self._walk_body(node.finalbody, owner, joined)
+                head = {name: set(values) for name, values in env.items()}
+                while True:
+                    normal = self._walk_body(node.body, owner, head)
+                    arms = [normal]
+                    for handler in node.handlers:
+                        handler_env = {name: set(values) for name, values in head.items()}
+                        if handler.name:
+                            self._bind(owner, handler, handler.name, set(), "except-target", handler_env)
+                        arm = self._walk_body(handler.body, owner, handler_env)
+                        if handler.name:
+                            arm[handler.name] = set()
+                        arms.append(arm)
+                    next_head = self._join([env, *arms])
+                    if next_head == head:
+                        break
+                    head = next_head
+                normal_else = self._walk_body(node.orelse, owner, normal)
+                env = self._walk_body(node.finalbody, owner, self._join([normal_else, *arms[1:]]))
+                continue
+            if isinstance(node, ast.Return):
+                if node.value is not None:
+                    self._walk_expr(node.value, owner, env)
+                    self._return_producers.setdefault(owner, set()).update(
+                        self._resolve_expr(node.value, env)
+                    )
                 continue
             self._walk_expr(node, owner, env)
         return env
 
     def _walk_programs(self) -> None:
-        for module, (_, tree) in self.modules.items():
-            root = self._module_symbols[module]
-            self._walk_body(tree.body, root, {})
+        # Return/value provenance is mutually recursive with calls to local
+        # factories.  Iterate to a fixed point, publishing only the final
+        # graph so intermediate passes cannot inflate denominators.
+        previous: dict[Symbol, set[Symbol]] = {}
+        while True:
+            self.calls = []
+            self.bindings = []
+            self.reads = []
+            self.discovery_errors = []
+            self._return_producers = {
+                symbol: set(values) for symbol, values in previous.items()
+            }
+            for module, (_, tree) in self.modules.items():
+                root = self._module_symbols[module]
+                self._walk_body(tree.body, root, self._exports[module])
+            current = {
+                symbol: set(values)
+                for symbol, values in self._return_producers.items()
+            }
+            if current == previous:
+                self.calls = list(dict.fromkeys(self.calls))
+                self.bindings = list(dict.fromkeys(self.bindings))
+                self.reads = list(dict.fromkeys(self.reads))
+                self.discovery_errors = list(dict.fromkeys(self.discovery_errors))
+                break
+            previous = current

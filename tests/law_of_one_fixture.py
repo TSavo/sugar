@@ -14,21 +14,15 @@ from law_of_one_auditor import audit_law_of_one
 from law_of_one_evidence import LawOfOneEvidence, assert_test_owned_evidence
 
 
-def _direct_source_file_entry(path: Path, backend: object, reporter: object):
-    """The single replaceable construction seat under the pending ruling."""
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.tree import SourceFile
-
-    return SourceFile(path_source(str(path)), backend=backend, reporter=reporter)
-
-
 @pytest.fixture
 def law_of_one_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LawOfOneEvidence:
+    from sugar_source_tree.tree import SourceFile
+
     repository_root = Path(__file__).resolve().parents[1]
     evidence = audit_law_of_one(
         repository_root=repository_root,
         temporary_root=tmp_path,
         monkeypatch=monkeypatch,
-        source_file_entry=_direct_source_file_entry,
+        source_file_entry=SourceFile.from_path,
     )
     return assert_test_owned_evidence(evidence)

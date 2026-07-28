@@ -72,6 +72,10 @@ class ProjectionClosureEvidence:
     definition: EvidenceSite
     callers: tuple[EvidenceSite, ...]
     dynamic_edges: tuple[EvidenceSite, ...]
+    aliases: tuple[EvidenceSite, ...]
+    reexports: tuple[EvidenceSite, ...]
+    wrappers: tuple[EvidenceSite, ...]
+    non_product_callers: tuple[EvidenceSite, ...]
     legacy_doors: tuple[EvidenceSite, ...]
     discovered_edges: int
     audited_edges: int
@@ -180,6 +184,10 @@ class LawOfOneEvidence:
         projection = self.projection
         assert projection.callers
         assert projection.dynamic_edges == ()
+        assert projection.aliases == ()
+        assert projection.reexports == ()
+        assert projection.wrappers == ()
+        assert projection.non_product_callers == ()
         assert projection.legacy_doors == ()
         assert projection.discovered_edges == projection.audited_edges > 0
 
