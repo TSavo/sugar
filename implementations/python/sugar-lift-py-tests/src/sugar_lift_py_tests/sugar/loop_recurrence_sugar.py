@@ -251,14 +251,36 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             raise TypeError("NextOperation must produce NextResult or a named exception")
 
         next_result = outcome.value
-        iteration_ctx = bind_temporal(
-            ctx,
-            runtime.target_name,
-            next_result.value,
-            owner="LoopRecurrenceSugar",
-            blame=str(self.site),
+        projected = self._project_iteration_target(
+            runtime.target_pattern, next_result.value, ctx
         )
-        body = reduce_block_to_exitset(runtime.body_sugars, iteration_ctx)
+        if isinstance(projected, Incomplete):
+            # Assignment has not begun: the positional-unpack Floor owns the
+            # halt and the exact context entering this iteration is its state.
+            return ExitSet.halted(projected.effect, state=ctx)
+        if not isinstance(projected, Complete):
+            return projected
+        target_bindings = projected.value
+        iteration_ctx = ctx
+        for name, coordinate_cid, value in target_bindings:
+            iteration_ctx = bind_temporal(
+                iteration_ctx,
+                name,
+                value,
+                owner="LoopRecurrenceSugar",
+                blame=str(self.site),
+            )
+            iteration_ctx = bind_temporal(
+                iteration_ctx,
+                coordinate_cid,
+                value,
+                owner="LoopRecurrenceSugar.target-coordinate",
+                blame=str(self.site),
+            )
+        body = reduce_block_to_exitset(
+            tuple(statement.sugar() for statement in runtime.body_statements),
+            iteration_ctx,
+        )
         if not isinstance(body, ExitSet):
             return body
         if len(body.exits) != 1:
@@ -272,8 +294,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             ):
                 state = self._require_loop_control_state(
                     face.state,
-                    target_name=runtime.target_name,
-                    target_value=next_result.value,
+                    target_bindings=target_bindings,
                 )
                 if effect.action == "continue":
                     return self._advance_iterator(
@@ -300,8 +321,60 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             entries=combined,
         )
 
+    def _project_iteration_target(self, pattern, value, ctx):
+        """Project every target leaf through the Floor-owned unpack door."""
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            PositionalUnpackOperation,
+            UnpackMemberRoster,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_source_tree.nodes import List, Name, Tuple_
+
+        coordinates = {
+            coordinate.projection_path: coordinate
+            for coordinate in pattern.target_coordinates
+        }
+
+        def project(target, current, path=()):
+            if isinstance(target, Name):
+                coordinate = coordinates[("target", *path)]
+                return Complete(((target.id, coordinate.cid, current),))
+            if not isinstance(target, (Tuple_, List)):
+                raise TypeError("live for target contains an unsupported target leaf")
+            operation = PositionalUnpackOperation(
+                fixed_prefix=len(target.elts),
+                fixed_suffix=0,
+                has_star=False,
+                owner="LoopRecurrenceSugar.target",
+                blame=target.fragment,
+            )
+            unpacked = operation.submit(current, ctx)
+            if isinstance(unpacked, Incomplete):
+                return unpacked
+            if not isinstance(unpacked, Complete) or not isinstance(
+                unpacked.value, UnpackMemberRoster
+            ):
+                raise TypeError("positional target unpack omitted its authenticated roster")
+            if (
+                unpacked.value.occurrence is not target.fragment
+                or unpacked.value.demand_cid != operation.demand_cid()
+                or len(unpacked.value.members) != len(target.elts)
+            ):
+                raise TypeError("positional target unpack returned cross-wired testimony")
+            bindings = []
+            for index, (child, member) in enumerate(
+                zip(target.elts, unpacked.value.members, strict=True)
+            ):
+                child_result = project(child, member, (*path, index))
+                if not isinstance(child_result, Complete):
+                    return child_result
+                bindings.extend(child_result.value)
+            return Complete(tuple(bindings))
+
+        return project(pattern.target, value)
+
     @staticmethod
-    def _require_loop_control_state(state, *, target_name, target_value):
+    def _require_loop_control_state(state, *, target_bindings):
         """Authenticate the producer's exact current reduction context.
 
         A loop-control halt carries the context it received at its source
@@ -313,8 +386,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         if not isinstance(state, ReduceContext):
             raise TypeError("loop control omitted its exact ReduceContext state")
-        if state.temporal.value_if_bound(target_name) is not target_value:
-            raise TypeError("loop control state lacks exact iteration target identity")
+        for target_name, coordinate_cid, target_value in target_bindings:
+            if (
+                state.temporal.value_if_bound(target_name) is not target_value
+                or state.temporal.value_if_bound(coordinate_cid) is not target_value
+            ):
+                raise TypeError("loop control state lacks exact iteration target identity")
         return state
 
     def _finish_iterator(self, runtime, ctx, *, entries):
@@ -323,9 +400,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.outcome import Completed, ExitSet
 
-        if not runtime.else_sugars:
+        if not runtime.else_statements:
             return self._publish_runtime_bindings(runtime, ctx, entries=entries)
-        otherwise = reduce_block_to_exitset(runtime.else_sugars, ctx)
+        otherwise = reduce_block_to_exitset(
+            tuple(statement.sugar() for statement in runtime.else_statements), ctx
+        )
         if not isinstance(otherwise, ExitSet) or len(otherwise.exits) != 1:
             return otherwise
         face = otherwise.exits[0]

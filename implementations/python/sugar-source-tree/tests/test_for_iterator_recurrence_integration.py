@@ -96,6 +96,13 @@ def test_loop_control_state_accepts_only_the_exact_iteration_binding_identity() 
         owner="loop-control-exact",
         blame="loop-control-exact",
     )
+    exact = bind_temporal(
+        exact,
+        "blake3-512:" + "a" * 128,
+        value,
+        owner="loop-control-coordinate",
+        blame="loop-control-coordinate",
+    )
     foreign = bind_temporal(
         ambient,
         "item",
@@ -107,20 +114,17 @@ def test_loop_control_state_accepts_only_the_exact_iteration_binding_identity() 
     assert (
         LoopRecurrenceSugar._require_loop_control_state(
             exact,
-            target_name="item",
-            target_value=value,
+            target_bindings=(("item", "blake3-512:" + "a" * 128, value),),
         )
         is exact
     )
     with pytest.raises(TypeError, match="exact iteration target identity"):
         LoopRecurrenceSugar._require_loop_control_state(
             ambient,
-            target_name="item",
-            target_value=value,
+            target_bindings=(("item", "blake3-512:" + "a" * 128, value),),
         )
     with pytest.raises(TypeError, match="exact iteration target identity"):
         LoopRecurrenceSugar._require_loop_control_state(
             foreign,
-            target_name="item",
-            target_value=value,
+            target_bindings=(("item", "blake3-512:" + "a" * 128, value),),
         )
