@@ -5334,6 +5334,10 @@ class With(Statement):
                 )
                 self.reporter.report_gap(self, panic)
                 raise panic
+            # Expected-type and binding authorize every face. Disagreeing faces
+            # must refuse here — never let face zero speak for the rest.
+            _ = resolution.shared_expected_type_operand
+            _ = resolution.shared_binding
             return resolution
         if not isinstance(
             resolution, (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1)
