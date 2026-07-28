@@ -5234,6 +5234,7 @@ class With(Statement):
             RaiseEffectKindV1,
             WarningEffectKindV1,
             NeverSuppressesDispositionV1,
+            ReturnTruthinessDispositionV1,
             ProtocolResourceSemanticsV1,
             TotalCompletionV1,
         )
@@ -5266,7 +5267,10 @@ class With(Statement):
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
             and isinstance(semantics.exit.completion, TotalCompletionV1)
-            and isinstance(semantics.exit.disposition, NeverSuppressesDispositionV1)
+            and isinstance(
+                semantics.exit.disposition,
+                (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
+            )
         )
         admitted_boundary = (
             isinstance(semantics, EffectBoundarySemanticsV1)
@@ -5287,7 +5291,8 @@ class With(Statement):
                     f"at {resolution.contract_cid}"
                 ),
                 requested=(
-                    "total Value/NeverSuppresses resource or typed "
+                    "total Value resource with source-derived NeverSuppresses or "
+                    "ReturnTruthiness disposition, or typed "
                     "Expects/Suppresses Raise/Warning boundary"
                 ),
                 fix="leave unsupported authenticated semantics loud; never upgrade testimony",

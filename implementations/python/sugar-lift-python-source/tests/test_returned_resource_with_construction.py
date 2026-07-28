@@ -23,7 +23,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_contract import ProtocolResourceSemanticsV1
+from sugar_lift_py_tests.context_manager_contract import (
+    ProtocolResourceSemanticsV1,
+    ReturnTruthinessDispositionV1,
+)
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceDerivedContextManagerRefV1,
     TreeConstructionContextV1,
@@ -33,7 +36,7 @@ from sugar_lift_py_tests.fixture_resource_obligation import (
     FixtureSuppliedResourceObligationV1,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete
-from sugar_lift_py_tests.outcome.exit_set import Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
@@ -44,7 +47,6 @@ from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
 from sugar_source_tree.tree import SourceFile
-
 
 _GUARD_SOURCE = (
     "class Guard:\n"
@@ -107,7 +109,9 @@ def _with_chain(sugar):
     chain = []
 
     def walk(node):
-        if isinstance(node, (WithSourceResourceSugar, WithResourceSugar, WithEffectBoundarySugar)):
+        if isinstance(
+            node, (WithSourceResourceSugar, WithResourceSugar, WithEffectBoundarySugar)
+        ):
             chain.append(node)
             for child in getattr(node, "body", ()) or ():
                 walk(child)
@@ -242,6 +246,81 @@ def test_direct_call_returned_resource_still_constructs(tmp_path: Path):
     )
     sugar = next(node for node in tree.nodes() if node.kind == "With").sugar()
     assert isinstance(sugar, WithSourceResourceSugar)
+
+
+def test_authenticated_pandas_303_get_handle_is_real_resource_reproducer():
+    """Pinned pandas site: source IOHandles enter/exit around frame output."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+
+    corpus = authenticated_pandas_corpus()
+    frame_source = (corpus.root / "core/frame.py").read_text(encoding="utf-8")
+    manager_source = (corpus.root / "io/common.py").read_text(encoding="utf-8")
+
+    assert frame_source.splitlines()[2987].strip().startswith("with get_handle(")
+    assert "class IOHandles" in manager_source
+    assert (
+        "def __enter__(self) -> IOHandles[AnyStr]:\n        return self"
+        in manager_source
+    )
+    assert "def __exit__(\n        self," in manager_source
+    assert "    ) -> None:\n        self.close()" in manager_source
+
+
+def test_source_true_exit_publishes_truthiness_and_consumes_raise(tmp_path: Path):
+    """Source-derived ``return True`` is suppression testimony, not a name arm."""
+    implementation = _GUARD_SOURCE.replace("return False", "return True")
+    dist = _distribution(tmp_path, implementation)
+    consumer = (
+        "from arbitrary import make_guard\n"
+        "def f(x):\n"
+        "    with make_guard(x):\n"
+        "        raise ValueError('boom')\n"
+        "    return x\n"
+    )
+
+    tree, context, _ = _tree(tmp_path, consumer, dist=dist)
+    reference = next(iter(context.source_derived_contract_refs.values()))
+
+    assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(
+        reference.semantics.exit.disposition, ReturnTruthinessDispositionV1
+    )
+    sugar = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    assert isinstance(sugar, WithSourceResourceSugar)
+    assert not any(
+        isinstance(face, Halted)
+        and getattr(face.effect, "exception_name", None) == "ValueError"
+        for face in sugar.desugar().exits
+    )
+
+
+def test_source_undecided_exit_never_silently_swallows_raise(tmp_path: Path):
+    """A source-visible symbolic return retains suppress and propagate faces."""
+    implementation = _GUARD_SOURCE.replace("return False", "return self.marker")
+    dist = _distribution(tmp_path, implementation)
+    consumer = (
+        "from arbitrary import make_guard\n"
+        "def f(x):\n"
+        "    with make_guard(x):\n"
+        "        raise ValueError('boom')\n"
+        "    return x\n"
+    )
+
+    tree, context, _ = _tree(tmp_path, consumer, dist=dist)
+    reference = next(iter(context.source_derived_contract_refs.values()))
+
+    assert isinstance(reference.semantics, ProtocolResourceSemanticsV1)
+    assert isinstance(
+        reference.semantics.exit.disposition, ReturnTruthinessDispositionV1
+    )
+    sugar = next(node for node in tree.nodes() if node.kind == "With").sugar()
+    exits = sugar.desugar().exits
+    assert any(isinstance(face, Completed) for face in exits)
+    assert any(
+        isinstance(face, Halted)
+        and getattr(face.effect, "exception_name", None) == "ValueError"
+        for face in exits
+    )
 
 
 def test_nested_assigned_resources_compose_through_one_algebra(tmp_path: Path):
@@ -389,7 +468,9 @@ def test_fixture_supplied_formal_manager_stays_typed_loud_without_actual(
     obligation_src.write_text(
         "def use(resource):\n    return resource\n", encoding="utf-8"
     )
-    frame = next(SourceFile(path_source(str(obligation_src))).functions()).source_visible_call_frame()
+    frame = next(
+        SourceFile(path_source(str(obligation_src))).functions()
+    ).source_visible_call_frame()
     obligation = FixtureSuppliedResourceObligationV1.mint(frame.formal_coordinates[0])
     assert obligation.kind == "fixture-supplied-resource-obligation"
     assert obligation.formal_coordinate_cid == frame.formal_coordinates[0].cid
