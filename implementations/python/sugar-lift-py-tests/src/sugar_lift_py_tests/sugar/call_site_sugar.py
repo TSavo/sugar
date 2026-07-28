@@ -237,9 +237,10 @@ class CallSiteSugar(ConstructedTermSugar):
 
             try:
                 if self.source_call_frame.pending_native_operation is None:
-                    positional = self.source_call_frame.bind_actuals(
+                    bound_source_actuals = self.source_call_frame.bind_actuals(
                         positional, kw_values, ctx
                     )
+                    positional = bound_source_actuals.actuals
                 else:
                     native_operation_actuals = (
                         self.source_call_frame.bind_native_operation_actuals(
