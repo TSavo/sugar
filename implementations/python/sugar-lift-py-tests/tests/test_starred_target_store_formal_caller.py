@@ -322,11 +322,40 @@ def test_discrimination_double_rhs_detected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Arity + opaque
+# Arity + opaque + occurrence / coordinate teeth
 # ---------------------------------------------------------------------------
 
 
+def _valueerror_type_identity():
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("ValueError")],
+    )
+
+
+def _arity_mismatch_effect(outcome):
+    """Normalize Complete/Incomplete/ExitSet shells to the RaiseEffect face."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    if isinstance(outcome, Incomplete):
+        effect = outcome.effect
+    elif isinstance(outcome, Complete) and isinstance(outcome.value, RaiseValue):
+        effect = outcome.value.effect
+    elif isinstance(outcome, ExitSet):
+        halted = [e for e in outcome.exits if isinstance(e, Halted)]
+        assert halted, outcome.exits
+        effect = halted[0].effect
+    else:
+        raise AssertionError(f"unexpected arity-mismatch shell: {type(outcome)!r}")
+    assert isinstance(effect, RaiseEffect), type(effect)
+    return effect
+
+
 def test_exact_arity_valueerror_identity() -> None:
+    """Named ValueError with exact type + operation occurrence (not spelling-only)."""
     site = _site("def f(obj, xs):\n    obj.x, obj.y = xs\n")
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(ListValue((TermValue(1),))),  # need 2
@@ -340,19 +369,144 @@ def test_exact_arity_valueerror_identity() -> None:
         ),
         site=site,
     )
-    out = sugar.desugar(None)
-    if isinstance(out, Incomplete):
-        assert out.effect.exception_name == "ValueError"
-    elif isinstance(out, Complete):
-        from sugar_lift_py_tests.floor import RaiseValue
+    effect = _arity_mismatch_effect(sugar.desugar(None))
+    assert effect.exception_name == "ValueError"
+    assert effect.exception_type_coordinate == _valueerror_type_identity()
+    assert (
+        effect.producer_node_owner
+        == "DynamicUnpackStoreAssignSugar.arity_mismatch"
+    )
+    # Operation occurrence cites the unpack site — not a foreign boundary.
+    assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
+    assert effect.occurrence_id is not None
 
-        assert isinstance(out.value, RaiseValue)
-        assert out.value.effect.exception_name == "ValueError"
-    else:
-        assert isinstance(out, ExitSet)
-        halted = [e for e in out.exits if isinstance(e, Halted)]
-        assert halted
-        assert getattr(halted[0].effect, "exception_name", None) == "ValueError"
+
+def test_arity_valueerror_wrong_occurrence_is_not_truthful() -> None:
+    """Same type name under a foreign occurrence is not the unpack exit."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    site = _site("def f(obj, xs):\n    obj.x, obj.y = xs\n")
+    sugar = DynamicUnpackStoreAssignSugar(
+        value=_FloorSugar(ListValue((TermValue(1),))),
+        targets=(
+            AttributeUnpackTarget(
+                _FloorSugar(ObjectValue("W", (), (), (), "w5")), "x", site
+            ),
+            AttributeUnpackTarget(
+                _FloorSugar(ObjectValue("W", (), (), (), "w6")), "y", site
+            ),
+        ),
+        site=site,
+    )
+    truthful = _arity_mismatch_effect(sugar.desugar(None))
+    foreign = replace(
+        truthful,
+        occurrence="pytest.raises:foreign-boundary",
+        producer_node_owner="pytest.raises",
+    )
+    assert isinstance(foreign, RaiseEffect)
+    assert foreign.exception_name == truthful.exception_name == "ValueError"
+    assert foreign.occurrence != truthful.occurrence
+    assert foreign.producer_node_owner != truthful.producer_node_owner
+    assert foreign != truthful
+    with pytest.raises(AssertionError):
+        assert foreign == truthful
+    with pytest.raises(AssertionError):
+        assert foreign.producer_node_owner == (
+            "DynamicUnpackStoreAssignSugar.arity_mismatch"
+        )
+
+
+def test_missing_wrong_positional_coordinate_is_loud() -> None:
+    """Roster is positional — wrong index / missing formal coordinate stays loud.
+
+    1. Positional roster members zip by source leaf index, never by name keys.
+    2. Formal setitem store leaf mints discharge coordinates (receiver, index,
+       value); a lying twin with swapped index/value slots is distinguishable.
+    3. A formal missing from discharge actuals cannot silently complete.
+    """
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.operations.positional_unpack_operation import (
+        PositionalUnpackOperation,
+        UnpackMemberRoster,
+    )
+
+    site = _site("def f(a, i, xs):\n    a[i], name = xs\n")
+    # --- positional roster: members by index, no string keys ---
+    op = PositionalUnpackOperation(
+        fixed_prefix=2,
+        fixed_suffix=0,
+        has_star=False,
+        owner="positional_coord",
+        blame=site,
+    )
+    roster_out = op.submit(ListValue((TermValue(10), TermValue(20))), None)
+    assert isinstance(roster_out, Complete)
+    assert isinstance(roster_out.value, UnpackMemberRoster)
+    assert roster_out.value.members[0] == TermValue(10)
+    assert roster_out.value.members[1] == TermValue(20)
+    assert not hasattr(roster_out.value, "bindings")
+    # Wrong position twin: swapping members is not the truthful roster.
+    lying_roster = UnpackMemberRoster((TermValue(20), TermValue(10)))
+    assert lying_roster != roster_out.value
+    with pytest.raises(AssertionError):
+        assert lying_roster == roster_out.value
+
+    # --- formal setitem leaf: discharge coordinates must stay ordered ---
+    coord_a = SimpleNamespace(coordinate_cid="cid:a")
+    coord_i = SimpleNamespace(coordinate_cid="cid:i")
+    formal_receiver = SymbolicValue(make_var("a"), formal_coordinate=coord_a)
+    formal_index = SymbolicValue(make_var("i"), formal_coordinate=coord_i)
+    target = SubscriptUnpackTarget(
+        _FloorSugar(formal_receiver),
+        _FloorSugar(formal_index),
+        site,
+    )
+    member = TermValue(99)
+    projected = target.apply_member(member, None)
+    assert isinstance(projected, NativeOperationExitCarrierV1), projected
+    assert projected.demand.operator == "setitem"
+    # Discharge order: receiver, index, value — not value-first.
+    assert len(projected.operands) == 3
+    assert projected.operands[2] == member
+    cids = projected.demand.operand_coordinate_cids
+    assert cids[0] == "cid:a"
+    assert cids[1] == "cid:i"
+    # Member is ground — no formal coordinate on the value slot.
+    assert cids[2] is None
+    truthful_coords = projected.coordinates
+    # Wrong-order twin swaps index and value coordinate slots.
+    lying = NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator="setitem",
+        operands=(
+            projected.operands[0],
+            projected.operands[2],
+            projected.operands[1],
+        ),
+        coordinates=(
+            truthful_coords[0],
+            truthful_coords[2],
+            truthful_coords[1],
+        ),
+    )
+    assert lying.demand.operand_coordinate_cids != cids
+    with pytest.raises(AssertionError):
+        assert lying.demand.operand_coordinate_cids == cids
+    # Missing a formal among the discharge map cannot complete the store.
+    with pytest.raises(Exception):
+        projected.discharge({})
+    # Supplying only one of two formals is still incomplete / loud.
+    with pytest.raises(Exception):
+        projected.discharge({"cid:a": ListValue((TermValue(0),))})
 
 
 def test_opaque_formal_is_sequence_unpack_effect() -> None:

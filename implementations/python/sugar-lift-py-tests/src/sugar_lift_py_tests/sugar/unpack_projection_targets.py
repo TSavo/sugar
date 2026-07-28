@@ -3,6 +3,11 @@
 Replaces string-tag leaf ladders (``\"name\"`` / ``\"attr\"`` / …) with closed
 variants: Name, Star, Attribute store, Subscript store.  Application is
 left-to-right over an ``UnpackMemberRoster`` (positional members).
+
+Store leaves route the **already-reduced** roster member through the shared
+store projection doors (``AttributeStoreEffectSugar.project_setattr`` /
+``SubscriptStoreEffectSugar.project_setitem``).  No panic-on-desugar placeholder
+Sugar stands in for the member field.
 """
 
 from __future__ import annotations
@@ -53,12 +58,13 @@ class AttributeUnpackTarget:
             AttributeStoreEffectSugar,
         )
 
-        return AttributeStoreEffectSugar(
-            receiver=self.receiver,
-            value=_MemberViaDesugarStore(),
-            attr=self.attr,
-            site=self.site,
-        ).desugar_store(ctx, member)
+        # Member is already reduced (roster FloorValue). Shared projection —
+        # never a second value.desugar, never a panic placeholder Sugar field.
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: AttributeStoreEffectSugar.project_setattr(
+                receiver, self.attr, member, self.site
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -74,12 +80,13 @@ class SubscriptUnpackTarget:
             SubscriptStoreEffectSugar,
         )
 
-        return SubscriptStoreEffectSugar(
-            receiver=self.receiver,
-            index=self.index,
-            value=_MemberViaDesugarStore(),
-            site=self.site,
-        ).desugar_store(ctx, member)
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: self.index.desugar(ctx).and_then(
+                lambda index: SubscriptStoreEffectSugar.project_setitem(
+                    receiver, index, member, self.site
+                )
+            )
+        )
 
 
 # Closed set of projection-target kinds (construction admits only these).
@@ -89,25 +96,6 @@ UNPACK_PROJECTION_TARGET_TYPES = (
     AttributeUnpackTarget,
     SubscriptUnpackTarget,
 )
-
-
-@dataclass(frozen=True)
-class _MemberViaDesugarStore(Sugar):
-    """Placeholder value field — member arrives only via ``desugar_store``."""
-
-    @classmethod
-    def witnesses(cls):
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="pre-reduced unpack member",
-            reason="unpack store targets receive members via desugar_store",
-        )
-
-    def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        raise AssertionError(
-            "unpack store member must arrive via desugar_store, not value.desugar"
-        )
 
 
 @dataclass(frozen=True)

@@ -202,19 +202,31 @@ class SubscriptStoreEffectSugar(Sugar):
     def desugar_store(self, ctx: object, value) -> Outcome:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: self._store(receiver, index, value)
+                lambda index: self.project_setitem(
+                    receiver, index, value, self.site
+                )
             )
         )
 
     def _store(self, receiver, index, value) -> Outcome:
+        return self.project_setitem(receiver, index, value, self.site)
+
+    @staticmethod
+    def project_setitem(receiver, index, value, site) -> Outcome:
+        """Producer-owned subscript **store** projection (one door).
+
+        Shared by ordinary ``SubscriptStoreEffectSugar`` and unpack store
+        targets that already hold a pre-reduced member Floor value — the
+        member never re-enters as a desugared child.
+        """
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None)
             for operand in (receiver, index, value)
         )
         if any(coordinate is not None for coordinate in coordinates):
             # Undischarged demand awaiting caller actuals — not a refusal.
-            return self.mint_setitem_carrier(
-                site=self.site,
+            return SubscriptStoreEffectSugar.mint_setitem_carrier(
+                site=site,
                 receiver=receiver,
                 index=index,
                 value=value,
@@ -223,8 +235,8 @@ class SubscriptStoreEffectSugar(Sugar):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
-                owner="SubscriptStoreEffectSugar._store",
-                blame=self.site,
+                owner="SubscriptStoreEffectSugar.project_setitem",
+                blame=site,
                 observed="undischarged subscript store over runtime-selected receiver",
                 requested=(
                     "NativeOperationExitCarrierV1 n-ary setitem demand over "
@@ -232,7 +244,7 @@ class SubscriptStoreEffectSugar(Sugar):
                 ),
                 fix="attach the three-operand carrier seam owned by 9883",
             )
-        projected = receiver.setitem(index, value, self.site)
+        projected = receiver.setitem(index, value, site)
         from sugar_lift_py_tests.floor import RaiseValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
