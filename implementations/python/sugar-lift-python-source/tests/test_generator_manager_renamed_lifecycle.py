@@ -41,7 +41,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
-from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
@@ -173,11 +173,7 @@ def _populate(root: Path, *, shape: _ManagerShape, consumer_source: str, files=N
     consumer.write_text(consumer_source, encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (
-            consumer.read_text(encoding="utf-8"),
-            str(consumer),
-            blake3_512_of(consumer.read_bytes()),
-        ),
+        path_source(str(consumer)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(
@@ -668,11 +664,7 @@ def _populate_multi(root: Path, *, dists: dict, consumer_source: str):
     consumer.write_text(consumer_source, encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (
-            consumer.read_text(encoding="utf-8"),
-            str(consumer),
-            blake3_512_of(consumer.read_bytes()),
-        ),
+        path_source(str(consumer)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(

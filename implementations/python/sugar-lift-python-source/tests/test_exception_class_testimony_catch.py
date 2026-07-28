@@ -16,7 +16,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -180,11 +180,7 @@ def test_builtin_valueerror_formal_still_seals_with_class_value(tmp_path: Path):
     )
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (
-            consumer.read_text(encoding="utf-8"),
-            str(consumer),
-            blake3_512_of(consumer.read_bytes()),
-        ),
+        path_source(str(consumer)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(

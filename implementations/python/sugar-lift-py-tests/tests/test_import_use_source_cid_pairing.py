@@ -1,131 +1,71 @@
-"""Import-use source CID must pair with retained source text (path_source law).
+"""Import-use source CID must match retained source text — refuse, never repair.
 
-Dual-door identity — ``read_text()`` for the string and ``blake3(read_bytes())``
-for the CID — goes stale under CRLF/universal-newlines translation and aborts
-nested-manager publication before lifecycle. The producer mint repairs the pair
-from the retained source without re-reading disk or weakening authentication.
+Dual-door identity (``read_text`` + ``blake3(read_bytes)``) is a fixture defect.
+``authenticated_import_uses`` rejects a mismatched claimed tuple; it must not
+rewrite the CID downstream of minting.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.import_binding import (
-    _paired_source_cid,
     authenticated_import_use_receipts,
+    authenticated_import_uses,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_oracle import path_source
 
 
-def test_paired_source_cid_repairs_dual_door_crlf(tmp_path: Path) -> None:
-    """read_text + blake3(read_bytes) under CRLF must not refuse mint."""
+def test_lying_mismatched_source_cid_is_refused_at_import_use_mint(
+    tmp_path: Path,
+) -> None:
+    """Lying twin: mismatched source text/CID must stay loud at the boundary."""
+    path = tmp_path / "consumer.py"
+    path.write_text("from pkg import f\nx = f()\n", encoding="utf-8")
+    source, _, honest_cid = path_source(str(path))
+    lying_cid = "blake3-512:" + "0" * 128
+    assert lying_cid != honest_cid
+
+    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+        authenticated_import_uses(
+            tmp_path, path, source, lying_cid, module_identities={}
+        )
+
+    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+        authenticated_import_use_receipts(
+            tmp_path, path, source, lying_cid, module_identities={}
+        )
+
+
+def test_dual_door_crlf_claim_is_refused_not_repaired(tmp_path: Path) -> None:
+    """CRLF dual-door claim is refused; production must not normalize the CID."""
     path = tmp_path / "consumer.py"
     path.write_bytes(b"from pkg import f\r\nx = f()\r\n")
-    # Dual-door (the historical nested-manager fixture pattern):
-    source = path.read_text(encoding="utf-8")  # LF after universal newlines
-    claimed = blake3_512_of(path.read_bytes())  # still CRLF bytes
+    # Dual-door anti-pattern (normalized text + byte-derived CID).
+    source = path.read_text(encoding="utf-8")
+    claimed = blake3_512_of(path.read_bytes())
     assert blake3_512_of(source.encode("utf-8")) != claimed
 
-    paired = _paired_source_cid(source, claimed)
-    assert paired == blake3_512_of(source.encode("utf-8"))
-    assert paired != claimed
+    with pytest.raises(ValueError, match="authenticated import-use source CID is stale"):
+        authenticated_import_use_receipts(
+            tmp_path, path, source, claimed, module_identities={}
+        )
 
+
+def test_honest_path_source_triple_mints_receipts(tmp_path: Path) -> None:
+    """Authoritative door: path_source triple is accepted unchanged."""
+    path = tmp_path / "consumer.py"
+    path.write_text("from pkg import f\nx = f()\n", encoding="utf-8")
+    source, locus, source_cid = path_source(str(path))
     receipts, outcomes = authenticated_import_use_receipts(
-        tmp_path, path, source, claimed, module_identities={}
+        tmp_path, path, source, source_cid, module_identities={}
     )
     assert outcomes
     assert receipts
     for receipt in receipts:
-        # Receipt post_init requires source recomputes to source_cid.
+        assert receipt.source_cid == source_cid
         assert blake3_512_of(receipt.source.encode("utf-8")) == receipt.source_cid
-
-
-def test_paired_source_cid_preserves_honest_match() -> None:
-    source = "from pkg import f\nx = f()\n"
-    cid = blake3_512_of(source.encode("utf-8"))
-    assert _paired_source_cid(source, cid) == cid
-
-
-def test_nested_manager_publication_survives_dual_door_consumer_identity(
-    tmp_path: Path,
-) -> None:
-    """Vertical pin: nested publication with dual-door consumer triple.
-
-    Same construction as test_generator_nested_managers._publish identity mint
-    (read_text + blake3(read_bytes)). On CRLF bytes this used to raise
-    ``authenticated import-use source CID is stale`` before nested layers ran.
-    """
-    import csv
-    import importlib.metadata
-
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceDerivedGeneratorResourceRefV1,
-        TreeConstructionContextV1,
-    )
-    from sugar_lift_python_source.manager_summary_derivation import (
-        GeneratorBackedLifecycleProtocolV1,
-        populate_source_derived_resource_refs,
-    )
-    from sugar_source_tree.tree import SourceFile
-
-    package = tmp_path / "unprivileged"
-    package.mkdir()
-    helpers = (
-        "from contextlib import contextmanager\r\n"
-        "\r\n"
-        "@contextmanager\r\n"
-        "def inner():\r\n"
-        "    prior = None\r\n"
-        "    yield 'inner'\r\n"
-        "\r\n"
-        "@contextmanager\r\n"
-        "def outer():\r\n"
-        "    with inner():\r\n"
-        "        yield 'outer'\r\n"
-    )
-    (package / "__init__.py").write_bytes(
-        b"from unprivileged.helpers import outer, inner\r\n"
-    )
-    (package / "helpers.py").write_bytes(helpers.encode("utf-8"))
-    metadata = tmp_path / "unprivileged_dist-1.0.dist-info"
-    metadata.mkdir()
-    (metadata / "METADATA").write_bytes(
-        b"Metadata-Version: 2.1\r\nName: unprivileged-dist\r\nVersion: 1.0\r\n"
-    )
-    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.writer(stream)
-        for file in (
-            "unprivileged/__init__.py",
-            "unprivileged/helpers.py",
-            "unprivileged_dist-1.0.dist-info/METADATA",
-            "unprivileged_dist-1.0.dist-info/RECORD",
-        ):
-            writer.writerow((file, "", ""))
-    distribution = importlib.metadata.Distribution.at(metadata)
-
-    path = tmp_path / "consumer.py"
-    path.write_bytes(b"from unprivileged import outer\r\nwith outer():\r\n    pass\r\n")
-    # Dual-door identity (do not "fix" by switching to path_source here).
-    text = path.read_text(encoding="utf-8")
-    claimed = blake3_512_of(path.read_bytes())
-    assert blake3_512_of(text.encode("utf-8")) != claimed
-
-    context = TreeConstructionContextV1.for_source_call_construction(
-        workspace_root=str(tmp_path)
-    )
-    tree = SourceFile((text, str(path), claimed), construction_context=context)
-    populate_source_derived_resource_refs(
-        tree,
-        root=tmp_path,
-        path=path,
-        distribution_index={"unprivileged": distribution},
-    )
-    refs = [
-        v
-        for v in context.source_derived_contract_refs.values()
-        if isinstance(v, SourceDerivedGeneratorResourceRefV1)
-    ]
-    assert refs, "nested outer must publish despite dual-door consumer identity"
-    protocol = refs[0].generator_protocol
-    assert isinstance(protocol, GeneratorBackedLifecycleProtocolV1)
-    assert len(protocol.nested_manager_layers) == 1
+    del locus

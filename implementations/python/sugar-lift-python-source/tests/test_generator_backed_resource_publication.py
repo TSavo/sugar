@@ -20,7 +20,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_python_source.manager_protocol_construction import (
     GeneratorBackedManagerProtocolV1,
     ManagerProtocolConstructionGapV1,
@@ -199,7 +199,7 @@ def test_open_still_publishes_neither_generator_ref_nor_native_defs(tmp_path: Pa
     )
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (path.read_text(encoding="utf-8"), str(path), blake3_512_of(path.read_bytes())),
+        path_source(str(path)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)

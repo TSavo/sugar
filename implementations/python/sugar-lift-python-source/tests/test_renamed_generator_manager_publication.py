@@ -31,7 +31,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_python_source.manager_protocol_construction import (
     GeneratorBackedManagerProtocolV1,
 )
@@ -177,11 +177,7 @@ def _populate(root: Path, *, shape: _ManagerShape, consumer_source: str, files=N
     consumer.write_text(consumer_source, encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (
-            consumer.read_text(encoding="utf-8"),
-            str(consumer),
-            blake3_512_of(consumer.read_bytes()),
-        ),
+        path_source(str(consumer)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(
@@ -419,11 +415,7 @@ def test_builtin_open_still_enrolls_nothing(tmp_path: Path):
     )
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (
-            path.read_text(encoding="utf-8"),
-            str(path),
-            blake3_512_of(path.read_bytes()),
-        ),
+        path_source(str(path)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
