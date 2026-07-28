@@ -5651,6 +5651,32 @@ class With(Statement):
             self.reporter.report_gap(self, panic)
             raise panic
 
+    def _published_generator_resource_testimony(self, item: WithItem):
+        """Return the producer's one closed generator-resource surface."""
+        context = self.unit.construction_context
+        if context is None:
+            return None
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceDerivedGeneratorResourceRefV1,
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        if not isinstance(context, TreeConstructionContextV1):
+            return None
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
+        coordinate = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+        )
+        published = context.source_derived_contract_refs.get(coordinate)
+        if isinstance(published, SourceDerivedGeneratorResourceRefV1):
+            return published
+        return None
+
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
 
@@ -5803,8 +5829,17 @@ class With(Statement):
             _ = resolution.shared_expected_type_operand
             _ = resolution.shared_binding
             return resolution
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceDerivedGeneratorResourceRefV1,
+        )
+
         if not isinstance(
-            resolution, (ContextManagerContractRefV1, SourceDerivedContextManagerRefV1)
+            resolution,
+            (
+                ContextManagerContractRefV1,
+                SourceDerivedContextManagerRefV1,
+                SourceDerivedGeneratorResourceRefV1,
+            ),
         ):
             backend_defect(
                 blame=self.fragment,
@@ -5972,8 +6007,9 @@ class With(Statement):
         if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
 
+        published_generator_resource = self._published_generator_resource_testimony(item)
         generator_manager = self._generator_manager_sugar(item)
-        if generator_manager is not None:
+        if generator_manager is not None and published_generator_resource is None:
             from sugar_lift_py_tests.sugar.generator_with_sugar import (
                 GeneratorWithSugar,
             )
@@ -6018,8 +6054,18 @@ class With(Statement):
                 SourceDerivedContextManagerRefV1,
             )
 
-            if isinstance(
-                resolved_ref, SourceDerivedContextManagerRefV1
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceDerivedGeneratorResourceRefV1,
+            )
+
+            generator_protocol = (
+                resolved_ref.generator_protocol
+                if isinstance(resolved_ref, SourceDerivedGeneratorResourceRefV1)
+                else None
+            )
+            if (
+                isinstance(resolved_ref, SourceDerivedContextManagerRefV1)
+                or generator_protocol is not None
             ) and isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
                 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
                     WithSourceResourceSugar,
@@ -6032,21 +6078,59 @@ class With(Statement):
                 enter_definition, exit_definition = (
                     self._require_native_resource_definitions(resolved_ref)
                 )
-                from dataclasses import replace
+                if generator_protocol is not None:
+                    from sugar_lift_py_tests.sugar.method_call_sugar import (
+                        MethodCallSugar,
+                    )
+                    from sugar_lift_py_tests.sugar.resource_coord_sugar import (
+                        ManagerRefSugar,
+                    )
 
-                enter_sugar = replace(
-                    item._make_enter_call().sugar(),
-                    native_definition_coordinate=enter_definition,
-                )
-                exit_sugar = replace(
-                    item._make_parametric_exit_call().sugar(),
-                    native_definition_coordinate=exit_definition,
-                )
+                    receiver = ManagerRefSugar(
+                        slot_id=manager_slot, site=self.fragment
+                    )
+                    enter_sugar = MethodCallSugar(
+                        receiver=receiver,
+                        name="__enter__",
+                        args=(),
+                        native_definition_coordinate=enter_definition,
+                        site=self.fragment,
+                    )
+                    exit_sugar = MethodCallSugar(
+                        receiver=receiver,
+                        name="__exit__",
+                        args=(
+                            item._make_exit_type_ref().sugar(),
+                            item._make_exit_value_ref().sugar(),
+                            item._make_exit_traceback_ref().sugar(),
+                        ),
+                        native_definition_coordinate=exit_definition,
+                        site=self.fragment,
+                    )
+                else:
+                    from dataclasses import replace
+
+                    enter_sugar = replace(
+                        item._make_enter_call().sugar(),
+                        native_definition_coordinate=enter_definition,
+                    )
+                    exit_sugar = replace(
+                        item._make_parametric_exit_call().sugar(),
+                        native_definition_coordinate=exit_definition,
+                    )
                 return WithSourceResourceSugar(
-                    manager=item.context_expr.sugar(),
+                    manager=(
+                        generator_manager
+                        if generator_protocol is not None
+                        else item.context_expr.sugar()
+                    ),
                     enter=enter_sugar,
                     exit=exit_sugar,
-                    protocol=resolved_ref.protocol,
+                    protocol=(
+                        generator_protocol
+                        if generator_protocol is not None
+                        else resolved_ref.protocol
+                    ),
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),
                     manager_slot_id=manager_slot,

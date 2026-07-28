@@ -403,6 +403,114 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     )
 
 
+def test_real_option_context_published_ref_selects_source_resource_at_construction():
+    """The closed generator-resource ref outranks the legacy generator path."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    corpus = authenticated_pandas_corpus()
+    root = corpus.root.parent
+    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = open_source_file_for_construction(
+        path, root=root, construction_context=context, populate_derived=False
+    )
+    populate_source_derived_resource_refs(tree, root=root, path=path)
+    with_node = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 25
+    )
+    receiver = next(
+        coordinate
+        for coordinate in context.source_manager_provider_calls
+        if coordinate.start_line == 25
+    )
+    refs = context.contract_refs
+    enter_definition = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_ENTER
+    )
+    exit_definition = refs.require_native_definition(
+        receiver, NativeProtocolSlot.CONTEXT_EXIT
+    )
+
+    class RecordingDefinitionDoor:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def require_native_definition(self, use_site, slot):
+            self.calls.append((use_site, slot))
+            return self.delegate.require_native_definition(use_site, slot)
+
+    recording = RecordingDefinitionDoor(refs)
+    object.__setattr__(context, "contract_refs", recording)
+
+    resource = with_node.sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert recording.calls == [
+        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
+        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert resource.enter.native_definition_coordinate == enter_definition
+    assert resource.exit.native_definition_coordinate == exit_definition
+
+
+@pytest.mark.parametrize("manager_name", ("borrowed_state", "temporary_setting"))
+def test_renamed_source_generator_resources_use_the_same_closed_factory_arm(
+    tmp_path: Path, manager_name: str
+):
+    """Selection follows the published ref type, never a manager spelling."""
+    implementation = (
+        "from contextlib import contextmanager\n\n"
+        "@contextmanager\n"
+        f"def {manager_name}(value):\n"
+        "    try:\n"
+        "        yield value\n"
+        "    finally:\n"
+        "        release(value)\n"
+    )
+    dist = _distribution(tmp_path, implementation, exported=manager_name)
+    tree, context, _ = _tree(
+        tmp_path,
+        f"from arbitrary import {manager_name}\n"
+        f"with {manager_name}(7) as entered:\n"
+        "    observed = entered\n",
+        dist=dist,
+    )
+    with_node = next(node for node in tree.nodes() if node.kind == "With")
+    receiver = next(iter(context.source_manager_provider_calls))
+
+    class RecordingDefinitionDoor:
+        def __init__(self, delegate):
+            self.delegate = delegate
+            self.calls = []
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+        def require_native_definition(self, use_site, slot):
+            self.calls.append((use_site, slot))
+            return self.delegate.require_native_definition(use_site, slot)
+
+    recording = RecordingDefinitionDoor(context.contract_refs)
+    object.__setattr__(context, "contract_refs", recording)
+
+    resource = with_node.substitute({}).sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert recording.calls == [
+        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
+        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
+    ]
+    assert resource.enter.native_definition_coordinate == resource.enter_definition
+    assert resource.exit.native_definition_coordinate == resource.exit_definition
+
+
 def test_source_true_exit_publishes_truthiness_and_consumes_raise(tmp_path: Path):
     """Source-derived ``return True`` is suppression testimony, not a name arm."""
     implementation = _GUARD_SOURCE.replace("return False", "return True")
