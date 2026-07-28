@@ -23,6 +23,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.generator_construction import (
     FinallyStepV1,
+    ForStepV1,
     GeneratorConstructionV1,
     GeneratorTransitionGapV1,
     IfStepV1,
@@ -566,8 +567,7 @@ def test_unsupported_x_yield_in_branch_keeps_whole_if_opaque() -> None:
     assert steps[0].carries_suspension is True
 
 
-def test_unnameable_finally_keeps_try_opaque_with_suspension() -> None:
-    # for-loop cleanup is not a ConstructedTermSugar term path → opaque Try
+def test_general_for_finally_stays_owned_by_cleanup() -> None:
     steps = _steps(
         "def manager():\n"
         "    try:\n"
@@ -576,10 +576,9 @@ def test_unnameable_finally_keeps_try_opaque_with_suspension() -> None:
         "        for x in items:\n"
         "            pass\n"
     )
-    assert any(
-        isinstance(s, OpaqueStepV1) and s.observed == "Try" and s.carries_suspension
-        for s in steps
-    )
+    cleanup = next(s for s in steps if isinstance(s, FinallyStepV1))
+    assert len(cleanup.cleanup_steps) == 1
+    assert isinstance(cleanup.cleanup_steps[0], ForStepV1)
 
 
 def test_cleanup_construction_invariant_failure_stays_loud() -> None:
@@ -633,9 +632,7 @@ def test_twin_branch_swap_changes_then_else_payloads() -> None:
     assert a.else_steps != b.else_steps
 
 
-def test_twin_missing_branch_occurrence_is_opaque_when_unnameable() -> None:
-    # raise without constructing if would be RaiseStep; missing nameable
-    # shape inside branch with for stays opaque If.
+def test_general_for_inside_branch_remains_an_ordered_branch_step() -> None:
     steps = _steps(
         "def m(c):\n"
         "    if c:\n"
@@ -643,8 +640,9 @@ def test_twin_missing_branch_occurrence_is_opaque_when_unnameable() -> None:
         "            yield x\n"
         "    yield 0\n"
     )
-    assert isinstance(steps[0], OpaqueStepV1)
-    assert steps[0].carries_suspension is True
+    assert isinstance(steps[0], IfStepV1)
+    assert len(steps[0].then_steps) == 1
+    assert isinstance(steps[0].then_steps[0], ForStepV1)
 
 
 def test_twin_cleanup_deletion_removes_finally_step() -> None:

@@ -17,10 +17,25 @@ these tests.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
+import pytest
+
 from sugar_lift_py_tests import generator_construction as generator_api
+from sugar_lift_py_tests.context.reduce_context import ReduceContext
+from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.iterator_value import (
+    ListIteratorValue,
+    NextResult,
+)
+from sugar_lift_py_tests.floor.term_value import TermValue
+from sugar_lift_py_tests.floor.tuple_value import TupleValue
+from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import FunctionDef
+from sugar_source_tree.binding_state import mint_binding_coordinate_v1
+from sugar_source_tree.nodes import For, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 
@@ -109,6 +124,30 @@ def _for_steps(source: str):
     return tuple(found)
 
 
+def _for_steps_with_parents(source: str):
+    for_step_type = _for_step_type()
+    found = []
+
+    def visit(step, parent) -> None:
+        if isinstance(step, for_step_type):
+            found.append((step, parent))
+        for field_name in (
+            "body_steps",
+            "then_steps",
+            "else_steps",
+            "cleanup_steps",
+            "statements",
+        ):
+            children = getattr(step, field_name, ())
+            if isinstance(children, tuple):
+                for child in children:
+                    visit(child, step)
+
+    for root in _steps(source):
+        visit(root, None)
+    return tuple(found)
+
+
 def _target_coordinate_cids(step) -> tuple[str, ...]:
     coordinates = getattr(step, "target_coordinates", None)
     assert coordinates is not None, (
@@ -166,6 +205,20 @@ def test_cleanup_iterable_and_target_coordinates_are_not_reconstructed() -> None
     assert before.fragment_cid != cleanup.fragment_cid
 
 
+def test_cleanup_for_step_remains_owned_by_finally_not_flattened() -> None:
+    """Lying-edge twin: lexical cleanup cannot become ordinary fall-through."""
+    finally_step_type = getattr(generator_api, "FinallyStepV1", None)
+    assert finally_step_type is not None
+    pairs = _for_steps_with_parents(_OPTION_PAIR_MANAGER)
+
+    assert len(pairs) == 2
+    assert pairs[0][1] is None, "the pre-yield loop is ordinary generator flow"
+    assert isinstance(pairs[1][1], finally_step_type), (
+        "the undo loop must remain a child of FinallyStepV1 so return, halt, "
+        "throw, close, and fall-through all route through it"
+    )
+
+
 def test_for_step_transition_contract_is_explicit_and_owner_complete() -> None:
     """The step itself names every state/exit obligation; consumers do not infer it."""
     for_step_type = _for_step_type()
@@ -176,6 +229,7 @@ def test_for_step_transition_contract_is_explicit_and_owner_complete() -> None:
         "target_coordinates",
         "body_steps",
         "fragment_cid",
+        "site",
     }
     assert required <= set(fields), (
         "ForStepV1 must own iterable, target coordinates, ordered body, and "
@@ -183,3 +237,346 @@ def test_for_step_transition_contract_is_explicit_and_owner_complete() -> None:
         "preserve body halts, accept only authenticated StopIteration, and route "
         "fall-through/return/halt through paired finally cleanup"
     )
+
+
+@dataclass(frozen=True)
+class _ValueSugar(ConstructedTermSugar):
+    value: FloorValue
+    site: object = field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Complete(self.value)
+
+    def to_term(self, *, owner: str):
+        return self.value.to_term(owner=owner)
+
+
+@dataclass(frozen=True)
+class _TracingIterable(FloorValue):
+    elements: tuple[FloorValue, ...]
+    events: list = field(compare=False, repr=False)
+
+    def iter_with(self, operation, ctx):
+        del operation, ctx
+        self.events.append("iter_with")
+        return Complete(_TracingIterator(self.elements, self.events))
+
+
+@dataclass(frozen=True)
+class _TracingIterator(FloorValue):
+    elements: tuple[FloorValue, ...]
+    events: list = field(compare=False, repr=False)
+
+    def next_with(self, operation, ctx):
+        self.events.append("next_with")
+        if not self.elements:
+            # Production authentication door: source occurrence + builtin
+            # StopIteration coordinate. The test never fabricates the effect.
+            return ListIteratorValue((), index=0).next_with(operation, ctx)
+        return Complete(
+            NextResult(
+                self.elements[0],
+                _TracingIterator(self.elements[1:], self.events),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class _NextHaltIterable(FloorValue):
+    effect: object
+    events: list = field(compare=False, repr=False)
+
+    def iter_with(self, operation, ctx):
+        del operation, ctx
+        self.events.append("iter_with")
+        return Complete(_NextHaltIterator(self.effect, self.events))
+
+
+@dataclass(frozen=True)
+class _NextHaltIterator(FloorValue):
+    effect: object
+    events: list = field(compare=False, repr=False)
+
+    def next_with(self, operation, ctx):
+        del operation, ctx
+        self.events.append("next_with")
+        return Incomplete(self.effect)
+
+
+@dataclass(frozen=True)
+class _ObserveTargetBindings(ConstructedTermSugar):
+    coordinate_cids: tuple[str, ...]
+    events: list = field(compare=False, repr=False)
+    site: object = field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        values = tuple(ctx.temporal.value_for(cid) for cid in self.coordinate_cids)
+        self.events.append(("body", values))
+        return Complete(TermValue(0))
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:test-observe-for-bindings",
+            tuple(str_const(cid) for cid in self.coordinate_cids),
+            symbol_kind="coordinate",
+        )
+
+
+@dataclass(frozen=True)
+class _HaltBody(ConstructedTermSugar):
+    effect: object
+    events: list = field(compare=False, repr=False)
+    site: object = field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        self.events.append("body_halt")
+        return Incomplete(self.effect)
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import str_const
+
+        del owner
+        return str_const("test:for-body-halt")
+
+
+def _runtime_for_step(events: list):
+    for_step_type = _for_step_type()
+    term_step_type = _term_step_type()
+    function = _function(
+        "def renamed(ops):\n"
+        "    for left, right in ops:\n"
+        "        apply_pair(left, right)\n"
+        "    yield None\n"
+    )
+    source_for = next(node for node in function.body if isinstance(node, For))
+    coordinates = tuple(
+        mint_binding_coordinate_v1(
+            scope_owner_cid=source_for.fragment.seal().cid,
+            binding_site=leaf.fragment,
+            projection_path=("for-target", index),
+        )
+        for index, leaf in enumerate(source_for.target.elts)
+    )
+    iterable = _TracingIterable(
+        (
+            TupleValue((TermValue(1), TermValue(2))),
+            TupleValue((TermValue(3), TermValue(4))),
+        ),
+        events,
+    )
+    body_term = _ObserveTargetBindings(
+        tuple(coordinate.cid for coordinate in coordinates),
+        events,
+        source_for.body[0].fragment,
+    )
+    step = for_step_type(
+        iterable=_ValueSugar(iterable, source_for.iter.fragment),
+        target_coordinates=coordinates,
+        body_steps=(
+            term_step_type(body_term, source_for.body[0].fragment.seal().cid),
+        ),
+        fragment_cid=source_for.fragment.seal().cid,
+        site=source_for.fragment,
+    )
+    return generator_api.GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:renamed",
+        frame_coordinate="frame:renamed",
+        binding_state=(),
+        steps=(step, generator_api.ReturnStepV1()),
+        reduction_context=ReduceContext.root(owner="ForStepV1-test"),
+    )
+
+
+def test_for_step_uses_iter_next_and_threads_each_advanced_binding_state() -> None:
+    """Truthful transition: two items, ordered bodies, then exact exhaustion."""
+    events = []
+    outcome = _runtime_for_step(events).resume()
+
+    assert isinstance(outcome, generator_api.GeneratorTerminationV1)
+    assert events == [
+        "iter_with",
+        "next_with",
+        ("body", (TermValue(1), TermValue(2))),
+        "next_with",
+        ("body", (TermValue(3), TermValue(4))),
+        "next_with",
+    ]
+
+
+def test_same_target_spelling_cannot_resolve_at_foreign_coordinates() -> None:
+    """Lying-coordinate twin: target names never authorize body reads."""
+    machine = _runtime_for_step([])
+    step = machine.steps[0]
+    coordinates = tuple(step.target_coordinates)
+    forged = tuple(
+        mint_binding_coordinate_v1(
+            scope_owner_cid=coordinate.scope_owner_cid,
+            binding_site=_function("def other():\n    yield None\n").fragment,
+            projection_path=coordinate.projection_path,
+        )
+        for coordinate in coordinates
+    )
+    observed = _ObserveTargetBindings(
+        tuple(coordinate.cid for coordinate in forged),
+        [],
+        step.site,
+    )
+    wrong_body = _term_step_type()(
+        observed,
+        step.body_steps[0].fragment_cid,
+    )
+    wrong = type(step)(
+        iterable=step.iterable,
+        target_coordinates=coordinates,
+        body_steps=(wrong_body,),
+        fragment_cid=step.fragment_cid,
+        site=step.site,
+    )
+    machine = type(machine).allocate(
+        allocation_coordinate="call:wrong-coordinate",
+        frame_coordinate="frame:wrong-coordinate",
+        binding_state=(),
+        steps=(wrong, generator_api.ReturnStepV1()),
+        reduction_context=ReduceContext.root(owner="ForStepV1-wrong-coordinate"),
+    )
+
+    with pytest.raises(ConstructionPanic):
+        machine.resume()
+
+
+def test_body_halt_is_preserved_and_does_not_advance_the_iterator() -> None:
+    """A body effect exits this iteration; recurrence cannot swallow it."""
+    from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
+
+    events = []
+    machine = _runtime_for_step(events)
+    step = machine.steps[0]
+    effect = ground_raise_effect(
+        exception_name="ValueError",
+        site=step.site,
+        owner="ForStepV1-body-halt-test",
+    )
+    halted_body = _HaltBody(effect, events, step.site)
+    halted_step = type(step)(
+        iterable=step.iterable,
+        target_coordinates=step.target_coordinates,
+        body_steps=(
+            _term_step_type()(halted_body, step.body_steps[0].fragment_cid),
+        ),
+        fragment_cid=step.fragment_cid,
+        site=step.site,
+    )
+    machine = type(machine).allocate(
+        allocation_coordinate="call:body-halt",
+        frame_coordinate="frame:body-halt",
+        binding_state=(),
+        steps=(halted_step, generator_api.ReturnStepV1()),
+        reduction_context=ReduceContext.root(owner="ForStepV1-body-halt"),
+    )
+
+    outcome = machine.resume()
+
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    assert isinstance(outcome.exits[0], Halted)
+    assert outcome.exits[0].effect is effect
+    assert events == ["iter_with", "next_with", "body_halt"]
+
+
+def test_stopiteration_spelling_with_foreign_identity_does_not_exhaust() -> None:
+    """Lying twin: the exception label cannot replace its type coordinate."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
+
+    events = []
+    machine = _runtime_for_step(events)
+    step = machine.steps[0]
+    value_error = ground_raise_effect(
+        exception_name="ValueError",
+        site=step.site,
+        owner="ForStepV1-foreign-stop-test",
+    )
+    foreign_stop = replace(value_error, exception_name="StopIteration")
+    wrong = replace(
+        step,
+        iterable=_ValueSugar(
+            _NextHaltIterable(foreign_stop, events),
+            step.site,
+        ),
+    )
+    machine = replace(machine, steps=(wrong, generator_api.ReturnStepV1()))
+
+    outcome = machine.resume()
+
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    assert isinstance(outcome.exits[0], Halted)
+    assert outcome.exits[0].effect is foreign_stop
+    assert events == ["iter_with", "next_with"]
+
+
+def _suspended_with_for_cleanup(events: list):
+    loop = _runtime_for_step(events).steps[0]
+    machine = generator_api.GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:finally-for",
+        frame_coordinate="frame:finally-for",
+        binding_state=(),
+        steps=(
+            generator_api.YieldStepV1(None),
+            generator_api.FinallyStepV1((), cleanup_steps=(loop,)),
+            generator_api.ReturnStepV1(),
+        ),
+        reduction_context=ReduceContext.root(owner="ForStepV1-finally-test"),
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, generator_api.YieldEffect)
+    return yielded.machine, loop.site
+
+
+@pytest.mark.parametrize("outgoing", ["close", "throw"])
+def test_for_cleanup_runs_on_each_outgoing_edge(outgoing: str) -> None:
+    """The structured finally retains its loop on normal and halted exits."""
+    from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
+
+    events = []
+    suspended, site = _suspended_with_for_cleanup(events)
+    if outgoing == "close":
+        result = suspended.close()
+    else:
+        effect = ground_raise_effect(
+            exception_name="ValueError",
+            site=site,
+            owner="ForStepV1-finally-throw-test",
+        )
+        result = suspended.throw(effect)
+        assert any(
+            isinstance(exit_, Halted) and exit_.effect is effect
+            for exit_ in result.exits
+        )
+
+    assert isinstance(result, ExitSet)
+    assert events == [
+        "iter_with",
+        "next_with",
+        ("body", (TermValue(1), TermValue(2))),
+        "next_with",
+        ("body", (TermValue(3), TermValue(4))),
+        "next_with",
+    ]

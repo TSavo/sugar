@@ -168,6 +168,7 @@ class FinallyStepV1:
     """
 
     statements: tuple[ConstructedTermSugar, ...]
+    cleanup_steps: tuple = ()
 
     def __post_init__(self) -> None:
         for statement in self.statements:
@@ -200,6 +201,35 @@ class TermStepV1:
 
     def __post_init__(self) -> None:
         _require_constructed_term(self.term, owner="TermStepV1.term")
+
+
+@dataclass(frozen=True)
+class ForStepV1:
+    """One source ``for`` recurrence owned by the generator producer."""
+
+    iterable: ConstructedTermSugar
+    target_coordinates: tuple
+    body_steps: tuple
+    fragment_cid: str
+    site: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(self.iterable, owner="ForStepV1.iterable")
+        if not self.target_coordinates:
+            raise TypeError("ForStepV1 requires authenticated target coordinates")
+        for coordinate in self.target_coordinates:
+            cid = getattr(coordinate, "cid", None)
+            if not isinstance(cid, str) or not cid.startswith("blake3-512:"):
+                raise TypeError("ForStepV1 target coordinate must be authenticated")
+
+
+@dataclass(frozen=True)
+class _ForIteratorStepV1:
+    iterator: object = field(compare=False, repr=False)
+    target_coordinates: tuple
+    body_steps: tuple
+    fragment_cid: str
+    site: object = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -269,6 +299,8 @@ GeneratorStepV1 = (
     | FinallyStepV1
     | RaiseStepV1
     | TermStepV1
+    | ForStepV1
+    | _ForIteratorStepV1
     | IfStepV1
     | NestedManagerStepV1
     | NestedManagerExitStepV1
@@ -290,6 +322,13 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "kind": "assign-binding",
             "name": value.name,
             "fragmentCid": value.fragment_cid,
+            "value": _generator_value_testimony(value.value, owner=owner),
+        }
+    if isinstance(value, GeneratorLoopBindingV1):
+        return {
+            "kind": "loop-binding",
+            "coordinateCid": value.coordinate.cid,
+            "demandCid": value.demand_cid,
             "value": _generator_value_testimony(value.value, owner=owner),
         }
     if isinstance(value, NestedEnteredBindingV1):
@@ -384,6 +423,10 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
                 _generator_value_testimony(item, owner=owner)
                 for item in step.statements
             ],
+            "cleanupSteps": [
+                _generator_step_testimony(item, owner=owner)
+                for item in step.cleanup_steps
+            ],
         }
     if isinstance(step, RaiseStepV1):
         return {
@@ -396,6 +439,25 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "term",
             "fragmentCid": step.fragment_cid,
             "term": _generator_value_testimony(step.term, owner=owner),
+        }
+    if isinstance(step, ForStepV1):
+        return {
+            "kind": "for",
+            "fragmentCid": step.fragment_cid,
+            "iterable": _generator_value_testimony(step.iterable, owner=owner),
+            "targetCoordinateCids": [c.cid for c in step.target_coordinates],
+            "bodySteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.body_steps
+            ],
+        }
+    if isinstance(step, _ForIteratorStepV1):
+        return {
+            "kind": "for-iterator",
+            "fragmentCid": step.fragment_cid,
+            "targetCoordinateCids": [c.cid for c in step.target_coordinates],
+            "bodySteps": [
+                _generator_step_testimony(item, owner=owner) for item in step.body_steps
+            ],
         }
     if isinstance(step, IfStepV1):
         return {
@@ -445,6 +507,14 @@ class GeneratorAssignBindingV1:
     name: str
     value: object
     fragment_cid: str
+
+
+@dataclass(frozen=True)
+class GeneratorLoopBindingV1:
+    coordinate: object
+    value: object = field(compare=False, repr=False)
+    occurrence: object = field(compare=False, repr=False)
+    demand_cid: str
 
 
 @dataclass(frozen=True)
@@ -710,11 +780,19 @@ class GeneratorConstructionV1:
                 return ExitSet.halted(outcome.effect, state=self)
             return self._gap(requested, f"raise did not halt ({type(outcome).__name__})")
         if isinstance(step, TermStepV1):
-            value = self._reduce_value(step.term, requested)
-            if isinstance(value, GeneratorTransitionGapV1):
-                return value
+            outcome = step.term.desugar(self._guard_evaluation_context())
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            if isinstance(outcome, Incomplete):
+                return ExitSet.halted(outcome.effect, state=self)
+            if not isinstance(outcome, Complete):
+                return self._gap(requested, type(outcome).__name__)
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
+        if isinstance(step, ForStepV1):
+            return self._transition_for(step, requested)
+        if isinstance(step, _ForIteratorStepV1):
+            return self._transition_for_iterator(step, requested)
         if isinstance(step, NestedManagerStepV1):
             return self._transition_nested_manager(step, requested)
         if isinstance(step, NestedManagerExitStepV1):
@@ -728,7 +806,19 @@ class GeneratorConstructionV1:
 
             if any(isinstance(exit_, Halted) for exit_ in cleanup.exits):
                 return cleanup
-            machine = replace(self, cursor=self.cursor + 1)
+            completed = tuple(
+                exit_ for exit_ in cleanup.exits if isinstance(exit_, Completed)
+            )
+            binding_state = self.binding_state
+            if len(completed) == 1 and isinstance(
+                completed[0].value, GeneratorTerminationV1
+            ):
+                binding_state = completed[0].value.binding_state
+            machine = replace(
+                self,
+                cursor=self.cursor + 1,
+                binding_state=binding_state,
+            )
             return machine._transition(requested)
         if isinstance(step, IfStepV1):
             return self._transition_branch(step, requested)
@@ -747,6 +837,92 @@ class GeneratorConstructionV1:
             suspended_resume_coordinate=resume_coordinate,
         )
         return YieldEffect(value, resume_coordinate, machine)
+
+    def _transition_for(self, step: ForStepV1, requested: str):
+        from sugar_lift_py_tests.operations import IteratorOperation
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        iterable = step.iterable.desugar(self._guard_evaluation_context())
+        if isinstance(iterable, Incomplete):
+            return ExitSet.halted(iterable.effect, state=self)
+        if not isinstance(iterable, Complete):
+            return self._gap(requested, type(iterable).__name__)
+        iterator = IteratorOperation(
+            owner="GeneratorConstructionV1.ForStepV1.iter",
+            blame=step.site,
+        ).submit(iterable.value, self._guard_evaluation_context())
+        if isinstance(iterator, Incomplete):
+            return ExitSet.halted(iterator.effect, state=self)
+        if not isinstance(iterator, Complete):
+            return self._gap(requested, type(iterator).__name__)
+        runtime = _ForIteratorStepV1(
+            iterator.value,
+            step.target_coordinates,
+            step.body_steps,
+            step.fragment_cid,
+            step.site,
+        )
+        machine = replace(self, steps=(*self.steps[: self.cursor], runtime, *self.steps[self.cursor + 1 :]))
+        return machine._transition(requested)
+
+    def _transition_for_iterator(self, step: _ForIteratorStepV1, requested: str):
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
+        from sugar_lift_py_tests.floor.iterator_value import NextResult
+        from sugar_lift_py_tests.operations import NextOperation
+        from sugar_lift_py_tests.operations.positional_unpack_operation import (
+            PositionalUnpackOperation,
+            UnpackMemberRoster,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        outcome = NextOperation(
+            owner="GeneratorConstructionV1.ForStepV1.next",
+            blame=step.site,
+        ).submit(step.iterator, self._guard_evaluation_context())
+        if isinstance(outcome, Incomplete):
+            effect = outcome.effect
+            stop_identity = ground_raise_effect(
+                exception_name="StopIteration",
+                site=step.site,
+                owner="GeneratorConstructionV1.ForStepV1.next",
+            ).exception_type_coordinate
+            if (
+                isinstance(effect, RaiseEffect)
+                and effect.exception_type_coordinate == stop_identity
+            ):
+                machine = replace(self, cursor=self.cursor + 1)
+                return machine._transition(requested)
+            return ExitSet.halted(effect, state=self)
+        if not isinstance(outcome, Complete) or not isinstance(outcome.value, NextResult):
+            return self._gap(requested, f"next_with returned {type(outcome).__name__}")
+
+        unpack = PositionalUnpackOperation(
+            fixed_prefix=len(step.target_coordinates),
+            fixed_suffix=0,
+            has_star=False,
+            owner="GeneratorConstructionV1.ForStepV1.target",
+            blame=step.site,
+        ).submit(outcome.value.value, self._guard_evaluation_context())
+        if isinstance(unpack, Incomplete):
+            return ExitSet.halted(unpack.effect, state=self)
+        if not isinstance(unpack, Complete) or not isinstance(unpack.value, UnpackMemberRoster):
+            return self._gap(requested, f"target unpack returned {type(unpack).__name__}")
+        bindings = tuple(
+            GeneratorLoopBindingV1(coordinate, member, unpack.value.occurrence, unpack.value.demand_cid)
+            for coordinate, member in zip(
+                step.target_coordinates, unpack.value.members, strict=True
+            )
+        )
+        recurrence = replace(step, iterator=outcome.value.advanced)
+        steps = (
+            *self.steps[: self.cursor],
+            *step.body_steps,
+            recurrence,
+            *self.steps[self.cursor + 1 :],
+        )
+        machine = replace(self, steps=steps, binding_state=(*self.binding_state, *bindings))
+        return machine._transition(requested)
 
     def _transition_nested_manager(self, step: NestedManagerStepV1, requested: str):
         """Enter nested protocol, bind entered state, splice body + exit step."""
@@ -936,6 +1112,8 @@ class GeneratorConstructionV1:
         for item in self.binding_state:
             if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
                 temporal = temporal.bind_value(item.name, item.value)
+            if isinstance(item, GeneratorLoopBindingV1):
+                temporal = temporal.bind_value(item.coordinate.cid, item.value)
 
         if base is None:
             return _BinderOnlyReduceCtx(temporal)
@@ -1033,12 +1211,32 @@ class GeneratorConstructionV1:
             return outcome.value
         return self._gap(requested, type(outcome).__name__)
 
-    @staticmethod
-    def _reduce_finally(step: FinallyStepV1) -> ExitSet:
+    def _reduce_finally(self, step: FinallyStepV1) -> ExitSet:
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
 
+        if step.cleanup_steps:
+            cleanup_machine = replace(
+                self,
+                steps=(*step.cleanup_steps, ReturnStepV1()),
+                cursor=0,
+                suspended_resume_coordinate=None,
+            )
+            result = cleanup_machine._transition("finally cleanup")
+            if isinstance(result, GeneratorTerminationV1):
+                return ExitSet.completed(result)
+            if isinstance(result, ExitSet):
+                return result
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="GeneratorConstructionV1._reduce_finally",
+                blame=step,
+                observed=f"cleanup transitioned to {type(result).__name__}",
+                requested="completed or halted cleanup",
+                fix="keep suspension and unresolved steps out of a finally cleanup suite",
+            )
         return reduce_block_to_exitset(step.statements)
 
     @staticmethod

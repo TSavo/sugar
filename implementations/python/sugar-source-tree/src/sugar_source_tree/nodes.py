@@ -2529,6 +2529,7 @@ class FunctionDef(Statement):
         from sugar_lift_py_tests.generator_construction import (
             AssignStepV1,
             FinallyStepV1,
+            ForStepV1,
             IfStepV1,
             InertStepV1,
             OpaqueStepV1,
@@ -2643,6 +2644,25 @@ class FunctionDef(Statement):
                         statement.fragment.seal().cid,
                     )
                 )
+            if isinstance(statement, For) and not statement.orelse:
+                body = branch_steps(statement.body)
+                coordinates = for_target_coordinates(statement)
+                iterable = statement.iter.sugar()
+                if (
+                    body is None
+                    or coordinates is None
+                    or not isinstance(iterable, ConstructedTermSugar)
+                ):
+                    return None
+                return _GeneratorNamedStepV1(
+                    ForStepV1(
+                        iterable=iterable,
+                        target_coordinates=coordinates,
+                        body_steps=body,
+                        fragment_cid=statement.fragment.seal().cid,
+                        site=statement.fragment,
+                    )
+                )
             if (
                 isinstance(statement, Try)
                 and not statement.handlers
@@ -2662,10 +2682,44 @@ class FunctionDef(Statement):
                     return _GeneratorTryFinallyStepsV1(
                         compose_finally(body_steps, cleanup_step)
                     )
+                cleanup_steps = branch_steps(statement.finalbody)
+                if body_steps is not None and cleanup_steps is not None:
+                    cleanup_step = FinallyStepV1((), cleanup_steps=cleanup_steps)
+                    return _GeneratorTryFinallyStepsV1(
+                        compose_finally(body_steps, cleanup_step)
+                    )
                 if body_steps is None and self._owns_yield(statement.body):
                     return _GeneratorTryFinallyExpansionV1(statement, cleanup)
                 return absent_step
             return absent_step
+
+        def for_target_coordinates(statement):
+            from sugar_source_tree.binding_state import mint_binding_coordinate_v1
+
+            leaves = []
+
+            def collect(target, path):
+                if isinstance(target, Name):
+                    leaves.append((target, path))
+                    return True
+                if not isinstance(target, (Tuple_, List)) or not target.elts:
+                    return False
+                return all(
+                    collect(child, (*path, index))
+                    for index, child in enumerate(target.elts)
+                )
+
+            if not collect(statement.target, ("for-target",)):
+                return None
+            owner_cid = statement.fragment.seal().cid
+            return tuple(
+                mint_binding_coordinate_v1(
+                    scope_owner_cid=owner_cid,
+                    binding_site=leaf.fragment,
+                    projection_path=path,
+                )
+                for leaf, path in leaves
+            )
 
         def branch_steps(body):
             """Steps for one branch/suite, or None if any shape is unnameable.
