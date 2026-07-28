@@ -71,6 +71,15 @@ class BytesValue(FloorValue):
             exception_name="TypeError", site=site, owner="BytesValue.setitem"
         )
 
+    def delitem(self, index, site):
+        """Bytes are immutable: every subscript delete is exact TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="BytesValue.delitem"
+        )
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
