@@ -102,7 +102,7 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_name == "TypeError"
+    assert halted.effect.exception_name is None
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
     assert halted.effect.occurrence is not None
 

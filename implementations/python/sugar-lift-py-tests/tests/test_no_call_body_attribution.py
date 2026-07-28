@@ -37,7 +37,6 @@ def _raise_value():
     return Complete(
         RaiseValue(
             RaiseEffect(
-                exception_name="TypeError",
                 exception_type_coordinate=str_const("TypeError"),
                 occurrence="pandas/example.py:1:4",
             )
@@ -53,7 +52,6 @@ def _call_owned_raise_value():
     return Complete(
         RaiseValue(
             RaiseEffect(
-                exception_name="TypeError",
                 exception_type_coordinate=str_const("TypeError"),
                 occurrence="pandas/example.py:1:4",
                 producer_node_owner="Call",
