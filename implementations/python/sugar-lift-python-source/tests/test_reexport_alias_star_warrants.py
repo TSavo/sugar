@@ -411,6 +411,74 @@ def test_prefix_pass_licenses_binding(tmp_path: Path) -> None:
     assert result.module_name == "ok_pkg.implementation"
 
 
+def test_empty_prefix_licenses_first_statement_definition(tmp_path: Path) -> None:
+    """Five-step: empty prefix (bind is first stmt) is vacuous Completed."""
+    dist = _dist(
+        tmp_path,
+        name="first-pkg",
+        files={
+            "first_pkg/__init__.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import first_pkg\nfirst_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "first_pkg"
+    assert result.definition.name == "build"
+
+
+def test_prefix_multi_face_if_refuses_as_named_dynamic_export(tmp_path: Path) -> None:
+    """Unresolved multi-face prefix stays a named gap — never AST-admitted."""
+    dist = _dist(
+        tmp_path,
+        name="face-pkg",
+        files={
+            "face_pkg/__init__.py": (
+                "flag = unknown\n"
+                "if flag:\n"
+                "    pass\n"
+                "else:\n"
+                "    pass\n"
+                "from face_pkg.implementation import build\n"
+            ),
+            "face_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import face_pkg\nface_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, PythonObjectResolutionGapV1)
+    assert result.kind == "dynamic-export"
+
+
+def test_prefix_does_not_include_the_binding_statement_itself(tmp_path: Path) -> None:
+    """Statements *before* the locus only: a raise *at* the bind is not prefix."""
+    # Raise is the first (and binding) statement on a dynamic path; empty
+    # prefix for a pure definition after pass is licensed separately above.
+    dist = _dist(
+        tmp_path,
+        name="bind-only-pkg",
+        files={
+            "bind_only_pkg/__init__.py": (
+                "from bind_only_pkg.implementation import build\n"
+            ),
+            "bind_only_pkg/implementation.py": "def build(value):\n    return value\n",
+        },
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    result = resolve_import_binding(
+        _call_demand(tmp_path, "import bind_only_pkg\nbind_only_pkg.build(1)\n"),
+        graph=graph,
+    )
+    assert isinstance(result, ResolvedPythonObjectV1)
+    assert result.module_name == "bind_only_pkg.implementation"
+
+
 def test_competing_static_binds_stay_ambiguous(tmp_path: Path) -> None:
     dist = _dist(
         tmp_path,

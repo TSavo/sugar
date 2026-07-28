@@ -814,25 +814,51 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state):
 
 
 def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
-    """License the binding only when prefix reduction Completed fall-through.
+    """License one export binding via the advisor's five-step prefix reduction.
 
-    Spec: authenticated module source/CID → statements strictly before the
-    unique export-binding locus → reduce via the same ``reduce_block_to_exitset``
-    path function bodies use → exactly one unconditional
-    ``Completed(can_fall_through=True)``.  Empty prefix is licensed.  Any
-    unresolved / halted / multi-face / incomplete-sugar prefix is refused.
+    1. Authenticated module source/CID — ``SourceFile`` path_source door only;
+       refuse dual-door / CID mismatch (construction refuses, we map to gap).
+    2. Exact export-binding coordinate — ``locus`` is the unique bind statement
+       (innermost) already established by ``_export_block_with_locus``.
+    3. Reduce statements **strictly before** that locus (module-body order,
+       start line/col < locus start) — never the binding statement itself.
+    4. Exactly one unconditional ``Completed(can_fall_through=True)`` via the
+       same ``reduce_block_to_exitset`` path function bodies use.
+    5. License only then; multi-face / halted / incomplete-sugar / guarded
+       faces stay **named** gaps (``dynamic-export`` at the call site).
+
+    Empty prefix (binding is the first statement) is licensed.  Soft success is
+    forbidden: every refusal path is explicit False so the caller emits the
+    named gap rather than inventing fall-through from AST control shape.
     """
     try:
         from sugar_lift_py_tests.outcome import Completed, true_guard
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
-        from sugar_source_tree.panic import SugarNotWritten
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+        from sugar_lift_python_source.canonical import blake3_512_of
+        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
+        from sugar_source_tree.panic import BackendDefect, SugarNotWritten
         from sugar_source_tree.tree import SourceFile
     except ImportError:
+        # Producer substrate unavailable — refuse license (named gap upstream).
         return False
 
-    source_file = SourceFile((module.source, module.source_seat, module.source_cid))
+    # --- 1. Authenticated module source/CID ---------------------------------
+    expected_cid = blake3_512_of(module.source.encode("utf-8"))
+    if module.source_cid != expected_cid:
+        return False
+    try:
+        source_file = SourceFile(
+            (module.source, module.source_seat, module.source_cid)
+        )
+    except (BackendDefect, ValueError, TypeError):
+        return False
+
+    # --- 2–3. Exact locus; statements strictly before it --------------------
+    # Locus is the AST bind site; typed body rows are matched by start
+    # line/col (same coordinate space the export walk used for lineno).
     locus_key = (locus.lineno, locus.col_offset)
     prefix = []
     for statement in source_file.root.body:
@@ -841,12 +867,12 @@ def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
         if key >= locus_key:
             break
         prefix.append(statement)
+    # Empty prefix: nothing before the bind → fall-through is vacuous True.
     if not prefix:
         return True
-    try:
-        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
 
+    # --- 4. Reduce prefix → one unconditional Completed fall-through --------
+    try:
         sugars = []
         for statement in prefix:
             # Module-level def/class *statements* are definitional: bodies are
@@ -860,15 +886,21 @@ def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
                 sugars.append(statement.sugar())
         exits = reduce_block_to_exitset(tuple(sugars))
     except SugarNotWritten:
+        # Incomplete sugar on the prefix — named unresolved face.
         return False
-    except Exception:
+    except (BackendDefect, ValueError, TypeError):
         return False
+
+    # --- 5. License only the single unconditional Completed fall-through ----
     if len(exits.exits) != 1:
+        # Multi-face / empty ExitSet — unresolved named gap.
         return False
     face = exits.exits[0]
     if not isinstance(face, Completed):
+        # Halted / refused face — not fall-through.
         return False
     if face.guard != true_guard():
+        # Guarded completion is not unconditional.
         return False
     value = face.value
     return bool(getattr(value, "can_fall_through", False))
