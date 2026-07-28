@@ -25,20 +25,22 @@ class AuthenticatedExceptionTypeSugar(Sugar):
         )
 
     def desugar(self, ctx=None):
-        """Project the authenticated type floor without re-asking Attribute.
+        """Project the sealed exception-type identity without member floors.
 
         Import-bound dotted operands already carry a closed
         ``python:exception_type_identity(import, …)`` coordinate from the
-        lexical import pass.  That coordinate *is* the source-visible floor:
-        re-desugaring the Attribute sugar would ask an opaque module receiver
-        for a member it has no testimony for, inventing either a
-        ``py.getattr`` projection or a spelling-table arm.  Neither is
-        admitted.  Builtins and source-class leaves still reduce their
-        constructed value (or the projected ``class_value``) as before.
+        lexical import pass.  That coordinate *is* the source-visible floor.
+
+        Provider-gated heads (``importorskip`` / optional try-import) seal the
+        identity term itself as the carrier — Attribute chains on module heads
+        must not invent ``SymbolicValue.attribute`` success or AttributeError.
+        MRO is only whatever was supplied at construction; this door never
+        fabricates it.
         """
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
             AuthenticatedExceptionTypeValue,
         )
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.outcome import Complete
 
         # When construction already projected the exception-class floor (import
@@ -62,11 +64,14 @@ class AuthenticatedExceptionTypeSugar(Sugar):
                 )
             )
 
-        return self.value.desugar(ctx).and_then(
-            lambda value: Complete(
-                AuthenticatedExceptionTypeValue(
-                    value, self.identity, self.mro, self.class_value
-                )
+        # Provider-gated / non-import sealed identity: do not re-desugar Attribute
+        # chains on opaque module receivers.
+        return Complete(
+            AuthenticatedExceptionTypeValue(
+                SymbolicValue(self.identity),
+                self.identity,
+                self.mro,
+                self.class_value,
             )
         )
 
