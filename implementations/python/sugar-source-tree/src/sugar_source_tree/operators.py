@@ -76,53 +76,93 @@ class ComparisonOperator(Operator):
 class Add(BinaryOperator):
     kind, symbol, inplace_operator = "Add", "+", "iadd"
 
+    def project_inplace(self, left, right, site):
+        """Double-dispatch: left owns iadd (Floor default → add)."""
+        return left.iadd(right, site)
+
 
 class Sub(BinaryOperator):
     kind, symbol, inplace_operator = "Sub", "-", "isub"
+
+    def project_inplace(self, left, right, site):
+        return left.isub(right, site)
 
 
 class Mult(BinaryOperator):
     kind, symbol, inplace_operator = "Mult", "*", "imul"
 
+    def project_inplace(self, left, right, site):
+        return left.imul(right, site)
+
 
 class MatMult(BinaryOperator):
     kind, symbol, inplace_operator = "MatMult", "@", "imatmul"
+
+    def project_inplace(self, left, right, site):
+        return left.imatmul(right, site)
 
 
 class Div(BinaryOperator):
     kind, symbol, inplace_operator = "Div", "/", "itruediv"
 
+    def project_inplace(self, left, right, site):
+        return left.itruediv(right, site)
+
 
 class Mod(BinaryOperator):
     kind, symbol, inplace_operator = "Mod", "%", "imod"
+
+    def project_inplace(self, left, right, site):
+        return left.imod(right, site)
 
 
 class Pow(BinaryOperator):
     kind, symbol, inplace_operator = "Pow", "**", "ipow"
 
+    def project_inplace(self, left, right, site):
+        return left.ipow(right, site)
+
 
 class LShift(BinaryOperator):
     kind, symbol, inplace_operator = "LShift", "<<", "ilshift"
+
+    def project_inplace(self, left, right, site):
+        return left.ilshift(right, site)
 
 
 class RShift(BinaryOperator):
     kind, symbol, inplace_operator = "RShift", ">>", "irshift"
 
+    def project_inplace(self, left, right, site):
+        return left.irshift(right, site)
+
 
 class BitOr(BinaryOperator):
     kind, symbol, inplace_operator = "BitOr", "|", "ior"
+
+    def project_inplace(self, left, right, site):
+        return left.ior(right, site)
 
 
 class BitXor(BinaryOperator):
     kind, symbol, inplace_operator = "BitXor", "^", "ixor"
 
+    def project_inplace(self, left, right, site):
+        return left.ixor(right, site)
+
 
 class BitAnd(BinaryOperator):
     kind, symbol, inplace_operator = "BitAnd", "&", "iand"
 
+    def project_inplace(self, left, right, site):
+        return left.iand(right, site)
+
 
 class FloorDiv(BinaryOperator):
     kind, symbol, inplace_operator = "FloorDiv", "//", "ifloordiv"
+
+    def project_inplace(self, left, right, site):
+        return left.ifloordiv(right, site)
 
 
 # BinaryOperator classes AugAssign may host — production mint set source.

@@ -425,139 +425,62 @@ def _project_delattr_named(receiver, name, site):
     return receiver.delattr(name.value, site)
 
 
-def _after_inplace_or_binary(projected, binary_fallback):
-    """Shared post-i* law: fallback only for authenticated completed NotImplemented.
-
-    Absent i* is handled by the caller (no method → call binary directly).
-    Incomplete, ExitSet, RaiseValue, carriers, and other faces surface as-is.
-    """
-    from sugar_lift_py_tests.outcome import Complete
-
-    if projected is NotImplemented:
-        return binary_fallback()
-    if isinstance(projected, Complete) and projected.value is NotImplemented:
-        return binary_fallback()
-    return projected
-
-
 def project_iadd(left, right, site):
-    """Authenticated ``iadd`` then Floor-authorized ``add``."""
-    if not callable(getattr(left, "iadd", None)):
-        return left.add(right, site)
-    return _after_inplace_or_binary(
-        left.iadd(right, site), lambda: left.add(right, site)
-    )
+    """Discharge ``iadd``: dispatch to Floor; default binary lives on FloorValue."""
+    return left.iadd(right, site)
 
 
 def project_isub(left, right, site):
-    """Authenticated ``isub`` then Floor-authorized ``subtract``."""
-    if not callable(getattr(left, "isub", None)):
-        return left.subtract(right, site)
-    return _after_inplace_or_binary(
-        left.isub(right, site), lambda: left.subtract(right, site)
-    )
+    return left.isub(right, site)
 
 
 def project_imul(left, right, site):
-    """Authenticated ``imul`` then Floor-authorized ``multiply``."""
-    if not callable(getattr(left, "imul", None)):
-        return left.multiply(right, site)
-    return _after_inplace_or_binary(
-        left.imul(right, site), lambda: left.multiply(right, site)
-    )
+    return left.imul(right, site)
 
 
 def project_itruediv(left, right, site):
-    """Authenticated ``itruediv`` then Floor-authorized ``divide``."""
-    if not callable(getattr(left, "itruediv", None)):
-        return left.divide(right, site)
-    return _after_inplace_or_binary(
-        left.itruediv(right, site), lambda: left.divide(right, site)
-    )
+    return left.itruediv(right, site)
 
 
 def project_ifloordiv(left, right, site):
-    """Authenticated ``ifloordiv`` then Floor-authorized ``floor_divide``."""
-    if not callable(getattr(left, "ifloordiv", None)):
-        return left.floor_divide(right, site)
-    return _after_inplace_or_binary(
-        left.ifloordiv(right, site), lambda: left.floor_divide(right, site)
-    )
+    return left.ifloordiv(right, site)
 
 
 def project_imod(left, right, site):
-    """Authenticated ``imod`` then Floor-authorized ``modulo``."""
-    if not callable(getattr(left, "imod", None)):
-        return left.modulo(right, site)
-    return _after_inplace_or_binary(
-        left.imod(right, site), lambda: left.modulo(right, site)
-    )
+    return left.imod(right, site)
 
 
 def project_ipow(left, right, site):
-    """Authenticated ``ipow`` then Floor-authorized ``power``."""
-    if not callable(getattr(left, "ipow", None)):
-        return left.power(right, site)
-    return _after_inplace_or_binary(
-        left.ipow(right, site), lambda: left.power(right, site)
-    )
+    return left.ipow(right, site)
 
 
 def project_iand(left, right, site):
-    """Authenticated ``iand`` then Floor-authorized ``bitwise_and``."""
-    if not callable(getattr(left, "iand", None)):
-        return left.bitwise_and(right, site)
-    return _after_inplace_or_binary(
-        left.iand(right, site), lambda: left.bitwise_and(right, site)
-    )
+    return left.iand(right, site)
 
 
 def project_ior(left, right, site):
-    """Authenticated ``ior`` then Floor-authorized ``bitwise_or``."""
-    if not callable(getattr(left, "ior", None)):
-        return left.bitwise_or(right, site)
-    return _after_inplace_or_binary(
-        left.ior(right, site), lambda: left.bitwise_or(right, site)
-    )
+    return left.ior(right, site)
 
 
 def project_ixor(left, right, site):
-    """Authenticated ``ixor`` then Floor-authorized ``bitwise_xor``."""
-    if not callable(getattr(left, "ixor", None)):
-        return left.bitwise_xor(right, site)
-    return _after_inplace_or_binary(
-        left.ixor(right, site), lambda: left.bitwise_xor(right, site)
-    )
+    return left.ixor(right, site)
 
 
 def project_ilshift(left, right, site):
-    """Authenticated ``ilshift`` then Floor-authorized ``left_shift``."""
-    if not callable(getattr(left, "ilshift", None)):
-        return left.left_shift(right, site)
-    return _after_inplace_or_binary(
-        left.ilshift(right, site), lambda: left.left_shift(right, site)
-    )
+    return left.ilshift(right, site)
 
 
 def project_irshift(left, right, site):
-    """Authenticated ``irshift`` then Floor-authorized ``right_shift``."""
-    if not callable(getattr(left, "irshift", None)):
-        return left.right_shift(right, site)
-    return _after_inplace_or_binary(
-        left.irshift(right, site), lambda: left.right_shift(right, site)
-    )
+    return left.irshift(right, site)
 
 
 def project_imatmul(left, right, site):
-    """Authenticated ``imatmul`` then Floor-authorized ``matrix_multiply``."""
-    if not callable(getattr(left, "imatmul", None)):
-        return left.matrix_multiply(right, site)
-    return _after_inplace_or_binary(
-        left.imatmul(right, site), lambda: left.matrix_multiply(right, site)
-    )
+    return left.imatmul(right, site)
 
 
 # Enrolled i* projectors — keys must equal production_augassign_inplace_operators().
+# Selection is operator-owned (BinaryOperator.project_inplace); this table is
+# discharge enrollment only — not a kind ladder.
 _INPLACE_NATIVE_OPERATION_PROJECTORS = {
     "iadd": project_iadd,
     "isub": project_isub,
@@ -573,71 +496,6 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
     "irshift": project_irshift,
     "imatmul": project_imatmul,
 }
-
-
-def inplace_projector_for(op):
-    """Resolve the authenticated inplace projector from a source BinaryOperator.
-
-    Uses isinstance on our operator classes.  Returns the explicit project_*
-    function; the carrier operator name is ``type(op).inplace_operator``.
-    """
-    from sugar_source_tree.operators import (
-        Add,
-        BitAnd,
-        BitOr,
-        BitXor,
-        Div,
-        FloorDiv,
-        LShift,
-        MatMult,
-        Mod,
-        Mult,
-        Pow,
-        RShift,
-        Sub,
-    )
-
-    if isinstance(op, Add):
-        return project_iadd
-    if isinstance(op, Sub):
-        return project_isub
-    if isinstance(op, Mult):
-        return project_imul
-    if isinstance(op, Div):
-        return project_itruediv
-    if isinstance(op, FloorDiv):
-        return project_ifloordiv
-    if isinstance(op, Mod):
-        return project_imod
-    if isinstance(op, Pow):
-        return project_ipow
-    if isinstance(op, BitAnd):
-        return project_iand
-    if isinstance(op, BitOr):
-        return project_ior
-    if isinstance(op, BitXor):
-        return project_ixor
-    if isinstance(op, LShift):
-        return project_ilshift
-    if isinstance(op, RShift):
-        return project_irshift
-    if isinstance(op, MatMult):
-        return project_imatmul
-    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-    from sugar_lift_py_tests.gap.panic import construction_panic
-
-    construction_panic(
-        ConstructionGap(
-            owner="inplace_projector_for",
-            blame=str(op),
-            observed=f"no enrolled inplace projector for {type(op).__name__}",
-            requested="an explicit project_* function for this BinaryOperator class",
-            fix="enroll project_<i*> and wire isinstance arm in inplace_projector_for",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-    )
-    raise AssertionError("unreachable")
 
 
 # Explicit projectors for authenticated native operations.

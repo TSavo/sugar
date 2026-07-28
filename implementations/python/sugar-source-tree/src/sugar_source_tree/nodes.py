@@ -4427,9 +4427,6 @@ class AugAssign(Statement):
                 site=self.fragment,
             )
         if isinstance(self.target, Subscript):
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                inplace_projector_for,
-            )
             from sugar_lift_py_tests.sugar.augassign_sugar import (
                 SubscriptAugAssignSugar,
             )
@@ -4438,14 +4435,13 @@ class AugAssign(Statement):
             op_site = getattr(self, "operator_site", None)
             if op_site is None:
                 op_site = self._mint_operator_site_from_structure()
-            projector = inplace_projector_for(self.op)
-            operator = type(self.op).inplace_operator
+            # Operator-owned double dispatch — not a caller isinstance ladder.
             return SubscriptAugAssignSugar(
                 receiver=self.target.value.sugar(),
                 index=self.target.slice_.sugar(),
                 rhs=self.value.sugar(),
-                operator=operator,
-                operation=projector,
+                operator=type(self.op).inplace_operator,
+                operation=self.op.project_inplace,
                 get_site=self.target.fragment,
                 op_site=op_site,
                 set_site=self.fragment,

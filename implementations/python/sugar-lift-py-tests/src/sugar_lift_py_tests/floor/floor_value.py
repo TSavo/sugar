@@ -1268,6 +1268,50 @@ class FloorValue:
             other, site, "matrix_multiply", "matrix-multiplication"
         )
 
+    # --- Inplace (AugAssign) protocol -----------------------------------------
+    # Default: absent __iadd__-style method falls through to ordinary binary.
+    # Species that own true inplace override these methods.  Projectors dispatch
+    # directly to left.iadd / left.isub / … — they do not probe getattr.
+
+    def iadd(self, other, site):
+        return self.add(other, site)
+
+    def isub(self, other, site):
+        return self.subtract(other, site)
+
+    def imul(self, other, site):
+        return self.multiply(other, site)
+
+    def itruediv(self, other, site):
+        return self.divide(other, site)
+
+    def ifloordiv(self, other, site):
+        return self.floor_divide(other, site)
+
+    def imod(self, other, site):
+        return self.modulo(other, site)
+
+    def ipow(self, other, site):
+        return self.power(other, site)
+
+    def iand(self, other, site):
+        return self.bitwise_and(other, site)
+
+    def ior(self, other, site):
+        return self.bitwise_or(other, site)
+
+    def ixor(self, other, site):
+        return self.bitwise_xor(other, site)
+
+    def ilshift(self, other, site):
+        return self.left_shift(other, site)
+
+    def irshift(self, other, site):
+        return self.right_shift(other, site)
+
+    def imatmul(self, other, site):
+        return self.matrix_multiply(other, site)
+
     def _runtime_bitwise_gap(self, other, site, owner, label):
         return self._binary_floor_gap(other, site, owner, f"runtime bitwise {label}")
 

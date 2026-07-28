@@ -255,6 +255,3 @@ class SubscriptStoreEffectSugar(Sugar):
             operands=(receiver, index, value),
             coordinates=coordinates,
         )
-
-
-

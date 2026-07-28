@@ -13,7 +13,6 @@ import pytest
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
-    inplace_projector_for,
     production_native_operation_operators,
     project_iadd,
 )
@@ -109,10 +108,11 @@ def _production_desugar(receiver, index, rhs, *, operator="iadd", projector=proj
 # ---------------------------------------------------------------------------
 
 
-def test_subscript_augassign_constructs_with_explicit_project_iadd() -> None:
+def test_subscript_augassign_constructs_with_operator_owned_project_inplace() -> None:
     _, sugar = _aug_sugar()
     assert isinstance(sugar, SubscriptAugAssignSugar)
-    assert sugar.operation is project_iadd
+    # Operator-owned double dispatch — bound project_inplace, not a kind ladder.
+    assert sugar.operation.__func__ is Add.project_inplace
     assert sugar.operator == "iadd"
     assert sugar.operator == Add.inplace_operator
     assert sugar.get_site is not sugar.op_site
@@ -276,7 +276,7 @@ def test_formal_helper_desugars_without_legacy_incomplete_only() -> None:
     function, outcome = _helper_definition()
     stmt = function.sugar().statements[0]
     assert isinstance(stmt, SubscriptAugAssignSugar)
-    assert stmt.operation is project_iadd
+    assert stmt.operation.__func__ is Add.project_inplace
     assert stmt.operator == "iadd"
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "subscript"
@@ -466,13 +466,74 @@ def test_production_readability_does_not_authorize_writability() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Explicit project_iadd
+# Floor protocol iadd + operator-owned project_inplace
 # ---------------------------------------------------------------------------
 
 
-def test_inplace_projector_for_add_is_project_iadd() -> None:
-    assert inplace_projector_for(Add.instance()) is project_iadd
+def test_operator_owned_project_inplace_dispatches_to_floor_iadd() -> None:
+    """Add.project_inplace → left.iadd; no caller isinstance ladder."""
+    assert Add.instance().project_inplace is not None
+    # Bound method on the singleton operator.
+    bound = Add.instance().project_inplace
+    assert bound.__func__ is Add.project_inplace
     assert Add.inplace_operator == "iadd"
+
+
+def test_floor_iadd_default_falls_through_to_ordinary_add() -> None:
+    """Absent species override: FloorValue.iadd is ordinary add (protocol)."""
+    # TermValue inherits FloorValue.iadd → add; project_iadd only dispatches.
+    out = project_iadd(TermValue(1), TermValue(2), _production_sites()[1])
+    assert isinstance(out, Complete)
+    assert out.value == TermValue(3)
+
+
+def test_floor_species_iadd_override_wins_over_add() -> None:
+    """True inplace override on Floor species is preferred — projector does not probe."""
+    calls: list[str] = []
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    class _IAddSpecies(FloorValue):
+        def __init__(self, n: int):
+            self.n = n
+
+        def iadd(self, other, site):
+            calls.append("iadd")
+            return Complete(TermValue(self.n + other.value))
+
+        def add(self, other, site):
+            calls.append("add")
+            return Complete(TermValue(self.n + other.value))
+
+    out = project_iadd(_IAddSpecies(1), TermValue(2), "op")
+    assert isinstance(out, Complete)
+    assert calls == ["iadd"]
+    with pytest.raises(AssertionError):
+        assert calls == ["add"]
+
+
+def test_floor_iadd_incomplete_surfaces_without_projector_probe() -> None:
+    """Unresolved Incomplete from Floor iadd surfaces; projector does not rewrite."""
+    from sugar_lift_py_tests.effect import CoverageGapEffect
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    incomplete_face = Incomplete(
+        CoverageGapEffect(
+            boundary="iadd",
+            reason="inplace unresolved face",
+        )
+    )
+
+    class _IncompleteSpecies(FloorValue):
+        def iadd(self, other, site):
+            del other, site
+            return incomplete_face
+
+        def add(self, other, site):
+            del other, site
+            return Complete(TermValue(0))
+
+    out = project_iadd(_IncompleteSpecies(), TermValue(1), "op")
+    assert out is incomplete_face
 
 
 def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
@@ -510,83 +571,6 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
     assert out.demand.operator == "iadd"
     with pytest.raises(AssertionError):
         assert out.demand.operator == "add"
-
-
-def test_project_iadd_falls_back_only_on_absent_method_or_notimplemented() -> None:
-    calls: list[str] = []
-
-    @dataclass(frozen=True)
-    class _AddOnly:
-        value: int
-
-        def add(self, other, site):
-            calls.append("add")
-            return Complete(TermValue(self.value + other.value))
-
-    assert project_iadd(_AddOnly(1), TermValue(2), "op").value == TermValue(3)
-    assert calls == ["add"]
-    calls.clear()
-
-    @dataclass(frozen=True)
-    class _NotImpl:
-        value: int
-
-        def iadd(self, other, site):
-            calls.append("iadd")
-            return NotImplemented
-
-        def add(self, other, site):
-            calls.append("add")
-            return Complete(TermValue(self.value + other.value))
-
-    assert project_iadd(_NotImpl(1), TermValue(2), "op").value == TermValue(3)
-    assert calls == ["iadd", "add"]
-
-
-def test_project_iadd_does_not_fallback_on_incomplete_face() -> None:
-    from sugar_lift_py_tests.effect import CoverageGapEffect
-
-    incomplete_face = Incomplete(
-        CoverageGapEffect(
-            boundary="iadd",
-            reason="inplace unresolved face — must not fall back to add",
-        )
-    )
-
-    @dataclass(frozen=True)
-    class _IncompleteIadd:
-        def iadd(self, other, site):
-            del other, site
-            return incomplete_face
-
-        def add(self, other, site):
-            del other, site
-            return Complete(TermValue(0))
-
-    out = project_iadd(_IncompleteIadd(), TermValue(1), "op")
-    assert out is incomplete_face
-
-
-def test_project_iadd_prefers_floor_iadd_when_present() -> None:
-    calls: list[str] = []
-
-    @dataclass(frozen=True)
-    class _Both:
-        value: int
-
-        def iadd(self, other, site):
-            calls.append("iadd")
-            return Complete(TermValue(self.value + other.value))
-
-        def add(self, other, site):
-            calls.append("add")
-            return Complete(TermValue(self.value + other.value))
-
-    out = project_iadd(_Both(1), TermValue(2), "op")
-    assert isinstance(out, Complete)
-    assert calls == ["iadd"]
-    with pytest.raises(AssertionError):
-        assert calls == ["add"]
 
 
 def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> None:
