@@ -4,7 +4,14 @@ enter_resource_outcome: first yield + exact machine state.
 exit_outcome_for: resume that state once; suppression from authenticated exit.
 
 Twins: double-exit refuses; wrong-face resume refuses; suppression only from
-exit outcome. No nodes.py / consumer edits.
+exit outcome.
+
+Pre-yield exceptional twins (ready for grok-1 item-1): inert steps before
+yield already green; ``Assign`` / suspension-carrying opaque pre-yield are
+honorable reds naming the remaining transition producer; never-yield enter
+refusal stays green as the exceptional control.
+
+No nodes.py / consumer edits.
 """
 
 from __future__ import annotations
@@ -14,13 +21,16 @@ from types import SimpleNamespace
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
+    InertStepV1,
+    OpaqueStepV1,
     ReturnStepV1,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import Complete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
     EnteredGeneratorManagerStateV1,
@@ -131,3 +141,172 @@ def test_identical_enters_mint_distinct_entry_cids_and_each_exits_once():
     protocol.exit_outcome_for(second)
     with pytest.raises(SugarNotWritten, match="double exit"):
         protocol.exit_outcome_for(first)
+
+
+# ---------------------------------------------------------------------------
+# Pre-yield exceptional twins — green core + reds waiting on grok-1 item-1
+# ---------------------------------------------------------------------------
+
+
+def test_pre_yield_inert_step_then_yield_still_enters():
+    """Control: statements that owe nothing are stepped past before first yield."""
+    protocol = _protocol(
+        frame=_frame(
+            steps=(
+                InertStepV1("Expr"),
+                InertStepV1("Pass"),
+                YieldStepV1(TermValue(99)),
+                ReturnStepV1(None),
+            ),
+            frame_cid=cid_of_json({"frame": "pre-yield-inert"}),
+        )
+    )
+    outcome = protocol.enter_resource_outcome()
+    assert isinstance(outcome, Complete)
+    assert outcome.value.enter_value == TermValue(99)
+    assert isinstance(outcome.value, EnteredGeneratorManagerStateV1)
+    # Exit still once after inert-prefix enter.
+    exit_outcome = protocol.exit_outcome_for(outcome.value)
+    face = outcome_to_exitset(exit_outcome).exits[0]
+    assert face.value.statements[-1] == ReturnValue(TermValue(False))
+
+
+def test_pre_yield_never_yield_is_authenticated_entry_refusal():
+    """Exceptional control: return before any yield → Incomplete entry raise."""
+    protocol = _protocol(
+        frame=_frame(
+            steps=(ReturnStepV1(None),),
+            frame_cid=cid_of_json({"frame": "never-yield"}),
+        )
+    )
+    outcome = protocol.enter_resource_outcome()
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, RaiseEffect)
+    assert outcome.effect.exception_name == "RuntimeError"
+    # Message is vendor-observed refusal, not a silent gap.
+    assert outcome.effect.raised_value is not None
+    assert "yield" in str(outcome.effect.raised_value).lower()
+
+
+def test_pre_yield_assign_then_yield_enters_with_resource():
+    """LAW (grok-1 item-1): ordinary pre-yield Assign is performed, then yield enters.
+
+    Live shapes from the renamed consumption suite are exactly this row:
+
+        prior = None
+        yield (key, value, prior)
+
+    Today ``OpaqueStepV1("Assign")`` gaps at enter. When the pre-yield
+    transition producer lands, ``enter_resource_outcome`` completes with the
+    yield value and an exact machine state that can exit once.
+    """
+    protocol = _protocol(
+        frame=_frame(
+            steps=(
+                OpaqueStepV1("Assign", carries_suspension=False),
+                YieldStepV1(TermValue(42)),
+                ReturnStepV1(None),
+            ),
+            frame_cid=cid_of_json({"frame": "pre-yield-assign"}),
+        )
+    )
+    try:
+        outcome = protocol.enter_resource_outcome()
+    except SugarNotWritten as gap:
+        pytest.fail(
+            "MISSING PRODUCER (pre-yield Assign transition → grok-1 item-1):\n"
+            f"  owner: GeneratorBackedManagerProtocolV1.enter_resource_outcome\n"
+            f"  observed: {gap.observed!r}\n"
+            f"  requested: {gap.requested!r}\n"
+            "  expected: step ordinary Assign (binding, no suspension), then "
+            "Complete(EnteredGeneratorManagerStateV1) on the following YieldStepV1\n"
+            "  shapes blocked: config-setter / warnings-filter / temp-state live "
+            "generators in test_generator_manager_renamed_lifecycle.py\n"
+            "  fix: construct Assign (and peer pre-yield statement) transitions "
+            "in GeneratorConstructionV1; do not leave them OpaqueStep gaps"
+        )
+    assert isinstance(outcome, Complete), type(outcome)
+    entered = outcome.value
+    assert isinstance(entered, EnteredGeneratorManagerStateV1)
+    assert entered.enter_value == TermValue(42)
+    assert entered.machine.suspended_resume_coordinate is not None
+    # Exit must still be one-shot after Assign-prefix enter.
+    protocol.exit_outcome_for(entered)
+    with pytest.raises(SugarNotWritten, match="double exit"):
+        protocol.exit_outcome_for(entered)
+
+
+def test_pre_yield_suspension_assign_twin_does_not_impersonate_ordinary_assign():
+    """Discrimination twin: Assign *carrying a suspension* is not ordinary bind.
+
+    ``x = yield v`` is generator-protocol work (resume value binding), not the
+    same obligation as ``x = 1`` before a later yield. Today both may gap; when
+    ordinary Assign greens, this twin must still refuse silent step-over of a
+    suspension-carrying Assign — either enter on the yield inside, or loud gap
+    naming suspension, never a fabricated enter that dropped the yield.
+    """
+    protocol = _protocol(
+        frame=_frame(
+            steps=(
+                OpaqueStepV1("Assign", carries_suspension=True),
+                # Trailing yield only if suspension Assign is wrongly skipped.
+                YieldStepV1(TermValue("should-not-steal")),
+                ReturnStepV1(None),
+            ),
+            frame_cid=cid_of_json({"frame": "pre-yield-suspension-assign"}),
+        )
+    )
+    try:
+        outcome = protocol.enter_resource_outcome()
+    except SugarNotWritten as gap:
+        # Honest residual until suspension-carrying Assign is constructed.
+        assert "Assign" in str(gap.observed) or "suspension" in str(gap.observed).lower(), (
+            gap.observed
+        )
+        assert "carrying a suspension" in str(gap.observed) or gap.observed == "Assign" or (
+            "Assign carrying a suspension" in str(gap.observed)
+        ), (
+            f"suspension twin must name suspension-carrying Assign, not a foreign "
+            f"shape; observed={gap.observed!r}"
+        )
+        return
+    # If enter somehow completes, it must be from the *inner* yield of the
+    # suspension Assign — never by skipping to the trailing YieldStep.
+    assert isinstance(outcome, Complete)
+    entered = outcome.value
+    assert isinstance(entered, EnteredGeneratorManagerStateV1)
+    # Trailing "should-not-steal" would mean the suspension Assign was skipped.
+    assert entered.enter_value != TermValue("should-not-steal"), (
+        "suspension-carrying Assign was stepped past as if inert; resume-value "
+        "binding was dropped"
+    )
+
+
+def test_pre_yield_assign_and_inert_prefix_compose_then_yield():
+    """Composed pre-yield: inert + Assign + yield — Assign is the blocker today."""
+    protocol = _protocol(
+        frame=_frame(
+            steps=(
+                InertStepV1("Expr"),
+                OpaqueStepV1("Assign", carries_suspension=False),
+                YieldStepV1(TermValue(7)),
+                ReturnStepV1(None),
+            ),
+            frame_cid=cid_of_json({"frame": "inert-then-assign-then-yield"}),
+        )
+    )
+    try:
+        outcome = protocol.enter_resource_outcome()
+    except SugarNotWritten as gap:
+        # Inert must not be reported as the blocker once Assign is the residual.
+        assert gap.observed == "Assign" or "Assign" in str(gap.observed), (
+            f"expected Assign as first real blocker after inert prefix; "
+            f"observed={gap.observed!r}"
+        )
+        pytest.fail(
+            "MISSING PRODUCER (pre-yield Assign after inert → grok-1 item-1):\n"
+            f"  observed: {gap.observed!r}\n"
+            "  expected: step past InertStepV1, perform Assign, yield TermValue(7)"
+        )
+    assert isinstance(outcome, Complete)
+    assert outcome.value.enter_value == TermValue(7)
