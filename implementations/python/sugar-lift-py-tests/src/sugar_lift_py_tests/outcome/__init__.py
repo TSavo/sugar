@@ -10,6 +10,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationDemandV1,
     NativeOperationExitCarrierV1,
     NativeOperationResolutionV1,
+    authenticated_exceptional_resolution_count,
     native_operator_demand,
 )
 
@@ -23,6 +24,7 @@ __all__ = [
     "NativeOperationDemandV1",
     "NativeOperationExitCarrierV1",
     "NativeOperationResolutionV1",
+    "authenticated_exceptional_resolution_count",
     "Outcome",
     "complete_value",
     "outcome_to_exitset",

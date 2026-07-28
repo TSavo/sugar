@@ -109,6 +109,11 @@ class NativeOperationResolutionV1:
     def is_exceptional(self) -> bool:
         return self._kind == "exceptional"
 
+    @property
+    def is_authenticated_exceptional_exit(self) -> bool:
+        """The only resolution arm admitted to an authenticated-exit tally."""
+        return self.has_authenticated_exception_type
+
     def project(self, *, source_node):
         """Project the closed resolution into an ExitSet or a typed refusal."""
         from sugar_lift_py_tests.effect import RaiseEffect
@@ -135,6 +140,12 @@ class NativeOperationResolutionV1:
             fix="retain the operation as undischarged until both coordinates are proven",
         )
 
+
+def authenticated_exceptional_resolution_count(resolutions) -> int:
+    """Count named exceptional resolutions by coordinates, never by arm kind."""
+    return sum(
+        resolution.is_authenticated_exceptional_exit for resolution in resolutions
+    )
 
 def _json(value) -> Any:
     return json.loads(encode_jcs(value))

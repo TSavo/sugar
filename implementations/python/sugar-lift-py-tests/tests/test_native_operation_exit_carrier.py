@@ -5,6 +5,7 @@ import pytest
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     NativeOperationResolutionV1,
+    authenticated_exceptional_resolution_count,
     source_coordinate,
 )
 from sugar_lift_py_tests.context_manager_contract import (
@@ -15,6 +16,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
+from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
@@ -22,7 +24,13 @@ from sugar_lift_py_tests.floor import NoneValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import (
+    Completed,
+    ExitSet,
+    Halted,
+    outcome_to_exitset,
+    true_guard,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -190,6 +198,39 @@ def test_nameless_resolution_is_undischarged_and_cannot_project_a_halt():
     assert not resolution.has_authenticated_exception_type
     with pytest.raises(SugarNotWritten, match="identity unproven"):
         resolution.project(source_node=_site())
+
+
+def test_only_coordinate_authenticated_resolutions_count_as_exceptional_exits():
+    source = _site()
+    named = NativeOperationResolutionV1.exceptional(
+        exception_type_coordinate=_Expected("TypeError").identity,
+        operation_occurrence=source_coordinate(source),
+    )
+    nameless = NativeOperationResolutionV1.undischarged("identity unproven")
+    completed = NativeOperationResolutionV1.completed(TermValue(1))
+
+    assert authenticated_exceptional_resolution_count((named, nameless, completed)) == 1
+    assert not nameless.is_authenticated_exceptional_exit
+
+
+def test_nameless_halt_stays_outside_matching_boundary_end_to_end():
+    body = ExitSet(
+        (
+            Halted(
+                true_guard(),
+                RaiseEffect(occurrence="operation-origin"),
+            ),
+        )
+    )
+
+    with pytest.raises(SugarNotWritten, match="no term to state the test over"):
+        body.and_exit(
+            ExitSet.completed(object()),
+            disposition=EffectBoundaryDisposition(
+                matcher=AuthenticatedRaiseMatcher(expected=_Expected("TypeError")),
+                unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+            ),
+        )
 
 
 def test_same_named_exception_keeps_distinct_operation_origins():
