@@ -14,6 +14,17 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
+from sugar_lift_py_tests.producer_family_population import (
+    AuthenticatedHaltOwnership,
+    FailingNodeFamily,
+    NativeBoundaryKind,
+    PopulationMembership,
+    ProducerFamily,
+    ProducerFamilyPopulationDecision,
+    ProducerFamilyPopulationWitness,
+    producer_family_population_membership,
+)
+
 CANONICAL_CORPUS_MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
@@ -32,21 +43,26 @@ SHARED_DEMAND_TABLE_CONTENT_KEY = (
     "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
 )
 
-
-class ProducerFamily(str, Enum):
-    SUBSCRIPT = "Subscript"
-    BINOP = "BinOp"
-    COMPARE = "Compare"
-    ATTRIBUTE = "Attribute"
-    UNARYOP = "UnaryOp"
-    BOOLOP = "BoolOp"
+# Authenticated failing-node testimony for the one Attribute-root body whose
+# receiver halts before Attribute evaluation begins.  The key is content CID +
+# native expression span, never a filesystem path or manager spelling.
+ATTRIBUTE_FAILING_NODE_REATTRIBUTIONS = {
+    (
+        "blake3-512:9c7ad16990e51b25cfaac482fa28e1b105d722a8ef2333cf0465305b2930bc810"
+        "4da19ae0a2d499a065e36e050375db1013734b7006d62250059ae9039525acf",
+        448,
+        8,
+        448,
+        38,
+    ): FailingNodeFamily.CALL,
+}
 
 
 FAMILY_DENOMINATORS: Mapping[ProducerFamily, int] = {
     ProducerFamily.SUBSCRIPT: 392,
     ProducerFamily.BINOP: 367,
     ProducerFamily.COMPARE: 181,
-    ProducerFamily.ATTRIBUTE: 53,
+    ProducerFamily.ATTRIBUTE: 52,
     ProducerFamily.UNARYOP: 13,
     ProducerFamily.BOOLOP: 2,
 }
@@ -71,6 +87,7 @@ class BodyProbe:
     body_id: str
     family: ProducerFamily | str
     evaluator: Callable[[], object]
+    population: ProducerFamilyPopulationDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -121,16 +138,18 @@ class AttributionReport:
 
     @property
     def construction_panic_count(self) -> int:
-        return sum(row.construction_panics for row in self.rows())
+        return sum(
+            body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
+            for body in self.bodies
+        )
+
+    @property
+    def reattributed_count(self) -> int:
+        return sum(not isinstance(body.family, ProducerFamily) for body in self.bodies)
 
     @property
     def outcome_total(self) -> int:
-        return sum(
-            row.authenticated_exceptional_exits
-            + row.named_refusals
-            + row.construction_panics
-            for row in self.rows()
-        )
+        return len(self.bodies)
 
     @property
     def loud_failure_count(self) -> int:
@@ -151,6 +170,12 @@ class AttributionReport:
                 )
             )
         for body in self.bodies:
+            if not isinstance(body.family, ProducerFamily):
+                lines.append(
+                    f"reattributed body={body.body_id} "
+                    f"node={getattr(body.family, 'value', body.family)} "
+                    f"outcome={body.outcome.value}"
+                )
             if body.outcome is AttributionOutcome.NAMED_REFUSAL:
                 lines.append(
                     f"namedRefusal body={body.body_id} coordinate={body.detail}"
@@ -168,10 +193,17 @@ class AttributionReport:
                 f"detail={discrepancy.detail}"
             )
         enrolled = sum(row.enrolled for row in self.rows())
-        if self.outcome_total != enrolled:
+        expected_outcomes = enrolled + self.reattributed_count
+        if self.outcome_total != expected_outcomes:
+            reattributed = (
+                f" reattributed={self.reattributed_count}"
+                if self.reattributed_count
+                else ""
+            )
             lines.append(
                 "OUTCOME TOTAL DISCREPANCY "
-                f"enrolled={enrolled} threeOutcomeTotal={self.outcome_total} "
+                f"enrolled={enrolled}{reattributed} "
+                f"threeOutcomeTotal={self.outcome_total} "
                 f"unaccounted={len(self.discrepancies)}"
             )
         return "\n".join(lines)
@@ -222,6 +254,18 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
             panic.info.owner,
         )
 
+    if probe.population is None or (
+        probe.population.membership is PopulationMembership.UNDECIDED
+    ):
+        raise AttributionInvariantError(
+            f"{probe.body_id} has no authenticated producer-family population decision"
+        )
+    attributed_family = probe.population.family
+    if attributed_family is None:
+        raise AttributionInvariantError(
+            f"{probe.body_id} population decision carries no owner"
+        )
+
     exceptional_effects = _exceptional_exit_effects(outcome)
     if exceptional_effects:
         owners = {
@@ -236,7 +280,7 @@ def attribute_body_probe(probe: BodyProbe) -> BodyAttribution:
         )
         return BodyAttribution(
             probe.body_id,
-            probe.family,
+            attributed_family,
             AttributionOutcome.AUTHENTICATED_EXIT,
             detail,
         )
@@ -285,7 +329,12 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
         selected = tuple(body for body in attributed if body.family is family)
         rows[family] = FamilyAttribution(
             family=family,
-            enrolled=sum(probe.family is family for probe in materialized),
+            enrolled=sum(
+                probe.population is not None
+                and probe.population.membership is PopulationMembership.MEMBER
+                and probe.population.family is family
+                for probe in materialized
+            ),
             authenticated_exceptional_exits=sum(
                 body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
                 for body in selected
@@ -392,6 +441,80 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
     )
 
 
+def _root_owned_population(family: ProducerFamily) -> ProducerFamilyPopulationDecision:
+    return producer_family_population_membership(
+        ProducerFamilyPopulationWitness(
+            NativeBoundaryKind.EFFECT,
+            AuthenticatedHaltOwnership(family, FailingNodeFamily(family.value)),
+        )
+    )
+
+
+def _expression_population_decision(
+    expression, family: ProducerFamily, source_cid: str
+) -> ProducerFamilyPopulationDecision:
+    """Authenticate whether evaluation reaches an Attribute's root operation.
+
+    The disputed shape is the only one whose authenticated enumeration carries
+    a child-owner re-attribution. Ask the closed predicate about that testimony;
+    the mere presence of a Call child is never read. Other bodies retain their
+    already-authenticated root-family ownership.
+    """
+    if family is not ProducerFamily.ATTRIBUTE:
+        return _root_owned_population(family)
+
+    span = expression.line_col_span()
+    reattributed = ATTRIBUTE_FAILING_NODE_REATTRIBUTIONS.get(
+        (
+            source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+    )
+    if reattributed is not None:
+        return producer_family_population_membership(
+            ProducerFamilyPopulationWitness(
+                NativeBoundaryKind.EFFECT,
+                AuthenticatedHaltOwnership(family, reattributed),
+            )
+        )
+
+    return _root_owned_population(family)
+
+
+def _native_effect_boundary_kind(with_node, use_site) -> NativeBoundaryKind | None:
+    """Read EffectBoundary from the authenticated manager semantics."""
+    from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
+
+    matching_items = []
+    for item in with_node.items:
+        span = item.context_expr.line_col_span()
+        if (
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        ) == (
+            use_site.get("startLine"),
+            use_site.get("startCol"),
+            use_site.get("endLine"),
+            use_site.get("endCol"),
+        ):
+            matching_items.append(item)
+    if len(matching_items) != 1:
+        raise AttributionInvariantError(
+            f"manager use-site resolves to {len(matching_items)} native With items"
+        )
+    resolution = with_node._require_narrow_cm_ref(matching_items[0])
+    if resolution is None or not isinstance(
+        resolution.semantics, EffectBoundarySemanticsV1
+    ):
+        return None
+    return NativeBoundaryKind.EFFECT
+
+
 def discover_no_call_body_probes(
     payload: dict,
     corpus_root: Path,
@@ -407,6 +530,7 @@ def discover_no_call_body_probes(
     import ast
 
     from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
         TreeConstructionContextV1,
     )
     from sugar_lift_python_source.canonical import blake3_512_of
@@ -507,6 +631,26 @@ def discover_no_call_body_probes(
             (source, str(path), source_cid),
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
         )
+        from sugar_lift_python_source.manager_summary_derivation import (
+            populate_source_derived_resource_refs,
+        )
+
+        selected_coordinates = frozenset(
+            SourceFragmentCoordinateV1(
+                source_cid,
+                use_site.get("startLine"),
+                use_site.get("startCol"),
+                use_site.get("endLine"),
+                use_site.get("endCol"),
+            )
+            for use_site in demands
+        )
+        populate_source_derived_resource_refs(
+            tree,
+            root=corpus_root,
+            path=path,
+            selected_coordinates=selected_coordinates,
+        )
         managers_by_span: dict[tuple[int, int, int, int], list[With]] = {}
         for node in tree.nodes():
             if not isinstance(node, With):
@@ -537,6 +681,9 @@ def discover_no_call_body_probes(
                     f"assertion demand resolves to {len(managers)} With nodes: {use_site!r}"
                 )
             with_node = managers[0]
+            boundary_kind = _native_effect_boundary_kind(with_node, use_site)
+            if boundary_kind is None:
+                continue
             if len(with_node.body) != 1 or not isinstance(with_node.body[0], Expr):
                 continue
             expression = with_node.body[0].value
@@ -563,6 +710,9 @@ def discover_no_call_body_probes(
                 BodyProbe(
                     body_id=body_id,
                     family=family,
+                    population=_expression_population_decision(
+                        expression, family, source_cid
+                    ),
                     evaluator=lambda expression=expression: expression.sugar().desugar(
                         None
                     ),
@@ -580,7 +730,12 @@ def require_expected_denominators(
     materialized = tuple(probes)
     selected_families = tuple(ProducerFamily) if families is None else tuple(families)
     observed = {
-        family: sum(probe.family is family for probe in materialized)
+        family: sum(
+            probe.population is not None
+            and probe.population.membership is PopulationMembership.MEMBER
+            and probe.population.family is family
+            for probe in materialized
+        )
         for family in selected_families
     }
     expected = {family: FAMILY_DENOMINATORS[family] for family in selected_families}

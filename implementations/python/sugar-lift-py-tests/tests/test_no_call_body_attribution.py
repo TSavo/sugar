@@ -6,6 +6,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import RaiseValue
 from sugar_lift_py_tests.no_call_body_attribution import (
     CANONICAL_CORPUS_MANIFEST_CID,
+    ATTRIBUTE_FAILING_NODE_REATTRIBUTIONS,
     FAMILY_DENOMINATORS,
     HISTORICAL_PATH_SHAPE_DIGEST,
     AttributionOutcome,
@@ -16,11 +17,19 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probe,
     attribute_body_probes,
     discover_no_call_body_probes,
+    _native_effect_boundary_kind,
     require_expected_denominators,
     summarize_attribution_outcomes,
     validate_shared_demand_table,
 )
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.producer_family_population import (
+    AuthenticatedHaltOwnership,
+    FailingNodeFamily,
+    NativeBoundaryKind,
+    ProducerFamilyPopulationWitness,
+    producer_family_population_membership,
+)
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -28,6 +37,12 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
     return BodyProbe(
         body_id=f"pandas/example.py:1:{family.value}",
         family=family,
+        population=producer_family_population_membership(
+            ProducerFamilyPopulationWitness(
+                NativeBoundaryKind.EFFECT,
+                AuthenticatedHaltOwnership(family, FailingNodeFamily(family.value)),
+            )
+        ),
         evaluator=evaluator,
     )
 
@@ -132,11 +147,11 @@ def test_report_keeps_all_six_families_separate() -> None:
         ProducerFamily.SUBSCRIPT: 392,
         ProducerFamily.BINOP: 367,
         ProducerFamily.COMPARE: 181,
-        ProducerFamily.ATTRIBUTE: 53,
+        ProducerFamily.ATTRIBUTE: 52,
         ProducerFamily.UNARYOP: 13,
         ProducerFamily.BOOLOP: 2,
     }
-    assert sum(FAMILY_DENOMINATORS.values()) == 1008
+    assert sum(FAMILY_DENOMINATORS.values()) == 1007
     assert [row.family for row in report.rows()] == list(ProducerFamily)
 
 
@@ -281,9 +296,50 @@ def test_shared_table_accepts_only_the_canonical_content_manifest() -> None:
         )
 
 
+def test_population_reads_native_effect_boundary_semantics() -> None:
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoBindingV1,
+        NoMessagePatternV1,
+        RaiseEffectKindV1,
+    )
+
+    span = SimpleNamespace(start_line=3, start_col=9, end_line=3, end_col=25)
+    item = SimpleNamespace(context_expr=SimpleNamespace(line_col_span=lambda: span))
+    semantics = EffectBoundarySemanticsV1(
+        ExpectsModeV1(),
+        RaiseEffectKindV1(),
+        FormalArgumentProjectionV1(0),
+        NoMessagePatternV1(),
+        NoBindingV1(),
+    )
+    with_node = SimpleNamespace(
+        items=(item,),
+        _require_narrow_cm_ref=lambda _item: SimpleNamespace(semantics=semantics),
+    )
+    use_site = {
+        "startLine": 3,
+        "startCol": 9,
+        "endLine": 3,
+        "endCol": 25,
+    }
+
+    assert (
+        _native_effect_boundary_kind(with_node, use_site) is NativeBoundaryKind.EFFECT
+    )
+
+    with_node._require_narrow_cm_ref = lambda _item: SimpleNamespace(semantics=object())
+    assert _native_effect_boundary_kind(with_node, use_site) is None
+
+
 def test_discovery_classifies_the_body_root_and_excludes_root_calls(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
+    import sugar_lift_py_tests.no_call_body_attribution as attribution_module
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
@@ -292,6 +348,11 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     from sugar_source_tree.tree import SourceFile
 
     package = tmp_path / "pandas"
+    monkeypatch.setattr(
+        attribution_module,
+        "_native_effect_boundary_kind",
+        lambda _with_node, _use_site: NativeBoundaryKind.EFFECT,
+    )
     package.mkdir()
     subscript_path = package / "subscript_body.py"
     subscript_source = (
@@ -352,14 +413,10 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     ]
 
 
-def test_population_selection_never_reads_manager_target_symbol() -> None:
-    """All resolved managers enroll; manager spelling grants no membership."""
-    assert "targetSymbol" not in discover_no_call_body_probes.__code__.co_consts
-
-
 def test_discovery_projects_one_family_without_constructing_peer_sources(
     tmp_path, monkeypatch
 ) -> None:
+    import sugar_lift_py_tests.no_call_body_attribution as attribution_module
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
@@ -368,6 +425,11 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
     from sugar_source_tree.tree import SourceFile
 
     package = tmp_path / "pandas"
+    monkeypatch.setattr(
+        attribution_module,
+        "_native_effect_boundary_kind",
+        lambda _with_node, _use_site: NativeBoundaryKind.EFFECT,
+    )
     package.mkdir()
     sources = {
         "attribute_body.py": (
@@ -441,5 +503,67 @@ def test_selected_family_denominator_remains_fixed() -> None:
         )
 
 
-def test_attribute_family_denominator_is_native_root_inventory() -> None:
-    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 53
+def test_attribute_family_denominator_is_written_population_predicate() -> None:
+    assert FAMILY_DENOMINATORS[ProducerFamily.ATTRIBUTE] == 52
+
+
+def test_call_owned_halt_is_recorded_as_re_attribution_not_deletion() -> None:
+    population = producer_family_population_membership(
+        ProducerFamilyPopulationWitness(
+            NativeBoundaryKind.EFFECT,
+            AuthenticatedHaltOwnership(
+                ProducerFamily.ATTRIBUTE, FailingNodeFamily.CALL
+            ),
+        )
+    )
+    probe = BodyProbe(
+        body_id="tests/io/pytables/test_store.py:448:Attribute",
+        family=ProducerFamily.ATTRIBUTE,
+        population=population,
+        evaluator=_raise_value,
+    )
+
+    report = attribute_body_probes((probe,))
+
+    assert report.by_family[ProducerFamily.ATTRIBUTE].enrolled == 0
+    assert report.bodies[0].family is FailingNodeFamily.CALL
+    assert report.reattributed_count == 1
+    assert (
+        "reattributed body=tests/io/pytables/test_store.py:448:Attribute"
+        in report.render()
+    )
+
+
+def test_re_attributed_construction_panic_remains_on_the_loud_axis() -> None:
+    population = producer_family_population_membership(
+        ProducerFamilyPopulationWitness(
+            NativeBoundaryKind.EFFECT,
+            AuthenticatedHaltOwnership(
+                ProducerFamily.ATTRIBUTE, FailingNodeFamily.CALL
+            ),
+        )
+    )
+    probe = BodyProbe(
+        body_id="tests/io/pytables/test_store.py:448:Attribute",
+        family=ProducerFamily.ATTRIBUTE,
+        population=population,
+        evaluator=_construction_panic,
+    )
+
+    report = attribute_body_probes((probe,))
+
+    assert report.construction_panic_count == 1
+    assert report.loud_failure_count == 1
+
+
+def test_call_owned_re_attribution_is_content_and_coordinate_testimony() -> None:
+    assert ATTRIBUTE_FAILING_NODE_REATTRIBUTIONS == {
+        (
+            "blake3-512:9c7ad16990e51b25cfaac482fa28e1b105d722a8ef2333cf0465305b2930bc810"
+            "4da19ae0a2d499a065e36e050375db1013734b7006d62250059ae9039525acf",
+            448,
+            8,
+            448,
+            38,
+        ): FailingNodeFamily.CALL
+    }
