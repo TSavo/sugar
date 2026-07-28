@@ -101,7 +101,7 @@ def _load_authenticate_disk_cache(
 
         with path.open("rb") as stream:
             payload = pickle.load(stream)
-        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v2":
+        if not isinstance(payload, dict) or payload.get("schema") != "dep-graph-v3":
             return None
         graph = DependencyArtifactGraph(
             artifact_kind=payload["artifact_kind"],
@@ -132,7 +132,10 @@ def _store_authenticate_disk_cache(
 
         # MappingProxyType is not pickleable; store plain dict modules.
         payload = {
-            "schema": "dep-graph-v2",
+            # v3 projects recorded .pyi defining source as modules.  A v2 seat
+            # for the same artifact CID is byte-authentic but semantically
+            # incomplete, so it must never answer this reader.
+            "schema": "dep-graph-v3",
             "artifact_kind": graph.artifact_kind,
             "distribution_name": graph.distribution_name,
             "distribution_version": graph.distribution_version,
@@ -866,6 +869,36 @@ def resolve_import_binding(
     )
 
 
+def resolve_authenticated_module_export(
+    *,
+    graph: DependencyArtifactGraph,
+    binding_cid: str,
+    module_name: str,
+    exported_name: str,
+    session: "SourceResolutionSession | None" = None,
+) -> PythonObjectResolutionV1:
+    """Resolve a provider export after its module binding was authenticated.
+
+    This is the non-``import`` spelling of :func:`resolve_import_binding`: a
+    source-derived module provider (for example, a returned module value) owns
+    ``binding_cid`` and ``module_name`` already.  Export traversal remains the
+    same content-addressed source/re-export walk; callers cannot supply a
+    definition, CID, or successful result directly.
+    """
+    _cid(binding_cid, "provider binding cid")
+    _string(module_name, "provider module name")
+    _string(exported_name, "provider exported name")
+    return _resolve_export(
+        graph,
+        binding_cid,
+        module_name,
+        exported_name,
+        (),
+        frozenset(),
+        session=session_or_new(session),
+    )
+
+
 def _binding_target(
     value: Mapping[str, Any],
 ) -> tuple[str, tuple[str, ...], str | None]:
@@ -890,7 +923,15 @@ def _binding_target(
 
 
 def _module_name(path: PurePosixPath) -> str | None:
-    if path.suffix != ".py":
+    # PEP 484 stubs are defining Python source for names and class ancestry.
+    # Wheels with native extension modules commonly ship the callable runtime
+    # in ``.so`` and the source-visible type definitions in a sibling ``.pyi``
+    # (PyArrow's exception hierarchy is one such provider).  Discarding that
+    # recorded, content-addressed source turns a reachable class definition
+    # into opacity.  A distribution containing both ``x.py`` and ``x.pyi``
+    # remains a duplicate module seat and is refused by the existing intake
+    # check; this door never chooses whichever file is convenient.
+    if path.suffix not in {".py", ".pyi"}:
         return None
     parts = list(path.with_suffix("").parts)
     if any(part.endswith(".dist-info") or part.endswith(".data") for part in parts):

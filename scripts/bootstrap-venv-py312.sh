@@ -11,7 +11,7 @@
 # pattern: a label that does not name the runtime it carries.
 #
 # Declared pins (sugar-build.toml + sugar-lift-py-tests[test] on main):
-#   python 3.12.13, numpy 2.5.1, pandas 3.0.3, pytest 9.1.1
+#   python 3.12.13, numpy 2.5.1, pandas 3.0.3, pyarrow 22.0.0, pytest 9.1.1
 #
 # Usage (from any checkout of this repository — the script must be IN the tree):
 #   bash scripts/bootstrap-venv-py312.sh
@@ -84,16 +84,20 @@ import sysconfig
 
 import numpy
 import pandas
+import pyarrow
 
 assert sys.version_info[:3] == (3, 12, 13), sys.version
 assert numpy.__version__ == "2.5.1", numpy.__version__
 assert pandas.__version__ == "3.0.3", pandas.__version__
+assert pyarrow.__version__ == "22.0.0", pyarrow.__version__
 purelib = pathlib.Path(sysconfig.get_paths()["purelib"]).resolve()
 assert purelib in pathlib.Path(numpy.__file__).resolve().parents, numpy.__file__
 assert purelib in pathlib.Path(pandas.__file__).resolve().parents, pandas.__file__
+assert purelib in pathlib.Path(pyarrow.__file__).resolve().parents, pyarrow.__file__
 print("interpreter", sys.version.split()[0], sys.executable)
 print("numpy", numpy.__version__, pathlib.Path(numpy.__file__).resolve())
 print("pandas", pandas.__version__, pathlib.Path(pandas.__file__).resolve())
+print("pyarrow", pyarrow.__version__, pathlib.Path(pyarrow.__file__).resolve())
 print("pytest", md.version("pytest"))
 print("PINS_OK")
 PY

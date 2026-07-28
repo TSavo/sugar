@@ -45,6 +45,11 @@ test = [
     # the two that constitute the measurement were the two that could move.
     "numpy==2.5.1",
     "pandas==3.0.3",
+    # External exception construction authenticates provider definitions from
+    # recorded wheel source.  pandas' ArrowInvalid/ArrowException sites cannot
+    # be constructed from pandas bytes alone; this exact provider is part of
+    # the measured closure, not imported or executed by the source resolver.
+    "pyarrow==22.0.0",
 ]
 
 [tool.sugar.measured-corpus]

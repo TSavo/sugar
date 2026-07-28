@@ -54,19 +54,13 @@ _CORPUS_MANIFEST_CID = (
 )
 _EXTERNAL_ERROR_TARGET = "pandas._testing.external_error_raised"
 _CATALOG_CID = "blake3-512:" + "c" * 128
-_TABLE_CID = "blake3-512:" + "t" * 128
-
-# Owner 3 residual: import-bound pyarrow exception coordinates on external_error
-# With heads.  Before source-visible construction they panicked on
-# SymbolicValue.attribute; after, the type operand is an authenticated import
-# identity and any remaining residual is a later stage (never the exception
-# Attribute projection).
+_TABLE_CID = "blake3-512:" + "d" * 128
 _ARROW_EXCEPTION_SITES = (
-    "tests/extension/test_arrow.py:1715",
-    "tests/io/test_parquet.py:799",
-    "tests/series/accessors/test_list_accessor.py:100",
-    "tests/series/accessors/test_list_accessor.py:132",
-    "tests/series/accessors/test_list_accessor.py:134",
+    ("tests/series/accessors/test_list_accessor.py", 100, "ArrowInvalid"),
+    ("tests/series/accessors/test_list_accessor.py", 132, "ArrowInvalid"),
+    ("tests/series/accessors/test_list_accessor.py", 134, "ArrowInvalid"),
+    ("tests/extension/test_arrow.py", 1715, "ArrowInvalid"),
+    ("tests/io/test_parquet.py", 799, "ArrowException"),
 )
 
 
@@ -209,6 +203,28 @@ def test_external_error_raised_population_is_the_authenticated_47_with_sites() -
     )
 
 
+def test_arrow_exception_sites_are_the_five_authenticated_attribute_operands() -> None:
+    """Pin the real source coordinates without turning spellings into dispatch."""
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.tree import SourceFile
+
+    corpus = authenticated_pandas_corpus()
+    observed = []
+    for relative, line, attribute in _ARROW_EXCEPTION_SITES:
+        path = corpus.root / relative
+        tree = SourceFile(path_source(str(path)))
+        matches = [
+            node
+            for node in tree.nodes()
+            if node.kind == "Attribute"
+            and node.attr == attribute
+            and node.line_col_span().start_line == line
+        ]
+        assert len(matches) == 1, (relative, line, attribute)
+        observed.append((relative, line, attribute))
+    assert tuple(observed) == _ARROW_EXCEPTION_SITES
+
+
 @cache
 def _external_error_attributions():
     """Construct each authenticated demand without entering unrelated managers."""
@@ -282,7 +298,9 @@ def _external_error_attributions():
                 )
             )
 
-            def evaluate(manager=manager, path=path, site=site, tree=tree, context=context):
+            def evaluate(
+                manager=manager, path=path, site=site, tree=tree, context=context
+            ):
                 populate_source_derived_resource_refs(
                     tree,
                     root=corpus.root.parent,
@@ -319,6 +337,7 @@ def test_external_error_raised_47_site_outcome_partition() -> None:
     # coordinates; residual is named (exit-face), never ConstructionPanic on
     # SymbolicValue.attribute for the exception-type operand.
     assert summary.construction_panics == 0
+    assert summary.authenticated_exceptional_exits > 0
     assert (
         summary.authenticated_exceptional_exits + summary.named_refusals
         == summary.enrolled
@@ -332,12 +351,12 @@ def test_external_error_raised_refusal_and_gap_twins_are_concrete_sites() -> Non
     assert refusal.outcome is AttributionOutcome.NAMED_REFUSAL
     assert refusal.detail == "With._construct_sugar"
 
-    for site_id in _ARROW_EXCEPTION_SITES:
-        site = by_id[site_id]
-        # Before: SymbolicValue.attribute on ArrowInvalid/ArrowException.
-        # After: import-bound export coordinate; residual is a later stage.
-        assert site.outcome is AttributionOutcome.NAMED_REFUSAL, site
-        assert site.detail == "With._construct_sugar", site
+    for relative, line, _attribute in _ARROW_EXCEPTION_SITES:
+        site = by_id[f"{relative}:{line}"]
+        # Before: a named refusal after sealing the attribute spelling. After:
+        # provider-defined class testimony reaches the boundary and the real
+        # body effect is authenticated.
+        assert site.outcome is AttributionOutcome.AUTHENTICATED_EXIT, site
 
 
 def test_external_error_raised_emits_complete_consumer_testimony() -> None:
