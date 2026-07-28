@@ -12,7 +12,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
 from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.binding_state import branch_result_slot
-from sugar_source_tree.nodes import Call, If
+from sugar_source_tree.nodes import Call, Compare, If
 from sugar_source_tree.panic import BackendDefect
 from sugar_source_tree.tree import SourceFile
 
@@ -112,6 +112,36 @@ def test_condition_halt_bypasses_both_if_bodies() -> None:
     assert halted.state is not None
 
 
+def test_condition_halt_emits_no_occurrence_from_toxic_body_twins() -> None:
+    source = (
+        "def choose(value):\n"
+        "    if value < 1:\n"
+        "        return None < 2\n"
+        "    else:\n"
+        "        return 2 < None\n"
+        "\n"
+        "choose(None)\n"
+    )
+    tree = _tree(source)
+    comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
+    assert len(comparisons) == 3
+    (outcome,) = tuple(
+        node.sugar().desugar(None)
+        for node in tree.nodes()
+        if isinstance(node, Call)
+    )
+
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
+    halted = outcome.exits[0]
+    assert isinstance(halted, Halted)
+    condition_occurrence = str(comparisons[0].sugar().site)
+    body_occurrences = {str(node.sugar().site) for node in comparisons[1:]}
+    assert halted.effect.occurrence_id == condition_occurrence
+    assert halted.effect.occurrence_id not in body_occurrences
+    assert halted.state is not None
+
+
 def test_complementary_results_share_only_the_condition_owned_slot() -> None:
     branch, _ = _two_ifs()
     slot = branch_result_slot(branch.test)
@@ -138,3 +168,48 @@ def test_complementary_results_share_only_the_condition_owned_slot() -> None:
     )
     assert len(authentications) == 1
     assert authentications[0].slot == slot
+
+
+def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> None:
+    branches = tuple(
+        node
+        for node in _tree(
+            "if left is right:\n"
+            "    assert left is right\n"
+            "else:\n"
+            "    assert left is not right\n"
+            "if left is right:\n"
+            "    assert left is right\n"
+            "else:\n"
+            "    assert left is not right\n"
+        ).nodes()
+        if isinstance(node, If)
+    )
+    assert len(branches) == 2
+
+    slots = tuple(branch_result_slot(branch.test) for branch in branches)
+    rewritten = tuple(
+        branch._rewrite_with_slot({}, slot)
+        for branch, slot in zip(branches, slots, strict=True)
+    )
+    outcomes = tuple(branch.sugar().desugar(None) for branch in rewritten)
+
+    assert slots[0] != slots[1]
+    expected_guards = tuple(
+        branch_result_guard(slot, branch.fragment)
+        for branch, slot in zip(rewritten, slots, strict=True)
+    )
+    assert expected_guards[0] != expected_guards[1]
+    for outcome, slot, expected in zip(
+        outcomes, slots, expected_guards, strict=True
+    ):
+        assert isinstance(outcome, Complete)
+        guarded = outcome.value
+        assert guarded.guard == expected
+        authentications = tuple(
+            entry
+            for entry in guarded.unconditional_entries
+            if isinstance(entry, BranchResultAuthentication)
+        )
+        assert len(authentications) == 1
+        assert authentications[0].slot == slot
