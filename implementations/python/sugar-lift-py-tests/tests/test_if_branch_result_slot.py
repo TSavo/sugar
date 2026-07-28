@@ -261,3 +261,90 @@ def test_boolean_continuing_face_returns_the_exact_second_operand(
 
     assert hasattr(outcome, "value")
     assert outcome.value is right
+
+
+@pytest.mark.parametrize(
+    ("condition_is_true", "selected_index"),
+    ((True, 0), (False, 1)),
+    ids=("truthful", "falsey-twin"),
+)
+def test_ifexp_returns_exact_selected_operand_and_never_evaluates_peer(
+    condition_is_true: bool, selected_index: int
+) -> None:
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    condition_type = (
+        TrueBoolLiteralSugar if condition_is_true else FalseBoolLiteralSugar
+    )
+    condition = condition_type("ifexp-condition")
+    selected = TermValue(11 if condition_is_true else 22)
+
+    class Selected(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            return Complete(selected)
+
+        def to_term(self, *, owner: str):
+            return selected.to_term(owner=owner)
+
+    class Skipped(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            raise AssertionError("unchosen IfExp operand was evaluated")
+
+        def to_term(self, *, owner: str):
+            raise AssertionError("unchosen IfExp operand was projected")
+
+    arms = (Selected(), Skipped()) if selected_index == 0 else (Skipped(), Selected())
+    outcome = IfExpSugar(condition, arms[0], arms[1], "ifexp-site").desugar(None)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value is selected
+
+
+def test_ifexp_condition_halt_bypasses_both_operands_with_effect_identity() -> None:
+    from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+
+    effect = ExpectationNotMetEffect("ifexp-condition", "condition-site")
+
+    class HaltingCondition(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            return Incomplete(effect)
+
+        def to_term(self, *, owner: str):
+            raise AssertionError("halting condition was projected")
+
+    class Skipped(ConstructedTermSugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            raise AssertionError("IfExp arm ran after condition halt")
+
+        def to_term(self, *, owner: str):
+            raise AssertionError("IfExp arm projected after condition halt")
+
+    outcome = IfExpSugar(
+        HaltingCondition(), Skipped(), Skipped(), "ifexp-site"
+    ).desugar(None)
+
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect is effect
