@@ -551,7 +551,13 @@ class NativeOperationExitCarrierV1:
             exits = outcome_to_exitset(projected)
 
         for continuation in self.continuations:
-            exits = exits.and_then(continuation)
+            def resume(value, continuation=continuation):
+                next_outcome = continuation(value)
+                if isinstance(next_outcome, NativeOperationExitCarrierV1):
+                    return next_outcome.discharge(actuals_by_formal_coordinate)
+                return next_outcome
+
+            exits = exits.and_then(resume)
         for guard in self.guards:
             exits = exits.guarded(guard)
         return exits
