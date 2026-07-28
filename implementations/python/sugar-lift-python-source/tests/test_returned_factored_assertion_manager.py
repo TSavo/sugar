@@ -218,13 +218,7 @@ def test_returned_manager_match_none_preserves_no_message_pattern(tmp_path: Path
 
 
 def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
-    """Returned factory with match= must seal OptionalFormalArgumentProjectionV1.
-
-    Production currently gaps ``exit-may-halt [__exit__ ExitSet]`` for message
-    formals (same red on sole-path variable-match twin). Soft formals only run
-    when exit_outcome raises; a completed ExitSet with residual Halted faces
-    does not re-enter soft. Stay RED with the missing producer contract.
-    """
+    """Returned match=pattern seals the obligation; excinfo binds consumed occurrence."""
     dist = _distribution(
         tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
     )
@@ -238,45 +232,48 @@ def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
     tree, context, _ = _populate(tmp_path, consumer, dist=dist)
     reference, node = _reference(context, tree)
 
-    if (
-        isinstance(reference, SourceDerivedContextManagerRefV1)
-        and isinstance(reference.semantics, EffectBoundarySemanticsV1)
-        and isinstance(
-            reference.semantics.message_pattern_operand,
-            OptionalFormalArgumentProjectionV1,
-        )
-    ):
-        sugar = node.sugar()
-        assert isinstance(sugar, WithEffectBoundarySugar)
-        exits = outcome_to_exitset(sugar.desugar())
-        completed = [face for face in exits.exits if isinstance(face, Completed)]
-        assert completed
-        binding = _observed_binding(completed[0])
-        assert binding is not None
-        return
-
-    pytest.fail(
-        "MISSING PRODUCER: message-pattern formal on returned assertion manager "
-        "does not seal EffectBoundarySemanticsV1(OptionalFormalArgumentProjection).\n"
-        f"  observed: {type(reference).__name__} "
-        f"kind={getattr(reference, 'kind', None)!r} "
-        f"detail={getattr(reference, 'detail', None)!r}\n"
-        "  expected: SourceDerivedContextManagerRefV1 with "
-        "message_pattern_operand=OptionalFormalArgumentProjectionV1\n"
-        "  missing method: derive_manager_summary must apply "
-        "_soft_effect_boundary_from_exception_formals (or equivalent formal "
-        "projection) when exit_outcome returns a non-total ExitSet with residual "
-        "Halted faces — today soft only runs on ConstructionPanic/SugarNotWritten, "
-        "so message formals gap as exit-may-halt [__exit__ ExitSet]\n"
-        "  contract: if formals authenticate expected type + String match, seal "
-        "Expects/Raise with OptionalFormalArgumentProjection for the match index"
+    assert not isinstance(reference, ContextManagerResolutionGapV1), reference
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    # Message obligation preserved through return / populate / With.
+    assert isinstance(
+        reference.semantics.message_pattern_operand,
+        OptionalFormalArgumentProjectionV1,
     )
+
+    sugar = node.sugar()
+    assert isinstance(sugar, WithEffectBoundarySugar)
+    assert sugar.observation_slot_id is not None
+    # Single sealed pattern face (not collapsed to NoMessagePattern).
+    assert sugar.semantics is not None
+    assert isinstance(
+        sugar.semantics.message_pattern_operand, OptionalFormalArgumentProjectionV1
+    )
+    assert sugar.semantics.message_pattern_operand == (
+        reference.semantics.message_pattern_operand
+    )
+
+    exits = outcome_to_exitset(sugar.desugar())
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert completed, exits.exits
+    binding = _observed_binding(completed[0])
+    assert binding is not None
+    assert binding.slot_id == sugar.observation_slot_id
+    assert getattr(binding.effect, "exception_name", None) == "ValueError"
+    # Bind only the consumed raise occurrence — not a fabricated twin.
+    occurrence = (
+        getattr(binding.effect, "occurrence_id", None)
+        or getattr(binding.effect, "occurrence", None)
+        or getattr(binding.effect, "blame", None)
+    )
+    assert occurrence is not None
+    assert all(_observed_binding(face) is None for face in exits.exits if isinstance(face, Halted))
 
 
 def test_returned_manager_pattern_mismatch_preserves_halt_without_binding(
     tmp_path: Path,
 ):
-    """Discrimination twin of pattern seal — requires pattern obligation first."""
+    """Discrimination: message mismatch keeps the identical halt unbound."""
     dist = _distribution(
         tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary"
     )
@@ -289,26 +286,27 @@ def test_returned_manager_pattern_mismatch_preserves_halt_without_binding(
     )
     tree, context, _ = _populate(tmp_path, consumer, dist=dist)
     reference, node = _reference(context, tree)
-    if not (
-        isinstance(reference, SourceDerivedContextManagerRefV1)
-        and isinstance(reference.semantics, EffectBoundarySemanticsV1)
-        and isinstance(
-            reference.semantics.message_pattern_operand,
-            OptionalFormalArgumentProjectionV1,
-        )
-    ):
-        pytest.fail(
-            "MISSING PRODUCER: blocked on pattern seal "
-            "(see test_returned_manager_pattern_preserves_message_obligation). "
-            f"observed={type(reference).__name__} "
-            f"kind={getattr(reference, 'kind', None)!r}"
-        )
+
+    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
+    assert isinstance(
+        reference.semantics.message_pattern_operand,
+        OptionalFormalArgumentProjectionV1,
+    )
 
     sugar = node.sugar()
     exits = outcome_to_exitset(sugar.desugar())
     halted = [face for face in exits.exits if isinstance(face, Halted)]
     assert halted, exits.exits
+    # Complement / mismatch: original halt retained, no excinfo binding.
     assert all(_observed_binding(face) is None for face in halted)
+    assert any(
+        getattr(face.effect, "exception_name", None) == "ValueError" for face in halted
+    )
+    # Pattern obligation still present on the sugar (not collapsed to None).
+    assert isinstance(
+        sugar.semantics.message_pattern_operand, OptionalFormalArgumentProjectionV1
+    )
 
 
 def test_direct_and_returned_twins_share_message_operand_and_binding(
