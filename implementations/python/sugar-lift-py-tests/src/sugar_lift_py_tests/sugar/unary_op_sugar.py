@@ -3,9 +3,24 @@
 Mirrors BinOpSugar: the node carries its operator, so recognition is the node's;
 this routes the reduced operand to the floor method that operator names, and the
 value owns the answer (a number folds; an undecided type refuses rather than
-inventing ``py.neg`` / identity / ``py.invert``). `not` composes two floor verbs:
-Python `not x` is `not bool(x)`, so it takes a decided truthiness and negates
-that predicate -- never inventing ``py.truthy`` when ``bool(x)`` is undecided.
+inventing ``py.neg`` / identity / ``py.invert``).
+
+Python semantic law for ``not`` (distinct from BoolOp):
+
+  ``result = not value``  means  ``result = not bool(value)``.
+
+  a. ``bool(value)`` MAY halt — ``__bool__`` / ``__len__`` can raise a
+     source-authenticated exception type; that halt is a real exceptional face.
+  b. ONLY the completed truth face is negated — a halted truth has no bool to
+     flip; ``Complete.and_then`` / ``ExitSet.sequence`` skip halted tails.
+  c. The result is ALWAYS a bool (``True``/``False``), never the operand.
+     Contrast BoolOp (#6595): ``a and b`` returns an operand.
+  d. Exception type originates in the truth dispatch floor, never from an
+     enclosing ``pytest.raises`` expectation (the boundary verifies, it cannot
+     create).
+
+Formal operands ride the existing ``NativeOperationExitCarrierV1`` via the
+``unary_truth`` adapter (#6583 three-way resolution; #6591 caller discharge).
 """
 
 from __future__ import annotations
@@ -36,6 +51,9 @@ def refuse_undecided_unary_truth(value, site) -> None:
     an exception identity invents the failure.  Both stay refused until
     source-visible type testimony decides.
 
+    Formals are not refused here: their type arrives at caller discharge on the
+    existing ``NativeOperationExitCarrierV1`` (``unary_truth``).
+
     ``CallSiteValue`` is the established exception: its ``truth`` floor already
     emits ``PredicateValue(py.truthy(term))`` over the authenticated call term
     (#4993 / #5147).  That is coordinate testimony, not an invented native
@@ -43,6 +61,9 @@ def refuse_undecided_unary_truth(value, site) -> None:
     derivation (``pytest.raises`` ``__exit__`` uses ``not self.…`` over call
     coordinates) and zeroes every producer → ExitSet → assertion-boundary route.
     """
+    if getattr(value, "formal_coordinate", None) is not None:
+        return
+
     denotes = getattr(value, "denotes_value", None)
     decided = getattr(value, "runtime_type_is_decided", None)
     if not callable(denotes) or not callable(decided):
@@ -95,10 +116,11 @@ class UnaryOpSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         operand = self.operand.desugar(ctx)
         if self.op_kind == "Not":
-            # `not x` = not bool(x): only a decided truthiness may be negated.
+            # `not x` = not bool(x): only a completed truthiness may be negated.
             def project_not(value):
                 from sugar_lift_py_tests.floor.block_value import BlockValue
                 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+                from sugar_lift_py_tests.floor.none_value import NoneValue
                 from sugar_lift_py_tests.floor.return_value import ReturnValue
 
                 # Method calls with authenticated bodies
@@ -122,9 +144,28 @@ class UnaryOpSugar(Sugar):
                     ]
                     if len(returns) == 1:
                         value = returns[0]
+
+                formal_coordinate = getattr(value, "formal_coordinate", None)
+                if formal_coordinate is not None:
+                    # Defer bool(value) until authenticated actuals arrive.
+                    # Second operand is an inert unit (null coordinate) so the
+                    # existing two-slot carrier can record a one-operand op.
+                    from sugar_lift_py_tests.caller_parameter_contract import (
+                        NativeOperationExitCarrierV1,
+                    )
+
+                    return NativeOperationExitCarrierV1.mint(
+                        site=self.site,
+                        operator="unary_truth",
+                        operands=(value, NoneValue()),
+                        coordinates=(formal_coordinate, None),
+                    )
+
                 refuse_undecided_unary_truth(value, self.site)
                 return value.truth(self.site)
 
+            # Negate only completed truth faces.  Complete(RaiseValue) and
+            # Halted exits bypass this step (no bool to flip).
             return operand.and_then(project_not).and_then(
                 lambda predicate: predicate.negate()
             )
