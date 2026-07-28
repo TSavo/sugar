@@ -19,6 +19,14 @@ class ImportMemberValue(FloorValue):
 
     qualified_name: str
 
+    def denotes_value(self) -> bool:
+        """An import-bound export denotes a runtime value at the member path."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Module export runtime type is not lift-time decided from the path alone."""
+        return False
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const

@@ -979,19 +979,21 @@ class FloorValue:
         THIS right operand, falling through to the pair gap. Most of those
         pairs are not eight separate arms to write. They are one law: when at
         least one operand's runtime TYPE is undecided, Python's own operator
-        dispatch for the pair is undecided. That is a third value, not a
-        completed symbolic coordinate: without source-visible native dispatch
-        testimony this law refuses to choose completion or manufacture an
-        exception identity.
+        dispatch for the pair is undecided. That is a third value: the producer
+        cannot claim sole completion and cannot invent an exception identity.
 
-        Two refusals are deliberate and stay loud:
+        Publish both native-dispatch faces (mirrors Compare #6564): the
+        completed face retains the operator coordinate, and the halted face
+        retains a source-cited raise whose exception identity remains
+        undecided. Sole completion or sole TypeError invention stay forbidden.
+
+        Two cases stay outside this door:
 
         * An operand that does not DENOTE a value (a callable, a class, an
           exit) is not an operand at all. No coordinate is invented for it.
         * Two operands of DECIDED type are a ground question -- ``list + bool``
-          is Python's ``TypeError``, not an unknown. Constructing a coordinate
-          there would launder a ground exit into a value. That pair belongs to
-          the ground field laws, and absence there is still a gap.
+          is Python's ``TypeError``, not an unknown. That pair belongs to the
+          ground field laws, and absence there is still a gap.
 
         Returns ``None`` when the law does not apply, so the caller falls
         through to its own pair gap.
@@ -1001,26 +1003,42 @@ class FloorValue:
         if self.runtime_type_is_decided() and other.runtime_type_is_decided():
             return None
 
-        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="binary_operation_exception_floor",
-            blame=site,
-            observed=f"{type(self).__name__} {operator} {type(other).__name__}",
-            requested=(
-                "source-visible native operator testimony selecting completion "
-                "or an authenticated exceptional exit"
-            ),
-            fix=(
-                "preserve the undecided third value at the BinOp producer; "
-                "resolve native operand types and their operator bodies from "
-                "source, or retain this named refusal without inventing an "
-                "exception identity"
-            ),
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import atomic, ctor
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            Halted,
+            complement_guard,
+            partition,
         )
+
+        left_term = self.to_term(owner=f"binary {operator} left")
+        right_term = other.to_term(owner=f"binary {operator} right")
+        completed_value = SymbolicValue(ctor(operator, [left_term, right_term]))
+        dispatch_raises = atomic(
+            f"python.binop_dispatch_raises[{operator}]",
+            [left_term, right_term],
+        )
+        halted_face, completed_face = partition(
+            ("binary-native-dispatch", str(site), operator)
+        )
+        effect = RaiseEffect(
+            blame=str(site),
+            occurrence=str(site),
+            producer_node_owner="BinOp",
+        )
+        return ExitSet(
+            (
+                Halted(dispatch_raises, effect, faces=frozenset({halted_face})),
+                Completed(
+                    complement_guard(dispatch_raises),
+                    completed_value,
+                    frozenset({completed_face}),
+                ),
+            )
+        ).normalize()
 
     def _binary_floor_gap(self, other, site, owner, floor):
         """The ONE None arm for every binary-operation floor.
