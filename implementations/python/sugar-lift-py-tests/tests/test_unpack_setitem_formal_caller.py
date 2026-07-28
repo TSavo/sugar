@@ -210,8 +210,15 @@ def test_mutable_receiver_completes_discrimination_wrong_cell() -> None:
 
 
 def test_invalid_index_named_indexerror_no_statement_completion() -> None:
-    """IndexError from Floor setitem; return does not complete; not Completed."""
+    """IndexError from Floor setitem; return does not complete; not Completed.
+
+    Post-#6644: the halt face carries the authentic reducer pre-effect state
+    (earlier unpack binding seam).  Name ``x`` is spent by substitute so the
+    block entries may be empty — the state object itself must still be present
+    and must not be fabricated completion.
+    """
     _, pending = _helper()
+    assert pending.pre_effect_state is not None
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         {
@@ -227,6 +234,9 @@ def test_invalid_index_named_indexerror_no_statement_completion() -> None:
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
     assert halted.effect.occurrence_id is not None
+    # Authentic earlier-binding halt state (carrier #6640 / enrollment #6644).
+    assert halted.state is not None
+    assert pending.pre_effect_state.state is halted.state
     # No statement completion: no UniverseValue return face on the halt arm.
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
     # Earlier name binding is not rolled back into a fake Completed — the sole
@@ -242,6 +252,8 @@ def test_source_caller_invalid_index_named_indexerror() -> None:
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
     assert halted.effect.occurrence_id is not None
+    # Caller path also preserves pre-effect state on the halt face.
+    assert halted.state is not None
 
 
 def test_invalid_index_discrimination_is_not_completed() -> None:
@@ -257,6 +269,9 @@ def test_invalid_index_discrimination_is_not_completed() -> None:
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "halted store completed the body"
+    # Bite: missing earlier-binding state is also not the law.
+    with pytest.raises(AssertionError):
+        assert exits.exits[0].state is None, "halt dropped earlier-binding state"
 
 
 # ---------------------------------------------------------------------------
