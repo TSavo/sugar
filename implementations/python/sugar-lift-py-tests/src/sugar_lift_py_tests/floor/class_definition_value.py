@@ -13,6 +13,7 @@ class ConstructedClassMethodV1:
     definition_fragment_cid: str
     body: object = field(compare=False)
     source_call_frame: object = field(compare=False)
+    descriptor_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,7 @@ class ClassDefinitionValue(GuardStableValue):
                     for coordinate in method.source_call_frame.formal_coordinates
                 ),
                 method.source_call_frame,
+                method.descriptor_kind,
             )
             for method in (*inherited, *self.methods)
         )

@@ -119,10 +119,7 @@ def test_nameless_halted_face_stays_loud_in_the_exit_ledger() -> None:
 
 def test_corpus_tally_does_not_count_nameless_halted_faces_as_exits() -> None:
     report = attribute_body_probes(
-        tuple(
-            _probe(ProducerFamily.COMPARE, _nameless_raise_value)
-            for _ in range(503)
-        )
+        tuple(_probe(ProducerFamily.COMPARE, _nameless_raise_value) for _ in range(503))
     )
 
     row = report.by_family[ProducerFamily.COMPARE]
@@ -267,7 +264,7 @@ def test_join_collects_construction_panic_and_outcome_discrepancy_before_failing
     assert report.loud_failure_count == 2
     assert "constructionPanic body=pandas/example.py:1:Subscript" in report.render()
     assert (
-            "OUTCOME TOTAL DISCREPANCY enrolled=2 outcomeTotal=1 unaccounted=1"
+        "OUTCOME TOTAL DISCREPANCY enrolled=2 outcomeTotal=1 unaccounted=1"
         in report.render()
     )
 
@@ -492,6 +489,64 @@ def test_discovery_projects_one_family_without_constructing_peer_sources(
     )
 
     assert [probe.body_id for probe in probes] == ["attribute_body.py:3:Attribute"]
+
+
+def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -> None:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import With
+    from sugar_source_tree.tree import SourceFile
+
+    package = tmp_path / "pandas"
+    package.mkdir()
+    path = package / "property_body.py"
+    source = (
+        "import pytest\n"
+        "class Receiver:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        raise ValueError('source getter')\n"
+        "def use():\n"
+        "    with pytest.raises(ValueError):\n"
+        "        Receiver().value\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    source_cid = blake3_512_of(source.encode())
+    tree = SourceFile(
+        (source, str(path), source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    with_node = next(node for node in tree.nodes() if isinstance(node, With))
+    span = with_node.items[0].context_expr.line_col_span()
+    probes = discover_no_call_body_probes(
+        {
+            "rows": [
+                {
+                    "kind": "context-manager-demand",
+                    "gapKind": None,
+                    "useSite": {
+                        "sourceCid": source_cid,
+                        "startLine": span.start_line,
+                        "startCol": span.start_col,
+                        "endLine": span.end_line,
+                        "endCol": span.end_col,
+                    },
+                }
+            ]
+        },
+        package,
+        families=frozenset({ProducerFamily.ATTRIBUTE}),
+    )
+
+    report = attribute_body_probes(probes)
+
+    assert report.discrepancies == ()
+    assert (
+        report.by_family[ProducerFamily.ATTRIBUTE].authenticated_exceptional_exits == 1
+    )
+    assert report.by_family[ProducerFamily.ATTRIBUTE].named_refusals == 0
 
 
 def test_selected_family_denominator_remains_fixed() -> None:
