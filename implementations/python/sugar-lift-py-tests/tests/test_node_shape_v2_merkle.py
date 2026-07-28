@@ -140,16 +140,37 @@ def test_a_leaf_carrying_a_cid_is_not_a_child():
 
 
 def test_operator_leaves_are_authenticated():
-    add = _H("BinOp", (("op", OpLeaf(operator_for("Add"))),))
-    sub = _H("BinOp", (("op", OpLeaf(operator_for("Sub"))),))
+    blame = "test_node_shape_v2_merkle.py:operator"
+    add = _H("BinOp", (("op", OpLeaf(operator_for("Add", blame=blame))),))
+    sub = _H("BinOp", (("op", OpLeaf(operator_for("Sub", blame=blame))),))
     assert _cid(add) != _cid(sub)
 
-    lt_gt = _H("Cmp", (("ops", OpsLeaf((operator_for("Lt"), operator_for("Gt")))),))
-    gt_lt = _H("Cmp", (("ops", OpsLeaf((operator_for("Gt"), operator_for("Lt")))),))
+    lt_gt = _H(
+        "Cmp",
+        (
+            (
+                "ops",
+                OpsLeaf(
+                    (operator_for("Lt", blame=blame), operator_for("Gt", blame=blame))
+                ),
+            ),
+        ),
+    )
+    gt_lt = _H(
+        "Cmp",
+        (
+            (
+                "ops",
+                OpsLeaf(
+                    (operator_for("Gt", blame=blame), operator_for("Lt", blame=blame))
+                ),
+            ),
+        ),
+    )
     assert _cid(lt_gt) != _cid(gt_lt)
 
-    ops_one = _H("Cmp", (("ops", OpsLeaf((operator_for("Lt"),))),))
-    op_one = _H("Cmp", (("ops", OpLeaf(operator_for("Lt"))),))
+    ops_one = _H("Cmp", (("ops", OpsLeaf((operator_for("Lt", blame=blame),))),))
+    op_one = _H("Cmp", (("ops", OpLeaf(operator_for("Lt", blame=blame))),))
     assert _cid(ops_one) != _cid(op_one)
 
 
@@ -202,7 +223,18 @@ def test_construction_is_bottom_up_and_never_embeds_a_subtree():
     # iteration encodes each node once, at its own arity.
     node = _name("a")
     for _ in range(2000):
-        node = _H("BinOp", (("left", Child(node)), ("op", OpLeaf(operator_for("Add")))))
+        node = _H(
+            "BinOp",
+            (
+                ("left", Child(node)),
+                (
+                    "op",
+                    OpLeaf(
+                        operator_for("Add", blame="test_node_shape_v2_merkle.py:deep")
+                    ),
+                ),
+            ),
+        )
     cid = backend_node_shape_cid_v2(node)
     assert cid.startswith("blake3-512:")
     # Every descendant is memoized -- each encoded exactly once, ever.

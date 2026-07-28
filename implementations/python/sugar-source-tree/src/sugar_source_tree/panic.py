@@ -42,11 +42,34 @@ from __future__ import annotations
 from enum import Enum
 
 
-class SourceTreePanic(Exception):
-    """Common base. Never raised directly — always one of the two below."""
+def _render_blame(blame: object) -> str:
+    """Project a native coordinate to actionable prose only at the panic edge."""
+    filename = getattr(blame, "filename", None)
+    line = getattr(blame, "line", None)
+    col = getattr(blame, "col", None)
+    if filename is not None and line is not None and col is not None:
+        return f"{filename}:{line}:{col}"
+    return str(blame)
 
-    def __init__(self, owner: str, observed: str, requested: str, fix: str) -> None:
-        super().__init__(owner, observed, requested, fix)
+
+class SourceTreePanic(Exception):
+    """Common base. Every refusal carries the native coordinate it blames."""
+
+    def __init__(
+        self,
+        *,
+        blame: object,
+        owner: str,
+        observed: str,
+        requested: str,
+        fix: str,
+    ) -> None:
+        if blame is None:
+            raise TypeError(
+                "blame must be a real source or backend coordinate, not None"
+            )
+        super().__init__(blame, owner, observed, requested, fix)
+        self.blame = blame
         self.owner = owner
         self.observed = observed
         self.requested = requested
@@ -57,6 +80,7 @@ class SourceTreePanic(Exception):
     def __str__(self) -> str:  # pragma: no cover - formatting only
         return (
             f"{self._LABEL} [{self.owner}]\n"
+            f"  blame:     {_render_blame(self.blame)}\n"
             f"  observed:  {self.observed}\n"
             f"  requested: {self.requested}\n"
             f"  fix:       {self.fix}"
@@ -306,14 +330,24 @@ class BackendDefect(SourceTreePanic):
 
 
 def vocabulary_missing(
-    owner: str, observed: str, requested: str, fix: str
+    *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "VocabularyMissing":
     raise VocabularyMissing(
-        owner=owner, observed=observed, requested=requested, fix=fix
+        blame=blame,
+        owner=owner,
+        observed=observed,
+        requested=requested,
+        fix=fix,
     )
 
 
 def backend_defect(
-    owner: str, observed: str, requested: str, fix: str
+    *, blame: object, owner: str, observed: str, requested: str, fix: str
 ) -> "BackendDefect":
-    raise BackendDefect(owner=owner, observed=observed, requested=requested, fix=fix)
+    raise BackendDefect(
+        blame=blame,
+        owner=owner,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )

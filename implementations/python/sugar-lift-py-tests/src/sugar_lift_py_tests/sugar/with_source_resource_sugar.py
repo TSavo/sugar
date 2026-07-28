@@ -84,12 +84,13 @@ class WithSourceResourceSugar(Sugar):
         if not parts:
             from sugar_source_tree.panic import SugarNotWritten
 
-            raise SugarNotWritten(
-                owner="WithSourceResourceSugar.desugar",
-                observed="constructed manager protocol produced no face",
-                requested="one completed or halted source-derived manager face",
-                fix="keep empty protocol testimony loud",
-            )
+        raise SugarNotWritten(
+            blame=self.site,
+            owner="WithSourceResourceSugar.desugar",
+            observed="constructed manager protocol produced no face",
+            requested="one completed or halted source-derived manager face",
+            fix="keep empty protocol testimony loud",
+        )
         result = parts[0]
         for part in parts[1:]:
             result = result.union(part)

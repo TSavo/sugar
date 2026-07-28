@@ -73,6 +73,7 @@ def matches_raise_effect(effect, expected) -> "MessageVerdict":
         # operands through their lexical coordinates", which invited exactly
         # that repair; it cost one owner three rounds and nearly landed.
         raise SugarNotWritten(
+            blame=effect.occurrence_id,
             owner="matches_raise_effect",
             observed="handler or raised exception has no term to state the test over",
             requested="an authenticated exception identity or an emittable VALUE term",
@@ -160,6 +161,7 @@ def _message_term(effect, *, owner):
     raised_term = _operand_term(raised, owner=owner, role="raised exception")
     if raised_term is None:
         raise SugarNotWritten(
+            blame=effect.occurrence_id,
             owner="authenticated_exception_matching._message_term",
             observed="raised exception has no value term to render as a message",
             requested="a message operand or an emittable raised VALUE term",
@@ -247,12 +249,11 @@ def warning_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     from sugar_source_tree.panic import SugarNotWritten
 
     identity_projection = getattr(expected, "exception_type_identity", None)
-    expected_identity = (
-        identity_projection() if callable(identity_projection) else None
-    )
+    expected_identity = identity_projection() if callable(identity_projection) else None
     observed_identity = getattr(effect, "category_identity", None)
     if expected_identity is None or observed_identity is None:
         raise SugarNotWritten(
+            blame=effect.blame,
             owner="warning_effect_message_verdict",
             observed="warning category operand or occurrence has no authenticated identity",
             requested="two source-authenticated warning category coordinates",
@@ -268,6 +269,7 @@ def warning_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     message = getattr(effect, "message", None)
     if not isinstance(message, str):
         raise SugarNotWritten(
+            blame=effect.blame,
             owner="warning_effect_message_verdict",
             observed="warning occurrence has no constructed message",
             requested="producer-carried warning message for the authenticated occurrence",

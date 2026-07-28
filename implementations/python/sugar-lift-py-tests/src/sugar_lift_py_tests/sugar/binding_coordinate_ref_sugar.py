@@ -31,6 +31,7 @@ class BindingCoordinateRefSugar(Sugar):
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(
+            blame=self.site,
             owner="BindingCoordinateRefSugar.desugar",
             observed="unspecialized source-call formal",
             requested="runtime BindingEntryV1 substitution before Sugar construction",

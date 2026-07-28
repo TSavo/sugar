@@ -62,6 +62,7 @@ class WithEffectBoundarySugar(Sugar):
             )
         ):
             raise SugarNotWritten(
+                blame=self.site,
                 owner="WithEffectBoundarySugar.desugar",
                 observed="unsupported authenticated EffectBoundary mode/effect",
                 requested="EffectBoundaryV1 Expects/Suppresses over Raise or Warning",
@@ -77,6 +78,7 @@ class WithEffectBoundarySugar(Sugar):
             manager_value = manager_exit.value
             if not isinstance(manager_value, CallSiteValue):
                 raise SugarNotWritten(
+                    blame=self.site,
                     owner="WithEffectBoundarySugar.desugar",
                     observed="manager did not construct a call-site value",
                     requested="one real call occurrence with authenticated formal binding",
@@ -144,6 +146,7 @@ class WithEffectBoundarySugar(Sugar):
 
         if not routed:
             raise SugarNotWritten(
+                blame=self.site,
                 owner="WithEffectBoundarySugar.desugar",
                 observed="manager produced no execution face",
                 requested="one completed or halted manager face",
@@ -238,9 +241,7 @@ def _unresolved_producer_coordinates(entries):
     return tuple(members)
 
 
-def _route_warning_boundary(
-    *, body, ctx, manager_exit, expected, pattern, mode, site
-):
+def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode, site):
     """Route warning testimony on every face while preserving body control.
 
     A warning observation can precede a later halt, so consuming the warning
@@ -298,6 +299,7 @@ def _route_warning_boundary(
         entries = getattr(record, "entries", None)
         if not isinstance(entries, tuple):
             raise SugarNotWritten(
+                blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed=f"body face carries {type(record).__name__}, not a reduced block record",
                 requested="reduced block carrying authenticated warning observations",
@@ -327,6 +329,7 @@ def _route_warning_boundary(
             else:
                 observed = "warning occurrence has no authenticated category identity"
             refusal = SugarNotWritten(
+                blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed=observed,
                 requested="one source-authenticated WarningObservationValue on the completed face",
@@ -446,6 +449,7 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
                 exits.append(face)
                 continue
             raise SugarNotWritten(
+                blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed=(
                     f"completed face carries {type(record).__name__}, "
@@ -468,6 +472,7 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
         # this shape by name. Undecided, not present and not absent.
         if any(entry.guards for entry in observations):
             raise SugarNotWritten(
+                blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed="warning occurrence is reached only under a branch guard",
                 requested="a decidable warning surface on the completed face",
@@ -496,6 +501,7 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
         unresolved_members = _unresolved_producer_coordinates(entries)
         if unresolved_members:
             refusal = SugarNotWritten(
+                blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
                 observed="completed face has unresolved warning producers",
                 requested="authenticated absence of warning observations",

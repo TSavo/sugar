@@ -112,6 +112,7 @@ def _effect_match_verdict(effect, matcher, ctx=None):
     expected = matcher.desugar(ctx)
     if not isinstance(expected, Complete):
         raise SugarNotWritten(
+            blame=effect.occurrence_id,
             owner="TrySugar._effect_matches",
             observed="except type did not construct a completed type operand",
             requested="an authenticated exception-type value",
@@ -223,7 +224,7 @@ def _route_one_halt(exit_, handlers: tuple, *, site, ctx) -> list:
         # a reconstructed E(). Observed must be installed BEFORE the body
         # reduces; prepending facts after the fact cannot authenticate a read
         # that already desugared to a pure coordinate.
-        handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect)
+        handler_ctx = bind_in_flight_effect(ctx, slot_id, exit_.effect, blame=site)
         if slot_id is not None:
             observer = getattr(handler_ctx, "with_observed_effect", None)
             if observer is not None:

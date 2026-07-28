@@ -55,4 +55,4 @@ def test_resolve_kind_never_returns_abstract():
 
 def test_unknown_operator_panics():
     with pytest.raises(SourceTreePanic):
-        operator_for("Frobnicate")
+        operator_for("Frobnicate", blame="test_typed.py:operator")

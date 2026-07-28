@@ -142,11 +142,11 @@ class GeneratorWithSugar(Sugar):
             )
         )
 
-    @staticmethod
-    def _loud(observed: str, label: str):
+    def _loud(self, observed: str, label: str):
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(
+            blame=self.site,
             owner="GeneratorWithSugar.desugar",
             observed=f"{label}: {observed}",
             requested="an exhaustive GeneratorConstructionV1 transition",

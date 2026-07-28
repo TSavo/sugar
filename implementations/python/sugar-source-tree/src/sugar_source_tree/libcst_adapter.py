@@ -116,6 +116,7 @@ class _Ctx:
             rng = self.positions[node]  # type: ignore[index]
         except KeyError:
             vocabulary_missing(
+                blame=node,
                 owner="libcst_adapter._Ctx.span",
                 observed=f"libcst {type(node).__name__} carries no position",
                 requested="a positioned node, or a rule marking it envelope-spanned",
@@ -219,6 +220,7 @@ def _asname_str(node: Optional[cst.AsName]) -> Optional[str]:
     if isinstance(target, cst.Name):
         return target.value
     vocabulary_missing(
+        blame=target,
         owner="libcst_adapter._asname_str",
         observed=f"AsName over {type(target).__name__}, not a Name",
         requested="a simple name binding",
@@ -236,6 +238,7 @@ def _dotted(node: cst.BaseExpression) -> str:
         cur = cur.value
     if not isinstance(cur, cst.Name):
         vocabulary_missing(
+            blame=cur,
             owner="libcst_adapter._dotted",
             observed=f"import target head is {type(cur).__name__}, not a Name",
             requested="a Name or a chain of Attribute over a Name",
@@ -275,6 +278,7 @@ def _statements(ctx: _Ctx, body: object) -> Tuple[BackendNode, ...]:
             out.append(_Handle(ctx, item))
             continue
         vocabulary_missing(
+            blame=item,
             owner="libcst_adapter._statements",
             observed=f"{type(item).__name__} in statement position",
             requested="a CST statement, suite, or block",
@@ -292,6 +296,7 @@ def _orelse(ctx: _Ctx, node: object) -> Tuple[BackendNode, ...]:
     if isinstance(node, cst.If):
         return (_Handle(ctx, node),)
     vocabulary_missing(
+        blame=node,
         owner="libcst_adapter._orelse",
         observed=f"{type(node).__name__} in orelse position",
         requested="an Else or a nested If",
@@ -358,13 +363,14 @@ def _op(table: dict[str, str], node: cst.CSTNode, where: str) -> Operator:
     kind = table.get(type(node).__name__)
     if kind is None:
         vocabulary_missing(
+            blame=node,
             owner=f"libcst_adapter._op[{where}]",
             observed=f"libcst operator {type(node).__name__} has no tree operator",
             requested="a mapping into the frozen operator vocabulary",
             fix="add the operator deliberately in operators.py and here; never guess",
         )
         raise AssertionError("unreachable")
-    return operator_for(kind)
+    return operator_for(kind, blame=node)
 
 
 # --------------------------------------------------------------------------
@@ -408,6 +414,7 @@ def _comp_for_anchor(ctx: _Ctx, node: cst.CompFor) -> Span:
         break
     if not (src.startswith("for", j) or src.startswith("async", j)):
         vocabulary_missing(
+            blame=node,
             owner="libcst_adapter._comp_for_anchor",
             observed=f"no 'for'/'async' keyword at comprehension clause start {j}",
             requested="'for' (optionally 'async for') opening the clause",
@@ -503,6 +510,7 @@ def _params(ctx: _Ctx, params: cst.Parameters) -> Children:
         pass  # bare ``*`` separator: a marker, not a parameter
     elif star_arg is not None and not isinstance(star_arg, cst.MaybeSentinel):
         vocabulary_missing(
+            blame=star_arg,
             owner="libcst_adapter._params",
             observed=f"star_arg is {type(star_arg).__name__}",
             requested="a Param, a ParamStar, or absent",
@@ -586,6 +594,7 @@ def _elements(ctx: _Ctx, elements: Sequence[cst.BaseElement]) -> Children:
             out.append(_Handle(ctx, el.value))
         else:
             vocabulary_missing(
+                blame=el,
                 owner="libcst_adapter._elements",
                 observed=f"{type(el).__name__} in element position",
                 requested="an Element or a StarredElement",
@@ -623,6 +632,7 @@ def _dict_items(ctx: _Ctx, elements: Sequence[cst.BaseDictElement]) -> Children:
             )
         else:
             vocabulary_missing(
+                blame=el,
                 owner="libcst_adapter._dict_items",
                 observed=f"{type(el).__name__} in dict element position",
                 requested="a DictElement or a StarredDictElement",
@@ -672,6 +682,7 @@ def _slice_element(ctx: _Ctx, element: cst.SubscriptElement) -> BackendNode:
     if isinstance(inner, cst.Slice):
         return _Handle(ctx, inner)
     vocabulary_missing(
+        blame=inner,
         owner="libcst_adapter._slice_element",
         observed=f"{type(inner).__name__} in subscript position",
         requested="an Index or a Slice",
@@ -696,6 +707,7 @@ def _format_spec(
     parts = list(spec)
     if not parts:
         vocabulary_missing(
+            blame=spec,
             owner="libcst_adapter._format_spec",
             observed="an empty format spec with no content to span",
             requested="a spec with at least one content node, or no spec at all",
@@ -721,6 +733,7 @@ def _conversion(value: Optional[str]) -> int:
     code = _CONVERSIONS.get(value)
     if code is None:
         vocabulary_missing(
+            blame=value,
             owner="libcst_adapter._conversion",
             observed=f"f-string conversion {value!r}",
             requested="one of !s, !r, !a, or none",
@@ -1105,6 +1118,7 @@ def _singleton(text: str) -> object:
     table: dict[str, object] = {"True": True, "False": False, "None": None}
     if text not in table:
         vocabulary_missing(
+            blame=text,
             owner="libcst_adapter._singleton",
             observed=f"match singleton {text!r}",
             requested="True, False, or None",
@@ -1131,6 +1145,7 @@ def _match_patterns(ctx: _Ctx, elements: Sequence[cst.CSTNode]) -> Children:
             out.append(_Handle(ctx, el))
         else:
             vocabulary_missing(
+                blame=el,
                 owner="libcst_adapter._match_patterns",
                 observed=f"{type(el).__name__} in match sequence position",
                 requested="a MatchSequenceElement or a MatchStar",
@@ -1260,6 +1275,7 @@ def _r_concatstring(ctx: _Ctx, n: cst.ConcatenatedString) -> Description:
         # (mixed str/bytes implicit concatenation): the backend's own
         # output is structurally invalid, not a vocabulary gap.
         backend_defect(
+            blame=n,
             owner="libcst_adapter._r_concatstring",
             observed="implicit concatenation mixing str and bytes pieces",
             requested="pieces of one literal type",
@@ -1524,6 +1540,7 @@ def _describe(ctx: _Ctx, node: cst.CSTNode) -> Description:
     rule = _RULES.get(type(node).__name__)
     if rule is None:
         vocabulary_missing(
+            blame=node,
             owner="libcst_adapter._describe",
             observed=f"libcst {type(node).__name__} has no adapter rule",
             requested="an explicit rule mapping this CST shape into tree terms",

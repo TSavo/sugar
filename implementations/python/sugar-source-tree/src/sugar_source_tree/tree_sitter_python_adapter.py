@@ -119,7 +119,6 @@ class _Handle(BackendNode):
         self._node = node
         self._desc: Optional[Description] = None
 
-
     @property
     def minting_unit(self):
         """Parsed out of this unit's text, so its span is that unit's."""
@@ -261,6 +260,7 @@ def _expression_statement(unit: SourceUnit, node: TSNode) -> Description:
             slots=(("elts", Children(tuple(_h(unit, c) for c in kids))),),
         )
     vocabulary_missing(
+        blame=node,
         owner="tree_sitter_python_adapter._expression_statement",
         observed=f"expression_statement with {len(kids)} named children",
         requested="exactly one expression",
@@ -321,6 +321,7 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
             values.append(_interpolation(unit, c))
         else:
             vocabulary_missing(
+                blame=node,
                 owner="tree_sitter_python_adapter._string_like",
                 observed=f"f-string child {c.type!r} not recognized",
                 requested="string_content or interpolation",
@@ -437,6 +438,7 @@ def _binary_operator(unit: SourceUnit, node: TSNode) -> Description:
     kind = _BIN_TOKEN.get(op_node.type)
     if kind is None:
         vocabulary_missing(
+            blame=node,
             owner="tree_sitter_python_adapter._binary_operator",
             observed=f"binary operator token {op_node.type!r} not recognized",
             requested="a known binary operator token",
@@ -448,7 +450,7 @@ def _binary_operator(unit: SourceUnit, node: TSNode) -> Description:
         anchors=(),
         slots=(
             ("left", Child(_h(unit, left))),
-            ("op", OpLeaf(operator_for(kind))),
+            ("op", OpLeaf(operator_for(kind, blame=node))),
             ("right", Child(_h(unit, right))),
         ),
     )
@@ -463,7 +465,7 @@ def _boolean_operator(unit: SourceUnit, node: TSNode) -> Description:
         raw_span=_span(unit, node),
         anchors=(),
         slots=(
-            ("op", OpLeaf(operator_for(_bool_kind(op_type)))),
+            ("op", OpLeaf(operator_for(_bool_kind(op_type), blame=node))),
             ("values", Children(tuple(_h(unit, v) for v in values))),
         ),
     )
@@ -475,7 +477,10 @@ def _not_operator(unit: SourceUnit, node: TSNode) -> Description:
         kind="UnaryOp",
         raw_span=_span(unit, node),
         anchors=(),
-        slots=(("op", OpLeaf(operator_for("Not"))), ("operand", Child(_h(unit, arg)))),
+        slots=(
+            ("op", OpLeaf(operator_for("Not", blame=node))),
+            ("operand", Child(_h(unit, arg))),
+        ),
     )
 
 
@@ -485,6 +490,7 @@ def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
     kind = _UNARY_TOKEN.get(op_node.type)
     if kind is None:
         vocabulary_missing(
+            blame=node,
             owner="tree_sitter_python_adapter._unary_operator",
             observed=f"unary operator token {op_node.type!r} not recognized",
             requested="'+', '-', or '~'",
@@ -494,7 +500,10 @@ def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
         kind="UnaryOp",
         raw_span=_span(unit, node),
         anchors=(),
-        slots=(("op", OpLeaf(operator_for(kind))), ("operand", Child(_h(unit, arg)))),
+        slots=(
+            ("op", OpLeaf(operator_for(kind, blame=node))),
+            ("operand", Child(_h(unit, arg))),
+        ),
     )
 
 
@@ -510,12 +519,13 @@ def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
         kind = _CMP_TOKEN.get(t.type)
         if kind is None:
             vocabulary_missing(
+                blame=node,
                 owner="tree_sitter_python_adapter._comparison_operator",
                 observed=f"comparison token {t.type!r} not recognized",
                 requested="a known comparison operator token",
                 fix="extend _CMP_TOKEN deliberately",
             )
-        ops.append(operator_for(kind))
+        ops.append(operator_for(kind, blame=node))
     return Description(
         kind="Compare",
         raw_span=_span(unit, node),
@@ -649,6 +659,7 @@ def _parenthesized_expression(unit: SourceUnit, node: TSNode) -> Description:
     inner = _named(node)
     if len(inner) != 1:
         vocabulary_missing(
+            blame=node,
             owner="tree_sitter_python_adapter._parenthesized_expression",
             observed=f"parenthesized_expression with {len(inner)} named children",
             requested="exactly one inner expression",
@@ -722,6 +733,7 @@ def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
             )
         else:
             vocabulary_missing(
+                blame=node,
                 owner="tree_sitter_python_adapter._dictionary",
                 observed=f"dictionary child {c.type!r} not recognized",
                 requested="pair or dictionary_splat",
@@ -1057,6 +1069,7 @@ def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> BackendNode:
             anchors=(_span(unit, name_node),),
         )
     vocabulary_missing(
+        blame=node,
         owner="tree_sitter_python_adapter._one_param",
         observed=f"parameter shape {node.type!r} not recognized",
         requested="a mapped parameter shape",
@@ -1145,6 +1158,7 @@ def _augmented_assignment(unit: SourceUnit, node: TSNode) -> Description:
     kind = _AUG_TOKEN.get(op_node.type)
     if kind is None:
         vocabulary_missing(
+            blame=node,
             owner="tree_sitter_python_adapter._augmented_assignment",
             observed=f"augmented assignment token {op_node.type!r} not recognized",
             requested="a known augmented assignment token",
@@ -1156,7 +1170,7 @@ def _augmented_assignment(unit: SourceUnit, node: TSNode) -> Description:
         anchors=(),
         slots=(
             ("target", Child(_h(unit, left))),
-            ("op", OpLeaf(operator_for(kind))),
+            ("op", OpLeaf(operator_for(kind, blame=node))),
             ("value", Child(_h(unit, right))),
         ),
     )
@@ -1930,6 +1944,7 @@ def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
             ),
         )
     vocabulary_missing(
+        blame=node,
         owner="tree_sitter_python_adapter._pattern",
         observed=f"case pattern shape {node.type!r} not recognized",
         requested="a mapped match-pattern shape",
@@ -1963,6 +1978,7 @@ def _describe(unit: SourceUnit, node: TSNode) -> Description:
     t = node.type
     if not node.is_named:
         vocabulary_missing(
+            blame=node,
             owner="tree_sitter_python_adapter._describe",
             observed=f"unnamed/punctuation node {t!r} reached the dispatcher",
             requested="a named grammar node",
@@ -1977,6 +1993,7 @@ def _describe(unit: SourceUnit, node: TSNode) -> Description:
     if fn is not None:
         return fn(unit, node)
     vocabulary_missing(
+        blame=node,
         owner="tree_sitter_python_adapter._describe",
         observed=f"tree-sitter node type {t!r} has no translation rule",
         requested="a mapped statement/expression shape",
@@ -2066,7 +2083,7 @@ _DISPATCH = {
         anchors=(),
         slots=(
             ("left", Child(_h(u, _named(n)[0]))),
-            ("op", OpLeaf(operator_for("BitOr"))),
+            ("op", OpLeaf(operator_for("BitOr", blame=node))),
             ("right", Child(_h(u, _named(n)[1]))),
         ),
     ),

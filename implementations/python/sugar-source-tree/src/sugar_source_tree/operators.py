@@ -35,6 +35,7 @@ class Operator:
             # abstract class directly. Not a vocabulary gap, not a backend
             # defect — raised as the common base deliberately.
             raise SourceTreePanic(
+                blame=cls,
                 owner="operators.Operator.instance",
                 observed=f"instance() on abstract {cls.__name__}",
                 requested="a concrete operator class",
@@ -216,11 +217,12 @@ _OPERATORS: dict[str, type[Operator]] = {
 }
 
 
-def operator_for(kind: str) -> Operator:
+def operator_for(kind: str, *, blame: object) -> Operator:
     """Frozen-vocabulary lookup: two arms — resolved, or panic."""
     cls = _OPERATORS.get(kind)
     if cls is None:
         vocabulary_missing(
+            blame=blame,
             owner="operators.operator_for",
             observed=f"operator kind {kind!r} not in the frozen vocabulary",
             requested="one of the declared Operator classes",

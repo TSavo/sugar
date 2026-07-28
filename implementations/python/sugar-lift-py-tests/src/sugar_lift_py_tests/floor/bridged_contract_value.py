@@ -38,6 +38,7 @@ class BridgedContractValue(FloorValue):
         ):
             return Complete(SymbolicValue(self.term.args[index.value]))
         raise SugarNotWritten(
+            blame=site,
             owner="BridgedContractValue.subscript",
             observed="contract return does not warrant this projection",
             requested="ground in-range projection from an authenticated structural return",

@@ -110,7 +110,6 @@ class _Handle(BackendNode):
         self._node = node
         self._desc: Optional[Description] = None
 
-
     @property
     def minting_unit(self):
         """Parsed out of this unit's text, so its span is that unit's."""
@@ -207,10 +206,11 @@ def _cmp_op(node: ParsoNode) -> Operator:
     if node.type == "comp_op":
         text = " ".join(c.value for c in _kids(node))
         if text == "not in":
-            return operator_for("NotIn")
+            return operator_for("NotIn", blame=node)
         if text == "is not":
-            return operator_for("IsNot")
+            return operator_for("IsNot", blame=node)
         vocabulary_missing(
+            blame=node,
             owner="parso_adapter._cmp_op",
             observed=f"comp_op token {text!r} not recognized",
             requested="one of: not in, is not",
@@ -218,18 +218,19 @@ def _cmp_op(node: ParsoNode) -> Operator:
         )
     text = node.value
     if text == "in":
-        return operator_for("In")
+        return operator_for("In", blame=node)
     if text == "is":
-        return operator_for("Is")
+        return operator_for("Is", blame=node)
     kind = _CMP_TOKEN.get(text)
     if kind is None:
         vocabulary_missing(
+            blame=node,
             owner="parso_adapter._cmp_op",
             observed=f"comparison token {text!r} not recognized",
             requested="a known comparison operator token",
             fix="extend _CMP_TOKEN deliberately",
         )
-    return operator_for(kind)
+    return operator_for(kind, blame=node)
 
 
 # --------------------------------------------------------------------------
@@ -250,6 +251,7 @@ def _fold_binop(unit: SourceUnit, node: ParsoNode) -> BackendNode:
         kind = _BIN_TOKEN.get(op_tok.value)
         if kind is None:
             vocabulary_missing(
+                blame=op_tok,
                 owner="parso_adapter._fold_binop",
                 observed=f"binary operator token {op_tok.value!r} not recognized",
                 requested="a known binary operator token",
@@ -262,7 +264,7 @@ def _fold_binop(unit: SourceUnit, node: ParsoNode) -> BackendNode:
             Span(first_start, end),
             (
                 ("left", Child(acc)),
-                ("op", OpLeaf(operator_for(kind))),
+                ("op", OpLeaf(operator_for(kind, blame=op_tok))),
                 ("right", Child(right)),
             ),
         )
@@ -277,7 +279,7 @@ def _boolop(unit: SourceUnit, node: ParsoNode, op_kind: str) -> Description:
         raw_span=_span(unit, node),
         anchors=(),
         slots=(
-            ("op", OpLeaf(operator_for(op_kind))),
+            ("op", OpLeaf(operator_for(op_kind, blame=node))),
             ("values", Children(values)),
         ),
     )
@@ -403,6 +405,7 @@ def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     if node.type == "operator" and node.value == "...":
         return _fixed_constant(span, Ellipsis)
     vocabulary_missing(
+        blame=node,
         owner="parso_adapter._constant_leaf",
         observed=f"leaf {node.type}:{node.value!r} is not a recognized literal",
         requested="number, string, None/True/False, or Ellipsis",
@@ -423,6 +426,7 @@ def _fstring_values(unit: SourceUnit, node: ParsoNode) -> List[BackendNode]:
             continue
         else:
             vocabulary_missing(
+                blame=c,
                 owner="parso_adapter._fstring_values",
                 observed=f"fstring child {c.type!r} not recognized",
                 requested="fstring_string or fstring_expr",
@@ -458,6 +462,7 @@ def _describe_fstring_expr(unit: SourceUnit, node: ParsoNode) -> Description:
             i += 1
             continue
         vocabulary_missing(
+            blame=c,
             owner="parso_adapter._describe_fstring_expr",
             observed=f"fstring_expr trailing token {c!r} not recognized",
             requested="'!' conversion or format spec",
@@ -524,6 +529,7 @@ def _fold_trailers(
             )
         else:
             vocabulary_missing(
+                blame=trailer,
                 owner="parso_adapter._fold_trailers",
                 observed=f"trailer starting with {first.value!r} not recognized",
                 requested="'.', '(' or '['",
@@ -587,6 +593,7 @@ def _call_args(
                 )
             else:
                 vocabulary_missing(
+                    blame=item,
                     owner="parso_adapter._call_args",
                     observed=f"argument shape {[c.type for c in ik]!r} not recognized",
                     requested="*expr, **expr, name=expr, or a comprehension argument",
@@ -638,6 +645,7 @@ def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     for seg in (lower, upper, step):
         if len(seg) > 1:
             vocabulary_missing(
+                blame=seg[0],
                 owner="parso_adapter._one_subscript_item",
                 observed=f"slice segment with {len(seg)} nodes",
                 requested="zero or one expression per slice segment",
@@ -822,6 +830,7 @@ def _describe(unit: SourceUnit, node: ParsoNode) -> Description:
     if fn is not None:
         return fn(unit, node)
     vocabulary_missing(
+        blame=node,
         owner="parso_adapter._describe",
         observed=f"parso node type {t!r} has no translation rule",
         requested="a mapped statement/expression shape",
@@ -899,6 +908,7 @@ def _describe_leaf(unit: SourceUnit, node: ParsoNode) -> Description:
             ),
         )
     vocabulary_missing(
+        blame=node,
         owner="parso_adapter._describe_leaf",
         observed=f"leaf {node.type}:{node.value!r} has no translation rule",
         requested="a mapped leaf shape",
@@ -991,6 +1001,7 @@ def _atom(unit: SourceUnit, node: ParsoNode) -> Description:
     if first.type == "fstring":
         return _describe(unit, first)
     vocabulary_missing(
+        blame=node,
         owner="parso_adapter._atom",
         observed=f"atom starting with {getattr(first, 'value', first.type)!r} not recognized",
         requested="'(', '[', '{' grouping, or an fstring",
@@ -1099,6 +1110,7 @@ def _comp_clauses(
             continue
         else:
             vocabulary_missing(
+                blame=n,
                 owner="parso_adapter._comp_clauses",
                 observed=f"comprehension clause child {n.type!r} not recognized",
                 requested="comp_for/sync_comp_for or comp_if",
@@ -1127,6 +1139,7 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
             # a comp_if may itself carry a further comp_iter (chained ifs/for)
             if len(ik) > 2:
                 vocabulary_missing(
+                    blame=r2,
                     owner="parso_adapter._comprehension",
                     observed="comp_if with a nested comp_iter tail not yet folded",
                     requested="a flattened ifs/for chain",
@@ -1134,6 +1147,7 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
                 )
         elif r2.type in ("comp_for", "sync_comp_for"):
             vocabulary_missing(
+                blame=r2,
                 owner="parso_adapter._comprehension",
                 observed="chained 'for ... for ...' clause not yet folded into a flat generators list",
                 requested="each comp_for as its own top-level Comprehension",
@@ -1215,6 +1229,7 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
         )
     if not _is_leaf(op):
         vocabulary_missing(
+            blame=op,
             owner="parso_adapter._expr_stmt",
             observed=f"expr_stmt second child is a {op.type!r} node, not an operator leaf",
             requested="'=', an augmented-assignment operator, or annassign",
@@ -1235,6 +1250,7 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     aug_kind = _AUG_TOKEN.get(op.value)
     if aug_kind is None:
         vocabulary_missing(
+            blame=op,
             owner="parso_adapter._expr_stmt",
             observed=f"expr_stmt operator {op.value!r} not recognized",
             requested="'=' (chained) or an augmented-assignment token",
@@ -1246,7 +1262,7 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
         anchors=(),
         slots=(
             ("target", Child(_h(unit, kids[0]))),
-            ("op", OpLeaf(operator_for(aug_kind))),
+            ("op", OpLeaf(operator_for(aug_kind, blame=op))),
             ("value", Child(_h(unit, kids[2]))),
         ),
     )
@@ -1761,6 +1777,7 @@ def _async_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
             kind="AsyncWith", raw_span=span, anchors=(), slots=base.slots
         )
     vocabulary_missing(
+        blame=inner,
         owner="parso_adapter._async_stmt",
         observed=f"async_stmt wrapping {inner.type!r} not recognized",
         requested="funcdef, for_stmt, or with_stmt",
@@ -1819,7 +1836,7 @@ def _not_test(unit: SourceUnit, node: ParsoNode) -> Description:
         raw_span=_span(unit, node),
         anchors=(),
         slots=(
-            ("op", OpLeaf(operator_for("Not"))),
+            ("op", OpLeaf(operator_for("Not", blame=node))),
             ("operand", Child(_h(unit, kids[1]))),
         ),
     )
@@ -1830,6 +1847,7 @@ def _factor(unit: SourceUnit, node: ParsoNode) -> Description:
     kind = _UNARY_TOKEN.get(kids[0].value)
     if kind is None:
         vocabulary_missing(
+            blame=kids[0],
             owner="parso_adapter._factor",
             observed=f"unary token {kids[0].value!r} not recognized",
             requested="'+', '-', or '~'",
@@ -1840,7 +1858,7 @@ def _factor(unit: SourceUnit, node: ParsoNode) -> Description:
         raw_span=_span(unit, node),
         anchors=(),
         slots=(
-            ("op", OpLeaf(operator_for(kind))),
+            ("op", OpLeaf(operator_for(kind, blame=kids[0]))),
             ("operand", Child(_h(unit, kids[1]))),
         ),
     )
@@ -1856,7 +1874,7 @@ def _power(unit: SourceUnit, node: ParsoNode) -> Description:
         anchors=(),
         slots=(
             ("left", Child(left)),
-            ("op", OpLeaf(operator_for("Pow"))),
+            ("op", OpLeaf(operator_for("Pow", blame=node))),
             ("right", Child(right)),
         ),
     )

@@ -89,6 +89,10 @@ def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> 
     with pytest.raises(SugarNotWritten) as raised:
         operation.desugar(None)
     refusal = raised.value
+    assert refusal.blame == node.fragment
+    assert f"{node.fragment.filename}:{node.fragment.line}:{node.fragment.col}" in str(
+        refusal
+    )
     assert refusal.owner == f"{type(receiver).__name__}.attribute"
     assert "undecided" in refusal.observed
     assert "source-authenticated attribute success or exceptional exit" in (

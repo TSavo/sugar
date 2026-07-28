@@ -60,6 +60,7 @@ class CallSiteSugar(Sugar):
 
             raise OpaqueSourceCallResolutionGap(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed=self.contract_resolution_gap,
                 requested="authenticated resolved-call contract reference",
                 fix="publish and resolve the imported target contract or keep the call loud",
@@ -124,6 +125,7 @@ class CallSiteSugar(Sugar):
             if not isinstance(self.source_call_frame, SourceVisibleCallFrameV1):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
+                    blame=self.site,
                     observed=type(self.source_call_frame).__name__,
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
@@ -137,6 +139,7 @@ class CallSiteSugar(Sugar):
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
+                    blame=self.site,
                     observed=str(exc),
                     requested="actuals matching the authenticated source signature",
                     fix="supply a real actual/default/variadic occurrence or keep loud",
@@ -164,6 +167,7 @@ class CallSiteSugar(Sugar):
 
                     raise BackendDefect(
                         owner="CallSiteSugar.desugar",
+                        blame=self.site,
                         observed="declaration/source frame mismatch",
                         requested="byte-identical authenticated source frame",
                         fix="retain the callee declaration frame across node binding",
@@ -223,6 +227,7 @@ class CallSiteSugar(Sugar):
         if len(reference.formals) != len(positional):
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="signature mismatch",
                 requested="actual arguments matching the authenticated import signature",
                 fix="correct the call signature or keep the call loud",
@@ -231,6 +236,7 @@ class CallSiteSugar(Sugar):
         if term is None:
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="authenticated contract has no exact return equality",
                 requested="exact structural return testimony",
                 fix="strengthen the contract or keep the imported value loud",
@@ -238,6 +244,7 @@ class CallSiteSugar(Sugar):
         if not _free_vars_in_term(term) <= set(reference.formals):
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="authenticated structural return contains an unbound projection",
                 requested="return variables authenticated by the target formal list",
                 fix="reject the stale or lying contract reference",
@@ -251,6 +258,7 @@ class CallSiteSugar(Sugar):
         }:
             raise SugarNotWritten(
                 owner="CallSiteSugar.desugar",
+                blame=self.site,
                 observed="authenticated contract has no exact structural return",
                 requested="structural return term carried by the target contract",
                 fix="strengthen the target contract or keep the imported value loud",

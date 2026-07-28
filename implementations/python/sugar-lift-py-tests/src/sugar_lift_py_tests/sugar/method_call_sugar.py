@@ -108,6 +108,7 @@ class MethodCallSugar(Sugar):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
+                blame=self.site,
                 owner="MethodCallSugar._collect_kwargs",
                 observed=type(receiver).__name__,
                 requested="authenticated constructed receiver matching the method frame",

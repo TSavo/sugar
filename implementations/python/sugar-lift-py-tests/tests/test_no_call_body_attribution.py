@@ -46,6 +46,7 @@ def _call_owned_raise_value():
 
 def _named_refusal():
     raise SugarNotWritten(
+        blame="test_no_call_body_attribution.py:native-producer",
         owner="native-producer",
         observed="source-visible operands do not decide the failure mode",
         requested="authenticated exceptional exit or retained refusal",

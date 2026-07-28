@@ -54,7 +54,7 @@ from .spans import Span
 
 
 def _op(node: ast.AST) -> Operator:
-    return operator_for(type(node).__name__)
+    return operator_for(type(node).__name__, blame=node)
 
 
 class _Handle(BackendNode):
@@ -66,7 +66,6 @@ class _Handle(BackendNode):
         self._unit = unit
         self._node = node
         self._desc: Optional[Description] = None
-
 
     @property
     def minting_unit(self):
@@ -99,7 +98,6 @@ class _ParamHandle(BackendNode):
         self._default = default
         self._kind = param_kind
         self._desc: Optional[Description] = None
-
 
     @property
     def minting_unit(self):
@@ -175,7 +173,6 @@ class _DictItemHandle(BackendNode):
         self._value = value
         self._desc: Optional[Description] = None
 
-
     @property
     def minting_unit(self):
         """Parsed out of this unit's text, so its span is that unit's."""
@@ -210,6 +207,7 @@ def _node_span(unit: SourceUnit, node: ast.AST) -> Span:
     end_lineno = getattr(node, "end_lineno", None)
     if lineno is None or end_lineno is None:
         vocabulary_missing(
+            blame=node,
             owner="cpython_adapter._node_span",
             observed=f"ast.{type(node).__name__} without a position",
             requested="a positioned node, or a describe() rule marking it envelope-spanned",
@@ -286,6 +284,7 @@ def _comprehension_for_anchor(unit: SourceUnit, comp: ast.comprehension) -> Span
         j -= 1
     if src[max(0, j - 3) : j] != "for":
         vocabulary_missing(
+            blame=comp,
             owner="cpython_adapter._comprehension_for_anchor",
             observed=f"no 'for' keyword immediately before comprehension target at {target_start}",
             requested="'for' (optionally 'async for') preceding the target",
@@ -382,6 +381,7 @@ def _describe(unit: SourceUnit, node: ast.AST) -> Description:
                 )
                 continue
             vocabulary_missing(
+                blame=node,
                 owner="cpython_adapter._describe",
                 observed=(
                     f"ast.{ast_kind}.{field_name} list with unhandled item "

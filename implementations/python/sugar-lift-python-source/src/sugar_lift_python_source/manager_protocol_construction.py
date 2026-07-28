@@ -74,7 +74,9 @@ class ConstructedManagerProtocolV1:
             enter = _call_protocol_method(
                 receiver, "__enter__", (), self.exit_face_id, ctx
             ).reduce_source_outcome(ctx)
-            entered = _receiver_state_after_enter(receiver, enter)
+            entered = _receiver_state_after_enter(
+                receiver, enter, blame=self.exit_face_id
+            )
             return _call_protocol_method(
                 entered,
                 "__exit__",
@@ -102,7 +104,7 @@ class ConstructedManagerProtocolV1:
             enter = _call_protocol_method(
                 receiver, "__enter__", (), self.exit_face_id, ctx
             ).reduce_source_outcome(ctx)
-            return _resource_enter_transitions(receiver, enter)
+            return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
 
         if isinstance(self.receiver_state, ObjectValue):
             return run_enter(self.receiver_state)
@@ -155,6 +157,7 @@ def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
     )
     if not isinstance(call, Complete) or not isinstance(call.value, CallSiteValue):
         raise SugarNotWritten(
+            blame=exit_face_id,
             owner="ConstructedManagerProtocolV1.protocol_method",
             observed=type(call).__name__,
             requested=f"authenticated {name} call over projected receiver state",
@@ -163,7 +166,9 @@ def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
     return call.value
 
 
-def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectValue:
+def _receiver_state_after_enter(
+    receiver: ObjectValue, enter_outcome, *, blame: object
+) -> ObjectValue:
     from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -180,6 +185,7 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
         return receiver
     if not exits or len(completed) != len(exits):
         raise SugarNotWritten(
+            blame=blame,
             owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
             observed="non-completed __enter__ face",
             requested="total completed enter testimony before __exit__",
@@ -190,6 +196,7 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
         block = face.value
         if not isinstance(block, BlockValue):
             raise SugarNotWritten(
+                blame=blame,
                 owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
                 observed=type(block).__name__,
                 requested="completed enter block carrying exact receiver stores",
@@ -201,6 +208,7 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
                 continue
             if statement.receiver.identity != receiver.identity:
                 raise SugarNotWritten(
+                    blame=blame,
                     owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
                     observed="receiver coordinate mismatch",
                     requested="stores from the exact authenticated manager receiver",
@@ -213,6 +221,7 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
     first = projected_faces[0]
     if any(fields != first for fields in projected_faces[1:]):
         raise SugarNotWritten(
+            blame=blame,
             owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
             observed="guarded enter faces disagree on receiver fields",
             requested="one exact post-enter ObjectValue.fields projection",
@@ -228,7 +237,7 @@ def _receiver_state_after_enter(receiver: ObjectValue, enter_outcome) -> ObjectV
     )
 
 
-def _resource_enter_transitions(receiver: ObjectValue, enter_outcome):
+def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: object):
     from sugar_lift_py_tests.ir import and_, not_
     from sugar_lift_py_tests.outcome import (
         Completed,
@@ -246,6 +255,7 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome):
             continue
         if not isinstance(face.value, BlockValue):
             raise SugarNotWritten(
+                blame=blame,
                 owner="ConstructedManagerProtocolV1.enter_resource_outcome",
                 observed=type(face.value).__name__,
                 requested="completed enter block carrying exact acquisition stores",
@@ -262,7 +272,7 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome):
                     next_states.append(
                         (
                             and_([guard, statement.guard]),
-                            _apply_receiver_store(state, statement),
+                            _apply_receiver_store(state, statement, blame=blame),
                             faces | {then_face},
                         )
                     )
@@ -276,7 +286,11 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome):
                 states = next_states
             elif isinstance(statement, ReceiverFieldStoreValue):
                 states = [
-                    (guard, _apply_receiver_store(state, statement), faces)
+                    (
+                        guard,
+                        _apply_receiver_store(state, statement, blame=blame),
+                        faces,
+                    )
                     for guard, state, faces in states
                 ]
         projected.extend(
@@ -292,12 +306,13 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome):
 
 
 def _apply_receiver_store(
-    receiver: ObjectValue, statement: ReceiverFieldStoreValue
+    receiver: ObjectValue, statement: ReceiverFieldStoreValue, *, blame: object
 ) -> ObjectValue:
     from sugar_source_tree.panic import SugarNotWritten
 
     if statement.receiver.identity != receiver.identity:
         raise SugarNotWritten(
+            blame=blame,
             owner="ConstructedManagerProtocolV1.enter_resource_outcome",
             observed="receiver coordinate mismatch",
             requested="acquisition store from the exact authenticated receiver",
