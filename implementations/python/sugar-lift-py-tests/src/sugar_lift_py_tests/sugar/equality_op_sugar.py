@@ -99,7 +99,7 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
 
 def _equals_with_derived_residue(left, right, site, ctx):
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        publish_undecided_comparison_edges,
+        publish_undecided_equality_edges,
     )
 
     outcome = left.equals(right, site)
@@ -119,7 +119,8 @@ def _equals_with_derived_residue(left, right, site, ctx):
                     derived_formulas=(*outcome.value.derived_formulas, residue),
                 )
             )
-    return publish_undecided_comparison_edges(
+    # Equality law: dual-edge when either operand type is undecided.
+    return publish_undecided_equality_edges(
         left,
         right,
         site,

@@ -87,6 +87,45 @@ def test_opaque_list_member_stays_loud():
         _list(1).contains(FunctionCallable("opaque"), "site")
 
 
+def test_nested_list_membership_is_decided_from_constructed_members():
+    """Membership law vertical slice: ``[1] in [[1], [2]]`` is ground equality."""
+    from sugar_lift_py_tests.floor import ListValue, TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    container = ListValue(
+        (
+            ListValue((TermValue(1),)),
+            ListValue((TermValue(2),)),
+        )
+    )
+    needle = ListValue((TermValue(1),))
+    missing = ListValue((TermValue(3),))
+    assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
+    assert isinstance(
+        container.contains(missing, "site").value, FalseBoolLiteralSugar
+    )
+
+
+def test_nested_tuple_membership_is_decided_from_constructed_members():
+    from sugar_lift_py_tests.floor import TermValue, TupleValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    container = TupleValue(
+        (
+            TupleValue((TermValue(1),)),
+            TupleValue((TermValue(2),)),
+        )
+    )
+    needle = TupleValue((TermValue(1),))
+    missing = TupleValue((TermValue(9),))
+    assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
+    assert isinstance(
+        container.contains(missing, "site").value, FalseBoolLiteralSugar
+    )
+
+
 def test_string_substring_membership_is_decided():
     from sugar_lift_py_tests.floor import StringValue
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar

@@ -7,11 +7,21 @@ is `py.lt` / `py.le` / ... -- vendor comparison, not SMT `<`, so the sort
 universe adjudicates (same NaN/reflexivity split as py.eq). `!=` is `==` negated:
 Python `a != b` is `not (a == b)`, so it stands on the equals floor and negates
 that predicate -- never a bespoke inequality atom.
+
+Compare construction is partitioned by law — not one monomorphic refusal:
+
+- **ordering** (`<` `<=` `>` `>=`): rich-method dispatch may complete or raise
+- **membership** (`in` / `not in`): container owns ``__contains__`` / iteration
+- **equality** (`==` / `!=`): ``__eq__`` / ``__ne__`` may complete or raise
+- **identity** (`is` / `is not`): total object identity; never user-code dispatch
+- **chaining** (`a < b < c`): pair laws composed under short-circuit ``And`` at
+  ``Compare._construct_sugar`` (BoolOpSugar over adjacent pair sugars)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from enum import Enum
 
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -32,6 +42,30 @@ COMPARE_METHODS: dict[str, str] = {
 # operand: `x in xs` is `xs.contains(x)`).
 COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot", "In", "NotIn"}
 
+
+class CompareLaw(str, Enum):
+    """Separate Compare construction mechanisms — laws differ, so partitions do."""
+
+    ORDERING = "ordering"
+    MEMBERSHIP = "membership"
+    EQUALITY = "equality"
+    IDENTITY = "identity"
+    CHAINING = "chaining"
+
+
+_LAW_BY_OP: dict[str, CompareLaw] = {
+    "Lt": CompareLaw.ORDERING,
+    "LtE": CompareLaw.ORDERING,
+    "Gt": CompareLaw.ORDERING,
+    "GtE": CompareLaw.ORDERING,
+    "In": CompareLaw.MEMBERSHIP,
+    "NotIn": CompareLaw.MEMBERSHIP,
+    "Eq": CompareLaw.EQUALITY,
+    "NotEq": CompareLaw.EQUALITY,
+    "Is": CompareLaw.IDENTITY,
+    "IsNot": CompareLaw.IDENTITY,
+}
+
 _DISPATCH_RAISE_COORDINATE = {
     "Eq": "python.eq_dispatch_raises",
     "NotEq": "python.eq_dispatch_raises",
@@ -44,24 +78,108 @@ _DISPATCH_RAISE_COORDINATE = {
 }
 
 
+def compare_law_for(op_kind: str) -> CompareLaw:
+    """The construction law that owns one comparison operator kind."""
+    try:
+        return _LAW_BY_OP[op_kind]
+    except KeyError as error:
+        raise KeyError(f"no Compare law for operator kind {op_kind!r}") from error
+
+
+def partition_key_for_law(law: CompareLaw, site, op_kind: str) -> tuple:
+    """Law-scoped ExitSet partition coordinate (not one shared monomorphic key)."""
+    return (f"compare.{law.value}.dispatch", str(site), op_kind)
+
+
 def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome):
-    """Retain both native-dispatch faces when operand types are undecided.
+    """Dispatch to the law-specific dual-edge publisher for ``op_kind``."""
+    law = compare_law_for(op_kind)
+    if law is CompareLaw.ORDERING:
+        return publish_undecided_ordering_edges(left, right, site, op_kind, outcome)
+    if law is CompareLaw.MEMBERSHIP:
+        return publish_undecided_membership_edges(left, right, site, op_kind, outcome)
+    if law is CompareLaw.EQUALITY:
+        return publish_undecided_equality_edges(left, right, site, op_kind, outcome)
+    # Identity never dual-edges: ``is`` / ``is not`` cannot invoke user code.
+    return outcome
 
-    Ordering, membership, and equality are not total over undecided runtime types:
-    Python may select a rich method that completes or raises (``Series`` vs
-    ``str`` raises ``TypeError``; unknown containers may raise from
-    ``__contains__``). Emitting ``py.lt`` / ``py.in`` invents completion;
-    inventing ``TypeError`` invents an exception identity. Both stay refused
-    until native operand types are source-authenticated — the same producer
-    law BinOp/BoolOp already own.
 
-    Equality is total only after both native operand types are decided.  An
-    undecided value may dispatch ``__eq__`` / ``__ne__`` that completes or
-    raises.  The producer owns that two-way split: the completed face retains
-    the operator's solver atom and the halted face retains a source-cited raise
-    occurrence whose exception identity remains undecided.  Identity is not
-    routed here because Python ``is`` / ``is not`` cannot invoke user code.
+def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
+    """Ordering law: undecided rich-method dispatch is a two-face partition."""
+    return _publish_undecided_dispatch_edges(
+        left,
+        right,
+        site,
+        op_kind,
+        outcome,
+        law=CompareLaw.ORDERING,
+    )
+
+
+def publish_undecided_membership_edges(left, right, site, op_kind: str, outcome):
+    """Membership law: undecided ``__contains__`` / iteration is a two-face partition.
+
+    Operand order is needle then container (the producer already swapped for
+    ``in`` / ``not in`` so the floor call is ``container.contains(item)``).
     """
+    return _publish_undecided_dispatch_edges(
+        left,
+        right,
+        site,
+        op_kind,
+        outcome,
+        law=CompareLaw.MEMBERSHIP,
+    )
+
+
+def publish_undecided_equality_edges(left, right, site, op_kind: str, outcome):
+    """Equality law: undecided ``__eq__`` / ``__ne__`` is a two-face partition."""
+    return _publish_undecided_dispatch_edges(
+        left,
+        right,
+        site,
+        op_kind,
+        outcome,
+        law=CompareLaw.EQUALITY,
+    )
+
+
+def construct_identity_comparison(left, right, site, *, negated: bool = False):
+    """Identity law: total object identity; never a dual-edge raise partition.
+
+    Python ``is`` / ``is not`` does not dispatch user code, so there is no
+    exceptional face to publish. The floor's ``is_identical`` atom is the whole
+    meaning; ``site`` is the identity floor's blame coordinate.
+    """
+    outcome = left.is_identical(right, site)
+    if not negated:
+        return outcome
+    return outcome.and_then(lambda predicate: predicate.negate())
+
+
+def _publish_undecided_dispatch_edges(
+    left,
+    right,
+    site,
+    op_kind: str,
+    outcome,
+    *,
+    law: CompareLaw,
+):
+    """Shared dual-edge construction; partition key is law-scoped.
+
+    Ordering, membership, and equality are not total over undecided runtime
+    types: Python may select a rich method that completes or raises. Emitting
+    only the solver atom invents completion; inventing ``TypeError`` invents an
+    exception identity. The producer therefore emits complementary completed
+    and halted edges without inventing an exception type.
+
+    Decided pairs fall through to the floor's ground construction (RaiseValue
+    TypeError or honest completion). Identity is not routed here.
+    """
+    if law is CompareLaw.IDENTITY or law is CompareLaw.CHAINING:
+        return outcome
+
     denotes_left = getattr(left, "denotes_value", None)
     denotes_right = getattr(right, "denotes_value", None)
     if not callable(denotes_left) or not callable(denotes_right):
@@ -101,7 +219,7 @@ def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome)
         ],
     )
     halted_face, completed_face = partition(
-        ("comparison-native-dispatch", str(site), op_kind)
+        partition_key_for_law(law, site, op_kind)
     )
     effect = RaiseEffect(
         blame=str(site),
@@ -144,38 +262,40 @@ class ComparisonOpSugar(Sugar):
         return left.and_then(right)
 
     def _membership(self, container, item):
-        """Dispatch membership only when native operand types are decided.
-
-        An undecided container or needle denotes a Python value, but which
-        ``__contains__`` / iteration path Python would select — and whether it
-        raises — is a third value. Emitting ``py.in`` invents completion;
-        inventing ``TypeError`` invents an exit. Keep that undecided dispatch
-        loud at the Compare producer.
-        """
+        """Membership law: container owns containment; undecided dispatch dual-edges."""
         outcome = container.contains(item, self.site)
-        return publish_undecided_comparison_edges(
+        return publish_undecided_membership_edges(
             item, container, self.site, self.op_kind, outcome
+        )
+
+    def _ordering(self, left, right):
+        """Ordering law: left owns the rich method; undecided dispatch dual-edges."""
+        method = COMPARE_METHODS[self.op_kind]
+        return publish_undecided_ordering_edges(
+            left,
+            right,
+            self.site,
+            self.op_kind,
+            getattr(left, method)(right, self.site),
         )
 
     def _apply(self, left, right):
         if self.op_kind == "NotEq":
-            # a != b is not (a == b): stand on the equals floor, negate.
-            return publish_undecided_comparison_edges(
+            # Equality law: a != b is not (a == b); dual-edge then negate.
+            return publish_undecided_equality_edges(
                 left,
                 right,
                 self.site,
                 self.op_kind,
                 left.equals(right, self.site),
-            ).and_then(
-                lambda predicate: predicate.negate()
-            )
+            ).and_then(lambda predicate: predicate.negate())
         if self.op_kind == "Is":
-            # a is b: object identity, stands on the is_identical floor.
-            return left.is_identical(right, self.site)
+            return construct_identity_comparison(
+                left, right, self.site, negated=False
+            )
         if self.op_kind == "IsNot":
-            # a is not b is not (a is b): identity floor, negated.
-            return left.is_identical(right, self.site).and_then(
-                lambda predicate: predicate.negate()
+            return construct_identity_comparison(
+                left, right, self.site, negated=True
             )
         if self.op_kind == "In":
             # a in b: the CONTAINER (right) owns membership -- b.contains(a).
@@ -185,11 +305,4 @@ class ComparisonOpSugar(Sugar):
             return self._membership(right, left).and_then(
                 lambda predicate: predicate.negate()
             )
-        method = COMPARE_METHODS[self.op_kind]
-        return publish_undecided_comparison_edges(
-            left,
-            right,
-            self.site,
-            self.op_kind,
-            getattr(left, method)(right, self.site),
-        )
+        return self._ordering(left, right)
