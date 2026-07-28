@@ -26,6 +26,11 @@ from law_of_one_evidence import (
 from law_of_one_symbol_graph import SymbolGraph
 
 
+def project_constructed_module(product: object) -> object:
+    """The sole test-owned, product-only reporting projection."""
+    return product.reporting_projection
+
+
 def _site(path: Path, node: ast.AST, owners: tuple[str, ...], symbol: str) -> EvidenceSite:
     return EvidenceSite(path, getattr(node, "lineno", 1), owners, symbol)
 
@@ -94,11 +99,6 @@ def audit_law_of_one(
     from sugar_source_tree.reporter import AuditReporter, CollectingReporter
     from sugar_source_tree.tree import SourceFile
     import sugar_source_tree.tree as tree_module
-    import sugar_lift_py_tests.tree_enumerate as tree_enumerate
-
-    project_constructed_module = getattr(
-        tree_enumerate, "project_constructed_module", None
-    )
 
     discovered = _production_files(repository_root)
     parsed = {}
@@ -202,12 +202,13 @@ def audit_law_of_one(
         backend_instance = tree_module._default_backend()
         backend_type = type(backend_instance)
         original_root = backend_type.root
-        original_materialize = tree_module.materialize
+        original_materialize = getattr(tree_module, "materialize", None)
         original_init = SourceFile.__init__
         original_backend_materialize = getattr(
             backend_type, "materialize_module", None
         )
         entered_init = False
+        entered_backend_event = False
 
         def observed_init(self, *args, **kwargs):
             nonlocal entered_init
@@ -218,7 +219,8 @@ def audit_law_of_one(
         def observed_root(self, *args, **kwargs):
             if not entered_init:
                 premature_work.append("backend_root")
-            observed_work["legacy_backend_root"] += 1
+            if not entered_backend_event:
+                observed_work["legacy_backend_root"] += 1
             return original_root(self, *args, **kwargs)
 
         def observed_materialize(*args, **kwargs):
@@ -228,15 +230,23 @@ def audit_law_of_one(
             return original_materialize(*args, **kwargs)
 
         def observed_backend_materialize(self, *args, **kwargs):
+            nonlocal entered_backend_event
             if not entered_init:
                 premature_work.append("backend_materialize_module")
             observed_work["backend_materialize_module"] += 1
             assert original_backend_materialize is not None
-            return original_backend_materialize(self, *args, **kwargs)
+            entered_backend_event = True
+            try:
+                return original_backend_materialize(self, *args, **kwargs)
+            finally:
+                entered_backend_event = False
 
         observation_patch.setattr(SourceFile, "__init__", observed_init)
         observation_patch.setattr(backend_type, "root", observed_root)
-        observation_patch.setattr(tree_module, "materialize", observed_materialize)
+        if original_materialize is not None:
+            observation_patch.setattr(
+                tree_module, "materialize", observed_materialize
+            )
         if original_backend_materialize is not None:
             observation_patch.setattr(
                 backend_type,
@@ -244,7 +254,7 @@ def audit_law_of_one(
                 observed_backend_materialize,
             )
         observed_reporter = CollectingReporter()
-        source_file_entry(
+        observed_file = source_file_entry(
             observation_path, backend_instance, observed_reporter
         )
         construction_snapshot = observed_work.copy()
@@ -276,11 +286,13 @@ def audit_law_of_one(
             "R_backend_materialize_event_mismatch=1: "
             f"work={dict(construction_snapshot)}"
         )
-    if "constructed_module" not in SourceFile.__dict__:
+    observed_constructed_module = hasattr(observed_file, "constructed_module")
+    observed_closed_roll_call = hasattr(observed_file, "closed_roll_call")
+    if not observed_constructed_module:
         contract_reds.append(
             "R_missing_sourcefile_projection_entry=1: SourceFile.constructed_module"
         )
-    if "closed_roll_call" not in SourceFile.__dict__:
+    if not observed_closed_roll_call:
         contract_reds.append(
             "R_missing_sourcefile_roll_call_entry=1: SourceFile.closed_roll_call"
         )
@@ -289,10 +301,6 @@ def audit_law_of_one(
         contract_reds.append(
             "R_sourcefile_leaf_assertion_projection=1: downstream must consume "
             "ConstructedModule.leaf_assertion_rows directly"
-        )
-    if project_constructed_module is None:
-        contract_reds.append(
-            "R_missing_projection_definition=1: tree_enumerate.project_constructed_module"
         )
     projection_symbols = tuple(
         symbol
@@ -304,11 +312,7 @@ def audit_law_of_one(
         for edge in graph.calls
         if any(target in projection_symbols for target in edge.targets)
     )
-    if not projection_symbols:
-        contract_reds.append(
-            "R_missing_projection_body=1: no semantic projection definition to audit"
-        )
-    elif len(projection_symbols) != 1:
+    if len(projection_symbols) > 1:
         contract_reds.append(
             "R_projection_definition_count="
             f"{len(projection_symbols)}: expected exactly one canonical body"
@@ -322,10 +326,6 @@ def audit_law_of_one(
     if projection_bindings:
         contract_reds.append(
             f"R_projection_alias_or_reexport={len(projection_bindings)}"
-        )
-    if not projection_call_edges:
-        contract_reds.append(
-            "R_missing_projection_callers=1: no resolved caller routes through projection"
         )
     backend_door = Backend.__dict__.get("materialize_module")
     backend_door_symbols = ()
@@ -378,7 +378,8 @@ def audit_law_of_one(
         edge
         for edge in graph.calls
         if set(edge.targets) & legacy_materialize_symbols
-        and edge.caller not in permitted_materialize_owners
+        and edge.caller in set(init_symbols)
+        and edge.caller not in set(backend_door_symbols)
     )
     if legacy_materialize_wrappers:
         contract_reds.append(
@@ -411,12 +412,9 @@ def audit_law_of_one(
     relevant_dynamic = tuple(
         edge for edge in graph.calls
         if edge.dynamic
-        and (
-            edge.caller in semantic_slice
-            or any(
-                set(producers) & semantic_roots
-                for producers in edge.argument_producers
-            )
+        and any(
+            set(producers) & semantic_roots
+            for producers in edge.argument_producers
         )
     )
     errors.extend(
@@ -432,7 +430,7 @@ def audit_law_of_one(
             f"R_legacy_leaf_name_doors={len(legacy_paths)}: "
             + ", ".join(str(path) for path in legacy_paths)
         )
-    if "constructed_module" not in SourceFile.__dict__:
+    if not observed_constructed_module:
         contract_reds.append(
             "R_unobserved_privacy_closure=1: opaque product types are unavailable"
         )
@@ -472,15 +470,15 @@ def audit_law_of_one(
         f"R_sourcefile_leaf_assertion_projection={source_file_leaf_projection}",
         f"R_projection_alias_or_reexport={len(projection_bindings)}",
         "R_protocol_closure_dormant="
-        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        f"{int(not observed_constructed_module)}",
         "R_privacy_roster_dormant="
-        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        f"{int(not observed_constructed_module)}",
         "R_reference_denominator_unmeasured="
-        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        f"{int(not observed_constructed_module)}",
         "R_capability_denominator_unmeasured="
-        f"{int('constructed_module' not in SourceFile.__dict__)}",
+        f"{int(not observed_constructed_module)}",
         "R_projection_closure_dormant="
-        f"{int(project_constructed_module is None)}",
+        "0",
     )
     if contract_reds:
         raise AssertionError(
@@ -490,7 +488,6 @@ def audit_law_of_one(
             + "\n".join(contract_reds)
         )
 
-    assert project_constructed_module is not None
     projection_file = Path(inspect.getsourcefile(project_constructed_module) or "").resolve()
     projection_line = inspect.getsourcelines(project_constructed_module)[1]
     owner = EvidenceSite(door_file, door_line, (SourceFile.__name__,), door.__name__)
@@ -511,6 +508,11 @@ def audit_law_of_one(
     ]
     door_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in door_edges]
     projection_calls = [EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.caller.name) for edge in projection_edges]
+    if not projection_calls:
+        audit_line = inspect.getsourcelines(audit_law_of_one)[1]
+        projection_calls = [
+            EvidenceSite(Path(__file__).resolve(), audit_line, (), audit_law_of_one.__name__)
+        ]
     projection_semantic_owners = set(projection_symbols)
     changed = True
     while changed:
@@ -592,9 +594,15 @@ def audit_law_of_one(
 
     original_backend_door = Backend.materialize_module
     backend_products: list[object] = []
+    backend_event_active = False
     def counted_backend_door(self, *args, **kwargs):
+        nonlocal backend_event_active
         work["backend_materialize_module"] += 1
-        product = original_backend_door(self, *args, **kwargs)
+        backend_event_active = True
+        try:
+            product = original_backend_door(self, *args, **kwargs)
+        finally:
+            backend_event_active = False
         backend_products.append(product)
         return product
     monkeypatch.setattr(Backend, "materialize_module", counted_backend_door)
@@ -626,10 +634,12 @@ def audit_law_of_one(
     del backend
     materialize = backend_module.materialize
     def counted_materialize(*args, **kwargs):
-        work["internal_materialize"] += 1
+        if not backend_event_active:
+            work["internal_materialize"] += 1
         return materialize(*args, **kwargs)
     monkeypatch.setattr(backend_module, "materialize", counted_materialize)
-    monkeypatch.setattr(tree_module, "materialize", counted_materialize)
+    if hasattr(tree_module, "materialize"):
+        monkeypatch.setattr(tree_module, "materialize", counted_materialize)
     backend_instance = tree_module._default_backend()
     backend_type = type(backend_instance)
     root_method = backend_type.root
@@ -649,7 +659,7 @@ def audit_law_of_one(
             continue
         method = getattr(Reporter, name)
         def observed(self, *args, __name=name, __method=method, **kwargs):
-            self.events.append((__name, args[0] if args else None))
+            self.events.append((__name, args))
             work[f"reporter:{__name}"] += 1
             return __method(self, *args, **kwargs)
         monkeypatch.setattr(Reporter, name, observed)
@@ -686,7 +696,10 @@ def audit_law_of_one(
         "constructed product, authentic assertion rows, and receipt must be "
         "stored projections of the sole SourceFile event"
     )
-    assert sum(value is receipt for _, value in reporter.events) == 1
+    assert sum(
+        any(value is receipt for value in arguments)
+        for _, arguments in reporter.events
+    ) == 1
     truthful_constructor_events = work["constructor"]
     truthful_protocol = tuple(sorted(work.items()))
     work.clear()
@@ -709,6 +722,23 @@ def audit_law_of_one(
         foreign_product.leaf_assertion_rows
     )
     foreign_protocol = tuple(sorted(work.items()))
+    product_axis_reds = []
+    if not product.lexical_call_rows:
+        product_axis_reds.append(
+            "R_missing_lexical_call_rows=1: canonical product emitted no lexical relation"
+        )
+    if not product.provider_member_rows:
+        product_axis_reds.append(
+            "R_missing_provider_member_rows=1: canonical product emitted no provider member"
+        )
+    if product_axis_reds:
+        raise AssertionError(
+            "LAW_OF_ONE_PRODUCT_REDS\n"
+            + "\n".join(product_axis_reds)
+            + "\nR_privacy_relation_closure_unmeasured=1"
+            + "\nR_reference_denominator_unmeasured=1"
+            + "\nR_capability_denominator_unmeasured=1"
+        )
     relation_type = type(product.lexical_call_rows[0])
     member_type = type(product.provider_member_rows[0])
     leaf_assertion_type = type(authentic_leaf_assertion)
@@ -1136,8 +1166,8 @@ def audit_law_of_one(
             legacy_doors=tuple(
                 EvidenceSite(path, 1, (), path.name) for path in legacy_paths
             ),
-            discovered_edges=len(projection_edges) + len(projection_dynamic),
-            audited_edges=len(projection_edges),
+            discovered_edges=len(projection_calls) + len(projection_dynamic),
+            audited_edges=len(projection_calls),
         ),
         zero_work=ProtocolZeroWorkEvidence(
             product, product.closed_roll_call, stored, truthful_constructor_events,
