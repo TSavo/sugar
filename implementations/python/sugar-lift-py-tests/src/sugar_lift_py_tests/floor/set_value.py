@@ -43,6 +43,24 @@ class SetValue(FloorValue):
             owner="SetValue.subscript",
         )
 
+    def setitem(self, index, value, site):
+        """Sets reject subscript store with exact TypeError."""
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="SetValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        """Sets reject subscript delete with exact TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="SetValue.delitem"
+        )
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
