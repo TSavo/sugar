@@ -571,6 +571,16 @@ def reduce_body(statements: tuple, ctx: object = None):
                 )
             )
         )
+    if (
+        len(exits.exits) == 1
+        and isinstance(exits.exits[0], Halted)
+        and exits.exits[0].guard == true_guard()
+        and exits.exits[0].state is not None
+    ):
+        # Incomplete has no temporal-state slot. Keep the authenticated halt
+        # face intact rather than laundering its pre-effect state through a
+        # representation that cannot carry it.
+        return exits
     collapsed = exits.collapse()
     if isinstance(collapsed, Incomplete):
         return collapsed
