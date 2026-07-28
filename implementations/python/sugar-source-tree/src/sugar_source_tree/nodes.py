@@ -8001,6 +8001,7 @@ class IfExp(Expression):
             body=self.body.sugar(),
             orelse=self.orelse.sugar(),
             site=self.fragment,
+            branch_slot=branch_result_slot(self.test),
         )
 
 
