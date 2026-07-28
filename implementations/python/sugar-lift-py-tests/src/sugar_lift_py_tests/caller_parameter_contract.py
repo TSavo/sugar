@@ -32,6 +32,8 @@ class NativeOperationResolutionV1:
         "value",
         "exception_type_coordinate",
         "raise_occurrence_coordinate",
+        "effect",
+        "pre_effect_state",
         "reason",
     )
 
@@ -42,6 +44,8 @@ class NativeOperationResolutionV1:
         value=None,
         exception_type_coordinate=None,
         raise_occurrence_coordinate=None,
+        effect=None,
+        pre_effect_state=None,
         reason=None,
     ):
         if kind not in {"completed", "exceptional", "undischarged"}:
@@ -67,6 +71,8 @@ class NativeOperationResolutionV1:
         self.value = value
         self.exception_type_coordinate = exception_type_coordinate
         self.raise_occurrence_coordinate = raise_occurrence_coordinate
+        self.effect = effect
+        self.pre_effect_state = pre_effect_state
         self.reason = reason
 
     @classmethod
@@ -74,11 +80,27 @@ class NativeOperationResolutionV1:
         return cls(kind="completed", value=value)
 
     @classmethod
-    def exceptional(cls, *, exception_type_coordinate, operation_occurrence):
+    def exceptional(
+        cls,
+        *,
+        exception_type_coordinate,
+        operation_occurrence,
+        effect=None,
+        pre_effect_state=None,
+    ):
+        if pre_effect_state is not None and not isinstance(
+            pre_effect_state, ReducerPreEffectStateV1
+        ):
+            raise TypeError(
+                "exceptional native operation requires reducer-issued "
+                "pre-effect-state testimony"
+            )
         return cls(
             kind="exceptional",
             exception_type_coordinate=exception_type_coordinate,
             raise_occurrence_coordinate=operation_occurrence,
+            effect=effect,
+            pre_effect_state=pre_effect_state,
         )
 
     @classmethod
@@ -125,12 +147,23 @@ class NativeOperationResolutionV1:
         if self.has_authenticated_exception_type:
             occurrence = self.raise_occurrence_coordinate
             assert occurrence is not None
-            return ExitSet.halted(
-                RaiseEffect(
+            testimony = self.pre_effect_state
+            effect = self.effect
+            if testimony is None:
+                effect = RaiseEffect(
                     exception_type_coordinate=self.exception_type_coordinate,
                     occurrence=str(occurrence.wire()),
                     blame=str(occurrence.wire()),
                 )
+            if not isinstance(effect, RaiseEffect):
+                raise TypeError("exceptional native operation effect must be RaiseEffect")
+            return ExitSet.halted(
+                effect,
+                state=(
+                    None
+                    if testimony is None
+                    else testimony.state
+                ),
             )
         raise SugarNotWritten(
             blame=str(source_node),
@@ -139,6 +172,43 @@ class NativeOperationResolutionV1:
             requested="authenticated exception type and operation occurrence coordinates",
             fix="retain the operation as undischarged until both coordinates are proven",
         )
+
+
+_REDUCER_PRE_EFFECT_STATE_SEAL = object()
+
+
+@dataclass(frozen=True)
+class ReducerPreEffectStateV1:
+    """Reducer-issued testimony for the exact state preceding one operation.
+
+    The constructor is sealed: callers cannot pass a raw empty block, receiver,
+    or post-store value and have it mistaken for temporal testimony.  The sole
+    mint is called by ``reduce_block_to_exitset`` at carrier enrollment.
+    """
+
+    state: object
+    _seal: object = dataclass_field(repr=False, compare=False)
+
+    def __post_init__(self):
+        if self._seal is not _REDUCER_PRE_EFFECT_STATE_SEAL:
+            raise TypeError(
+                "pre-effect state must be issued by reduce_block_to_exitset"
+            )
+
+    @classmethod
+    def _from_reducer(cls, state):
+        if state is None:
+            raise TypeError("reducer pre-effect state cannot be absent")
+        if (
+            type(state).__name__ != "_ReducedBlock"
+            or type(state).__module__
+            != "sugar_lift_py_tests.sugar.function_universe_sugar"
+        ):
+            raise TypeError(
+                "reducer pre-effect state must be the live _ReducedBlock, not "
+                f"{type(state).__name__}"
+            )
+        return cls(state=state, _seal=_REDUCER_PRE_EFFECT_STATE_SEAL)
 
 
 def authenticated_exceptional_resolution_count(resolutions) -> int:
@@ -404,6 +474,9 @@ def _conjoin_guards(guards):
     return and_(list(guards))
 
 
+_PRE_EFFECT_STATE_UNSET = object()
+
+
 @dataclass(frozen=True)
 class NativeOperationExitCarrierV1:
     """Deferred native operation whose discharge codomain is an ``ExitSet``.
@@ -425,6 +498,9 @@ class NativeOperationExitCarrierV1:
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
     guards: tuple = dataclass_field(default=(), repr=False)
+    pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self):
         operand_count = len(self.operands)
@@ -475,9 +551,36 @@ class NativeOperationExitCarrierV1:
             site=site,
         )
 
-    def and_then(self, step):
-        """Retain enclosing expression work until the operation discharges."""
-        return replace(self, continuations=(*self.continuations, step))
+    def and_then(self, step, *, pre_effect_state=_PRE_EFFECT_STATE_UNSET):
+        """Retain work and, at the reducer seam, the exact pre-effect state."""
+        testimony = self.pre_effect_state
+        if pre_effect_state is not _PRE_EFFECT_STATE_UNSET:
+            if not isinstance(pre_effect_state, ReducerPreEffectStateV1):
+                raise TypeError(
+                    "pre_effect_state must be reducer-issued testimony; raw "
+                    f"{type(pre_effect_state).__name__} is not admissible"
+                )
+            if testimony is not None and testimony.state is not pre_effect_state.state:
+                from sugar_lift_py_tests.gap.info import GapKind
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="NativeOperationExitCarrierV1.and_then",
+                    blame=self.demand.source_node,
+                    observed="a second conflicting reducer pre-effect state",
+                    requested="one reducer enrollment carrying one exact state",
+                    fix=(
+                        "enroll the carrier once at reduce_block_to_exitset; "
+                        "later expression continuations must omit pre_effect_state"
+                    ),
+                    gap_kind=GapKind.FLOOR,
+                )
+            testimony = pre_effect_state
+        return replace(
+            self,
+            continuations=(*self.continuations, step),
+            pre_effect_state=testimony,
+        )
 
     def guarded(self, guard, face=None):
         """Guard the deferred operation without discharging or losing its demand."""
@@ -543,6 +646,8 @@ class NativeOperationExitCarrierV1:
                 resolution = NativeOperationResolutionV1.exceptional(
                     exception_type_coordinate=effect.exception_type_coordinate,
                     operation_occurrence=self.demand.source_node,
+                    effect=effect,
+                    pre_effect_state=self.pre_effect_state,
                 )
             exits = resolution.project(source_node=self.demand.source_node)
         elif isinstance(projected, Complete):
