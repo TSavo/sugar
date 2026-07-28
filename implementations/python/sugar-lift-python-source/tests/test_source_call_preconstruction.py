@@ -143,8 +143,7 @@ def test_authenticated_nested_attribute_call_installs_recursive_source_frame(
         "import unprivileged.nested as nested\n\n"
         "def arbitrary_helper(value=17):\n"
         "    return nested.project(value)\n",
-        "def project(value):\n"
-        "    return value\n",
+        "def project(value):\n" "    return value\n",
     )
     path, source_file, context = _consumer(
         tmp_path,
@@ -219,36 +218,109 @@ def test_runtime_receiver_attribute_call_remains_dynamic_and_loud(
     assert "blame=project observed=missing callsite body" in str(raised.value)
 
 
-def test_source_visible_function_with_opaque_child_stays_typed_loud(
+def test_frame_exists_does_not_imply_body_semantically_completed(
     tmp_path: Path,
 ) -> None:
+    """Frame installation and body completion are distinct laws.
+
+    Truthful twin (complete return body): authenticated outer installs a ref
+    AND force_floor completes the body to a BlockValue return.
+
+    Lying twin (incomplete child floor): the same outer still installs a ref
+    and frame — ``len`` is a real builtin call, not an opaque fabricated child
+    — but reducing the body stays typed-loud via ConstructionPanic. A frame
+    must never be read as evidence the body completed.
+    """
+    # --- Truthful: frame exists AND body completes ---
+    complete_root = tmp_path / "complete"
+    complete_root.mkdir()
+    complete_dist = _distribution(
+        complete_root,
+        "def arbitrary_helper(value):\n" "    return value\n",
+    )
+    complete_path, complete_file, complete_ctx = _consumer(
+        complete_root,
+        "from unprivileged import arbitrary_helper as renamed\nrenamed(17)\n",
+    )
+    complete_call = next(
+        node for node in complete_file.nodes() if isinstance(node, Call)
+    )
+    populate_source_visible_call_frames(
+        complete_file,
+        root=complete_root,
+        path=complete_path,
+        distribution_index={"unprivileged": complete_dist},
+    )
+    complete_coord = _coordinate(complete_call)
+    complete_row = complete_ctx.source_call_resolutions[complete_coord]
+    assert isinstance(complete_row, SourceCallPreconstructionRefV1)
+    assert complete_coord in complete_ctx.source_call_frames
+    complete_value = complete_call.sugar().desugar().value
+    assert isinstance(complete_value, CallSiteValue)
+    completed = complete_value.force_floor(
+        None, owner="truthful complete body", project_callsite=False
+    )
+    assert isinstance(completed, BlockValue)
+    assert completed.statements == (ReturnValue(TermValue(17)),)
+
+    # --- Lying: frame exists, body does NOT complete ---
+    incomplete_root = tmp_path / "incomplete"
+    incomplete_root.mkdir()
+    incomplete_dist = _distribution(
+        incomplete_root,
+        "def arbitrary_helper(value):\n" "    return len(value)\n",
+    )
+    incomplete_path, incomplete_file, incomplete_ctx = _consumer(
+        incomplete_root,
+        "from unprivileged import arbitrary_helper as renamed\nrenamed(17)\n",
+    )
+    incomplete_call = next(
+        node for node in incomplete_file.nodes() if isinstance(node, Call)
+    )
+    populate_source_visible_call_frames(
+        incomplete_file,
+        root=incomplete_root,
+        path=incomplete_path,
+        distribution_index={"unprivileged": incomplete_dist},
+    )
+    incomplete_coord = _coordinate(incomplete_call)
+    incomplete_row = incomplete_ctx.source_call_resolutions[incomplete_coord]
+    # Outer function is source-visible: preconstruction installs a frame.
+    assert isinstance(incomplete_row, SourceCallPreconstructionRefV1)
+    assert incomplete_coord in incomplete_ctx.source_call_frames
+    # Body reduction is incomplete (TermValue has no length floor). Typed-loud
+    # ConstructionPanic — never a fabricated opaque-child completion.
+    with pytest.raises(ConstructionPanic, match="length|Floor"):
+        incomplete_call.sugar().desugar()
+
+
+def test_absent_child_export_is_loud_without_fabricated_child_result(
+    tmp_path: Path,
+) -> None:
+    """Truly absent child export: outer frame may exist; child stays typed-loud.
+
+    Distinguishes preconstruction frame presence from fabricating a green
+    opaque child result for a name with no defining source.
+    """
     distribution = _distribution(
         tmp_path,
-        "def arbitrary_helper(value):\n" "    return len(value)\n",
+        "def arbitrary_helper(value):\n" "    return not_a_real_export(value)\n",
     )
     path, source_file, context = _consumer(
         tmp_path,
-        "from unprivileged import arbitrary_helper as renamed\n" "renamed(17)\n",
+        "from unprivileged import arbitrary_helper as renamed\nrenamed(17)\n",
     )
     call = next(node for node in source_file.nodes() if isinstance(node, Call))
-
     populate_source_visible_call_frames(
         source_file,
         root=tmp_path,
         path=path,
         distribution_index={"unprivileged": distribution},
     )
-
     coordinate = _coordinate(call)
     row = context.source_call_resolutions[coordinate]
-    assert isinstance(row, SourceCallPreconstructionGapV1)
-    # INHERITED RED on origin/main (78714a798): `len` is bound in the builtin
-    # temporal, so this fixture no longer has an opaque child and the row is a
-    # constructed ref.  The kind is renamed to the vocabulary that exists; the
-    # fixture is a separate defect and stays loud rather than being trimmed to
-    # fit.
-    assert row.kind == "call-target-source-absent"
-    assert coordinate not in context.source_call_frames
+    assert isinstance(row, SourceCallPreconstructionRefV1)
+    assert coordinate in context.source_call_frames
     with pytest.raises(SugarNotWritten, match="call-target-source-absent"):
         call.sugar().desugar()
 
@@ -304,7 +376,20 @@ def test_invalid_source_call_signature_is_typed_loud(tmp_path: Path) -> None:
         call.sugar().desugar()
 
 
-def test_unwritten_source_body_is_a_typed_call_gap(tmp_path: Path) -> None:
+def test_generator_frame_exists_is_not_ordinary_body_completion(
+    tmp_path: Path,
+) -> None:
+    """Generator source is written: frame exists; completion is not BlockValue.
+
+    Truthful twin: a yield body installs a source frame with generator_steps
+    and desugars to GeneratorConstructionV1 (allocated suspended machine).
+
+    Lying twin: the same site must not be classified as source-body-gap (the
+    body is written) and must not project as an ordinary completed BlockValue
+    return — frame existence is not ordinary body semantic completion.
+    """
+    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
+
     distribution = _distribution(
         tmp_path,
         "def arbitrary_helper(value):\n" "    yield value\n",
@@ -323,11 +408,23 @@ def test_unwritten_source_body_is_a_typed_call_gap(tmp_path: Path) -> None:
     coordinate = _coordinate(call)
 
     row = context.source_call_resolutions[coordinate]
-    assert isinstance(row, SourceCallPreconstructionGapV1)
-    assert row.kind == "source-body-gap"
-    assert coordinate not in context.source_call_frames
-    with pytest.raises(SugarNotWritten, match="source-body-gap"):
-        call.sugar().desugar()
+    # Truthful: frame exists; generator_steps authenticate suspension.
+    assert isinstance(row, SourceCallPreconstructionRefV1)
+    assert coordinate in context.source_call_frames
+    frame = context.source_call_frames[coordinate]
+    assert frame.generator_steps is not None
+    assert len(frame.generator_steps) >= 1
+
+    outcome = call.sugar().desugar()
+    assert isinstance(outcome.value, GeneratorConstructionV1)
+    machine = outcome.value
+    assert machine.steps  # suspended machine, not ordinary BlockValue return
+
+    # Lying: not source-body-gap (body is written as a generator).
+    assert not isinstance(row, SourceCallPreconstructionGapV1)
+    # Lying: not ordinary body semantic completion.
+    assert not isinstance(outcome.value, BlockValue)
+    assert not isinstance(outcome.value, CallSiteValue)
 
 
 def test_distribution_without_authenticated_manifest_stays_typed_loud(
