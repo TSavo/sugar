@@ -40,8 +40,6 @@ class CallSiteSugar(Sugar):
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
-    formal_function_sugar: Any = dataclass_field(default=None, compare=False)
-    formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -214,25 +212,6 @@ class CallSiteSugar(Sugar):
                 else ()
             ),
         )
-        if self.formal_function_sugar is not None:
-            if len(self.formal_coordinate_cids) != len(positional):
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed="formal projection arity mismatch",
-                    requested="one authenticated caller actual per formal coordinate",
-                    fix="bind the exact source signature or keep the call loud",
-                )
-            pending = self.formal_function_sugar.desugar(ctx)
-            from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-
-            if isinstance(pending, NativeOperationExitCarrierV1):
-                pending = pending.discharge(
-                    dict(zip(self.formal_coordinate_cids, positional, strict=True))
-                )
-            return callsite.project_producer_outcome(pending)
         return callsite.producer_outcome(ctx)
 
     def _collect_bridged(self, positional: tuple) -> Outcome:

@@ -270,53 +270,6 @@ def reduce_block_to_exitset(
             outcome = head.desugar(statement_ctx)
             from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
-            def project(value):
-                if isinstance(value, _ReducedBlock):
-                    contribution = value.entries
-                    continues = value.can_fall_through
-                    nested_fall_through = value.fall_through
-                    nested_transforms = value.transforms
-                    next_context = (
-                        value.context if value.context is not None else active_ctx
-                    )
-                else:
-                    linear = Complete(value)
-                    contribution = linear.contribution()
-                    continues = linear.follow().continues
-                    nested_fall_through = ()
-                    nested_transforms = ()
-                    next_context = _extend_receiver_store_scope(
-                        linear.value, active_ctx
-                    )
-                for transform in reversed(state.transforms):
-                    contribution = transform(contribution)
-                entries = (*state.entries, *contribution)
-                if not continues:
-                    return ExitSet.completed(
-                        _ReducedBlock(entries, False, (), context=next_context)
-                    )
-                return ExitSet.completed(
-                    _ReducedBlock(
-                        entries,
-                        True,
-                        (*state.fall_through, *nested_fall_through),
-                        (*state.transforms, *nested_transforms),
-                        next_context,
-                    )
-                )
-
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                # A formal native operation is neither a completion nor a halt
-                # until an authenticated caller supplies its actual operands.
-                # Retain the ordinary statement projection as a continuation;
-                # discharge will feed its Completed face through this exact
-                # block seam, while its Halted face bypasses the tail.
-                return outcome.and_then(project)
-
             if (
                 isinstance(outcome, Complete)
                 and isinstance(outcome.value, GuardedFaces)
@@ -381,6 +334,50 @@ def reduce_block_to_exitset(
                         else and_(list(state.fall_through))
                     )
                     outcome = outcome.guarded(continuation)
+
+                def project(value):
+                    if isinstance(value, _ReducedBlock):
+                        # A nested block statement (a `with` whose body is
+                        # itself a routed `with` — the mixed multi-manager
+                        # site) hands back its OWN reduced block as the
+                        # completed value, not a floor value. There is no
+                        # linear `Complete` view to interrogate: the block's
+                        # contribution IS its entries and its continuation IS
+                        # its `can_fall_through`. Asking `Complete(value)` for
+                        # a contribution here is what raised a bare
+                        # AttributeError instead of routing the inner block.
+                        contribution = value.entries
+                        continues = value.can_fall_through
+                        nested_fall_through = value.fall_through
+                        nested_transforms = value.transforms
+                        next_context = (
+                            value.context if value.context is not None else active_ctx
+                        )
+                    else:
+                        linear = Complete(value)
+                        contribution = linear.contribution()
+                        continues = linear.follow().continues
+                        nested_fall_through = ()
+                        nested_transforms = ()
+                        next_context = _extend_receiver_store_scope(
+                            linear.value, active_ctx
+                        )
+                    for transform in reversed(state.transforms):
+                        contribution = transform(contribution)
+                    entries = (*state.entries, *contribution)
+                    if not continues:
+                        return ExitSet.completed(
+                            _ReducedBlock(entries, False, (), context=next_context)
+                        )
+                    return ExitSet.completed(
+                        _ReducedBlock(
+                            entries,
+                            True,
+                            (*state.fall_through, *nested_fall_through),
+                            (*state.transforms, *nested_transforms),
+                            next_context,
+                        )
+                    )
 
                 # A statement that reduces to its OWN ExitSet (a nested block:
                 # try/with, or an unpack assignment whose store leaves are
@@ -484,38 +481,12 @@ def reduce_block_to_exitset(
                 _ReducedBlock(entries, True, fall_through, transforms, next_context)
             )
 
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        if isinstance(exits, NativeOperationExitCarrierV1):
-            exits = exits.and_then(reduce_next)
-        elif (
-            len(exits.exits) == 1
-            and isinstance(exits.exits[0], Completed)
-            and exits.exits[0].guard == true_guard()
-            and not exits.exits[0].faces
-            and not exits.exits[0].pending_contracts
-        ):
-            # The straight-line singleton is the only ExitSet face that can
-            # become a deferred native-operation carrier without needing a
-            # guarded carrier algebra. Preserve it directly. Branching paths
-            # continue through ExitSet.sequence and remain loud if they try to
-            # smuggle an undischarged carrier through a guard.
-            exits = reduce_next(exits.exits[0].value)
-        else:
-            exits = exits.sequence(reduce_next)
+        exits = exits.sequence(reduce_next)
 
     # The block boundary is where an obligation stops being in flight, so it is
     # the one door that consumes the carriers. Doing it here rather than per
     # statement keeps a single owner and lets `sequence` compose obligations
     # across statements first.
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(exits, NativeOperationExitCarrierV1):
-        return exits
     return _enrol_exit_obligations(exits)
 
 
@@ -543,20 +514,6 @@ def reduce_body(statements: tuple, ctx: object = None):
     (calls, unsupported statements) that will.
     """
     exits = reduce_block_to_exitset(statements, ctx)
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(exits, NativeOperationExitCarrierV1):
-        return exits.and_then(
-            lambda state: Complete(
-                BlockValue(
-                    state.entries,
-                    fall_through=state.fall_through,
-                    can_fall_through=state.can_fall_through,
-                )
-            )
-        )
     collapsed = exits.collapse()
     if isinstance(collapsed, Incomplete):
         return collapsed
