@@ -233,14 +233,29 @@ def test_dual_subscript_display_unpack_constructs_distinct_pairings(
 
 
 def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> None:
-    """Face (a) undecided path: no fabricated completion for formal setitem."""
+    """Face (a) formal path: setitem carrier is undischarged, never Completed.
+
+    Formal receivers mint ``NativeOperationExitCarrierV1`` (operator
+    ``setitem``) awaiting caller actuals.  That is the honest undischarged
+    resolution — not a fabricated completion, and not a ``SugarNotWritten``
+    panic (the panic is reserved for undecided non-formal receivers).
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
     sugar = _function_sugar(
         tmp_path,
         "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n",
         "formal",
     )
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
-        sugar.desugar(None)
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "setitem"
+    assert not isinstance(outcome, Complete)
+    # Missing actuals stay undischarged.
+    with pytest.raises(SugarNotWritten, match="caller actual absent"):
+        outcome.discharge({})
 
 
 # ---------------------------------------------------------------------------
@@ -389,20 +404,24 @@ def test_lying_completed_when_later_target_halted_is_not_the_law(
 def test_lying_completed_face_for_undecided_receiver_is_not_the_law(
     tmp_path: Path,
 ) -> None:
-    """Lying twin 2: emit completed when receiver arity/type is undecided."""
+    """Lying twin 2: emit completed when formal store is still undischarged."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
     sugar = _function_sugar(
         tmp_path,
         "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n",
         "lie_undecided",
     )
-    # Truthful path is loud undischarged.
-    with pytest.raises(SugarNotWritten):
-        sugar.desugar(None)
+    # Truthful path: undischarged setitem carrier (not Completed).
+    outcome = sugar.desugar(None)
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "setitem"
     # A lying implementation would return Complete(...). Discriminate: that is
     # not what construction desugars to today, and must not be asserted green.
     with pytest.raises(AssertionError):
-        outcome = Complete(TermValue(0))
-        assert isinstance(outcome, Incomplete)  # wrong on purpose for the tooth
+        assert isinstance(outcome, Complete)
 
 
 def test_lying_boundary_exception_type_is_not_store_origin(tmp_path: Path) -> None:

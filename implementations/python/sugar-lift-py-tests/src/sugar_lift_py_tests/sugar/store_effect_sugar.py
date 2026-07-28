@@ -142,11 +142,24 @@ class AttributeStoreEffectSugar(Sugar):
 
 @dataclass(frozen=True)
 class SubscriptStoreEffectSugar(Sugar):
-    """`receiver[index] = value`, evaluated and dispatched as ``__setitem__``.
+    """`receiver[index] = value` — evaluate once, then project the store face.
 
-    Ground receivers project their native completed or exceptional store face.
-    A runtime-selected receiver stays loud until the n-ary native-operation
-    carrier can preserve receiver, key, value, and the original occurrence.
+    Python order: RHS first, then the receiver, then the index, each exactly
+    once.  Dispatch is ``__setitem__`` via Floor ``setitem`` — a different
+    method and obligation from the load path ``subscript`` / ``__getitem__``.
+
+    Projection arms:
+
+    1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
+       ``setitem`` with operands and coordinates in *discharge* order
+       ``(receiver, index, value)``.  The n-ary projector calls
+       ``receiver.setitem(index, value, site)``.  Helper alone stays
+       undischarged; an ordinary source caller supplies actuals.
+    2. **Decided runtime type** → ``receiver.setitem(index, value, site)``
+       projecting ``Completed`` or ``RaiseValue`` exceptional faces through
+       the store path (never the load path).
+    3. **Undecided non-formal** → loud ``SugarNotWritten`` until the
+       three-operand formal carrier is attachable.
     """
 
     receiver: Sugar
@@ -157,8 +170,9 @@ class SubscriptStoreEffectSugar(Sugar):
     @classmethod
     def witnesses(cls):
         # The source-visible completed/exceptional and loud-refusal laws are
-        # discrimination tests in test_subscript_store_desugar.py. The former
-        # typed-runtime-effect witness asserted the superseded generic effect.
+        # discrimination tests in test_subscript_store_desugar.py /
+        # test_setitem_formal_caller.py. The former typed-runtime-effect
+        # witness asserted the superseded generic effect.
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -184,15 +198,12 @@ class SubscriptStoreEffectSugar(Sugar):
             for operand in (receiver, index, value)
         )
         if any(coordinate is not None for coordinate in coordinates):
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
+            # Undischarged demand awaiting caller actuals — not a refusal.
+            return self.mint_setitem_carrier(
                 site=self.site,
-                operator="setitem",
-                operands=(receiver, index, value),
-                coordinates=coordinates,
+                receiver=receiver,
+                index=index,
+                value=value,
             )
         if not receiver.runtime_type_is_decided():
             from sugar_source_tree.panic import SugarNotWritten
@@ -214,6 +225,36 @@ class SubscriptStoreEffectSugar(Sugar):
         if isinstance(projected, Complete) and isinstance(projected.value, RaiseValue):
             return Incomplete(projected.value.effect)
         return projected
+
+    @staticmethod
+    def mint_setitem_carrier(*, site, receiver, index, value):
+        """Producer-side contract for n-ary ``setitem`` discharge.
+
+        Operand order matches the projector table (#6614):
+        ``receiver.setitem(index, value, site)``.  This is *discharge* order
+        (receiver, index, value) — not source evaluation order (value,
+        receiver, index).  Coordinates are exactly one slot per ordered
+        operand; lengths and order are load-bearing (#6613 ``__post_init__``).
+        """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        coordinates = tuple(
+            getattr(operand, "formal_coordinate", None)
+            for operand in (receiver, index, value)
+        )
+        if not any(coordinate is not None for coordinate in coordinates):
+            raise ValueError(
+                "setitem carrier requires at least one formal_coordinate among "
+                "receiver, index, and value"
+            )
+        return NativeOperationExitCarrierV1.mint(
+            site=site,
+            operator="setitem",
+            operands=(receiver, index, value),
+            coordinates=coordinates,
+        )
 
 
 @dataclass(frozen=True)

@@ -5525,14 +5525,31 @@ class With(Statement):
                 enter_slot = (
                     f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
+                enter_definition, exit_definition = (
+                    self._require_native_resource_definitions(resolved_ref)
+                )
+                from dataclasses import replace
+
+                enter_sugar = replace(
+                    item._make_enter_call().sugar(),
+                    native_definition_coordinate=enter_definition,
+                )
+                exit_sugar = replace(
+                    item._make_parametric_exit_call().sugar(),
+                    native_definition_coordinate=exit_definition,
+                )
                 return WithSourceResourceSugar(
                     manager=item.context_expr.sugar(),
+                    enter=enter_sugar,
+                    exit=exit_sugar,
                     protocol=resolved_ref.protocol,
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),
                     manager_slot_id=manager_slot,
                     enter_slot_id=enter_slot,
                     exit_face_id=item._exit_face_id(),
+                    enter_definition=enter_definition,
+                    exit_definition=exit_definition,
                     site=self.fragment,
                 )
 
