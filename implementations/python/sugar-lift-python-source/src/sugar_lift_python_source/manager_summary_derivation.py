@@ -842,13 +842,16 @@ def _projected_manager_call_uses(source_file):
     # Preserve the original direct-call route exactly.
     collect(source_file.root, projected_names=False)
 
-    # Project only frames that actually contain the new bare-Name shape.  A
-    # module-wide substitution would enter unrelated functions and demand
-    # contracts for sites outside this population pass.
+    # Project frames that contain a bare-Name manager — single-item
+    # ``with m:`` and multi-item ``with m, n:`` alike.  The multi-item
+    # shape was the first enrolled reproducer (#6489); a returned resource
+    # assigned once and consumed as a single Name is the same projection,
+    # not a second binding mechanism.  Module-wide substitution is still
+    # avoided: only functions that actually write a bare-Name manager are
+    # projected, so unrelated frames do not demand contracts.
     for function in source_file.functions():
         if not any(
             isinstance(node, With)
-            and len(node.items) > 1
             and any(item.context_expr.kind == "Name" for item in node.items)
             for node in function.walk()
         ):

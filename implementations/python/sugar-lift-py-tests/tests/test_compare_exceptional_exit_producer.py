@@ -44,6 +44,12 @@ COL_SOURCE_CID = (
 )
 NUMERIC_SITE_SHA256 = "ad382bdf9178c34fffa4762b4014a8ef64d02e548433adaa8aba414398d6e5d8"
 COMMON_SITE_SHA256 = "442441f4ea11ec95e361c54ddf5c599a49769928970af3daee3b9a482dce7754"
+CATEGORICAL_EQ_SITE_SHA256 = (
+    "b831a0a2339aaa702fc962a23f23b53e7f1eb08b45c6a93abddb42ee7e76690d"
+)
+MULTI_EQ_SITE_SHA256 = (
+    "45fafbc8cd4dcc9bfcabd8f807e44e15377d729cfd7cf517c2b7ff72560aa343"
+)
 
 
 @dataclass(frozen=True)
@@ -251,13 +257,47 @@ def test_undecided_symbolic_operands_refuse_invented_ordering(
     assert "TypeError" not in str(info)
 
 
-def test_symbolic_equality_remains_solver_owned() -> None:
-    """Equality stays a total ``py.eq`` coordinate for symbolic/ground pairs."""
+def test_undecided_symbolic_equality_refuses_invented_py_eq() -> None:
+    """``left == right`` cannot invent ``py.eq`` when both operand types are undecided.
+
+    Misaligned pandas Index/Series/DataFrame/Categorical equality raises
+    ValueError/TypeError at runtime. Emitting a total solver coordinate
+    invents completion under ``pytest.raises``; inventing the exception
+    invents an identity. Both stay refused until types are source-decided.
+    """
+    left = _ValueSugar(SymbolicValue(make_var("left")))
+    right = _ValueSugar(SymbolicValue(make_var("right")))
+    with pytest.raises(ConstructionPanic) as raised:
+        EqualityOpSugar(left, right, "compare-site").desugar(None)
+
+    info = raised.value.info
+    assert info.owner == "comparison_operation_exception_floor"
+    assert info.observed == "SymbolicValue == SymbolicValue"
+    assert "authenticated exceptional exit" in info.requested
+    assert "TypeError" not in str(info)
+    assert "ValueError" not in str(info)
+
+
+def test_symbolic_equality_with_ground_remains_solver_owned() -> None:
+    """Symbolic/ground equality stays a total ``py.eq`` coordinate."""
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
     outcome = EqualityOpSugar(
         _ValueSugar(SymbolicValue(make_var("left"))),
         _ValueSugar(TermValue(1)),
+        "compare-site",
+    ).desugar(None)
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, PredicateValue)
+
+
+def test_ground_decided_equality_still_completes() -> None:
+    """Lying twin: two decided ground scalars are not an undecided third value."""
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+    outcome = EqualityOpSugar(
+        _ValueSugar(TermValue(1)),
+        _ValueSugar(TermValue(2)),
         "compare-site",
     ).desugar(None)
     assert isinstance(outcome, Complete)
@@ -291,6 +331,43 @@ def test_ground_decided_membership_still_completes() -> None:
     ).desugar(None)
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, TrueBoolLiteralSugar)
+
+
+def test_pandas_categorical_equality_stays_source_undecided() -> None:
+    """``c1 == c2`` under TypeError: both Categorical types are source-undecided.
+
+    Site: ``pandas/tests/arrays/categorical/test_operators.py:335``. Emitting
+    ``py.eq`` invented the residual silent Complete; refuse without minting
+    TypeError.
+    """
+    path = _corpus_root() / "tests/arrays/categorical/test_operators.py"
+    source = path.read_text(encoding="utf-8")
+    assert hashlib.sha256(source.encode()).hexdigest() == CATEGORICAL_EQ_SITE_SHA256
+    assert source.count("c1 == c2") >= 1
+
+    from pandas import Categorical
+
+    c1 = Categorical(["a", "b"], categories=["a", "b"], ordered=False)
+    c2 = Categorical(["a", "c"], categories=["c", "a"], ordered=False)
+    with pytest.raises(TypeError, match="Categoricals can only be compared"):
+        c1 == c2  # noqa: B015
+
+    _assert_named_compare_panic(
+        _compare_at(path, source, line=335),
+        observed="SymbolicValue == SymbolicValue",
+    )
+
+
+def test_pandas_index_length_equality_stays_source_undecided() -> None:
+    """``index_a == index_b`` under ValueError: length mismatch is not ``py.eq``."""
+    path = _corpus_root() / "tests/indexes/multi/test_equivalence.py"
+    source = path.read_text(encoding="utf-8")
+    assert hashlib.sha256(source.encode()).hexdigest() == MULTI_EQ_SITE_SHA256
+
+    _assert_named_compare_panic(
+        _compare_at(path, source, line=43),
+        observed="SymbolicValue == SymbolicValue",
+    )
 
 
 def test_pandas_series_string_ordering_stays_source_undecided() -> None:
