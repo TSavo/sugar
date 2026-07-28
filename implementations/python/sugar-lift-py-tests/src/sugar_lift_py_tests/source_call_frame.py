@@ -214,7 +214,7 @@ class SourceVisibleCallFrameV1:
             BindingEntryV1(
                 coordinate,
                 node,
-                BoundBindingStateV1(testimony),
+                BoundBindingStateV1(testimony) if testimony is not None else None,
             )
             for coordinate, node, testimony in zip(
                 self.formal_coordinates, bound, supplied_testimonies, strict=True

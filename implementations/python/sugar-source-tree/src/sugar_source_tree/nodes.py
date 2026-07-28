@@ -3275,10 +3275,7 @@ class ClassDef(Statement):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
         )
-        from sugar_source_tree.binding_provenance import (
-            BindingCoordinateV1,
-            BoundBindingStateV1,
-        )
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
         from sugar_source_tree.binding_state import BindingEntryV1
 
         initializer = next(
@@ -3302,7 +3299,7 @@ class ClassDef(Statement):
             receiver_coordinate_cid = coordinate.cid
             initializer_scope = {
                 receiver_param.name: BindingEntryV1(
-                    coordinate, receiver, BoundBindingStateV1(None)
+                    coordinate, receiver, None  # unsealed; seal when testified
                 ),
                 **scope,
             }

@@ -160,6 +160,10 @@ class BindingEntryV1:
     def with_testimony(
         self, testimony: ConstructedValueTestimonyV1
     ) -> "BindingEntryV1":
+        if testimony is None:
+            raise BindingStateWireGap("constructed-value testimony unavailable")
+        # Re-authenticate: a stale or fabricated CID cannot seal.
+        ConstructedValueTestimonyV1.decode(testimony.wire())
         return replace(self, sealed_state=BoundBindingStateV1(testimony))
 
     def require_constructed_value_testimony(self) -> ConstructedValueTestimonyV1:
@@ -180,11 +184,7 @@ class BindingEntryV1:
             raise BindingStateWireGap(
                 "runtime binding state has no authenticated sealed projection"
             )
-        if (
-            isinstance(self.sealed_state, BoundBindingStateV1)
-            and self.sealed_state.testimony is None
-        ):
-            raise RuntimeBindingEntryGap("constructed-value testimony unavailable")
+        # BoundBindingStateV1 requires testimony at construction; no delayed gap.
         return SealedBindingEntryV1.decode(
             SealedBindingEntryV1(self.coordinate, self.sealed_state).wire()
         ).wire()
@@ -553,11 +553,13 @@ class _ResolvedSourceFragment:
         return _Memento(self._source)
 
 
-def _initial_sealed_state(state: BindingState) -> SealedBindingStateV1:
+def _initial_sealed_state(state: BindingState) -> SealedBindingStateV1 | None:
     from sugar_source_tree.nodes import Node
 
     if isinstance(state, Node):
-        return BoundBindingStateV1(None)
+        # Unsealed bound value: optionality lives on the carrier (None), never
+        # as BoundBindingStateV1 without testimony.
+        return None
     if isinstance(state, UnboundBinding):
         return UnboundBindingStateV1(state.cause.seal().cid)
     if isinstance(state, GuardedBinding):
@@ -565,6 +567,115 @@ def _initial_sealed_state(state: BindingState) -> SealedBindingStateV1:
     if isinstance(state, LoopProjectedBinding):
         return None
     raise BindingStateWireGap(f"unknown runtime binding state {type(state).__name__}")
+
+
+def _semantic_value_cid_for_bound_node(node: "Node") -> str:
+    """Content CID of one bound Node's actual value.
+
+    Prefers an already-authenticated construction testimony on the node, then
+    the closed constructed-value envelope of its sugar, then the node shape
+    CID. Genuinely unavailable content refuses loud.
+    """
+    construction = getattr(node, "construction_testimony", None)
+    if construction is not None:
+        semantic = getattr(construction, "semantic_value_cid", None)
+        if isinstance(semantic, str) and semantic.startswith("blake3-512:"):
+            return semantic
+        cid = getattr(construction, "cid", None)
+        if isinstance(cid, str) and cid.startswith("blake3-512:"):
+            # construction_testimony may itself be ConstructedValueTestimonyV1.
+            return construction.semantic_value_cid
+    try:
+        constructed = node.sugar()
+        return cid_of_json(_constructed_preimage(constructed))
+    except BindingStateWireGap:
+        raise
+    except Exception as cause:  # noqa: BLE001 -- map any construction miss to seal gap
+        try:
+            return node_construction_shape_cid(node)
+        except (TypeError, ValueError) as shape_cause:
+            raise BindingStateWireGap(
+                "constructed-value testimony unavailable: "
+                f"{type(cause).__name__}: {cause}; "
+                f"shape: {type(shape_cause).__name__}: {shape_cause}"
+            ) from cause
+
+
+def seal_bound_binding_entry_v1(
+    entry: BindingEntryV1,
+    *,
+    testimony: ConstructedValueTestimonyV1 | None = None,
+    semantic_value_cid: str | None = None,
+) -> BindingEntryV1:
+    """Seal one bound runtime entry with mandatory ConstructedValueTestimonyV1.
+
+    Producer door for generator (and other) bound entries that must wire
+    without a delayed :class:`BindingStateWireGap`. Testimony is derived from
+    the bound Node's source fragment and actual value content, or accepted only
+    when it re-authenticates against that content.
+
+    Returns a successfully sealed entry whose :meth:`BindingEntryV1.wire`
+    succeeds. Unavailable testimony or value/testimony mismatch refuse here.
+    """
+    from sugar_source_tree.nodes import Node
+
+    if not isinstance(entry.state, Node):
+        raise BindingStateWireGap(
+            "binding state is not a constructed bound value; "
+            "only constructed Node bound entries seal with constructed-value testimony"
+        )
+    if cid_of_json(entry.coordinate.preimage) != entry.coordinate.cid:
+        raise BindingStateWireGap("binding coordinate CID mismatch")
+
+    derived_semantic = (
+        semantic_value_cid
+        if semantic_value_cid is not None
+        else _semantic_value_cid_for_bound_node(entry.state)
+    )
+    _require_runtime_cid(derived_semantic, "semanticValueCid")
+    derived = mint_constructed_value_testimony_v1(
+        source_fragment=entry.state.fragment,
+        semantic_value_cid=derived_semantic,
+    )
+
+    if testimony is None:
+        sealed_testimony = derived
+    else:
+        ConstructedValueTestimonyV1.decode(testimony.wire())
+        if testimony.cid != derived.cid:
+            raise BindingStateWireGap(
+                "constructed-value testimony does not match bound value content"
+            )
+        sealed_testimony = testimony
+
+    existing = entry.constructed_value_testimony
+    if existing is not None and existing.cid != sealed_testimony.cid:
+        raise BindingStateWireGap(
+            "constructed-value testimony does not match bound value content"
+        )
+
+    sealed = entry.with_testimony(sealed_testimony)
+    # Prove the seal: a successfully sealed state never delays wire refusal.
+    sealed.wire()
+    return sealed
+
+
+def seal_generator_binding_state_v1(
+    binding_state: tuple[object, ...],
+) -> tuple[object, ...]:
+    """Seal every bound BindingEntryV1 in a generator binding-state tuple.
+
+    Non-entry items (resume bindings, primitive test stubs) pass through.
+    Each bound entry exits with mandatory ConstructedValueTestimonyV1, or the
+    producer gaps loud before the generator instance is allocated.
+    """
+    sealed: list[object] = []
+    for item in binding_state:
+        if isinstance(item, BindingEntryV1):
+            sealed.append(seal_bound_binding_entry_v1(item))
+        else:
+            sealed.append(item)
+    return tuple(sealed)
 
 
 def node_construction_shape_cid(node: Node) -> str:
