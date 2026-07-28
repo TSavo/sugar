@@ -103,6 +103,24 @@ class NoneValue(FloorValue):
             exception_name="TypeError", site=site, owner="ground_type_error"
         )
 
+    def setitem(self, index, value, site):
+        """``None[index] = value`` is an exact ground TypeError."""
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="NoneValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        """``del None[index]`` is an exact ground TypeError."""
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="NoneValue.delitem"
+        )
+
     def less_than(self, other, site):
         # None orders against nothing: any ground comparison is authenticated
         # TypeError. Symbolic falls to super() emit.
