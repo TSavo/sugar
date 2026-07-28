@@ -49,9 +49,11 @@ _RENAMED_TWIN = (
 )
 
 
-def _function(source: str) -> FunctionDef:
+def _function(
+    source: str, filename: str = "generator_for_step_v1.py"
+) -> FunctionDef:
     tree = SourceFile(
-        (source, "generator_for_step_v1.py", blake3_512_of(source.encode("utf-8")))
+        (source, filename, blake3_512_of(source.encode("utf-8")))
     )
     return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
@@ -168,6 +170,33 @@ def test_cleanup_iterable_and_target_coordinates_are_not_reconstructed() -> None
     assert before.fragment_cid != cleanup.fragment_cid
 
 
+def test_for_steps_seat_exact_module_and_target_site_identity() -> None:
+    """Truthful/lying module twin: every coordinate names its lexical memento."""
+    function = _function(_OPTION_PAIR_MANAGER)
+    loops = tuple(node for node in function.walk() if node.kind == "For")
+    steps = _for_steps(_OPTION_PAIR_MANAGER)
+
+    assert function.unit.filename == "generator_for_step_v1.py"
+    assert function.unit.source_cid == blake3_512_of(_OPTION_PAIR_MANAGER.encode())
+    assert len(loops) == len(steps) == 2
+    for loop, step in zip(loops, steps, strict=True):
+        assert step.fragment_cid == loop.fragment.seal().cid
+        assert step.iterable.site.seal().to_dict() == loop.iter.fragment.seal().to_dict()
+        target_sites = tuple(item.fragment.seal().to_dict() for item in loop.target.elts)
+        assert tuple(coordinate.binding_site for coordinate in step.target_coordinates) == (
+            target_sites
+        )
+
+    foreign_module = _function(_OPTION_PAIR_MANAGER, "foreign_scope.py")
+    foreign_steps = foreign_module._source_visible_generator_steps_from(
+        foreign_module.body
+    )
+    foreign_for = next(step for step in foreign_steps if isinstance(step, _for_step_type()))
+    assert foreign_for.fragment_cid == steps[0].fragment_cid
+    assert foreign_for.module_cid != steps[0].module_cid
+    assert _target_coordinate_cids(foreign_for) != _target_coordinate_cids(steps[0])
+
+
 def test_for_step_transition_contract_is_explicit_and_owner_complete() -> None:
     """The step itself names every state/exit obligation; consumers do not infer it."""
     for_step_type = _for_step_type()
@@ -177,6 +206,7 @@ def test_for_step_transition_contract_is_explicit_and_owner_complete() -> None:
         "iterable",
         "target_coordinates",
         "body_steps",
+        "module_cid",
         "fragment_cid",
     }
     assert required <= set(fields), (
@@ -220,5 +250,6 @@ def test_for_step_rejects_cid_shaped_foreign_target_coordinates() -> None:
             iterable=step.iterable,
             target_coordinates=(ForeignCoordinate(),),
             body_steps=step.body_steps,
+            module_cid=step.module_cid,
             fragment_cid=step.fragment_cid,
         )

@@ -186,6 +186,7 @@ class ForStepV1:
     iterable: ConstructedTermSugar
     target_coordinates: tuple
     body_steps: tuple
+    module_cid: str
     fragment_cid: str
 
     def __post_init__(self) -> None:
@@ -204,10 +205,12 @@ class ForStepV1:
             coordinate_cids.append(coordinate.cid)
         if len(coordinate_cids) != len(set(coordinate_cids)):
             raise TypeError("ForStepV1 target coordinates must be distinct")
-        if not isinstance(self.fragment_cid, str) or not self.fragment_cid.startswith(
-            "blake3-512:"
+        for field_name, value in (
+            ("module_cid", self.module_cid),
+            ("fragment_cid", self.fragment_cid),
         ):
-            raise TypeError("ForStepV1.fragment_cid must be authenticated")
+            if not isinstance(value, str) or not value.startswith("blake3-512:"):
+                raise TypeError(f"ForStepV1.{field_name} must be authenticated")
 
 
 @dataclass(frozen=True)
@@ -429,6 +432,7 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
     if isinstance(step, ForStepV1):
         return {
             "kind": "for",
+            "moduleCid": step.module_cid,
             "fragmentCid": step.fragment_cid,
             "iterable": _generator_value_testimony(step.iterable, owner=owner),
             "targetCoordinateCids": [

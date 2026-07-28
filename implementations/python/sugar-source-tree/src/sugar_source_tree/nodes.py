@@ -2663,6 +2663,7 @@ class FunctionDef(Statement):
                         iterable=iterable,
                         target_coordinates=target_coordinates,
                         body_steps=body_steps,
+                        module_cid=generator_for_module_cid(statement),
                         fragment_cid=statement.fragment.seal().cid,
                     )
                 )
@@ -2720,16 +2721,9 @@ class FunctionDef(Statement):
 
         def generator_for_target_coordinates(statement):
             """Mint one authenticated coordinate per lexical target leaf."""
-            from sugar_lift_python_source.canonical import cid_of_json
             from .binding_state import mint_binding_coordinate_v1
 
-            scope_owner_cid = cid_of_json(
-                {
-                    "kind": "generator-for-binding-scope",
-                    "schemaVersion": "1",
-                    "source": statement.fragment.seal().to_dict(),
-                }
-            )
+            scope_owner_cid = generator_for_module_cid(statement)
 
             def collect(target, path):
                 if isinstance(target, Name):
@@ -2751,6 +2745,19 @@ class FunctionDef(Statement):
                 return None
 
             return collect(statement.target, ())
+
+        def generator_for_module_cid(statement):
+            """Authenticate module identity separately from content/span CID."""
+            from sugar_lift_python_source.canonical import cid_of_json
+
+            return cid_of_json(
+                {
+                    "kind": "generator-for-module",
+                    "schemaVersion": "1",
+                    "filename": statement.unit.filename,
+                    "sourceCid": statement.unit.source_cid,
+                }
+            )
 
         def compose_finally(body_steps, cleanup_step):
             """Seat cleanup before every terminal face and on fall-through."""
