@@ -11,6 +11,22 @@ class SliceValue(FloorValue):
     upper: FloorValue | None
     step: FloorValue | None
 
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="SliceValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="SliceValue.delitem"
+        )
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
