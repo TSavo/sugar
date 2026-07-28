@@ -1,30 +1,12 @@
 """R1 as law: unmatched assertion residual retains IDENTICAL pre-halt state.
 
 Seam-3 residual R1 (#6672): WithEffectBoundarySugar *unmatched* residual
-re-seats an equal ``ReducedBlock`` (``==``) rather than retaining
-``halted.state is pre_halt_state`` object identity. try/except ``and_exit``
-and NeverSuppresses *do* retain ``is``.
+must retain ``halted.state is pre_halt_state`` object identity. try/except
+``and_exit`` and NeverSuppresses already retain ``is``.
 
-This module pins R1 as an executable law:
-
-  LAW (honorably red until the owner climbs):
-    On an unmatched assertion residual, the retained Halted face's state
-    object is the IDENTICAL ReducedBlock that rode the store halt
-    (``face.state is halted.state``), not a re-seated equal copy.
-
-  TWIN (green witness of the current crime):
-    Today's residual is observably a *distinct* object that is ``==``-equal
-    but not ``is``: identity probe fails, and mutating one reference is not
-    the same cell as the other would be if they were aliases.
-
-Owner of the red:
-  WithEffectBoundarySugar unmatched residual path (observation attach /
-  unmet residual re-seat) — not a store producer, not carrier mint, not
-  ExitSet algebra for try/except matching. Replacement: retain the incoming
-  Halted.state reference on unmatched residual the same way
-  AuthenticatedRaiseMatcher unmet / NeverSuppresses do.
-
-Tests-only. No production edits.
+Climb: empty-prefix ``_prefixed`` in the body reducer retains the nested
+pre-halt ``_ReducedBlock`` by identity (no ``==``-equal re-seat). The law
+below is green; the former crime twin is retired.
 """
 
 from __future__ import annotations
@@ -199,64 +181,16 @@ def test_control_never_suppresses_retains_identical_state() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TWIN (green): current ==-equal re-seat is observably distinct
-# ---------------------------------------------------------------------------
-
-
-def test_r1_twin_unmatched_boundary_reseats_equal_but_not_identical_state() -> None:
-    """Green witness of the current crime: equal copy, not the same object.
-
-    Identity probe: ``face.state is halted.state`` is False while
-    ``face.state == halted.state`` is True. That is the R1 gap made loud as a
-    measurable twin — two references, one equal value, not one cell.
-    """
-    pending, halted = _unpack_store_halt()
-    pre = pending.pre_effect_state.state
-    assert halted.state is pre
-
-    face = _assertion_boundary_unmatched(ExitSet((halted,))).exits[0]
-    assert isinstance(face, Halted)
-    assert face.effect is halted.effect
-    assert face.state is not None
-
-    # Equal value (today's residual is not a fabricated empty/foreign state).
-    assert face.state == halted.state
-    assert face.state == pre
-
-    # Observably distinct objects: not the same ReducedBlock cell.
-    assert face.state is not halted.state, (
-        "if this fails green, R1 is closed — unmatched residual already "
-        "retains identical state; retire this twin and the red law below"
-    )
-    assert face.state is not pre
-    assert id(face.state) != id(halted.state)
-
-    # Alias probe: if they were the same cell, identity would hold both ways.
-    # Distinct ids prove a re-seat, not a shared reference.
-    assert id(face.state) != id(pre)
-
-
-# ---------------------------------------------------------------------------
-# LAW (honorably red): unmatched residual must retain IDENTICAL state
+# LAW (green): unmatched residual retains IDENTICAL state
 # ---------------------------------------------------------------------------
 
 
 def test_r1_law_unmatched_boundary_retains_identical_pre_halt_state() -> None:
     """LAW: unmatched assertion residual keeps ``face.state is halted.state``.
 
-    HONORABLY RED until WithEffectBoundarySugar's unmatched residual path
-    retains the incoming Halted.state reference (same object identity as
-    try/except ``and_exit`` unmet and NeverSuppresses).
-
-    Owner:
-      WithEffectBoundarySugar unmatched residual / observation-attach re-seat
-      (not store producer, not carrier mint, not ExitSet try/except algebra).
-
-    Replacement architecture:
-      On unmatched residual, emit Halted(guard, effect, incoming.state) with
-      the same state object the store halt carried — do not construct a new
-      equal ReducedBlock. When green, ``is`` holds and the twin above
-      retires (its ``is not`` assertion flips).
+    Body reduction through WithEffectBoundarySugar must not re-seat an equal
+    ``_ReducedBlock`` on the unmatched residual — same identity as try/except
+    ``and_exit`` unmet and NeverSuppresses.
     """
     pending, halted = _unpack_store_halt()
     pre = pending.pre_effect_state.state
@@ -267,14 +201,21 @@ def test_r1_law_unmatched_boundary_retains_identical_pre_halt_state() -> None:
     assert not isinstance(face, Completed)
     assert face.effect is halted.effect
 
-    # THE LAW — currently red: residual re-seats equal copy instead of identity.
-    assert face.state is halted.state, (
-        "R1 SEAM3: unmatched WithEffectBoundarySugar residual re-seated an "
-        "equal ReducedBlock instead of retaining the identical pre-halt "
-        "state. owner=WithEffectBoundarySugar unmatched residual path "
-        "fix=emit Halted(..., state=incoming.state) without re-seat; "
-        f"observed face.state id={id(face.state)} "
-        f"halted.state id={id(halted.state)} "
-        f"equal={face.state == halted.state}"
-    )
+    assert face.state is halted.state
     assert face.state is pre
+
+
+def test_r1_retired_twin_no_longer_observes_distinct_equal_copy() -> None:
+    """Retired crime twin: residual is no longer a distinct ==-equal re-seat.
+
+    When R1 was open, ``face.state is not halted.state`` while ``==`` held. After
+    the climb, identity holds — the twin's ``is not`` probe must not fire.
+    """
+    pending, halted = _unpack_store_halt()
+    pre = pending.pre_effect_state.state
+    face = _assertion_boundary_unmatched(ExitSet((halted,))).exits[0]
+    assert isinstance(face, Halted)
+    assert face.state is halted.state
+    assert face.state is pre
+    assert face.state == halted.state  # still equal, and now identical
+    assert id(face.state) == id(halted.state)
