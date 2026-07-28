@@ -9,8 +9,10 @@ from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
+    ManagerItemResolutionOutcomeV1,
     _projected_manager_call_uses,
     populate_source_derived_resource_refs,
+    resolve_bare_name_manager_items,
 )
 
 PANDAS_SOURCE_CID = (
@@ -30,7 +32,9 @@ def _pandas_root() -> Path:
         PANDAS_MANIFEST_CID,
         1421,
     )
-    return corpus.root
+    # Construction loci use the distribution-recorded seat, which is rooted at
+    # site-packages even though corpus identity is over the pandas package root.
+    return corpus.root.parent
 
 
 def _real_tree():
@@ -154,3 +158,123 @@ def test_undecided_rebinding_does_not_invent_a_second_manager_call(
         if coordinate.start_line == 5
     ]
     assert rows == [(5, 9, 2)]
+
+
+def test_pandas_303_two_names_report_independent_named_refusals() -> None:
+    """Undecidable provider construction stays honest for each manager item."""
+    tree = _real_tree()
+    root = _pandas_root()
+
+    rows = resolve_bare_name_manager_items(
+        tree,
+        root=root,
+        path=root / "pandas/tests/io/formats/test_ipython_compat.py",
+        with_start_line=32,
+    )
+
+    assert [(row.coordinate.start_col, row.outcome) for row in rows] == [
+        (13, ManagerItemResolutionOutcomeV1.NAMED_REFUSAL),
+        (18, ManagerItemResolutionOutcomeV1.NAMED_REFUSAL),
+    ]
+    assert [row.binding_coordinate.start_line for row in rows] == [21, 30]
+    assert all(row.owner == "SourceCallBindingGap" for row in rows)
+    assert all("unconsumed call actual" in row.detail for row in rows)
+
+
+def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) -> None:
+    """Lying twin: names cannot authorize managers independently of bindings."""
+    source = tmp_path / "lying.py"
+    source.write_text(
+        "def exercise(opt_value, latex_value):\n"
+        "    opt = opt_value\n"
+        "    with_latex = latex_value\n"
+        "    with opt, with_latex:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    tree = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
+
+    rows = resolve_bare_name_manager_items(
+        tree, root=tmp_path, path=source, with_start_line=4
+    )
+
+    assert [row.outcome for row in rows] == [
+        ManagerItemResolutionOutcomeV1.NAMED_REFUSAL,
+        ManagerItemResolutionOutcomeV1.NAMED_REFUSAL,
+    ]
+    assert all(row.owner == "ManagerBindingProjectionGap" for row in rows)
+
+
+def test_bare_name_resolution_path_contains_no_vendor_name_literals() -> None:
+    """The structural resolver cannot admit this site by manager spelling."""
+    import ast
+    import inspect
+    import textwrap
+
+    import sugar_lift_python_source.manager_summary_derivation as derivation
+
+    module = ast.parse(textwrap.dedent(inspect.getsource(derivation)))
+    literals = {
+        node.value
+        for node in ast.walk(module)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert literals.isdisjoint(
+        {
+            "opt",
+            "with_latex",
+            "option_context",
+            "pytest.raises",
+            "external_error_raised",
+        }
+    )
+
+
+def test_per_item_construction_panic_stays_on_its_loud_axis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A producer defect is never re-labelled as an honest named refusal."""
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    import sugar_lift_python_source.manager_summary_derivation as derivation
+
+    source = tmp_path / "panic.py"
+    source.write_text(
+        "from managers import acquire\n"
+        "def exercise():\n"
+        "    first = acquire()\n"
+        "    second = acquire()\n"
+        "    with first, second:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    tree = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
+
+    def panic(*_args, **_kwargs):
+        construction_panic_gap(
+            owner="test-provider",
+            blame="panic.py",
+            observed="provider defect",
+            requested="manager testimony",
+            fix="repair provider construction",
+        )
+
+    monkeypatch.setattr(derivation, "populate_source_derived_resource_refs", panic)
+    rows = resolve_bare_name_manager_items(
+        tree, root=tmp_path, path=source, with_start_line=5
+    )
+
+    assert [row.outcome for row in rows] == [
+        ManagerItemResolutionOutcomeV1.CONSTRUCTION_PANIC,
+        ManagerItemResolutionOutcomeV1.CONSTRUCTION_PANIC,
+    ]
+    assert [row.owner for row in rows] == ["test-provider", "test-provider"]

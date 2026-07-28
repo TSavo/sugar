@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import json
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.context_manager_contract import (
@@ -76,6 +82,23 @@ class DerivedManagerSummaryGapV1:
         "opaque-exit-truthiness",
     ]
     protocol_construction_cid: str
+    detail: str
+
+
+class ManagerItemResolutionOutcomeV1(str, Enum):
+    """Closed result for one context-manager item; no item speaks for another."""
+
+    AUTHENTICATED_EXCEPTIONAL_EXIT = "authenticated-exceptional-exit"
+    NAMED_REFUSAL = "named-refusal"
+    CONSTRUCTION_PANIC = "construction-panic"
+
+
+@dataclass(frozen=True)
+class ManagerItemResolutionV1:
+    coordinate: SourceFragmentCoordinateV1
+    binding_coordinate: SourceFragmentCoordinateV1 | None
+    outcome: ManagerItemResolutionOutcomeV1
+    owner: str
     detail: str
 
 
@@ -203,9 +226,7 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
             and isinstance(face.value.statements[-1].value, PredicateValue)
         ):
             predicates.append(face.value.statements[-1].value.formula)
-    if predicates and all(
-        predicate == predicates[0] for predicate in predicates[1:]
-    ):
+    if predicates and all(predicate == predicates[0] for predicate in predicates[1:]):
         formula = predicates[0]
     else:
         formula = _guarded_literal_suppression_formula(exit_set)
@@ -338,9 +359,7 @@ def _guarded_literal_suppression_formula(exit_set):
                 if literal is None:
                     return None
                 if literal:
-                    resolved = _resolve_branch_result_guards(
-                        face.guard, authenticated
-                    )
+                    resolved = _resolve_branch_result_guards(face.guard, authenticated)
                     if resolved is None:
                         return None
                     saw_true = True
@@ -781,6 +800,158 @@ def populate_source_derived_resource_refs(
         )
 
 
+def resolve_bare_name_manager_items(
+    source_file,
+    *,
+    root,
+    path,
+    with_start_line: int,
+    distribution_index=None,
+) -> tuple[ManagerItemResolutionV1, ...]:
+    """Resolve each bare-name manager item independently through its binding.
+
+    A projected binding call is only a route to testimony.  It is not itself
+    testimony, and an item whose provider remains undecidable therefore keeps
+    its own coordinate-bearing refusal.  Construction panics stay on their
+    separate loud axis.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+    )
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceDerivedContextManagerRefV1,
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.nodes import Name, With
+    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
+
+    site = next(
+        node
+        for node in source_file.root.walk()
+        if isinstance(node, With) and node.line_col_span().start_line == with_start_line
+    )
+    projected = _projected_manager_call_uses(source_file)
+    projected_by_use = {row[0]: row[1] for row in projected.values()}
+    context = source_file.root.unit.construction_context
+    rows = []
+    for item in site.items:
+        if not isinstance(item.context_expr, Name):
+            continue
+        start_line, start_col, end_line, end_col = item._manager_use_site_span()
+        coordinate = SourceFragmentCoordinateV1(
+            source_file.root.unit.source_cid,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+        )
+        call = projected_by_use.get(coordinate)
+        binding_coordinate = None
+        if call is not None:
+            span = call.line_col_span()
+            binding_coordinate = SourceFragmentCoordinateV1(
+                source_file.root.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+        else:
+            rows.append(
+                ManagerItemResolutionV1(
+                    coordinate,
+                    None,
+                    ManagerItemResolutionOutcomeV1.NAMED_REFUSAL,
+                    "ManagerBindingProjectionGap",
+                    "bare manager binding did not project an authenticated call",
+                )
+            )
+            continue
+
+        if context is None:
+            rows.append(
+                ManagerItemResolutionV1(
+                    coordinate,
+                    binding_coordinate,
+                    ManagerItemResolutionOutcomeV1.NAMED_REFUSAL,
+                    "ManagerConstructionContextGap",
+                    "source file has no manager construction context",
+                )
+            )
+            continue
+        context.source_derived_contract_refs.pop(coordinate, None)
+        try:
+            populate_source_derived_resource_refs(
+                source_file,
+                root=root,
+                path=path,
+                distribution_index=distribution_index,
+                selected_coordinates=frozenset({coordinate}),
+            )
+        except ConstructionPanic as panic:
+            info = getattr(panic, "info", None)
+            rows.append(
+                ManagerItemResolutionV1(
+                    coordinate,
+                    binding_coordinate,
+                    ManagerItemResolutionOutcomeV1.CONSTRUCTION_PANIC,
+                    getattr(info, "owner", None) or "ConstructionPanic",
+                    getattr(info, "observed", None) or str(panic),
+                )
+            )
+            continue
+        except (
+            SourceCallBindingGap,
+            OpaqueSourceCallResolutionGap,
+            SugarNotWritten,
+        ) as exc:
+            rows.append(
+                ManagerItemResolutionV1(
+                    coordinate,
+                    binding_coordinate,
+                    ManagerItemResolutionOutcomeV1.NAMED_REFUSAL,
+                    type(exc).__name__,
+                    str(exc),
+                )
+            )
+            continue
+        reference = context.source_derived_contract_refs.get(coordinate)
+        if isinstance(reference, SourceDerivedContextManagerRefV1) and isinstance(
+            reference.semantics, EffectBoundarySemanticsV1
+        ):
+            rows.append(
+                ManagerItemResolutionV1(
+                    coordinate,
+                    binding_coordinate,
+                    ManagerItemResolutionOutcomeV1.AUTHENTICATED_EXCEPTIONAL_EXIT,
+                    "EffectBoundarySemanticsV1",
+                    reference.summary_cid,
+                )
+            )
+        else:
+            owner = (
+                type(reference).__name__
+                if reference is not None
+                else "ManagerContractResolutionGap"
+            )
+            detail = (
+                getattr(reference, "detail", None)
+                or "no authenticated exceptional exit"
+            )
+            rows.append(
+                ManagerItemResolutionV1(
+                    coordinate,
+                    binding_coordinate,
+                    ManagerItemResolutionOutcomeV1.NAMED_REFUSAL,
+                    owner,
+                    detail,
+                )
+            )
+    return tuple(rows)
+
+
 def _projected_manager_call_uses(source_file):
     """Project ordinary reaching assignments into context-manager call uses.
 
@@ -807,9 +978,7 @@ def _projected_manager_call_uses(source_file):
                 if not projected_names and hasattr(item, "manager_use_site_start_line"):
                     continue
                 span = expr.line_col_span()
-                start_line, start_col, end_line, end_col = (
-                    item._manager_use_site_span()
-                )
+                start_line, start_col, end_line, end_col = item._manager_use_site_span()
                 if projected_names and (
                     start_line,
                     start_col,
