@@ -11,10 +11,7 @@ import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    SubscriptStoreRuntimeEffect,
-)
+from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
@@ -110,17 +107,13 @@ def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
-def test_mixed_chain_preserves_each_store_face_in_source_order():
-    entries = _completed_entries(
-        "def arbitrary(o, xs):\n"
-        "    renamed = o.field = xs[0] = 7\n"
-        "    return renamed\n"
-    )
-    red = [entry for entry in entries if isinstance(entry, Incomplete)]
-    assert [type(entry.effect) for entry in red] == [
-        AttributeStoreRuntimeEffect,
-        SubscriptStoreRuntimeEffect,
-    ]
+def test_mixed_chain_never_fabricates_a_completed_subscript_store():
+    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
+        _fn(
+            "def arbitrary(o, xs):\n"
+            "    renamed = o.field = xs[0] = 7\n"
+            "    return renamed\n"
+        ).sugar().desugar()
 
 
 def test_nested_tuple_target_binds_each_structural_projection():
@@ -215,11 +208,21 @@ def test_attribute_store_target_lifts_a_typed_red_effect():
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
-def test_subscript_store_target_lifts_a_typed_red_effect():
-    entries = _completed_entries("def A(xs):\n    xs[0] = 1\n    return xs\n")
-    red = [e for e in entries if isinstance(e, Incomplete)]
-    assert len(red) == 1
-    assert isinstance(red[0].effect, SubscriptStoreRuntimeEffect)
+def test_subscript_store_target_stays_loud_without_setitem_testimony():
+    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
+        _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar()
+
+
+def test_subscript_store_producer_retains_receiver_key_and_rhs():
+    function = _fn("def A(xs, key, value):\n    xs[key] = value\n")
+    assignment = next(node for node in function.walk() if node.kind == "Assign")
+
+    store = assignment.sugar()
+
+    assert type(store).__name__ == "SubscriptStoreEffectSugar"
+    assert store.receiver.site.text == "xs"
+    assert store.index.site.text == "key"
+    assert store.value.site.text == "value"
 
 
 if __name__ == "__main__":
@@ -233,8 +236,8 @@ if __name__ == "__main__":
     test_non_display_rhs_stays_loud()
     test_mixed_chained_targets_stay_loud()
     test_attribute_store_target_lifts_a_typed_red_effect()
-    test_subscript_store_target_lifts_a_typed_red_effect()
+    test_subscript_store_target_stays_loud_without_setitem_testimony()
     print(
         "ok: tuple/chained assign destructures; starred/nested stay loud; "
-        "store targets lift typed red"
+        "subscript stores require setitem testimony"
     )

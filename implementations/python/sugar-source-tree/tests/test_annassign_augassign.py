@@ -7,6 +7,8 @@ bare non-Name annotations remain loud gaps."""
 
 import tempfile
 
+import pytest
+
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.effect import (
     AttributeStoreRuntimeEffect,
@@ -17,6 +19,7 @@ from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -110,11 +113,9 @@ def test_annotated_attribute_with_value_builds_store_effect():
     assert isinstance(effects[0], AttributeStoreRuntimeEffect)
 
 
-def test_annotated_subscript_with_value_builds_store_effect():
-    effects = _red_effects("def A(d, k, y):\n    d[k]: int = y\n    return y\n")
-
-    assert len(effects) == 1
-    assert isinstance(effects[0], SubscriptStoreRuntimeEffect)
+def test_annotated_subscript_store_stays_loud_without_setitem_testimony():
+    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
+        _fn("def A(d, k, y):\n    d[k]: int = y\n    return y\n").sugar().desugar()
 
 
 _CONSTRUCTED_RECEIVER_SOURCE = (

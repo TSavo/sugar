@@ -3511,7 +3511,9 @@ def _valued_store_target_sugar(target, value_sugar, site):
         )
 
         return SubscriptStoreEffectSugar(
-            index_text=target.slice_.fragment.text,
+            receiver=target.value.sugar(),
+            index=target.slice_.sugar(),
+            value=value_sugar,
             site=site,
         )
     return None
@@ -4116,7 +4118,9 @@ class Assign(Statement):
 
                     stores.append(
                         SubscriptStoreEffectSugar(
-                            index_text=target.slice_.fragment.text,
+                            receiver=target.value.sugar(),
+                            index=target.slice_.sugar(),
+                            value=value_sugar,
                             site=target.fragment,
                         )
                     )
@@ -4229,10 +4233,10 @@ class AugAssign(Statement):
             )
         if isinstance(self.target, Subscript):
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                SubscriptStoreEffectSugar,
+                LegacyAugmentedSubscriptStoreEffectSugar,
             )
 
-            return SubscriptStoreEffectSugar(
+            return LegacyAugmentedSubscriptStoreEffectSugar(
                 index_text=self.target.slice_.fragment.text,
                 site=self.fragment,
             )
