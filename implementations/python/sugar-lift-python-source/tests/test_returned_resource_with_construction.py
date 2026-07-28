@@ -338,11 +338,18 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
         for node in tree.nodes()
         if node.kind == "With" and node.line_col_span().start_line == 25
     )
-    receiver = next(
+    receivers = tuple(
         coordinate
         for coordinate in context.source_manager_provider_calls
         if coordinate.start_line == 25
     )
+    assert len(receivers) == 1, (
+        "authenticated pandas option_context use at line 25 must publish exactly "
+        "one provider receiver before With construction; publication stopped "
+        "upstream, derived refs="
+        f"{tuple(type(ref).__name__ for ref in context.source_derived_contract_refs.values())}"
+    )
+    receiver = receivers[0]
     refs = context.contract_refs
     enter_definition = refs.require_native_definition(
         receiver, NativeProtocolSlot.CONTEXT_ENTER
