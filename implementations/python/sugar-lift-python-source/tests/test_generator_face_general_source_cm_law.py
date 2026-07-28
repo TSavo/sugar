@@ -25,7 +25,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceDerivedGeneratorResourceRefV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_python_source.manager_summary_derivation import (
     GeneratorBackedLifecycleProtocolV1,
     _project_generator_lifecycle_faces,
@@ -87,7 +87,7 @@ def _publish(tmp_path: Path, consumer: str) -> list:
         workspace_root=str(tmp_path)
     )
     tree = SourceFile(
-        (path.read_text(encoding="utf-8"), str(path), blake3_512_of(path.read_bytes())),
+        path_source(str(path)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(

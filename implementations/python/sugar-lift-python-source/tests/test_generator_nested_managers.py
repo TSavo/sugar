@@ -46,7 +46,7 @@ from sugar_lift_py_tests.generator_construction import (
     ReturnStepV1,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
-from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
+from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
     EnteredGeneratorManagerStateV1,
     construct_generator_backed_protocol,
@@ -56,6 +56,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     GeneratorNestedManagerLayerV1,
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
 
@@ -97,7 +98,7 @@ def _publish(tmp_path: Path, implementation: str, consumer: str | None = None):
         workspace_root=str(tmp_path)
     )
     tree = SourceFile(
-        (path.read_text(encoding="utf-8"), str(path), blake3_512_of(path.read_bytes())),
+        path_source(str(path)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(

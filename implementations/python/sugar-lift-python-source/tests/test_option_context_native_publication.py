@@ -21,7 +21,6 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
     _classes_constructed_by_returns,
     _enter_exit_sites_from_class_def,
@@ -29,6 +28,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
     _sole_returned_manager_class,
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
 
@@ -68,11 +68,7 @@ def _populate(tmp_path: Path, dist, package: str, consumer_source: str):
     consumer.write_text(consumer_source, encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (
-            consumer.read_text(encoding="utf-8"),
-            str(consumer),
-            blake3_512_of(consumer.read_bytes()),
-        ),
+        path_source(str(consumer)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(
@@ -165,7 +161,7 @@ def test_open_produces_no_source_definition(tmp_path: Path):
     )
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (path.read_text(encoding="utf-8"), str(path), blake3_512_of(path.read_bytes())),
+        path_source(str(path)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
@@ -336,7 +332,6 @@ def test_content_tampered_enter_source_changes_coordinate(tmp_path: Path):
 def test_two_plausible_returned_classes_refuse_first_candidate(tmp_path: Path):
     """Discrimination: two return classes cannot select the first."""
     from sugar_source_tree.nodes import FunctionDef
-    from sugar_lift_python_source.source_oracle import path_source
 
     path = tmp_path / "ambiguous.py"
     path.write_text(
@@ -511,7 +506,7 @@ def test_lying_twin_spelling_without_binding_publishes_nothing(tmp_path: Path):
     )
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (path.read_text(encoding="utf-8"), str(path), blake3_512_of(path.read_bytes())),
+        path_source(str(path)),
         construction_context=context,
     )
     populate_source_derived_resource_refs(tree, root=tmp_path, path=path)
