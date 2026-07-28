@@ -435,6 +435,22 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
     body_es = promote_raise_halts(reduce_block_to_exitset(body, ctx)).guarded(
         manager_exit.guard
     )
+    # The inverted contract is proved by a POSITIVE completed edge whose
+    # temporal record contains no matching warning observation.  An empty
+    # ExitSet says the body never resolved; it is not a vacuous proof of
+    # absence. Producer-family enrollment carries the same distinction as
+    # AuthenticatedCompletedOwnership versus UndecidedOwnership; keep that
+    # population predicate in its single owner rather than restating it here.
+    if not body_es.exits:
+        raise SugarNotWritten(
+            owner="WithEffectBoundarySugar.warning_observation",
+            observed="body has no authenticated exit edge",
+            requested="a resolved ExitSet containing a Completed edge",
+            fix=(
+                "construct and resolve the body before deciding warning absence; "
+                "absence of a halt is not completion testimony"
+            ),
+        )
     exits = []
     for face in body_es.exits:
         # Matching-category routing already reads both faces the same way:
