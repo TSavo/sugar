@@ -19,6 +19,22 @@ class SetLiteralValue(FloorValue):
 
     items: tuple[Term, ...]
 
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="SetLiteralValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="SetLiteralValue.delitem"
+        )
+
     def contribution(self):
         # Typed non-FOL support carrier: absorbed in a block record.
         return ()
