@@ -29,9 +29,27 @@ def _write(tmp_path: Path, source: str) -> Path:
     return path
 
 
+def _run(path: Path, rel: str) -> int:
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+        empty_resolved_contract_refs,
+    )
+
+    root = path.parent
+    context = TreeConstructionContextV1(
+        empty_resolved_contract_refs(), workspace_root=str(root)
+    )
+    return _CHILD.run_production_lift_child(
+        path,
+        rel,
+        corpus_root=root,
+        construction_context=context,
+    )
+
+
 def test_clean_file_completes(tmp_path: Path, capsys) -> None:
     path = _write(tmp_path, "def a(z):\n    return z\n")
-    assert _CHILD.run_production_lift_child(path, "mod.py") == 0
+    assert _run(path, "mod.py") == 0
     terminal = _CHILD.terminal_outcome(capsys.readouterr().out)
     assert terminal == _CHILD.OUTCOME_COMPLETED
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
@@ -42,7 +60,7 @@ def test_intentional_typed_gap_is_typed_gap_not_failure(tmp_path: Path, capsys) 
     # typed loud gap. The child marks the file typed-gap and exits 0; the floors
     # must NOT count this as a bare exception.
     path = _write(tmp_path, "def a():\n    with open('x'):\n        pass\n")
-    assert _CHILD.run_production_lift_child(path, "mod.py") == 0
+    assert _run(path, "mod.py") == 0
     terminal = _CHILD.terminal_outcome(capsys.readouterr().out)
     assert terminal == _CHILD.OUTCOME_TYPED_GAP
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
@@ -70,7 +88,7 @@ def test_kit_construction_panic_is_typed_gap_not_failure(
 
     monkeypatch.setattr(nodes_mod.FunctionDef, "sugar", _boom)
     path = _write(tmp_path, "def a():\n    return 1\n")
-    assert _CHILD.run_production_lift_child(path, "mod.py") == 0
+    assert _run(path, "mod.py") == 0
     terminal = _CHILD.terminal_outcome(capsys.readouterr().out)
     assert terminal == _CHILD.OUTCOME_TYPED_GAP
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
@@ -99,7 +117,7 @@ def test_source_file_construction_panic_is_typed_gap(
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
 
-    assert _CHILD.run_production_lift_child(path, "arbitrary.py") == 0
+    assert _run(path, "arbitrary.py") == 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
@@ -121,7 +139,7 @@ def test_source_file_unwritten_is_typed_gap(
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
 
-    assert _CHILD.run_production_lift_child(path, "arbitrary.py") == 0
+    assert _run(path, "arbitrary.py") == 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
@@ -134,11 +152,69 @@ def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(tree_mod.SourceFile, "__init__", _boom)
     path = _write(tmp_path, "def a():\n    return 1\n")
     with pytest.raises(RuntimeError, match="planted bare exception"):
-        _CHILD.run_production_lift_child(path, "mod.py")
+        _run(path, "mod.py")
 
 
 def test_bootstrap_check_is_green_when_door_present() -> None:
     assert _CHILD.production_lift_bootstrap_error() is None
+
+
+def test_frozen_corpus_context_is_independent_of_launch_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import sugar_lift_py_tests.lift_rpc as lift_rpc
+
+    root = tmp_path / "pkg"
+    source_dir = root / "sub"
+    source_dir.mkdir(parents=True)
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "managers.py").write_text(
+        "import contextlib\n"
+        "@contextlib.contextmanager\n"
+        "def held():\n"
+        "    yield 1\n",
+        encoding="utf-8",
+    )
+    (source_dir / "__init__.py").write_text("", encoding="utf-8")
+    source = source_dir / "uses.py"
+    source.write_text(
+        "from pkg.managers import held\n"
+        "def run():\n"
+        "    with held() as value:\n"
+        "        return value\n",
+        encoding="utf-8",
+    )
+    context = object()
+    observed: list[tuple[Path, object]] = []
+
+    class Opened:
+        def functions(self):
+            return ()
+
+    def open_once(_path, *, root, construction_context, **_kwargs):
+        observed.append((root, construction_context))
+        return Opened()
+
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", open_once)
+
+    monkeypatch.chdir(root)
+    first = _CHILD.production_lift_testimony(
+        source,
+        "sub/uses.py",
+        corpus_root=root,
+        construction_context=context,
+    )
+    monkeypatch.chdir(source_dir)
+    second = _CHILD.production_lift_testimony(
+        source,
+        "sub/uses.py",
+        corpus_root=root,
+        construction_context=context,
+    )
+
+    assert first == second
+    assert first["outcome"] == _CHILD.OUTCOME_COMPLETED
+    assert observed == [(root, context), (root, context)]
 
 
 def test_terminal_outcome_none_is_the_silent_axis() -> None:

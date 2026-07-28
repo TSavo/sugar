@@ -47,6 +47,9 @@ class SupervisedEnumSupervisor:
         file_timeout: float = 30.0,
         python: str | None = None,
         env: Mapping[str, str] | None = None,
+        corpus_root: Path,
+        demand_table_path: Path | None = None,
+        allow_local_demand_derivation: bool = False,
     ) -> None:
         if file_timeout > 30:
             raise ValueError("per-file timeout may not exceed 30 seconds")
@@ -54,6 +57,11 @@ class SupervisedEnumSupervisor:
         self.python = python or sys.executable
         self.env = dict(env or os.environ)
         self.env.setdefault("PYTHONFAULTHANDLER", "1")
+        self.corpus_root = corpus_root.resolve()
+        self.demand_table_path = (
+            None if demand_table_path is None else demand_table_path.resolve()
+        )
+        self.allow_local_demand_derivation = allow_local_demand_derivation
         self._proc: subprocess.Popen[str] | None = None
         self.worker_restarts = 0
         self._current_file: str | None = None
@@ -86,6 +94,22 @@ class SupervisedEnumSupervisor:
         if ready.get("kind") != "ready":
             self._kill()
             raise RuntimeError(f"supervised enum worker bad handshake: {ready!r}")
+        assert self._proc.stdin is not None
+        initialize = {"kind": "initialize", "corpus_root": str(self.corpus_root)}
+        if self.demand_table_path is not None:
+            initialize["demand_table_path"] = str(self.demand_table_path)
+        initialize["allow_local_demand_derivation"] = (
+            self.allow_local_demand_derivation
+        )
+        self._proc.stdin.write(json.dumps(initialize) + "\n")
+        self._proc.stdin.flush()
+        initialized = self._readline(timeout=30.0)
+        if initialized is None or initialized.get("kind") != "context-ready":
+            self._kill()
+            raise RuntimeError(
+                "supervised enum worker context initialization refused: "
+                f"{initialized!r}"
+            )
 
     def stop(self) -> None:
         proc = self._proc
@@ -285,9 +309,15 @@ def scan_paths(
     *,
     root: Path,
     file_timeout: float = 30.0,
+    demand_table_path: Path | None = None,
 ) -> list[FileTerminal]:
     from _enum_floor_runtime import relative_to_root
 
     pairs = [(path, relative_to_root(path, root)) for path in paths]
-    supervisor = SupervisedEnumSupervisor(file_timeout=file_timeout)
+    supervisor = SupervisedEnumSupervisor(
+        file_timeout=file_timeout,
+        corpus_root=root,
+        demand_table_path=demand_table_path,
+        allow_local_demand_derivation=demand_table_path is None,
+    )
     return supervisor.scan(pairs)

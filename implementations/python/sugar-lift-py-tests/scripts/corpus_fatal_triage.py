@@ -15,6 +15,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,13 @@ def _progress_logging_enabled() -> bool:
     return flag in {"1", "true", "yes", "on"}
 
 
-def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
+def _child_payload(
+    path: Path,
+    rel: str,
+    *,
+    corpus_root: Path,
+    construction_context,
+) -> tuple[dict[str, Any], int]:
     progress = _progress_logging_enabled()
     if not progress:
         logging.disable(logging.CRITICAL)
@@ -69,9 +76,19 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
 
         if progress:
             with reduction_span(sugar="production_lift", role="file", site=rel):
-                terminal = production_lift_testimony(path, rel)
+                terminal = production_lift_testimony(
+                    path,
+                    rel,
+                    corpus_root=corpus_root,
+                    construction_context=construction_context,
+                )
         else:
-            terminal = production_lift_testimony(path, rel)
+            terminal = production_lift_testimony(
+                path,
+                rel,
+                corpus_root=corpus_root,
+                construction_context=construction_context,
+            )
     except KeyboardInterrupt:
         raise
     except Exception as error:
@@ -86,9 +103,29 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
 
 
 def _run_child(args: argparse.Namespace) -> int:
-    terminal, returncode = _child_payload(Path(args.child_file), args.child_rel)
-    print(json.dumps(terminal, sort_keys=True), flush=True)
-    return returncode
+    print(
+        json.dumps(
+            {
+                "outcome": "typed-gap",
+                "file": args.child_rel,
+                "typed_gap_count": 1,
+                "typed_gaps": [
+                    {
+                        "exception_type": "FatalTriageContextProtocolRefusal",
+                        "gap": {
+                            "owner": "corpus_fatal_triage.child-protocol",
+                            "observed": "one-file child invocation has no shared frozen context",
+                            "requested": "persistent worker initialized from the authenticated shared demand table",
+                            "fix": "run fatal triage through its parent protocol",
+                        },
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return 0
 
 
 def _parse_child_stdout(stdout: str) -> dict[str, Any] | None:
@@ -187,11 +224,35 @@ def _run_parent(args: argparse.Namespace) -> int:
     representatives: dict[str, list[str]] = defaultdict(list)
     typed_gap_classes: Counter[str] = Counter()
     typed_gap_owners: Counter[str] = Counter()
-    script = Path(__file__).resolve()
     by_rel = {
         f"{package}/{path.relative_to(root).as_posix()}": (path, root)
         for package, root, path in paths
     }
+
+    # Authenticate the corpus seat before acquiring the shared demand table.
+    # The path is transport only; the manifest CID and demand-table content key
+    # are the identities.  One persistent worker freezes one context from that
+    # table and consumes it for every file in this run.
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.no_call_body_attribution import pull_shared_demand_table
+    from _supervised_enum_supervisor import SupervisedEnumSupervisor
+
+    authenticated = authenticated_pandas_corpus()
+    corpus_roots = {root.resolve() for _, root, _ in paths}
+    if authenticated.root.resolve() not in corpus_roots:
+        raise RuntimeError(
+            "fatal-triage.authenticated-corpus-root: canonical pandas corpus "
+            "is absent from the enrolled package roots"
+        )
+    workspace_root = Path(os.path.commonpath([str(root) for root in corpus_roots]))
+    demand_scratch = tempfile.TemporaryDirectory(prefix="fatal-triage-demand-")
+    demand_table_path = Path(demand_scratch.name) / "python-demand-table.json"
+    pull_shared_demand_table(Path(__file__).resolve().parents[4], demand_table_path)
+    supervisor = SupervisedEnumSupervisor(
+        file_timeout=float(args.file_timeout),
+        corpus_root=workspace_root,
+        demand_table_path=demand_table_path,
+    )
 
     def measure_unchecked(rel: str) -> dict[str, Any]:
         path, _root = by_rel[rel]
@@ -201,38 +262,14 @@ def _run_parent(args: argparse.Namespace) -> int:
             source = path.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(source, filename=rel)
         assertion_count = sum(isinstance(node, ast.Assert) for node in ast.walk(tree))
-        command = [
-            sys.executable,
-            str(script),
-            "--child-file",
-            str(path),
-            "--child-rel",
-            rel,
-        ]
-        env = dict(os.environ)
-        env["PYTHONFAULTHANDLER"] = "1"
-        try:
-            result = subprocess.run(
-                command,
-                text=True,
-                capture_output=True,
-                timeout=args.file_timeout,
-                env=env,
-                check=False,
-            )
-            row = _classify_child(
-                rel=rel,
-                result=result,
-                timed_out=False,
-                timeout_seconds=args.file_timeout,
-            )
-        except subprocess.TimeoutExpired:
-            row = _classify_child(
-                rel=rel,
-                result=None,
-                timed_out=True,
-                timeout_seconds=args.file_timeout,
-            )
+        terminal = supervisor.lift_file(path, rel)
+        row = {
+            "file": rel,
+            "category": terminal.category,
+            "returncode": terminal.returncode,
+            "testimony": terminal.terminal,
+            "reason": terminal.stderr_tail,
+        }
         return {"assertionCount": assertion_count, "terminal": row}
 
     def measure(rel: str) -> dict[str, Any]:
@@ -248,18 +285,22 @@ def _run_parent(args: argparse.Namespace) -> int:
                 },
             }
 
-    if args.checkpoint_jsonl:
-        from pandas_census_checkpoint import Checkpoint, run_pending
+    try:
+        if args.checkpoint_jsonl:
+            from pandas_census_checkpoint import Checkpoint, run_pending
 
-        checkpoint = Checkpoint(
-            floor="fatal-triage",
-            files=tuple(by_rel),
-            path=Path(args.checkpoint_jsonl),
-        )
-        journal_rows = run_pending(checkpoint, measure, workers=1)
-        measured = [dict(row["result"]) for row in journal_rows]
-    else:
-        measured = [measure(rel) for rel in sorted(by_rel)]
+            checkpoint = Checkpoint(
+                floor="fatal-triage",
+                files=tuple(by_rel),
+                path=Path(args.checkpoint_jsonl),
+            )
+            journal_rows = run_pending(checkpoint, measure, workers=1)
+            measured = [dict(row["result"]) for row in journal_rows]
+        else:
+            measured = [measure(rel) for rel in sorted(by_rel)]
+    finally:
+        supervisor.stop()
+        demand_scratch.cleanup()
 
     for index, (rel, measured_row) in enumerate(
         zip(sorted(by_rel), measured, strict=True), start=1

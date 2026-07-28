@@ -9,6 +9,8 @@ import textwrap
 import pytest
 
 import sys
+import json
+import subprocess
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 _SPEC = importlib.util.spec_from_file_location(
@@ -48,12 +50,22 @@ def test_supervised_timeout_restarts_and_continues(tmp_path: Path, monkeypatch) 
     sleeper = _write(tmp_path, "sleep.py", "def a():\n    return 1\n")
     after = _write(tmp_path, "after.py", "def a(z):\n    return z\n")
     monkeypatch.setenv("SUGAR_SUPERVISOR_PLANT_TIMEOUT", "sleep.py")
-    rows = _SUP.scan_paths([sleeper, after], root=tmp_path, file_timeout=1.0)
-    assert rows[0].file == "sleep.py"
-    assert rows[0].category == "timeout"
-    assert rows[0].worker_restarts >= 1
-    assert rows[1].file == "after.py"
-    assert rows[1].category == "completed"
+    supervisor = _SUP.SupervisedEnumSupervisor(
+        corpus_root=tmp_path,
+        file_timeout=1.0,
+        allow_local_demand_derivation=True,
+    )
+    try:
+        timed_out = supervisor.lift_file(sleeper, "sleep.py")
+        supervisor.file_timeout = 30.0
+        completed = supervisor.lift_file(after, "after.py")
+    finally:
+        supervisor.stop()
+    assert timed_out.file == "sleep.py"
+    assert timed_out.category == "timeout"
+    assert timed_out.worker_restarts >= 1
+    assert completed.file == "after.py"
+    assert completed.category == "completed"
 
 
 def test_supervised_bare_exception_keeps_going(tmp_path: Path, monkeypatch) -> None:
@@ -64,3 +76,36 @@ def test_supervised_bare_exception_keeps_going(tmp_path: Path, monkeypatch) -> N
     assert rows[0].category == "bare-exception"
     assert "planted bare" in rows[0].stderr_tail
     assert rows[1].category == "completed"
+
+
+def test_worker_refuses_file_before_frozen_context_initialization(
+    tmp_path: Path,
+) -> None:
+    source = _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
+    worker = subprocess.Popen(
+        [sys.executable, str(_SCRIPTS / "_supervised_enum_worker.py")],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert worker.stdin is not None and worker.stdout is not None
+    try:
+        assert json.loads(worker.stdout.readline())["kind"] == "ready"
+        worker.stdin.write(
+            json.dumps(
+                {"kind": "lift", "path": str(source), "rel": "clean.py"}
+            )
+            + "\n"
+        )
+        worker.stdin.flush()
+        refusal = json.loads(worker.stdout.readline())
+        assert refusal == {
+            "kind": "lift-refusal",
+            "file": "clean.py",
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": "authenticated frozen construction context was not initialized",
+        }
+    finally:
+        worker.stdin.write(json.dumps({"kind": "shutdown"}) + "\n")
+        worker.stdin.flush()
+        worker.wait(timeout=5)

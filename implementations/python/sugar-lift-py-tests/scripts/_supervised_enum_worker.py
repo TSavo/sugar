@@ -24,6 +24,9 @@ import json
 import sys
 from pathlib import Path
 
+_CORPUS_ROOT: Path | None = None
+_CONSTRUCTION_CONTEXT = None
+
 
 def _bootstrap() -> str | None:
     scripts = Path(__file__).resolve().parent
@@ -54,8 +57,69 @@ def _lift(path: str, rel: str) -> dict:
 
     from _production_lift_child import production_lift_testimony
 
-    terminal = production_lift_testimony(Path(path), rel)
+    if _CORPUS_ROOT is None or _CONSTRUCTION_CONTEXT is None:
+        return {
+            "kind": "lift-refusal",
+            "file": rel,
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": "authenticated frozen construction context was not initialized",
+        }
+    terminal = production_lift_testimony(
+        Path(path),
+        rel,
+        corpus_root=_CORPUS_ROOT,
+        construction_context=_CONSTRUCTION_CONTEXT,
+    )
     return {"kind": "lift-result", "file": rel, "terminal": terminal}
+
+
+def _initialize(
+    corpus_root: str,
+    demand_table_path: str | None,
+    *,
+    allow_local_demand_derivation: bool,
+) -> dict:
+    global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT
+    if _CONSTRUCTION_CONTEXT is not None:
+        return {
+            "kind": "initialize-refusal",
+            "coordinate": "supervised-enum-worker.construction-context",
+            "reason": "frozen construction context was already initialized",
+        }
+    from sugar_lift_py_tests.lift_rpc import (
+        provisional_contract_refs_from_demand_rows,
+        tree_construction_context_for_workspace,
+    )
+
+    root = Path(corpus_root).resolve()
+    contract_refs = None
+    demand_table_identity = None
+    if demand_table_path:
+        from sugar_lift_py_tests.no_call_body_attribution import (
+            SHARED_DEMAND_TABLE_CONTENT_KEY,
+            validate_shared_demand_table,
+        )
+
+        payload = validate_shared_demand_table(
+            json.loads(Path(demand_table_path).read_text(encoding="utf-8")),
+            expected_content_key=SHARED_DEMAND_TABLE_CONTENT_KEY,
+        )
+        contract_refs = provisional_contract_refs_from_demand_rows(payload["rows"])
+        demand_table_identity = SHARED_DEMAND_TABLE_CONTENT_KEY
+    elif not allow_local_demand_derivation:
+        raise RuntimeError(
+            "supervised-enum-worker.shared-demand-table: authenticated demand "
+            "table testimony is absent"
+        )
+    _CORPUS_ROOT = root
+    _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(
+        root, contract_refs=contract_refs
+    )
+    return {
+        "kind": "context-ready",
+        "corpus_root": str(root),
+        "demand_table_identity": demand_table_identity,
+    }
 
 
 def main() -> int:
@@ -94,6 +158,25 @@ def main() -> int:
             return 0
         if kind == "ping":
             print(json.dumps({"kind": "pong"}), flush=True)
+            continue
+        if kind == "initialize":
+            try:
+                response = _initialize(
+                    str(msg.get("corpus_root") or ""),
+                    str(msg["demand_table_path"])
+                    if msg.get("demand_table_path")
+                    else None,
+                    allow_local_demand_derivation=bool(
+                        msg.get("allow_local_demand_derivation", False)
+                    ),
+                )
+            except Exception as error:
+                response = {
+                    "kind": "initialize-refusal",
+                    "coordinate": "supervised-enum-worker.construction-context",
+                    "reason": f"{type(error).__name__}: {error}",
+                }
+            print(json.dumps(response), flush=True)
             continue
         if kind == "lift":
             path = str(msg.get("path") or "")
