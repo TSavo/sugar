@@ -1,4 +1,4 @@
-"""Executable independent, test-owned LAW_OF_ONE auditor."""
+"""Package-local executable, independent LAW_OF_ONE auditor."""
 
 from __future__ import annotations
 
