@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -437,20 +437,17 @@ def _three_deep_manager_halt(exception_name: str):
     original_middle = middle
     original_inner = inner
     middle_exit, inner_enter, inner_exit = [], [], []
+    effect = RaiseEffect(
+        exception_name=exception_name,
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(exception_name)],
+        ),
+        occurrence="test_common.py:640",
+    )
     inner = replace(
         inner,
-        manager=_FixedOutcomeSugar(
-            Incomplete(
-                RaiseEffect(
-                    exception_name=exception_name,
-                    exception_type_coordinate=ctor(
-                        "python:exception_type_identity",
-                        [str_const("builtins"), str_const(exception_name)],
-                    ),
-                    occurrence="test_common.py:640",
-                )
-            )
-        ),
+        manager=_FixedOutcomeSugar(Incomplete(effect)),
         enter=_FixedOutcomeSugar(
             Complete(StringValue("inner-enter")), probe=inner_enter
         ),
@@ -474,6 +471,180 @@ def _three_deep_manager_halt(exception_name: str):
         ),
     )
     return outer.desugar(), middle_exit, inner_enter, inner_exit
+
+
+@dataclass(frozen=True)
+class _LevelRoutingReceipt:
+    level: str
+    effect: object
+    attribution: object
+    consumed: bool
+    passed: bool
+
+    @property
+    def authenticated_exceptional_exits(self) -> int:
+        from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
+
+        return int(self.attribution is AttributionOutcome.AUTHENTICATED_EXIT)
+
+    @property
+    def named_refusals(self) -> int:
+        from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
+
+        return int(self.attribution is AttributionOutcome.NAMED_REFUSAL)
+
+    @property
+    def construction_panics(self) -> int:
+        from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
+
+        return int(self.attribution is AttributionOutcome.CONSTRUCTION_PANIC)
+
+
+def _account_level(level: str, effect, evaluate):
+    """Account one incoming edge without reconstructing its identity."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        outcome = evaluate()
+    except SugarNotWritten:
+        return (
+            _LevelRoutingReceipt(
+                level, effect, AttributionOutcome.NAMED_REFUSAL, False, False
+            ),
+            None,
+        )
+    except ConstructionPanic:
+        return (
+            _LevelRoutingReceipt(
+                level, effect, AttributionOutcome.CONSTRUCTION_PANIC, False, False
+            ),
+            None,
+        )
+
+    # Observe the exact projection the next enclosing boundary consumes. The
+    # linear Outcome adapter may carry a hard raise inside BlockValue; routing
+    # sees it only after the ordinary block reduction promotes that native
+    # entry back to a Halted ExitSet face.
+    exits = (
+        promote_raise_halts(outcome)
+        if isinstance(outcome, ExitSet)
+        else promote_raise_halts(
+            reduce_block_to_exitset((_FixedOutcomeSugar(outcome),), None)
+        )
+    )
+    passed = any(
+        isinstance(face, Halted) and face.effect is effect for face in exits.exits
+    )
+    completed = any(isinstance(face, Completed) for face in exits.exits)
+    if passed and completed:
+        raise AssertionError(
+            f"{level} duplicated the incoming edge into a completed arm: {exits!r}"
+        )
+    consumed = not passed and completed
+    if consumed == passed:
+        raise AssertionError(
+            f"{level} must consume or pass the exact incoming edge once: {exits!r}"
+        )
+    return (
+        _LevelRoutingReceipt(
+            level, effect, AttributionOutcome.AUTHENTICATED_EXIT, consumed, passed
+        ),
+        outcome,
+    )
+
+
+def _three_deep_level_receipts(exception_name: str):
+    """Expose the pinned chain's ExitSet after each source-ordered router."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import BlockValue, ClassValue, StringValue
+    from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+        AuthenticatedExceptionTypeValue,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    source = (
+        "def test_close_on_error():\n"
+        "    with boundary(OSError):\n"
+        "        with bytes_io() as buffer:\n"
+        "            with get_handle(buffer) as handles:\n"
+        "                pass\n"
+    )
+    identity = (source, "test_common_three_deep.py", blake3_512_of(source.encode()))
+    probe = SourceFile(identity)
+    with_nodes = sorted(
+        (node for node in probe.nodes() if node.kind == "With"),
+        key=lambda node: node.line_col_span().start_line,
+    )
+    rows = {}
+    for index, node in enumerate(with_nodes):
+        coordinate = _coordinate(node.items[0].context_expr)
+        rows[coordinate] = (
+            _ref(coordinate, _raise_semantics(), "h")
+            if index == 0
+            else _resource_ref(coordinate, str(index))
+        )
+    outer, middle, inner = _with_routers(
+        _built_function(identity, "test_close_on_error", rows)
+    )
+    effect = RaiseEffect(
+        exception_name=exception_name,
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(exception_name)],
+        ),
+        occurrence="test_common.py:640",
+    )
+    inner = replace(
+        inner,
+        manager=_FixedOutcomeSugar(Incomplete(effect)),
+        enter=_FixedOutcomeSugar(Complete(StringValue("inner-enter"))),
+        exit=_FixedOutcomeSugar(Complete(StringValue("inner-exit"))),
+    )
+    inner_receipt, inner_outcome = _account_level("inner", effect, inner.desugar)
+    assert inner_outcome is not None, inner_receipt
+
+    middle = replace(
+        middle,
+        manager=_FixedOutcomeSugar(Complete(StringValue("bytes-io"))),
+        enter=_FixedOutcomeSugar(Complete(StringValue("buffer"))),
+        exit=_FixedOutcomeSugar(Complete(StringValue("bytes-io-exit"))),
+        body=(_FixedOutcomeSugar(inner_outcome),),
+    )
+    middle_receipt, middle_outcome = _account_level("middle", effect, middle.desugar)
+    assert middle_outcome is not None, middle_receipt
+
+    expected_identity = ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("OSError")],
+    )
+    expected = AuthenticatedExceptionTypeValue(
+        ClassValue("OSError", (), BlockValue(())),
+        expected_identity,
+        (expected_identity,),
+    )
+    manager_call = CallSiteValue(
+        "boundary",
+        (expected,),
+        ("expected",),
+        ctor("call:boundary", []),
+        None,
+    )
+    outer = replace(
+        outer,
+        manager=_FixedOutcomeSugar(Complete(manager_call)),
+        body=(_FixedOutcomeSugar(middle_outcome),),
+    )
+    outer_receipt, outer_outcome = _account_level("outer", effect, outer.desugar)
+    assert outer_outcome is not None, outer_receipt
+    return inner_receipt, middle_receipt, outer_receipt
 
 
 def test_three_deep_innermost_manager_halt_reaches_outer_assertion_after_cleanup():
@@ -514,6 +685,44 @@ def test_three_deep_nonmatching_manager_halt_stays_halted_after_cleanup():
     assert middle_exit == [1]
     assert inner_enter == []
     assert inner_exit == []
+
+
+def test_three_deep_each_level_accounts_the_outer_matching_edge_once():
+    """Real site: two resources pass OSError; only the assertion consumes it."""
+    receipts = _three_deep_level_receipts("OSError")
+
+    assert [receipt.level for receipt in receipts] == ["inner", "middle", "outer"]
+    assert [receipt.consumed for receipt in receipts] == [False, False, True]
+    assert [receipt.passed for receipt in receipts] == [True, True, False]
+    assert all(receipt.authenticated_exceptional_exits == 1 for receipt in receipts)
+    assert all(receipt.named_refusals == 0 for receipt in receipts)
+    assert all(receipt.construction_panics == 0 for receipt in receipts)
+
+
+def test_three_deep_outer_only_edge_cannot_be_consumed_at_an_inner_level():
+    """Load-bearing lying twin: OSError is the outer contract's edge alone."""
+    inner, middle, outer = _three_deep_level_receipts("OSError")
+
+    assert inner.passed and not inner.consumed
+    assert middle.passed and not middle.consumed
+    assert outer.consumed and not outer.passed
+    assert inner.effect is middle.effect is outer.effect
+
+
+def test_three_deep_edge_matching_no_level_escapes_all_three_unchanged():
+    """A TypeError belongs to no level and must remain the identical loud edge."""
+    inner, middle, outer = _three_deep_level_receipts("TypeError")
+
+    assert all(
+        receipt.passed and not receipt.consumed for receipt in (inner, middle, outer)
+    )
+    assert inner.effect is middle.effect is outer.effect
+    assert all(
+        receipt.authenticated_exceptional_exits == 1
+        for receipt in (inner, middle, outer)
+    )
+    assert all(receipt.named_refusals == 0 for receipt in (inner, middle, outer))
+    assert all(receipt.construction_panics == 0 for receipt in (inner, middle, outer))
 
 
 def test_pinned_juxtaposed_assertion_and_resource_nest_left_to_right():
