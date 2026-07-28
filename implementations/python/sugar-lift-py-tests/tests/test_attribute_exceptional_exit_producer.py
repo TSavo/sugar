@@ -12,7 +12,7 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, SymbolicValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -21,8 +21,6 @@ from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import Attribute
 from sugar_source_tree.tree import SourceFile
 
-CORPUS_ROOT = Path("/Users/tsavo/sugar-defect-drain/.venv/lib/python3.14/site-packages")
-SITE = CORPUS_ROOT / "pandas/tests/test_register_accessor.py"
 SITE_SHA256 = "4d2599448c6b329af3822dbc2295fafe142d9ce84e49821c435d9b1c11fea793"
 SOURCE_CID = (
     "blake3-512:43cdd8a4f204ef75c77996a7e7a98b84bcd174de708cfe1e9e430415bbd636e2"
@@ -42,10 +40,10 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
-def _site_attribute(source: str) -> Attribute:
+def _site_attribute(source: str, site: Path) -> Attribute:
     assert blake3_512_of(source.encode()) == SOURCE_CID
     tree = SourceFile(
-        workspace_path_source(str(SITE), root=str(CORPUS_ROOT)),
+        workspace_path_source(str(site), root=str(site.parents[2])),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     matches = tuple(
@@ -88,18 +86,18 @@ def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> 
         receiver=_ReceiverSugar(receiver),
         name=node.attr if name is None else name,
     )
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         operation.desugar(None)
-    info = raised.value.info
-    assert info.owner == f"{type(receiver).__name__}.attribute"
-    assert "undecided" in info.observed
+    refusal = raised.value
+    assert refusal.owner == f"{type(receiver).__name__}.attribute"
+    assert "undecided" in refusal.observed
     assert "source-authenticated attribute success or exceptional exit" in (
-        info.requested
+        refusal.requested
     )
-    assert "AttributeError" not in info.observed
-    assert "AttributeError" not in info.requested
-    assert "RuntimeEffect" not in info.observed
-    assert "RuntimeEffect" not in info.requested
+    assert "AttributeError" not in refusal.observed
+    assert "AttributeError" not in refusal.requested
+    assert "RuntimeEffect" not in refusal.observed
+    assert "RuntimeEffect" not in refusal.requested
 
 
 def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) -> None:
@@ -156,16 +154,18 @@ def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) 
 
 
 def test_real_pandas_constructed_receiver_attribute_is_named_undecided() -> None:
-    source = SITE.read_text(encoding="utf-8")
+    site = _authenticated_corpus_file("tests/test_register_accessor.py")
+    source = site.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == SITE_SHA256
-    node = _site_attribute(source)
+    node = _site_attribute(source, site)
 
     _assert_undecided(node, _call_result())
 
 
 def test_symbolic_receiver_attribute_is_the_same_named_third_value() -> None:
-    source = SITE.read_text(encoding="utf-8")
-    node = _site_attribute(source)
+    site = _authenticated_corpus_file("tests/test_register_accessor.py")
+    source = site.read_text(encoding="utf-8")
+    node = _site_attribute(source, site)
 
     _assert_undecided(node, SymbolicValue(make_var("series")))
 
@@ -178,7 +178,8 @@ def test_lying_known_member_does_not_license_blanket_attribute_error() -> None:
 
 
 def test_replacing_bad_with_known_member_still_cannot_invent_an_exit() -> None:
-    source = SITE.read_text(encoding="utf-8")
+    site = _authenticated_corpus_file("tests/test_register_accessor.py")
+    source = site.read_text(encoding="utf-8")
     assert source.count("pd.Series([], dtype=object).bad") == 1
     lying = source.replace(
         "pd.Series([], dtype=object).bad",
@@ -186,12 +187,12 @@ def test_replacing_bad_with_known_member_still_cannot_invent_an_exit() -> None:
     )
     assert "pd.Series([], dtype=object).__class__" in lying
 
-    _assert_undecided(_site_attribute(source), _call_result(), name="__class__")
+    _assert_undecided(_site_attribute(source, site), _call_result(), name="__class__")
 
 
 # --- No-call Attribute family corpus pins (denominator 41) -----------------
 # Bare desugar without bindings yields SymbolicValue receivers; the producer
-# must keep the third value as ConstructionPanic(owner=SymbolicValue.attribute)
+# must keep the third value as SugarNotWritten(owner=SymbolicValue.attribute)
 # rather than invent AttributeError. These sites are enrolled Attribute bodies
 # under the no-Call-descendant law.
 
@@ -227,18 +228,18 @@ def _line_attribute(source: str, path: Path, *, line: int, attr: str) -> Attribu
 
 def _assert_bare_desugar_symbolic_attribute(node: Attribute) -> None:
     """Production door: expression.sugar().desugar(None) with no bindings."""
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         node.sugar().desugar(None)
-    info = raised.value.info
-    assert info.owner == "SymbolicValue.attribute"
-    assert "undecided" in info.observed
+    refusal = raised.value
+    assert refusal.owner == "SymbolicValue.attribute"
+    assert "undecided" in refusal.observed
     assert "source-authenticated attribute success or exceptional exit" in (
-        info.requested
+        refusal.requested
     )
-    assert "AttributeError" not in info.observed
-    assert "AttributeError" not in info.requested
-    assert "RuntimeEffect" not in info.observed
-    assert "RuntimeEffect" not in info.requested
+    assert "AttributeError" not in refusal.observed
+    assert "AttributeError" not in refusal.requested
+    assert "RuntimeEffect" not in refusal.observed
+    assert "RuntimeEffect" not in refusal.requested
 
 
 @pytest.mark.parametrize(
@@ -265,7 +266,7 @@ def test_no_call_attribute_corpus_sites_stay_symbolic_undecided(
 def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
     """BinOp ``s_0123 & np.nan`` child-evaluates ``.nan`` on SymbolicValue.
 
-    That panic is Attribute-family coordinate (owner SymbolicValue.attribute),
+    That refusal is Attribute-family coordinate (owner SymbolicValue.attribute),
     not binary_operation_exception_floor. Keep the owner name honest when a
     BinOp site is a parent of Attribute evaluation.
     """
@@ -287,11 +288,11 @@ def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
         and node.line_col_span().start_line == 96
     )
     assert len(matches) == 1
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         matches[0].sugar().desugar(None)
-    info = raised.value.info
-    assert info.owner == "SymbolicValue.attribute"
-    assert "SymbolicValue.nan" in info.observed
+    refusal = raised.value
+    assert refusal.owner == "SymbolicValue.attribute"
+    assert "SymbolicValue.nan" in refusal.observed
     assert "source-authenticated attribute success or exceptional exit" in (
-        info.requested
+        refusal.requested
     )

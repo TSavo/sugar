@@ -15,7 +15,7 @@ from sugar_source_tree.tree import SourceFile
 
 
 def _attribute_refusal(src):
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_source_tree.panic import SugarNotWritten
 
     directory = tempfile.mkdtemp()
     path = os.path.join(directory, "m.py")
@@ -24,8 +24,8 @@ def _attribute_refusal(src):
     function = next(SourceFile(path_source(path)).functions())
     try:
         function.sugar().desugar(None)
-    except ConstructionPanic as panic:
-        return panic.info
+    except SugarNotWritten as refusal:
+        return refusal
     raise AssertionError("opaque member operation invented a completed coordinate")
 
 
@@ -66,7 +66,7 @@ def test_opaque_subscript_is_named_undecided():
 def test_opaque_attribute_uses_the_typed_construction_refusal():
     info = _attribute_refusal("def f(x):\n    return g(x).foo\n")
 
-    assert info.gap_locus.value == "Construction"
+    assert type(info).__name__ == "SugarNotWritten"
     assert "AttributeError" not in info.observed
     assert "AttributeError" not in info.requested
 

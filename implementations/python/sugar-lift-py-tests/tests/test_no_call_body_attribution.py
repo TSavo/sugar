@@ -235,6 +235,11 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     ]
 
 
+def test_population_selection_never_reads_manager_target_symbol() -> None:
+    """All resolved managers enroll; manager spelling grants no membership."""
+    assert "targetSymbol" not in discover_no_call_body_probes.__code__.co_consts
+
+
 def test_discovery_projects_one_family_without_constructing_peer_sources(
     tmp_path, monkeypatch
 ) -> None:
