@@ -756,6 +756,28 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def setattr(self, name, value, site):
+        """``receiver.name = value`` — the store path, never the read path.
+
+        Distinct from :meth:`attribute` / ``__getattr__`` / ``__getattribute__``.
+        A readable name does not license a write. Default: loud floor gap.
+        """
+        del name, value
+        from sugar_lift_py_tests.gap.panic import construction_panic
+        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+
+        observed = type(self).__name__
+        info = ConstructionGap(
+            owner="setattr",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the attribute-store floor",
+            fix=f"write more Floor: implement {observed}.setattr",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        construction_panic(info)
+
     def delitem(self, index, site):
         del index
         from sugar_lift_py_tests.gap.panic import construction_panic

@@ -357,3 +357,12 @@ class TupleValue(FloorValue):
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TupleValue.setitem"
         )
+
+    def setattr(self, name, value, site):
+        """Tuples have no ``__dict__``; attribute store is AttributeError."""
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="TupleValue.setattr"
+        )
