@@ -191,7 +191,7 @@ class AuthenticatedModuleSourceV1:
 @dataclass(frozen=True)
 class DefinitionCoordinateV1:
     name: str
-    kind: Literal["function", "class", "import"]
+    kind: Literal["function", "class", "import", "alias"]
     source_cid: str
     start_line: int
     start_col: int
@@ -201,7 +201,7 @@ class DefinitionCoordinateV1:
 
     def __post_init__(self) -> None:
         _string(self.name, "definition name")
-        if self.kind not in {"function", "class", "import"}:
+        if self.kind not in {"function", "class", "import", "alias"}:
             raise ValueError("definition coordinate has unknown kind")
         _cid(self.source_cid, "definition sourceCid")
         for value, label in (
@@ -241,7 +241,7 @@ class DefinitionCoordinateV1:
             },
             "definition coordinate",
         )
-        if value["kind"] not in {"function", "class", "import"}:
+        if value["kind"] not in {"function", "class", "import", "alias"}:
             raise ValueError("definition coordinate has unknown kind")
         return cls(
             name=_string(value["name"], "definition name"),
@@ -267,8 +267,10 @@ class ReexportWarrantV1:
     cid: str = ""
 
     def __post_init__(self) -> None:
-        if self.definition.kind != "import":
-            raise ValueError("re-export warrant must cite an import definition")
+        if self.definition.kind not in {"import", "alias"}:
+            raise ValueError(
+                "re-export warrant must cite an import or alias definition"
+            )
         if self.definition.source_cid != self.from_source_cid:
             raise ValueError("re-export definition is not in its from-module source")
         expected = cid_of_json(self._preimage())

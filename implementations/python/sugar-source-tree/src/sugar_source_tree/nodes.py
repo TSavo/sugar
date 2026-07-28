@@ -197,6 +197,9 @@ class SourceUnit:
     _exception_type_identity_cache: dict = field(init=False, default_factory=dict)
     # Memo for the module's per-occurrence import-binding map (one lexical pass).
     _import_bound_name_targets: object = field(init=False, default=None)
+    # Final-checked import value-use resolutions at exact use sites of this
+    # unit only (source_cid match). Never foreign LineTable spans.
+    _import_value_use_resolutions: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -219,6 +222,7 @@ class SourceUnit:
         object.__setattr__(self, "function_nodes", ())
         object.__setattr__(self, "_exception_type_identity_cache", {})
         object.__setattr__(self, "_import_bound_name_targets", None)
+        object.__setattr__(self, "_import_value_use_resolutions", {})
 
     def import_bound_name_target(
         self, span: Tuple[int, int, int, int]
@@ -239,6 +243,84 @@ class SourceUnit:
             targets = import_bound_name_targets(module, self.source_cid)
             object.__setattr__(self, "_import_bound_name_targets", targets)
         return targets.get(span)
+
+    def seat_import_value_use_resolution(
+        self,
+        span: Tuple[int, int, int, int],
+        resolved: object,
+        *,
+        source_cid: str,
+    ) -> None:
+        """Seat one final-checked import value-use resolution on this unit only.
+
+        Requires:
+        - ``source_cid`` equals this unit's authenticated ``source_cid``
+        - ``span`` is a 4-tuple of ints that projects inside this unit's LineTable
+        - ``resolved`` is a ``ResolvedPythonObjectV1`` (typed, not arbitrary object)
+
+        Foreign/malformed/tampered seating is typed-loud (never silent table write).
+        """
+        from sugar_source_tree.panic import BackendDefect
+
+        if source_cid != self.source_cid:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed=f"source_cid={source_cid!r}",
+                requested=f"source_cid={self.source_cid!r} (this unit only)",
+                fix="seat only authenticated value-use receipts of this unit's source",
+            )
+        if (
+            not isinstance(span, tuple)
+            or len(span) != 4
+            or not all(isinstance(part, int) and not isinstance(part, bool) for part in span)
+        ):
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed=repr(span),
+                requested="(start_line, start_col, end_line, end_col) ints",
+                fix="mint seating keys from authenticated useSite coordinates only",
+            )
+        start_line, start_col, end_line, end_col = span
+        # Validate coordinates against this unit's LineTable (no foreign offsets).
+        # LineTable.offset raises BackendDefect on out-of-range — no broad catch.
+        start_off = self.line_table.offset(start_line, start_col)
+        end_off = self.line_table.offset(end_line, end_col)
+        if end_off < start_off:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed=f"inverted span {span!r}",
+                requested="start <= end in unit source",
+                fix="repair authenticated useSite coordinates",
+            )
+        from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
+        if not isinstance(resolved, ResolvedPythonObjectV1):
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed=type(resolved).__name__,
+                requested="ResolvedPythonObjectV1",
+                fix="seat only resolve_import_binding products, never arbitrary objects",
+            )
+        table = self._import_value_use_resolutions
+        if table is None:
+            table = {}
+            object.__setattr__(self, "_import_value_use_resolutions", table)
+        table[span] = resolved
+
+    def import_value_use_resolution(
+        self, span: Tuple[int, int, int, int]
+    ) -> object | None:
+        """Seated import value-use resolution at exact ``span``, or None.
+
+        Frames consume only exact seated coordinates — no scanning, no spelling.
+        """
+        table = self._import_value_use_resolutions
+        if not table:
+            return None
+        return table.get(span)
 
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""

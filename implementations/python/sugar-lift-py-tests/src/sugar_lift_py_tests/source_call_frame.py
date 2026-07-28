@@ -397,11 +397,38 @@ class SourceVisibleCallFrameV1:
             )
         ):
             if kind == "vararg":
-                bound.append(self._tuple_node(tuple(remaining)))
+                coordinate = self.formal_coordinates[index]
+                bound.append(
+                    self._tuple_node(
+                        tuple(
+                            _same_unit_actual_node(
+                                self.owner.unit,
+                                value,
+                                coordinate.project("variadic", actual_index),
+                            )
+                            for actual_index, value in enumerate(remaining)
+                        )
+                    )
+                )
                 remaining.clear()
                 continue
             if kind == "kwarg":
-                bound.append(self._dict_node(tuple(named.items())))
+                coordinate = self.formal_coordinates[index]
+                bound.append(
+                    self._dict_node(
+                        tuple(
+                            (
+                                key,
+                                _same_unit_actual_node(
+                                    self.owner.unit,
+                                    value,
+                                    coordinate.project("variadic-keyword", actual_index),
+                                ),
+                            )
+                            for actual_index, (key, value) in enumerate(named.items())
+                        )
+                    )
+                )
                 named.clear()
                 continue
             value = None
@@ -422,6 +449,14 @@ class SourceVisibleCallFrameV1:
             bound.append(value)
         if remaining or named:
             raise SourceCallBindingGap("unconsumed call actual")
+
+        # Rehost foreign-unit actuals onto this frame's SourceUnit so binding
+        # never carries cross-unit LineTable offsets into construction.
+        owner_unit = self.owner.unit
+        bound = tuple(
+            _same_unit_actual_node(owner_unit, node, coordinate)
+            for node, coordinate in zip(bound, self.formal_coordinates, strict=True)
+        )
 
         supplied_testimonies = testimonies or (None,) * len(bound)
         if len(supplied_testimonies) != len(bound):
@@ -512,6 +547,57 @@ class SourceVisibleCallFrameV1:
 
 class SourceCallBindingGap(ValueError):
     pass
+
+
+def _same_unit_actual_node(owner_unit, node, coordinate):
+    """Rehost a bound actual onto the frame owner unit when needed.
+
+    Same-unit nodes pass through. Foreign-unit actuals must never carry their
+    LineTable offsets into owner-unit construction (``offset N outside 0..M``):
+    mint a ``BindingCoordinateRef`` at the formal's owner-local span only.
+
+    Value-use resolutions are **not** transferred or re-seated here: frames
+    consume exact seats on the owning SourceUnit (source-CID authenticated at
+    publication). No broad Exception catch, no fallback fabrication of seats.
+    """
+    from sugar_source_tree.backend import Leaf, materialize
+    from sugar_source_tree.nodes import Node
+    from sugar_source_tree.shadow import ShadowNode
+    from sugar_source_tree.spans import Span
+
+    if not isinstance(node, Node):
+        return node
+    if node.unit.source_cid == owner_unit.source_cid:
+        return node
+
+    site = coordinate.binding_site
+    if not isinstance(site, dict):
+        raise SourceCallBindingGap(
+            "foreign actual requires owner-local formal binding site"
+        )
+    site_cid = site.get("source_cid") or site.get("sourceCid")
+    if site_cid != owner_unit.source_cid:
+        raise SourceCallBindingGap(
+            "formal binding site is not on the frame owner unit"
+        )
+    span_info = site.get("span")
+    if not isinstance(span_info, dict):
+        raise SourceCallBindingGap("formal binding site missing sealed span")
+    start = span_info.get("start")
+    end = span_info.get("end")
+    if not isinstance(start, int) or not isinstance(end, int) or end < start:
+        raise SourceCallBindingGap("formal binding site span is not unit-local")
+    owner_span = Span(start, end)
+
+    return materialize(
+        owner_unit,
+        ShadowNode(
+            "BindingCoordinateRef",
+            owner_span,
+            (("coordinate", Leaf(coordinate)),),
+        ),
+        node.reporter,
+    )
 
 
 SourceCallFrameV1 = SourceVisibleCallFrameV1

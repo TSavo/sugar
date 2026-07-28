@@ -49,6 +49,24 @@ class BindingCoordinateV1:
     def wire(self) -> dict[str, Any]:
         return {**self.preimage, "bindingCoordinateCid": self.cid}
 
+    def project(self, *path: str | int) -> "BindingCoordinateV1":
+        """Derive an authenticated child coordinate from this formal seat."""
+        if not path or not all(
+            isinstance(part, (str, int)) and not isinstance(part, bool)
+            for part in path
+        ):
+            raise BindingProvenanceGap("projected coordinate requires a structural path")
+        projection_path = (*self.projection_path, *path)
+        preimage = {
+            "kind": "binding-coordinate",
+            "schemaVersion": "1",
+            "scopeOwnerCid": self.scope_owner_cid,
+            "bindingSite": self.binding_site,
+            "projectionPath": list(projection_path),
+        }
+        raw = {**preimage, "bindingCoordinateCid": cid_of_json(preimage)}
+        return type(self).decode(raw)
+
     @classmethod
     def mint(
         cls,
