@@ -435,7 +435,13 @@ class SourceUnit:
             )
             or any(
                 isinstance(member, FunctionDef)
-                and (member.name in forbidden_methods or member.decorators)
+                and (
+                    member.name in forbidden_methods
+                    or (
+                        member.decorators
+                        and definition._method_descriptor_kind(member) is None
+                    )
+                )
                 for member in definition.body
             )
         )
@@ -784,9 +790,7 @@ class SourceUnit:
         for handler in statement.handlers:
             if handler.name == name:
                 return True
-            if any(
-                self._statement_rebinds_name(body, name) for body in handler.body
-            ):
+            if any(self._statement_rebinds_name(body, name) for body in handler.body):
                 return True
         return any(
             self._statement_rebinds_name(tail, name)
@@ -2858,6 +2862,25 @@ class ClassDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "bases", "keywords", "body")
 
+    def _method_descriptor_kind(self, method: "FunctionDef") -> Optional[str]:
+        """Authenticate one language descriptor decorator by lexical binding.
+
+        The decorator spelling is only a lookup key.  A same-named module
+        binding defeats the builtin coordinate, so it can never grant property
+        or class/static method semantics.
+        """
+        if len(method.decorators) != 1:
+            return None
+        decorator = method.decorators[0]
+        if not isinstance(decorator, Name):
+            return None
+        if decorator.id not in {"property", "classmethod", "staticmethod"}:
+            return None
+        bindings = (self.unit.module_direct_bindings or {}).get(decorator.id, ())
+        if bindings:
+            return None
+        return decorator.id
+
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
         the type params then bind for the bases, keywords, and body. The body is
@@ -3010,6 +3033,7 @@ class ClassDef(Statement):
                 method.fragment.seal().cid,
                 method.sugar(),
                 method.source_visible_call_frame(),
+                self._method_descriptor_kind(method),
             )
             for method in methods
         )
@@ -5934,11 +5958,15 @@ class Raise(Statement):
             ):
                 if isinstance(type_operand, Name):
                     identity = self.unit.exception_type_identity(type_operand)
-                    mro = self.unit.exception_type_mro(type_operand)
+                    if identity is None:
+                        identity = self.unit.imported_exception_type_identity(
+                            type_operand
+                        )
+                        mro = None
+                    else:
+                        mro = self.unit.exception_type_mro(type_operand)
                 else:
-                    identity = self.unit.imported_exception_type_identity(
-                        type_operand
-                    )
+                    identity = self.unit.imported_exception_type_identity(type_operand)
                     mro = None
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):

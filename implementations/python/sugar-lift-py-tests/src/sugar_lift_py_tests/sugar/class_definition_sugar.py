@@ -68,6 +68,7 @@ class ClassDefinitionSugar(Sugar):
                     "name": method.name,
                     "definitionFragmentCid": method.definition_fragment_cid,
                     "sourceCallFrameCid": method.source_call_frame.frame_cid,
+                    "descriptorKind": method.descriptor_kind,
                 }
                 for method in self.methods
             ],
