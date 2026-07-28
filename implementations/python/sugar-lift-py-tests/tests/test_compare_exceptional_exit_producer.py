@@ -13,7 +13,6 @@ import pytest
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
@@ -22,6 +21,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Compare
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 # Content manifest (relative path + per-file BLAKE3-512). Path-shape
@@ -88,16 +88,16 @@ def _compare_at(path: Path, source: str, *, line: int) -> Compare:
     return matches[0]
 
 
-def _assert_named_compare_panic(node, *, observed: str) -> None:
-    with pytest.raises(ConstructionPanic) as raised:
+def _assert_named_compare_refusal(node, *, observed: str) -> None:
+    with pytest.raises(SugarNotWritten) as raised:
         node.sugar().desugar(None)
-    info = raised.value.info
-    assert info.owner == "comparison_operation_exception_floor"
-    assert info.observed == observed
-    assert "source-visible native comparison testimony" in info.requested
-    assert "authenticated exceptional exit" in info.requested
-    assert "TypeError" not in str(info)
-    assert "RuntimeEffect" not in str(info)
+    refusal = raised.value
+    assert refusal.owner == "comparison_operation_exception_floor"
+    assert refusal.observed == observed
+    assert "source-visible native comparison testimony" in refusal.requested
+    assert "authenticated exceptional exit" in refusal.requested
+    assert "TypeError" not in str(refusal)
+    assert "RuntimeEffect" not in str(refusal)
 
 
 def test_launcher_authenticates_content_manifest_not_path_shape() -> None:
@@ -169,7 +169,7 @@ def test_pandas_col_membership_refuses_to_invent_type_error() -> None:
     assert hashlib.sha256(source.encode()).hexdigest() == COL_SITE_SHA256
     assert blake3_512_of(source.encode()) == COL_SOURCE_CID
 
-    _assert_named_compare_panic(
+    _assert_named_compare_refusal(
         _compare_at(path, source, line=365),
         observed="TermValue in CallSiteValue",
     )
@@ -226,11 +226,11 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
         if op_kind == "Eq"
         else ComparisonOpSugar(op_kind, left, right, "compare-site")
     )
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         sugar.desugar(None)
 
-    assert raised.value.info.owner == "comparison_operation_exception_floor"
-    assert "TypeError" not in str(raised.value.info)
+    assert raised.value.owner == "comparison_operation_exception_floor"
+    assert "TypeError" not in str(raised.value)
 
 
 @pytest.mark.parametrize("op_kind", ["Lt", "Gt", "LtE", "GtE"])
@@ -240,10 +240,10 @@ def test_undecided_symbolic_operands_refuse_invented_ordering(
     """``left < right`` cannot invent ``py.lt`` when operand types are undecided."""
     left = _ValueSugar(SymbolicValue(make_var("left")))
     right = _ValueSugar(SymbolicValue(make_var("right")))
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         ComparisonOpSugar(op_kind, left, right, "compare-site").desugar(None)
 
-    info = raised.value.info
+    info = raised.value
     assert info.owner == "comparison_operation_exception_floor"
     operator = {"Lt": "<", "Gt": ">", "LtE": "<=", "GtE": ">="}[op_kind]
     assert info.observed == f"SymbolicValue {operator} SymbolicValue"
@@ -251,21 +251,19 @@ def test_undecided_symbolic_operands_refuse_invented_ordering(
     assert "TypeError" not in str(info)
 
 
-def test_symbolic_equality_remains_solver_owned() -> None:
-    """Equality stays a total ``py.eq`` coordinate for symbolic/ground pairs."""
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-
-    outcome = EqualityOpSugar(
-        _ValueSugar(SymbolicValue(make_var("left"))),
-        _ValueSugar(TermValue(1)),
-        "compare-site",
-    ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
+def test_symbolic_equality_refuses_unwitnessed_native_dispatch() -> None:
+    """A symbolic operand does not testify that ``__eq__`` cannot raise."""
+    with pytest.raises(SugarNotWritten) as raised:
+        EqualityOpSugar(
+            _ValueSugar(SymbolicValue(make_var("left"))),
+            _ValueSugar(TermValue(1)),
+            "compare-site",
+        ).desugar(None)
+    assert raised.value.owner == "comparison_operation_exception_floor"
 
 
 def test_undecided_symbolic_membership_refuses_invented_py_in() -> None:
-    with pytest.raises(ConstructionPanic) as raised:
+    with pytest.raises(SugarNotWritten) as raised:
         ComparisonOpSugar(
             "In",
             _ValueSugar(TermValue(1)),
@@ -273,7 +271,7 @@ def test_undecided_symbolic_membership_refuses_invented_py_in() -> None:
             "compare-site",
         ).desugar(None)
 
-    info = raised.value.info
+    info = raised.value
     assert info.owner == "comparison_operation_exception_floor"
     assert info.observed == "TermValue in SymbolicValue"
     assert "TypeError" not in str(info)
@@ -311,7 +309,7 @@ def test_pandas_series_string_ordering_stays_source_undecided() -> None:
     with pytest.raises(TypeError, match="Invalid comparison"):
         series < "a"  # noqa: B015
 
-    _assert_named_compare_panic(
+    _assert_named_compare_refusal(
         _compare_at(path, source, line=146),
         observed="SymbolicValue < StringValue",
     )
@@ -341,7 +339,7 @@ def test_pandas_left_right_ordering_faces_stay_source_undecided(
     path = _corpus_root() / "tests/arithmetic/common.py"
     source = path.read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() == COMMON_SITE_SHA256
-    _assert_named_compare_panic(
+    _assert_named_compare_refusal(
         _compare_at(path, source, line=line),
         observed=observed,
     )

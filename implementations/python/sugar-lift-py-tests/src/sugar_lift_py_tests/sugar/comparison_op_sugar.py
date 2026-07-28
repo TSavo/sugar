@@ -55,9 +55,9 @@ def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
     until native operand types are source-authenticated — the same producer
     law BinOp/BoolOp already own.
 
-    Equality is different: ``==`` / ``!=`` remain total solver coordinates for
-    symbolic and ground pairs (``py.eq``), so equality only refuses an
-    unexecuted call result whose ``__eq__`` body is itself undecided.
+    Equality is total only after both native operand types are decided.  An
+    undecided value may dispatch ``__eq__`` / ``__ne__`` that completes or
+    raises, so a solver ``py.eq`` coordinate cannot authenticate completion.
     """
     denotes_left = getattr(left, "denotes_value", None)
     denotes_right = getattr(right, "denotes_value", None)
@@ -66,26 +66,19 @@ def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
     if not (denotes_left() and denotes_right()):
         return
 
-    if op_kind in {"Eq", "NotEq"}:
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    decided_left = getattr(left, "runtime_type_is_decided", None)
+    decided_right = getattr(right, "runtime_type_is_decided", None)
+    if not callable(decided_left) or not callable(decided_right):
+        return
+    if decided_left() and decided_right():
+        return
 
-        if not isinstance(left, CallSiteValue) and not isinstance(right, CallSiteValue):
-            return
-    else:
-        decided_left = getattr(left, "runtime_type_is_decided", None)
-        decided_right = getattr(right, "runtime_type_is_decided", None)
-        if not callable(decided_left) or not callable(decided_right):
-            return
-        if decided_left() and decided_right():
-            return
-
-    from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_source_tree.panic import SugarNotWritten
 
     operator = _OPERATOR_COORDINATE[op_kind]
-    construction_panic_gap(
+    del site
+    raise SugarNotWritten(
         owner="comparison_operation_exception_floor",
-        blame=site,
         observed=(f"{type(left).__name__} {operator} {type(right).__name__}"),
         requested=(
             "source-visible native comparison testimony selecting completion "
@@ -97,8 +90,6 @@ def refuse_undecided_comparison(left, right, site, op_kind: str) -> None:
             "bodies from source, or retain this named refusal without "
             "inventing an exception identity"
         ),
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
     )
 
 
