@@ -19,13 +19,16 @@ import subprocess
 import tempfile
 from functools import cache
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerResolutionGapV1,
+    ResolvedContractRefsV1,
     SourceDerivedContextManagerRefV1,
+    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
@@ -36,7 +39,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     summarize_attribution_outcomes,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-
 
 _SOURCE_CID = (
     "blake3-512:3a71aa9c523d26a6a541cb6fdc124d37c364245b959d41873619701b421fbe370"
@@ -51,6 +53,21 @@ _CORPUS_MANIFEST_CID = (
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 )
 _EXTERNAL_ERROR_TARGET = "pandas._testing.external_error_raised"
+_CATALOG_CID = "blake3-512:" + "c" * 128
+_TABLE_CID = "blake3-512:" + "t" * 128
+
+# Owner 3 residual: import-bound pyarrow exception coordinates on external_error
+# With heads.  Before source-visible construction they panicked on
+# SymbolicValue.attribute; after, the type operand is an authenticated import
+# identity and any remaining residual is a later stage (never the exception
+# Attribute projection).
+_ARROW_EXCEPTION_SITES = (
+    "tests/extension/test_arrow.py:1715",
+    "tests/io/test_parquet.py:799",
+    "tests/series/accessors/test_list_accessor.py:100",
+    "tests/series/accessors/test_list_accessor.py:132",
+    "tests/series/accessors/test_list_accessor.py:134",
+)
 
 
 @cache
@@ -233,9 +250,7 @@ def _external_error_attributions():
                 (),
             )
         context = TreeConstructionContextV1(
-            ResolvedContractRefsV1(
-                _CATALOG_CID, _TABLE_CID, MappingProxyType(refs)
-            ),
+            ResolvedContractRefsV1(_CATALOG_CID, _TABLE_CID, MappingProxyType(refs)),
             workspace_root=str(corpus.root.parent),
         )
         tree = SourceFile(
@@ -293,20 +308,29 @@ def test_external_error_raised_47_site_outcome_partition() -> None:
     summary = summarize_attribution_outcomes(_external_error_attributions())
 
     assert summary.enrolled == 47
-    assert summary.authenticated_exceptional_exits == 0
-    assert summary.named_refusals == 42
-    assert summary.construction_panics == 5
+    # ArrowInvalid/ArrowException heads construct through import-bound export
+    # coordinates; residual is named (exit-face), never ConstructionPanic on
+    # SymbolicValue.attribute for the exception-type operand.
+    assert summary.construction_panics == 0
+    assert (
+        summary.authenticated_exceptional_exits + summary.named_refusals
+        == summary.enrolled
+    )
 
 
 def test_external_error_raised_refusal_and_gap_twins_are_concrete_sites() -> None:
     by_id = {body.body_id: body for body in _external_error_attributions()}
 
     refusal = by_id["tests/io/test_feather.py:40"]
-    gap = by_id["tests/extension/test_arrow.py:1715"]
     assert refusal.outcome is AttributionOutcome.NAMED_REFUSAL
     assert refusal.detail == "With._construct_sugar"
-    assert gap.outcome is AttributionOutcome.CONSTRUCTION_PANIC
-    assert gap.detail == "SymbolicValue.attribute"
+
+    for site_id in _ARROW_EXCEPTION_SITES:
+        site = by_id[site_id]
+        # Before: SymbolicValue.attribute on ArrowInvalid/ArrowException.
+        # After: import-bound export coordinate; residual is a later stage.
+        assert site.outcome is AttributionOutcome.NAMED_REFUSAL, site
+        assert site.detail == "With._construct_sugar", site
 
 
 def test_external_error_raised_emits_complete_consumer_testimony() -> None:
@@ -340,9 +364,7 @@ def test_external_error_raised_emits_complete_consumer_testimony() -> None:
 
     assert len(report.lines()) == 8
     assert report.lines()[4].endswith("pandas/tests/io/test_feather.py:40:13")
-    assert report.lines()[-1].startswith(
-        "survivingTypedGapsOrReattributions reported"
-    )
+    assert report.lines()[-1].startswith("survivingTypedGapsOrReattributions reported")
 
 
 def test_adjacent_computed_class_raises_stays_typed_opaque() -> None:

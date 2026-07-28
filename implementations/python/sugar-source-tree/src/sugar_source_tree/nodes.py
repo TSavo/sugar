@@ -8544,15 +8544,48 @@ class Attribute(Expression):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
         The attr name is a static identifier carried onto the coordinate.
 
+        When the whole chain is a closed import-bound export
+        (``import M as h; h.a.b``), the coordinate is the joined export
+        ``M.a.b`` — the same authority Call uses for import-bound callees.
+        No module receiver is projected, so no AttributeError is invented and
+        no vendor member table is consulted.
+
         An opaque receiver still constructs this native operation. Its floor
         decides whether source testimony supplies a value or exceptional exit;
         when neither is known, the producer refuses instead of inventing a
         completed ``py.getattr`` projection or guessing ``AttributeError``."""
+        export = self._import_bound_export_symbol()
+        if export is not None:
+            from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+
+            return ImportMemberSugar(qualified_name=export, site=self.fragment)
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
             receiver=self.value.sugar(), name=self.attr, site=self.fragment
         )
+
+    def _import_bound_export_symbol(self) -> Optional[str]:
+        """Closed ``module.attr…`` coordinate when the head is uniquely import-bound.
+
+        Mirrors ``Call._import_bound_callee_symbol`` for non-call Attribute
+        expressions (exception types, dtype constructors used as values).
+        """
+        link = self
+        attributes: list[str] = []
+        while isinstance(link, Attribute):
+            attributes.append(link.attr)
+            link = link.value
+        if not isinstance(link, Name):
+            return None
+        span = link.line_col_span()
+        target = self.unit.import_bound_name_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            return None
+        module = target[len("python:") :] if target.startswith("python:") else target
+        return ".".join([module, *reversed(attributes)])
 
     def substitute(self, scope):
         """Project only from a construction-authenticated object place."""
