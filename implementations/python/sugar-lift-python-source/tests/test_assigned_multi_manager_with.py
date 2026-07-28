@@ -110,6 +110,50 @@ def test_pandas_303_two_name_managers_project_their_assignment_calls() -> None:
     assert rows == [(21, 32, 13), (30, 32, 18)]
 
 
+def test_local_single_name_manager_projects_reaching_call(tmp_path: Path) -> None:
+    """Single-item ``with m:`` projects the same way multi-item does."""
+    source = tmp_path / "single.py"
+    source.write_text(
+        "def exercise(make_manager):\n"
+        "    opt = make_manager()\n"
+        "    with opt:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    tree = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        populate_derived=False,
+    )
+    projected = _projected_manager_call_uses(tree)
+    rows = sorted(
+        (call.line_col_span().start_line, coordinate.start_line, coordinate.start_col)
+        for coordinate, call, _exit_face in projected.values()
+    )
+    assert rows == [(2, 3, 9)]
+
+
+def test_pandas_303_single_assigned_manager_projects_reaching_call() -> None:
+    """Same corpus file, single-item ``with opt:`` — general single-Name projection."""
+    tree = _real_tree()
+    site = next(
+        node
+        for node in tree.nodes()
+        if node.kind == "With" and node.line_col_span().start_line == 53
+    )
+    assert len(site.items) == 1
+    assert site.items[0].context_expr.kind == "Name"
+
+    projected = _projected_manager_call_uses(tree)
+    rows = sorted(
+        (call.line_col_span().start_line, coordinate.start_line, coordinate.start_col)
+        for coordinate, call, _exit_face in projected.values()
+        if coordinate.start_line == 53
+    )
+    assert rows == [(51, 53, 13)]
+
+
 def test_projection_is_a_transaction_and_does_not_mutate_the_source_tree() -> None:
     tree = _real_tree()
     site = _line_32_with(tree)
