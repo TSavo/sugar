@@ -21,16 +21,26 @@ from sugar_lift_py_tests.sugar.comprehension_sugar import (
     ComprehensionSugar,
     ComprehensionTargetSugar,
 )
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.tree import SourceFile
 
 
 @dataclass(frozen=True)
-class _OutcomeSugar:
+class _ConstructedOutcomeSugar(ConstructedTermSugar):
     outcome: object
+    site: object
+
+    @classmethod
+    def witnesses(cls):
+        return ()
 
     def desugar(self, ctx=None):
         del ctx
         return self.outcome
+
+    def to_term(self, *, owner: str):
+        del owner
+        return self.outcome.value.to_term(owner="test fixture")
 
 
 def _comprehension(element_outcome):
@@ -40,11 +50,17 @@ def _comprehension(element_outcome):
             ComprehensionGeneratorSugar(
                 target=ComprehensionTargetSugar(source_name="x"),
                 binding_coordinate_cid="element-cid",
-                iterable=_OutcomeSugar(Complete(SymbolicValue(make_var("outer_xs")))),
+                iterable=_ConstructedOutcomeSugar(
+                    Complete(SymbolicValue(make_var("outer_xs"))),
+                    site="synthetic-comprehension-iterable",
+                ),
                 filters=(),
             ),
         ),
-        element=_OutcomeSugar(element_outcome),
+        element=_ConstructedOutcomeSugar(
+            element_outcome,
+            site="synthetic-comprehension-element",
+        ),
         site="comprehension-temporal-test",
     )
 
