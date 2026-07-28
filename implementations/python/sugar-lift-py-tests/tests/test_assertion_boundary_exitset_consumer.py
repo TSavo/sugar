@@ -98,6 +98,97 @@ class _ProducerExpression:
         return ExitSet((self.authenticated_exit,))
 
 
+def _boundary_from_exitset(
+    body: ExitSet,
+    *,
+    expected=None,
+    pattern=None,
+    observation_slot_id: str | None = None,
+):
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        CallParameterV1,
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        ImportSignatureV2,
+        LiteralDefaultV1,
+        NoDefaultV1,
+        NoMessagePatternV1,
+        OptionalFormalArgumentProjectionV1,
+        PositionalOrKeywordV1,
+        RaiseEffectKindV1,
+    )
+    from sugar_lift_py_tests.ir import PrimitiveSort
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
+        WithEffectBoundarySugar,
+    )
+
+    class Fixed(Sugar):
+        def __init__(self, outcome):
+            self.outcome = outcome
+
+        def desugar(self, ctx=None):
+            del ctx
+            return self.outcome
+
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+    expected = expected or _Expected("TypeError")
+    actuals = (expected,)
+    parameters = [
+        CallParameterV1(
+            "expected",
+            PrimitiveSort("Value"),
+            PositionalOrKeywordV1(),
+            True,
+            NoDefaultV1(),
+        )
+    ]
+    message_selector = NoMessagePatternV1()
+    if pattern is not None:
+        actuals += (pattern,)
+        parameters.append(
+            CallParameterV1(
+                "match",
+                PrimitiveSort("Value"),
+                PositionalOrKeywordV1(),
+                False,
+                LiteralDefaultV1({"kind": "ctor", "name": "None", "args": []}),
+            )
+        )
+        message_selector = OptionalFormalArgumentProjectionV1(1)
+    manager_value = CallSiteValue(
+        target_name="expect",
+        arg_values=actuals,
+        parameters=tuple(parameter.name for parameter in parameters),
+        term=ctor("call:expect", []),
+        body=None,
+        keyword_names=("match",) if pattern is not None else (),
+    )
+    return WithEffectBoundarySugar(
+        manager=Fixed(Complete(manager_value)),
+        body=(Fixed(body),),
+        semantics=EffectBoundarySemanticsV1(
+            ExpectsModeV1(),
+            RaiseEffectKindV1(),
+            FormalArgumentProjectionV1(0),
+            message_selector,
+            ExceptionInfoBindingV1(),
+        ),
+        contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(tuple(parameters))),
+        context_manager_edge=None,
+        observation_slot_id=observation_slot_id,
+        site="pandas/tests/arithmetic/common.py:143:4",
+    )
+
+
 @pytest.mark.parametrize(
     "producer",
     ["BinOp", "Subscript", "Compare", "Attribute", "UnaryOp", "BoolOp", "Call"],
@@ -133,6 +224,122 @@ def test_wrong_exception_type_remains_halted():
     assert isinstance(face, Halted)
     assert face.effect is original.effect
     assert _marker(face) == "wrong-type"
+
+
+def test_nameless_halt_stays_outside_assertion_boundary():
+    """No identity and no raised value means there is no match question.
+
+    The boundary's expected type verifies an authenticated producer result; it
+    cannot turn a nameless halt into that result or demand a predicate whose
+    subject does not exist.
+    """
+    nameless = RaiseEffect(blame="producer.py:9:4")
+    body = ExitSet((Halted(true_guard(), nameless, _state("nameless")),))
+
+    routed = _boundary_from_exitset(body, expected=_Expected("ValueError")).desugar()
+
+    assert routed.exits == (
+        Halted(true_guard(), nameless, _state("nameless")),
+    )
+
+
+def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
+    """Construct the Python raises law from one authenticated corpus shape.
+
+    pandas 3.0.3 ``pandas/tests/arithmetic/common.py:143`` carries exactly
+    ``pytest.raises(TypeError, match=msg)`` and its body at line 144 is
+    ``left < right``.  That real site does not bind ``as excinfo``; the slot
+    below is the explicit synthetic extension proving the same consumed edge
+    can authenticate Python's observation binding without changing its origin.
+    """
+    from sugar_lift_py_tests.effect_router import ObservedEffectBinding
+    from sugar_lift_py_tests.floor import StringValue
+
+    expected = _Expected("TypeError")
+    producer_coordinate = _identity("TypeError")
+    assert producer_coordinate == expected.identity
+
+    producer_effect = RaiseEffect(
+        exception_name="TypeError",
+        blame="pandas/tests/arithmetic/common.py:144:8",
+        occurrence="pandas/tests/arithmetic/common.py:144:8",
+        exception_type_coordinate=producer_coordinate,
+        exception_type_mro=(producer_coordinate,),
+        raised_value=CallSiteValue(
+            "TypeError",
+            (StringValue("Cannot compare type Timestamp with date"),),
+            ("message",),
+            ctor("call:TypeError", []),
+            None,
+        ),
+        producer_node_owner="ComparisonOpSugar.desugar",
+    )
+    matching = Halted(true_guard(), producer_effect, _state("compare"))
+    other = _raise("ValueError", "other-type")
+    nameless_effect = RaiseEffect(
+        blame="pandas/tests/arithmetic/common.py:144:8",
+        producer_node_owner="ComparisonOpSugar.desugar",
+    )
+    nameless = Halted(true_guard(), nameless_effect, _state("nameless"))
+    completed = Completed(true_guard(), _state("completed"))
+    msg = CallSiteValue(
+        "join",
+        (StringValue("|"), SymbolicValue(make_var("msg_alternatives"))),
+        (),
+        ctor("call:join", []),
+        None,
+    )
+
+    routed = _boundary_from_exitset(
+        ExitSet((matching, other, nameless, completed)),
+        expected=expected,
+        pattern=msg,
+        observation_slot_id="excinfo",
+    ).desugar()
+
+    def observed_binding(face):
+        record = face.value if isinstance(face, Completed) else face.state
+        return next(
+            (
+                entry
+                for entry in record.entries
+                if isinstance(entry, ObservedEffectBinding)
+            ),
+            None,
+        )
+
+    compare_faces = [
+        face
+        for face in routed.exits
+        if (isinstance(face, Halted) and face.effect is producer_effect)
+        or observed_binding(face) is not None
+    ]
+    assert {type(face).__name__ for face in compare_faces} == {
+        "Completed",
+        "Halted",
+    }, routed.exits
+    assert all("py.re_search" in str(face.guard) for face in compare_faces)
+    consumed = next(face for face in compare_faces if isinstance(face, Completed))
+    failed_message = next(face for face in compare_faces if isinstance(face, Halted))
+    binding = observed_binding(consumed)
+    assert binding is not None
+    assert binding.slot_id == "excinfo"
+    assert binding.effect is producer_effect
+    assert binding.effect.exception_type_coordinate is producer_coordinate
+    assert binding.effect.exception_type_coordinate is not expected.identity
+    assert binding.effect.producer_node_owner == "ComparisonOpSugar.desugar"
+    assert binding.effect.occurrence == "pandas/tests/arithmetic/common.py:144:8"
+    assert failed_message.effect is producer_effect
+
+    by_marker = {
+        _marker(face): face for face in routed.exits if face not in compare_faces
+    }
+    assert isinstance(by_marker["other-type"], Halted)
+    assert by_marker["other-type"].effect is other.effect
+    assert isinstance(by_marker["nameless"], Halted)
+    assert by_marker["nameless"].effect is nameless_effect
+    assert isinstance(by_marker["completed"], Halted)
+    assert isinstance(by_marker["completed"].effect, ExpectationNotMetEffect)
 
 
 def test_matching_consumption_preserves_completed_and_unrelated_arms():
