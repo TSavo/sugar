@@ -255,6 +255,35 @@ def _import_from_module(current: str, node: Node) -> str | None:
     return ".".join(base) or None
 
 
+def _importorskip_module(value: Node | None) -> str | None:
+    """Module name of ``pytest.importorskip("mod")`` / ``importorskip("mod")``.
+
+    Source-visible only: Attribute or Name head, one positional string
+    Constant, no keywords/stars.  Spelling of the module is the Constant's
+    own value, never a vendor table.
+    """
+    if value is None or value.kind != "Call":
+        return None
+    if value.keywords or any(arg.kind == "Starred" for arg in value.args):
+        return None
+    if len(value.args) != 1 or value.args[0].kind != "Constant":
+        return None
+    module = value.args[0].value
+    if not isinstance(module, str) or not module:
+        return None
+    func = value.func
+    if func.kind == "Name" and func.id == "importorskip":
+        return module
+    if (
+        func.kind == "Attribute"
+        and func.attr == "importorskip"
+        and func.value.kind == "Name"
+        and func.value.id == "pytest"
+    ):
+        return module
+    return None
+
+
 class _Pass:
     def __init__(
         self,
@@ -314,18 +343,20 @@ class _Pass:
         if node is None:
             return
         if node.kind == "Name":
-            # A name USE whose sole reaching definition is an import statement
-            # is lexically bound to that import's target coordinate.  Recorded
-            # here, by the same reaching-definition state the call rows use --
-            # never by a second resolver and never by spelling.
+            # A name USE whose sole concrete reaching definition is an import
+            # statement is lexically bound to that import's target coordinate.
+            # Optional try/import joins ImportDef with unbound on the except
+            # path; the ImportDef is still the only source-visible binding.
+            # Recorded here by the same reaching-definition state the call rows
+            # use -- never by a second resolver and never by spelling.
             reaching = state.get(node.id, frozenset({_UNBOUND}))
-            if len(reaching) == 1:
-                definition = next(iter(reaching))
-                if isinstance(definition, _ImportDef):
-                    span = node.line_col_span()
-                    self.name_targets[
-                        (span.start_line, span.start_col, span.end_line, span.end_col)
-                    ] = definition.target_symbol
+            imports = {value for value in reaching if isinstance(value, _ImportDef)}
+            if len(imports) == 1 and not (reaching - imports - {_UNBOUND}):
+                definition = next(iter(imports))
+                span = node.line_col_span()
+                self.name_targets[
+                    (span.start_line, span.start_col, span.end_line, span.end_col)
+                ] = definition.target_symbol
             return
         if node.kind == "Call":
             self.expression(node.func, state, scope)
@@ -544,8 +575,49 @@ class _Pass:
             value = getattr(node, "value", None)
             self.expression(value, state, scope)
             targets = node.targets if node.kind == "Assign" else [node.target]
+            importorskip = (
+                _importorskip_module(value)
+                if node.kind == "Assign" and len(targets) == 1
+                else None
+            )
             for target in targets:
-                for name in _bound_names(target):
+                names = _bound_names(target)
+                if (
+                    importorskip is not None
+                    and len(names) == 1
+                    and target.kind == "Name"
+                ):
+                    local = next(iter(names))
+                    module = importorskip
+                    payload = {
+                        "kind": "python-import-binding",
+                        "schemaVersion": "1",
+                        "sourceCid": self.source_cid,
+                        "scope": _site(self.source_cid, scope),
+                        "definitionSite": _site(self.source_cid, node),
+                        "localSlot": local,
+                        "target": {
+                            "moduleIdentity": self.module_identities.get(
+                                module,
+                                {
+                                    "kind": "unavailable-python-module",
+                                    "name": module,
+                                },
+                            ),
+                            "exportedPath": [],
+                        },
+                    }
+                    state[local] = frozenset(
+                        {
+                            _ImportDef(
+                                _hash(payload),
+                                f"python:{module}",
+                                encode_jcs(_json_value(payload)),
+                            )
+                        }
+                    )
+                    continue
+                for name in names:
                     state[name] = frozenset({_NON_IMPORT})
             return state
         if node.kind == "If":
