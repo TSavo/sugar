@@ -84,6 +84,11 @@ class BoundNativeOperationActualsV1:
 
     actuals: tuple
     by_formal_coordinate: dict[str, object]
+    source_actuals: BoundSourceCallActualsV1
+
+    def __post_init__(self) -> None:
+        if self.source_actuals.actuals != self.actuals:
+            raise SourceCallBindingGap("native actual testimony values diverge")
 
 
 @dataclass(frozen=True)
@@ -366,6 +371,7 @@ class SourceVisibleCallFrameV1:
         return BoundNativeOperationActualsV1(
             actuals=bound.actuals,
             by_formal_coordinate=bound.by_native_formal_coordinate,
+            source_actuals=bound,
         )
 
     def with_native_operation_projection(self, formal_coordinates, pending):
