@@ -11,7 +11,7 @@ from sugar_lift_py_tests.sugar.binding_projection import (
     LoopGuardedProjection,
     UnboundProjection,
 )
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 
 
 def _guarded_projection_faces(state: GuardedProjection):
@@ -116,8 +116,82 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     )
 
 
+def _projection_term(state, *, owner: str):
+    """Canonical testimony for one producer-authenticated binding projection."""
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
+    from sugar_lift_py_tests.ir import ctor, formula_to_value, num, str_const
+
+    if isinstance(state, ConstructedTermSugar):
+        return state.to_term(owner=owner)
+    if isinstance(state, UnboundProjection):
+        cause = state.cause.seal()
+        return ctor(
+            "python:unbound-binding-projection",
+            (
+                str_const(state.name),
+                str_const(cause.source_cid),
+                num(cause.start),
+                num(cause.end),
+                str_const(cause.cid),
+            ),
+            symbol_kind="coordinate",
+        )
+    if isinstance(state, GuardedProjection):
+        return ctor(
+            "python:guarded-binding-projection",
+            (
+                str_const(state.slot.slot_id),
+                _projection_term(state.when_true, owner=owner),
+                _projection_term(state.when_false, owner=owner),
+            ),
+            symbol_kind="coordinate",
+        )
+    if isinstance(state, LoopGuardedProjection):
+        if (
+            not isinstance(state.target_cid, str)
+            or not state.target_cid.startswith("blake3-512:")
+        ):
+            raise TypeError(
+                "loop guarded binding projection requires authenticated target CID"
+            )
+        faces = []
+        for face in state.completed_faces:
+            if face.guard_formula is None:
+                raise TypeError(
+                    "loop guarded binding projection requires exact guard testimony"
+                )
+            if not isinstance(face.exit_partition_arity, int):
+                raise TypeError(
+                    "loop guarded binding projection requires exit-family arity"
+                )
+            guard_cid = blake3_512_of(
+                encode_jcs(formula_to_value(face.guard_formula)).encode("utf-8")
+            )
+            faces.append(
+                ctor(
+                    "python:loop-guarded-binding-face",
+                    (
+                        str_const(face.completion_kind),
+                        str_const(guard_cid),
+                        num(face.exit_partition_arity),
+                        _projection_term(face.state, owner=owner),
+                    ),
+                    symbol_kind="coordinate",
+                )
+            )
+        return ctor(
+            "python:loop-guarded-binding-projection",
+            (str_const(state.target_cid), *faces),
+            symbol_kind="coordinate",
+        )
+    raise TypeError(
+        "guarded binding read requires constructed projection testimony, got "
+        f"{type(state).__name__}"
+    )
+
+
 @dataclass(frozen=True)
-class GuardedBindingReadSugar(Sugar):
+class GuardedBindingReadSugar(ConstructedTermSugar):
     name: str
     state: object
     site: object = dataclass_field(compare=False)
@@ -130,3 +204,16 @@ class GuardedBindingReadSugar(Sugar):
         return read_binding(
             self.state, read_name=self.name, read_site=self.site, ctx=ctx
         ).collapse()
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:guarded-binding-read",
+            (
+                self.occurrence_term(owner=owner),
+                str_const(self.name),
+                _projection_term(self.state, owner=owner),
+            ),
+            symbol_kind="coordinate",
+        )

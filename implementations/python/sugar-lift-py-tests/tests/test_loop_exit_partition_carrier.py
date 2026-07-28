@@ -43,6 +43,7 @@ family is refused, so the end-to-end green cannot be bought by a fallback.
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 
 import pytest
 
@@ -58,6 +59,9 @@ from sugar_lift_py_tests.sugar.binding_projection import (
 )
 from sugar_lift_py_tests.sugar.delete_name_sugar import delete_binding
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import _loop_exit_faces
+from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import GuardedBindingReadSugar
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 # The shape of `pandas/core/methods/selectn.py:224`: a name carried across a
 # `for` loop that can `break`, then READ after the loop. The read is where the
@@ -74,6 +78,27 @@ def compute(columns, seed, sink):
 """
 
 _CID = "blake3-512:" + "ab" * 32
+
+
+@dataclass(frozen=True)
+class _SealedSite:
+    source_cid: str
+    start: int
+    end: int
+    cid: str
+
+
+@dataclass(frozen=True)
+class _TermSite:
+    coordinate: str
+
+    def seal(self):
+        return _SealedSite(
+            source_cid="blake3-512:" + "11" * 32,
+            start=1,
+            end=2,
+            cid=self.coordinate,
+        )
 
 
 def _face(kind: str, arity: int | None, *, guard: object = None):
@@ -114,6 +139,78 @@ def test_the_loop_exit_family_reaches_the_arms(tmp_path):
     measured rows are back.
     """
     _desugar_all(_write(tmp_path, FIXTURE))
+
+
+def test_guarded_loop_read_is_a_constructed_term_with_exact_coordinates():
+    """Truthful producer: the read carries its occurrence and loop testimony."""
+    from sugar_lift_py_tests.ir import _term_content_cid, atomic
+
+    read_site = _TermSite("blake3-512:" + "22" * 32)
+    value_site = _TermSite("blake3-512:" + "33" * 32)
+    projection = LoopGuardedProjection(
+        (
+            LoopGuardedCompletedFace(
+                "BreakExit", atomic("break_guard", []), IntLiteralSugar(1, value_site), 2
+            ),
+            LoopGuardedCompletedFace(
+                "NormalExhaustion",
+                atomic("exhausted_guard", []),
+                IntLiteralSugar(2, value_site),
+                2,
+            ),
+        ),
+        _CID,
+    )
+    read = GuardedBindingReadSugar("value", projection, read_site)
+
+    assert isinstance(read, ConstructedTermSugar)
+    authentic_cid = _term_content_cid(read.to_term(owner="guarded-loop-read-test"))
+
+    foreign_target = GuardedBindingReadSugar(
+        "value",
+        LoopGuardedProjection(
+            projection.completed_faces,
+            "blake3-512:" + "cd" * 32,
+        ),
+        read_site,
+    )
+    foreign_occurrence = GuardedBindingReadSugar(
+        "value",
+        projection,
+        _TermSite("blake3-512:" + "44" * 32),
+    )
+
+    assert _term_content_cid(
+        foreign_target.to_term(owner="guarded-loop-read-foreign-target")
+    ) != authentic_cid
+    assert _term_content_cid(
+        foreign_occurrence.to_term(owner="guarded-loop-read-foreign-occurrence")
+    ) != authentic_cid
+
+    missing_target = GuardedBindingReadSugar(
+        "value",
+        LoopGuardedProjection(projection.completed_faces, None),
+        read_site,
+    )
+    missing_arity_faces = tuple(
+        LoopGuardedCompletedFace(
+            face.completion_kind,
+            face.guard_formula,
+            face.state,
+            None,
+        )
+        for face in projection.completed_faces
+    )
+    missing_arity = GuardedBindingReadSugar(
+        "value",
+        LoopGuardedProjection(missing_arity_faces, _CID),
+        read_site,
+    )
+
+    with pytest.raises(TypeError, match="authenticated target CID"):
+        missing_target.to_term(owner="guarded-loop-read-missing-target")
+    with pytest.raises(TypeError, match="exit-family arity"):
+        missing_arity.to_term(owner="guarded-loop-read-missing-arity")
 
 
 def test_the_carrier_is_the_loop_projection_read(tmp_path):
