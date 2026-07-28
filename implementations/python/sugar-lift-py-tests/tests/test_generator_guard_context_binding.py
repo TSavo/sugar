@@ -192,8 +192,8 @@ def test_production_positional_bind_actuals_floor_reaches_guard_by_identity() ->
     true_arg = TrueBoolLiteralSugar(site=call.args[0].fragment)
     # Production binder: bind_actuals then CallSiteSugar.allocate path.
     bound_floors = frame.bind_actuals((true_arg,), ())
-    assert bound_floors[0] is true_arg
-    assert isinstance(bound_floors[0], FloorValue)
+    assert bound_floors.actuals[0] is true_arg
+    assert isinstance(bound_floors.actuals[0], FloorValue)
 
     caller = FactoryBuildContext(filename="prod.py", catalog=SugarCatalog())
     sugar = CallSiteSugar(
@@ -234,8 +234,8 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
     enabled_floor = TrueBoolLiteralSugar(site="kw:enabled")
     # Keyword for enabled; flag takes default via bind_actuals.
     bound = frame.bind_actuals((), (("enabled", enabled_floor),))
-    assert bound[0] is enabled_floor
-    assert isinstance(bound[1], FloorValue)  # default True
+    assert bound.actuals[0] is enabled_floor
+    assert isinstance(bound.actuals[1], FloorValue)  # default True
 
     sugar = CallSiteSugar(
         target_name="option_context",
@@ -257,7 +257,7 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
     }
     assert by_cid[frame.formal_coordinates[0].cid] is enabled_floor
     # Default formal is the exact object bind_actuals returned.
-    assert by_cid[frame.formal_coordinates[1].cid] is bound[1]
+    assert by_cid[frame.formal_coordinates[1].cid] is bound.actuals[1]
     assert machine._guard_evaluation_context().temporal.value_if_bound(
         frame.formal_coordinates[0].cid
     ) is enabled_floor

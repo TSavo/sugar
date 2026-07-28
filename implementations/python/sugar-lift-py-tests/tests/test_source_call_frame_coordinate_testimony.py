@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 
 import pytest
@@ -35,7 +36,7 @@ def test_binder_returns_ordered_typed_coordinate_testimony() -> None:
     bound = frame.bind_actuals((left,), ())
 
     assert isinstance(bound, BoundSourceCallActualsV1)
-    assert bound[0] is left
+    assert bound.actuals[0] is left
     assert bound.formal_coordinates == frame.formal_coordinates
     assert bound.native_formal_coordinates == frame.native_operation_formal_coordinates
     assert tuple(pair.actual for pair in bound.pairs) == bound.actuals
@@ -65,6 +66,22 @@ def test_bound_actuals_equality_requires_authenticated_coordinate_testimony() ->
     assert truthful != lying
     assert truthful != values
     assert values != truthful
+
+
+def test_bound_actuals_requires_explicit_value_projection() -> None:
+    """Authenticated testimony cannot masquerade as an unlabelled sequence."""
+    frame = _frame()
+    values = (TermValue(1), TermValue(2))
+    bound = BoundSourceCallActualsV1(
+        values,
+        frame.formal_coordinates,
+        frame.native_operation_formal_coordinates,
+    )
+
+    assert bound.actuals == values
+    assert not isinstance(bound, Sequence)
+    with pytest.raises(TypeError):
+        tuple(bound)
 
 
 @pytest.mark.parametrize("variant", ("missing", "duplicate", "reordered", "foreign"))

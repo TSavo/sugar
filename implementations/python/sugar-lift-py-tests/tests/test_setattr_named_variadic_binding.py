@@ -214,7 +214,7 @@ def test_bind_actuals_packs_star_without_self_name_shift() -> None:
         TupleValue((TermValue(1), TermValue(2), TermValue(3))),
     )
     # Two bound slots only — pack is values, not shifted by self/name.
-    assert len(bound) == 2
+    assert len(bound.actuals) == 2
 
 
 def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
@@ -239,7 +239,7 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
             )
         ),
     )
-    assert len(bound) == 2
+    assert len(bound.actuals) == 2
 
 
 # ---------------------------------------------------------------------------
