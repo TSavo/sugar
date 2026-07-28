@@ -34,6 +34,19 @@ class ListValue(FloorValue):
 
         return getattr_coordinate(self, name, owner="ListValue.attribute")
 
+    def setattr(self, name, value, site):
+        """Lists have no instance ``__dict__``; attribute store is AttributeError.
+
+        Distinct from the read path: ``xs.append`` may resolve as a bound method
+        coordinate while ``xs.append = f`` still raises AttributeError.
+        """
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="ListValue.setattr"
+        )
+
     def to_term(self, *, owner: str):
         # Project elements into FOL — assert equality / dig return faces.
         from sugar_lift_py_tests.ir import ctor

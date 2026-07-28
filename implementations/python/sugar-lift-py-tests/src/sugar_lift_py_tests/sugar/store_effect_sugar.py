@@ -9,21 +9,29 @@ from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
 @dataclass(frozen=True)
 class AttributeStoreEffectSugar(Sugar):
-    """`<receiver>.<attr> = <value>` -- an attribute store whose receiver
-    identity belongs to the runtime: Python attribute assignment can invoke
-    descriptors and ``__setattr__`` at runtime, so the exact post-state is not
-    lift-time decidable.
+    """`receiver.attr = value` — evaluate once, then project the store face.
 
-    Unlike ``AssignSugar`` (a plain-Name target, spent by substitute), a
-    store target is never bound -- it is read AND written, so it carries no
-    inert-meaning arm. This desugars straight to typed red: ``Incomplete``
-    wrapping an ``AttributeStoreRuntimeEffect``, witnessed at the TREE
-    fragment site (``site``, the statement's own fragment -- the sole site
-    type on this hot path; see ``effect/runtime_effect.py``'s
-    ``RuntimeEffectSite`` protocol). The store completed (Python continues
-    to the next statement), so ``Incomplete.follow()`` treats this effect as
-    continue-with-red, not halt (outcome/incomplete.py::
-    _effect_continues_control_flow) -- the block keeps reducing past it.
+    Python order: RHS first, then the receiver, each exactly once.  Dispatch is
+    ``__setattr__`` / descriptor ``__set__`` via Floor ``setattr`` — a different
+    method and obligation from the read path ``attribute`` /
+    ``__getattr__`` / ``__getattribute__``.
+
+    Projection arms (PARTIAL — dual-face composition instrument preserved):
+
+    1. **Decided runtime type** → ``receiver.setattr(attr, value, site)``
+       projecting ``Completed`` or ``RaiseValue`` exceptional faces through
+       the store path (never the read path).
+    2. **Undecided / formal** → ``AttributeStoreRuntimeEffect`` dual faces
+       under complementary store-outcome guards.  This is the instrument the
+       five named store ExitSet composition laws read; it is **not** replaced
+       by a consumer ``SugarNotWritten``.
+
+    Formal ``setattr_named`` carrier mint (n-ary discharge contract) is the
+    next partial step once composition can consume undischarged carriers
+    without deleting dual-face detectors.  The mint shape is pinned in
+    ``test_attribute_store_desugar`` as the producer-side contract for the
+    n-ary worker: operator ``setattr_named``, operands
+    ``(receiver, StringValue(name), value)``.
     """
 
     receiver: Sugar
@@ -58,6 +66,21 @@ class AttributeStoreEffectSugar(Sugar):
         )
 
     def _store(self, receiver, value) -> Outcome:
+        from sugar_lift_py_tests.floor import RaiseValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        # Decided receivers project through Floor setattr (store path ≠ read).
+        if receiver.runtime_type_is_decided():
+            projected = receiver.setattr(self.attr, value, self.site)
+            if isinstance(projected, Complete) and isinstance(
+                projected.value, RaiseValue
+            ):
+                return Incomplete(projected.value.effect)
+            return projected
+
+        # Undecided / formal: retain dual-face AttributeStoreRuntimeEffect.
+        # Do not emit SugarNotWritten from this consumer — that converts
+        # constructed dual-face behaviour into a refusal.
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
             runtime_effect_evidence_from_terms,
@@ -80,6 +103,33 @@ class AttributeStoreEffectSugar(Sugar):
                 f"attr={self.attr} site={self.site}",
                 **runtime_effect_evidence_from_terms(operation, operation, self.site),
             )
+        )
+
+    @staticmethod
+    def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
+        """Producer-side contract for n-ary ``setattr_named`` discharge.
+
+        Operand order and operator string are fixed for the n-ary worker:
+        ``receiver.setattr(name.value, value, site)`` after discharge.
+        Not wired into ``_store`` while dual-face composition laws still
+        instrument formal parameters via ``AttributeStoreRuntimeEffect``.
+        """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.floor import StringValue
+
+        formal_coordinate = getattr(receiver, "formal_coordinate", None)
+        if formal_coordinate is None:
+            raise ValueError(
+                "setattr_named carrier requires a receiver formal_coordinate"
+            )
+        value_coordinate = getattr(value, "formal_coordinate", None)
+        return NativeOperationExitCarrierV1.mint(
+            site=site,
+            operator="setattr_named",
+            operands=(receiver, StringValue(attr), value),
+            coordinates=(formal_coordinate, None, value_coordinate),
         )
 
 

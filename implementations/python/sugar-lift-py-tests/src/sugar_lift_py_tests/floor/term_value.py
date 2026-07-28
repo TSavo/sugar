@@ -156,9 +156,7 @@ class TermValue(FloorValue):
                 else FalseBoolLiteralSugar(site=site)
             )
         if self._unorderable_ground_peer(other):
-            return self._ground_ordering_type_error(
-                site, owner="TermValue.less_than"
-            )
+            return self._ground_ordering_type_error(site, owner="TermValue.less_than")
         return super().less_than(other, site)
 
     def less_equal(self, other, site):
@@ -177,9 +175,7 @@ class TermValue(FloorValue):
                 else FalseBoolLiteralSugar(site=site)
             )
         if self._unorderable_ground_peer(other):
-            return self._ground_ordering_type_error(
-                site, owner="TermValue.less_equal"
-            )
+            return self._ground_ordering_type_error(site, owner="TermValue.less_equal")
         return super().less_equal(other, site)
 
     def greater_than(self, other, site):
@@ -303,9 +299,7 @@ class TermValue(FloorValue):
 
         if type(other) is ComplexValue:
             return super().subtract(other, site)
-        return self._decided_binary_type_error(
-            other, site, owner="TermValue.subtract"
-        )
+        return self._decided_binary_type_error(other, site, owner="TermValue.subtract")
 
     def multiply(self, other, site):
         # A number stands on the multiplication floor: two numbers multiply, and the
@@ -345,9 +339,7 @@ class TermValue(FloorValue):
 
         if type(other) is ComplexValue:
             return super().multiply(other, site)
-        return self._decided_binary_type_error(
-            other, site, owner="TermValue.multiply"
-        )
+        return self._decided_binary_type_error(other, site, owner="TermValue.multiply")
 
     def power(self, other, site):
         if type(other) is TermValue:
@@ -668,6 +660,15 @@ class TermValue(FloorValue):
             exception_name="TypeError",
             site=site,
             owner="TermValue.bitwise_invert",
+        )
+
+    def setattr(self, name, value, site):
+        """``(1).x = v`` raises AttributeError — store path, not read path."""
+        del name, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="AttributeError", site=site, owner="TermValue.setattr"
         )
 
     def subscript(self, index, site):

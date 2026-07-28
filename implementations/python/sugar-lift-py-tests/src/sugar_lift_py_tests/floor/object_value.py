@@ -242,6 +242,28 @@ class ObjectValue(FloorValue):
             for method in self.methods
         )
 
+    def setattr(self, name, value, site):
+        """``self.name = value`` via instance-field store or property refusal.
+
+        Properties are data descriptors: a getter without an authenticated
+        setter raises ``AttributeError`` on the **store** path — never by
+        consulting :meth:`attribute` / the read path.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+
+        if any(
+            method.name == name and method.descriptor_kind == "property"
+            for method in self.methods
+        ):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="ObjectValue.setattr",
+            )
+        return Complete(self.with_field_store(name, value))
+
     def with_deferred_helper_fields(self) -> "ObjectValue":
         names = self.helper_receiver_field_names()
         return ObjectValue(
