@@ -58,6 +58,34 @@ class TupleValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
+    def python_isinstance(self, type_name: str, type_term, site):
+        """A constructed tuple is exactly an instance of ``tuple`` / ``object``."""
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if type_name in {"tuple", "object"}:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        if type_name in {
+            "list",
+            "dict",
+            "set",
+            "frozenset",
+            "str",
+            "bytes",
+            "int",
+            "bool",
+            "float",
+            "type",
+            "NoneType",
+        }:
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().python_isinstance(type_name, type_term, site)
+
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 

@@ -76,10 +76,102 @@ class ComprehensionSugar(Sugar):
             )
         generator = self.generators[index]
         return generator.iterable.desugar(ctx).and_then(
-            lambda iterable: self._desugar_filters(
-                generator, 0, (), iterable, index, resolved, ctx
+            lambda iterable: self._after_iterable(
+                generator, iterable, index, resolved, ctx
             )
         )
+
+    def _after_iterable(self, generator, iterable, index, resolved, ctx):
+        """Project finite maps when the iterable is an exact container floor.
+
+        ``tuple(self._parse_exc(e) for e in (expected,))`` is the RaisesExc
+        field path: a one-element TupleValue iterable and a source-visible
+        element body.  Projecting ``finite_elements`` here lets
+        ``python.tuple.construct`` floor the outer ``tuple(...)`` call; without
+        it the generator stays an opaque coordinate and ``not expected_exceptions``
+        refuses at the UnaryOp producer.
+        """
+        if (
+            index == 0
+            and len(self.generators) == 1
+            and not generator.filters
+            and self.key is None
+        ):
+            finite = self._finite_map(generator, iterable, ctx)
+            if finite is not None:
+                return finite
+        return self._desugar_filters(
+            generator, 0, (), iterable, index, resolved, ctx
+        )
+
+    def _finite_map(self, generator, iterable, ctx):
+        from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.ir import (
+            PrimitiveSort,
+            _Lambda,
+            _intern_term,
+            ctor,
+        )
+        from sugar_lift_py_tests.outcome import Complete
+
+        members = None
+        if isinstance(iterable, (TupleValue, ListValue)):
+            members = iterable.elements
+        elif isinstance(iterable, ComprehensionValue) and iterable.finite_elements is not None:
+            members = iterable.finite_elements
+        if members is None:
+            return None
+        target = generator.target
+        if target.source_name is None or target.coordinates is not None:
+            # Destructured targets need unpack projection; stay symbolic.
+            return None
+        if ctx is None or not hasattr(ctx, "temporal"):
+            return None
+        from dataclasses import replace
+
+        projected = []
+        owner = str(self.site)
+        for member in members:
+            temporal = ctx.temporal.bind_value(
+                generator.binding_coordinate_cid, member
+            )
+            if target.source_name is not None:
+                temporal = temporal.bind_value(target.source_name, member)
+            try:
+                inner_ctx = replace(ctx, temporal=temporal)
+            except TypeError:
+                return None
+            try:
+                outcome = self.element.desugar(inner_ctx)
+            except Exception:
+                return None
+            if not isinstance(outcome, Complete):
+                return None
+            projected.append(outcome.value)
+        # Term carries iterable + projected-element coordinate; finite_elements
+        # is the exact member testimony consumers (tuple construct) demand.
+        if projected:
+            element_term = projected[0].to_term(owner=owner)
+        else:
+            element_term = ctor("python:loop.latch", [], symbol_kind="coordinate")
+        term = ctor(
+            self.kind,
+            [
+                iterable.to_term(owner=owner),
+                _intern_term(
+                    _Lambda(
+                        generator.binding_coordinate_cid,
+                        PrimitiveSort("Value"),
+                        element_term,
+                    )
+                ),
+                ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
+            ],
+            symbol_kind="coordinate",
+        )
+        return Complete(ComprehensionValue(term, finite_elements=tuple(projected)))
 
     def _desugar_filters(
         self, generator, filter_index, filters, iterable, index, resolved, ctx
