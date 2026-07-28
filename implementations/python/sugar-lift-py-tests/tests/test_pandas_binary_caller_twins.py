@@ -14,11 +14,15 @@ import pytest
 from pandas import Series, Timedelta
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.context_manager_resolution import (
+    SourceFragmentCoordinateV1,
+    TreeConstructionContextV1,
+)
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.source_call_resolution import SourceCallPreconstructionRefV1
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_call_preconstruction import (
     populate_source_visible_call_frames,
@@ -454,6 +458,53 @@ def test_authenticated_box_expected_actual_names_type_error_edge(
         ),
     )
     assert routed.exits == (original,)
+
+
+def test_installed_box_expected_source_call_has_an_authenticated_frame(
+    tmp_path: Path,
+) -> None:
+    """Seam-1 specimen: installed ``tm.box_expected`` keeps its authenticated frame.
+
+    Unrelated class/method body panics (Compare leg site in numpy_ arrays)
+    must not erase the box_expected frame. Reachable-only source-frame
+    construction parks incomplete callees; the leg-site panic itself is not
+    weakened when that definition is the authenticated target.
+    """
+    source = (
+        "import pandas as pd\n"
+        "import pandas._testing as tm\n"
+        "actual = tm.box_expected((1,), pd.array)\n"
+    )
+    path = tmp_path / "installed-box-actual.py"
+    path.write_text(source, encoding="utf-8")
+    context = TreeConstructionContextV1.for_source_call_construction(
+        workspace_root=str(tmp_path)
+    )
+    tree = SourceFile(
+        workspace_path_source(str(path), root=str(tmp_path)),
+        construction_context=context,
+    )
+    call = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, SourceCall)
+        and getattr(node.func, "attr", None) == "box_expected"
+    )
+
+    populate_source_visible_call_frames(tree, root=tmp_path, path=path)
+
+    span = call.line_col_span()
+    coordinate = SourceFragmentCoordinateV1(
+        tree.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    assert isinstance(
+        context.source_call_resolutions[coordinate],
+        SourceCallPreconstructionRefV1,
+    )
 
 
 def test_runtime_wrong_expected_type_does_not_consume_candidate_exception() -> None:

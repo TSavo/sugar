@@ -1046,31 +1046,13 @@ def _resolve_source_visible_frame_uncached(
             return base.value.id
         return None
 
-    reachable_names = {target.name}
-    pending_names = [target.name]
-    while pending_names:
-        current = definitions_by_name[pending_names.pop()]
-        dependencies = []
-        if isinstance(current, ClassDef):
-            dependencies.extend(
-                name
-                for base in current.bases
-                if (name := _local_class_base_name(base)) is not None
-            )
-            functions = tuple(
-                item for item in current.body if isinstance(item, FunctionDef)
-            )
-        else:
-            functions = (current,)
-        dependencies.extend(
-            call.func.id
-            for function in functions
-            for call in _local_named_calls(function)
-        )
-        for name in dependencies:
-            if name in definitions_by_name and name not in reachable_names:
-                reachable_names.add(name)
-                pending_names.append(name)
+    # REACHABLE-ONLY definition graph. Frame projection constructs only the
+    # authenticated target and definitions it references by authenticated
+    # local edges (bases + named calls in the target's own frame surface).
+    # Unrelated module-level classes are never constructor-sugared just because
+    # they share a source file — their panics stay loud only if this target
+    # actually reaches them.
+    reachable_names = _reachable_local_definition_names(target, definitions_by_name)
     definitions = tuple(item for item in definitions if item.name in reachable_names)
 
     # Imported calls inside the authenticated factory body are ordinary source
@@ -1158,9 +1140,27 @@ def _resolve_source_visible_frame_uncached(
                 ),
             )
             continue
-        projected = resolve_source_visible_frame(
-            imported, graph=dependency_graph, session=session
-        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        try:
+            projected = resolve_source_visible_frame(
+                imported, graph=dependency_graph, session=session
+            )
+        except SugarNotWritten as exc:
+            # Imported callee body is incomplete: park the obligation, do not
+            # erase the outer authenticated target frame.
+            _install_opaque_call_obligation(
+                context,
+                call,
+                OpaqueSourceCallObligationV1(
+                    _call_coordinate(call),
+                    receipt.target_symbol,
+                    resolved.cid,
+                    resolution_kind="call-target-export-unresolved",
+                ),
+            )
+            del exc
+            continue
         if isinstance(projected, ManagerConstructionGapV1):
             kind = (
                 "call-graph-cycle"
@@ -1282,6 +1282,8 @@ def _resolve_source_visible_frame_uncached(
     reaching_classes: dict[str, ClassDef] = {}
     from sugar_source_tree.panic import SugarNotWritten
 
+    # Only reachable ClassDefs (see filter above). Never constructor-sugar an
+    # unrelated module-level class just because it shares this source file.
     for item in definitions:
         if not isinstance(item, ClassDef):
             continue
@@ -1303,8 +1305,11 @@ def _resolve_source_visible_frame_uncached(
             context.source_class_bases[item.fragment.seal().cid] = tuple(local_bases)
         reaching_classes[item.name] = item
     for item in definitions:
-        if isinstance(item, ClassDef):
-            frames[item.name] = item.source_visible_constructor_frame()
+        if not isinstance(item, ClassDef):
+            continue
+        # Target class (or a local class the target actually reaches): panics
+        # stay loud. There is no soft-green for a reached broken definition.
+        frames[item.name] = item.source_visible_constructor_frame()
 
     pending = [item for item in definitions if isinstance(item, FunctionDef)]
     while pending:
@@ -1404,7 +1409,17 @@ def _resolve_external_call_frame(
     )
     if not isinstance(callee, _Resolved):
         return _ExternalCallTargetGap("call-target-source-absent")
-    projected = resolve_source_visible_frame(callee, graph=graph, session=session)
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        projected = resolve_source_visible_frame(callee, graph=graph, session=session)
+    except SugarNotWritten:
+        # Callee body is incomplete (e.g. Compare leg gap inside a method of a
+        # class this target only *names*).  Park the free-name obligation; do
+        # not erase the outer authenticated target frame.  When that broken
+        # definition IS the outer target, resolve_source_visible_frame is the
+        # entry door and the panic stays loud there.
+        return _ExternalCallTargetGap("call-target-export-unresolved")
     if isinstance(projected, ManagerConstructionGapV1):
         # A cycle reached through a re-export hop is still a cycle.  Read the
         # callee's OWN authenticated gap kind rather than restating the hop as a
@@ -1421,6 +1436,95 @@ def _resolve_export(*args, **kwargs):
     from .dependency_artifact import _resolve_export as _door
 
     return _door(*args, **kwargs)
+
+
+def _reachable_local_definition_names(
+    target: Node, definitions_by_name: dict[str, Node]
+) -> set[str]:
+    """Local definitions the authenticated target reaches by reference.
+
+    Edges are authenticated structure only:
+
+    * Class bases named as local ``Name`` / ``Name[T]`` (not attributed/computed)
+    * Named local calls inside the target function, or — for a ClassDef target —
+      inside ``__init__`` and class-level field RHS only (not every method body)
+
+    Method bodies of a class are NOT scanned when expanding the graph for a
+    sibling or for a function target that never names the class.  That keeps
+    unrelated module classes (and panics inside their methods) from aborting a
+    target that does not reach them.  When the target *is* that class, its
+    constructor frame still sugars the full definition and method panics stay
+    loud at the target door.
+    """
+    if not isinstance(target, (FunctionDef, ClassDef)):
+        return set()
+    # Method targets are not module-level definitions_by_name keys; their
+    # enclosing class is not automatically enrolled.  Only __call__ early-exit
+    # handles method frames.  Module-level targets start at their own name.
+    if target.name not in definitions_by_name:
+        return {target.name} if isinstance(target, FunctionDef) else set()
+
+    reachable: set[str] = {target.name}
+    pending = [target.name]
+
+    def _local_class_base_name(base: Node) -> str | None:
+        if isinstance(base, Name):
+            return base.id
+        if isinstance(base, Subscript) and isinstance(base.value, Name):
+            return base.value.id
+        return None
+
+    while pending:
+        current = definitions_by_name[pending.pop()]
+        dependencies: list[str] = []
+        if isinstance(current, ClassDef):
+            dependencies.extend(
+                name
+                for base in current.bases
+                if (name := _local_class_base_name(base)) is not None
+            )
+            # Constructor surface only: __init__ + class-body field values.
+            # Do not name-scan every method — that is the "every class in the
+            # module" residual when one class's method mentions another.
+            functions = tuple(
+                item
+                for item in current.body
+                if isinstance(item, FunctionDef) and item.name == "__init__"
+            )
+            for item in current.body:
+                if isinstance(item, Assign):
+                    # field = LocalClass(...) edges are real construction refs.
+                    for call in _named_calls_under(item.value):
+                        dependencies.append(call.func.id)
+                elif (
+                    isinstance(item, AnnAssign)
+                    and item.value is not None
+                ):
+                    for call in _named_calls_under(item.value):
+                        dependencies.append(call.func.id)
+        else:
+            functions = (current,)
+        dependencies.extend(
+            call.func.id
+            for function in functions
+            for call in _local_named_calls(function)
+        )
+        for name in dependencies:
+            if name in definitions_by_name and name not in reachable:
+                reachable.add(name)
+                pending.append(name)
+    return reachable
+
+
+def _named_calls_under(node: Node):
+    """Named ``Call`` nodes under one expression (authenticated AST walk)."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, Call) and isinstance(current.func, Name):
+            yield current
+        children = [child for _, _, child in current.children()]
+        stack.extend(children)
 
 
 def _matches_definition(node: Node, resolved: ResolvedPythonObjectV1) -> bool:
