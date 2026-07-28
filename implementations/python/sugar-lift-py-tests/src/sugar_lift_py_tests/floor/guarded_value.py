@@ -273,6 +273,26 @@ class GuardedValue(FloorValue):
         false_outcome = getattr(left, method)(self.when_false, site)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if isinstance(true_outcome, ExitSet) or isinstance(false_outcome, ExitSet):
+            from sugar_lift_py_tests.outcome.exit_set import (
+                outcome_to_exitset,
+                partition,
+            )
+
+            true_face, false_face = partition(
+                ("GuardedValue.map_from_left", str(site), method, self.guard)
+            )
+            return (
+                outcome_to_exitset(true_outcome)
+                .guarded(self.guard, true_face)
+                .union(
+                    outcome_to_exitset(false_outcome).guarded(
+                        not_(self.guard), false_face
+                    )
+                )
+            )
         true_pending, true_outcome = pending_demand(true_outcome, self.guard)
         false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
         true_outcome = require_single_value(

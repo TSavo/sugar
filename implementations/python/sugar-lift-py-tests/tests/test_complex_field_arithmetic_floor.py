@@ -222,10 +222,9 @@ def test_an_opaque_operand_keeps_the_undecided_third_value_loud() -> None:
     floor must not swallow it into a fabricated concrete complex.
 
     What this arm pinned was the REFUSAL to fabricate a complex, and that is
-    unchanged: the outcome below is not a ``ComplexValue``. What it also
-    asserted -- a completed symbolic coordinate -- erased the exceptional face.
-    An unexecuted call's result type is undecided, so Python's own operator
-    dispatch for the pair is undecided and remains a named producer gap.
+    unchanged: the outcome below is not a ``ComplexValue``. An unexecuted
+    call's result type is undecided, so Python's own operator dispatch retains
+    both the symbolic completion and exceptional face.
 
     See ``tests/test_undecided_binary_operand_law.py``.
     """
@@ -233,18 +232,31 @@ def test_an_opaque_operand_keeps_the_undecided_third_value_loud() -> None:
 
     assert complex_field_coordinate(opaque) is None
 
-    with pytest.raises(ConstructionPanic) as raised:
-        ComplexValue(0.0, 1.0).add(opaque, SITE)
-    assert raised.value.info.owner == "binary_operation_exception_floor"
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    outcome = ComplexValue(0.0, 1.0).add(opaque, SITE)
+    assert isinstance(outcome, ExitSet)
+    assert {type(exit_) for exit_ in outcome.exits} == {Completed, Halted}
+    assert not any(
+        isinstance(exit_, Completed) and isinstance(exit_.value, ComplexValue)
+        for exit_ in outcome.exits
+    )
 
 
-def test_an_integer_plus_a_symbolic_operand_is_still_undecided() -> None:
-    """The complex arm sits AFTER the symbolic arms and stole none of them."""
+def test_an_integer_plus_a_symbolic_operand_retains_both_dispatch_faces() -> None:
+    """The complex arm sits after, while undecided dispatch keeps both faces."""
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
     symbolic = SymbolicValue(TermValue(2).to_term(owner=SITE))
 
-    with pytest.raises(ConstructionPanic) as raised:
-        TermValue(1).add(symbolic, SITE)
-    assert raised.value.info.owner == "binary_operation_exception_floor"
+    outcome = TermValue(1).add(symbolic, SITE)
+    assert isinstance(outcome, ExitSet)
+    assert {type(exit_) for exit_ in outcome.exits} == {Completed, Halted}
+    halted = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == "BinOp"
 
 
 # -- the field coordinate is read from the value, not from a name -------------

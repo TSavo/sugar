@@ -8,8 +8,9 @@ named for THIS right operand, falling to the (owner x pair) gap.
 
 Most of those pairs are not eight arms to write. When at least one operand's
 runtime TYPE is undecided, Python's own operator dispatch for the pair is
-undecided.  That is a third value: the producer cannot claim completion and
-cannot invent an exception identity, so the shared law emits one named gap.
+undecided.  That is a third value: the producer publishes both possible faces,
+retaining the symbolic completion beside a source-cited exceptional edge whose
+exception identity remains undecided.
 
 The category is read from each value's own testimony (``denotes_value`` /
 ``runtime_type_is_decided``), never from a lexical type name.
@@ -149,6 +150,84 @@ def test_symbolic_left_operand_publishes_both_dispatch_faces(
     _dual_edge(_symbolic(), TermValue(2), method, operator)
 
 
+def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
+    """Lying twin: source-decided integer addition remains one completion."""
+    from sugar_lift_py_tests.outcome import Complete
+
+    outcome = TermValue(1).add(TermValue(2), SITE)
+    assert isinstance(outcome, Complete)
+    assert outcome.value == TermValue(3)
+
+
+def test_swapped_symbolic_operands_retain_distinct_coordinates() -> None:
+    """Ordered dispatch identity distinguishes ``a - b`` from ``b - a``."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    left = SymbolicValue(make_var("left"))
+    right = SymbolicValue(make_var("right"))
+    forward = left.subtract(right, SITE)
+    reverse = right.subtract(left, SITE)
+
+    forward_completed = next(
+        exit_ for exit_ in forward.exits if isinstance(exit_, Completed)
+    )
+    reverse_completed = next(
+        exit_ for exit_ in reverse.exits if isinstance(exit_, Completed)
+    )
+    forward_halted = next(exit_ for exit_ in forward.exits if isinstance(exit_, Halted))
+    reverse_halted = next(exit_ for exit_ in reverse.exits if isinstance(exit_, Halted))
+    assert forward_completed.value.term == ctor(
+        "-", [make_var("left"), make_var("right")]
+    )
+    assert reverse_completed.value.term == ctor(
+        "-", [make_var("right"), make_var("left")]
+    )
+    assert forward_halted.guard != reverse_halted.guard
+
+
+def test_lying_exception_type_does_not_consume_binary_dispatch_halt() -> None:
+    """The boundary cannot invent an identity for an undecided binary raise."""
+    from sugar_lift_py_tests.context_manager_contract import (
+        AuthenticatedRaiseMatcher,
+        EffectBoundaryDisposition,
+    )
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.effect.expectation_not_met_effect import (
+        ExpectationNotMetEffect,
+    )
+    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    class _Expected:
+        def exception_type_identity(self):
+            return ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const("ValueError")],
+            )
+
+    body = _symbolic().add(TermValue(2), SITE)
+    original = next(
+        exit_
+        for exit_ in body.exits
+        if isinstance(exit_, Halted) and isinstance(exit_.effect, RaiseEffect)
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(
+        SugarNotWritten,
+        match="handler or raised exception has no term to state the test over",
+    ):
+        body.and_exit(
+            ExitSet.completed(object()),
+            disposition=EffectBoundaryDisposition(
+                matcher=AuthenticatedRaiseMatcher(expected=_Expected()),
+                unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+            ),
+        )
+    assert original.effect.exception_name is None
+
+
 # -- positive arm: the pairs the pinned census actually found -----------------
 
 
@@ -246,7 +325,8 @@ def test_the_whole_function_publishes_undecided_native_dispatch(
     halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
     assert halted
     assert all(
-        isinstance(face.effect, RaiseEffect) and face.effect.producer_node_owner == "BinOp"
+        isinstance(face.effect, RaiseEffect)
+        and face.effect.producer_node_owner == "BinOp"
         for face in halted
     )
 
