@@ -30,3 +30,23 @@ class ObjectMethodValue(FloorValue):
 
         if not isinstance(self.body, (SugarBody, Sugar)):
             raise TypeError("ObjectMethodValue body must be constructor-built")
+
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="ObjectMethodValue.setitem",
+        )
+
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="ObjectMethodValue.delitem",
+        )
