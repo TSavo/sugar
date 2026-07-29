@@ -1795,15 +1795,25 @@ def _construct_reachable_decorated_class_bindings(
             Path("."), Path(module.source_seat), module.source, module.source_cid,
             module_identities={},
         )
-        receipts_by_span = {
-            (
+        receipts_by_span = {}
+        for receipt in decorator_receipts:
+            receipt_span = (
                 receipt.use["useSite"]["startLine"],
                 receipt.use["useSite"]["startCol"],
                 receipt.use["useSite"]["endLine"],
                 receipt.use["useSite"]["endCol"],
-            ): receipt
-            for receipt in decorator_receipts
-        }
+            )
+            if receipt_span in receipts_by_span:
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=definition.fragment,
+                    owner="manager_construction imported decorator enrollment",
+                    observed="duplicate authenticated call receipt span",
+                    requested="one exact call receipt per decorator occurrence",
+                    fix="repair lexical call receipt enrollment uniqueness",
+                )
+            receipts_by_span[receipt_span] = receipt
         for decorator in definition.decorators:
             if not isinstance(decorator, Call) or not isinstance(
                 decorator.func, Attribute
@@ -1838,6 +1848,10 @@ def _construct_reachable_decorated_class_bindings(
                 continue
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
+            if any(keyword.arg is None for keyword in decorator.keywords):
+                raise SourceCallBindingGap(
+                    "decorator spread keyword requires typed variadic projection"
+                )
             try:
                 decorator_frame = decorator_frame.bind_node_actuals(
                     decorator.args,
