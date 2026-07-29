@@ -54,6 +54,7 @@ class ClassDefinitionSugar(Sugar):
                 return {
                     "name": item.name,
                     "definitionFragmentCid": item.definition_fragment_cid,
+                    "bindingTargetOccurrence": item.binding_target_occurrence.wire(),
                     "evaluationGroupCid": item.evaluation_group_cid,
                 }
             return {

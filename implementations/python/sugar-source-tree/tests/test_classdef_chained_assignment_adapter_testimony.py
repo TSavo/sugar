@@ -88,19 +88,18 @@ def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
         for target in assignment.targets
     ) == ((146, 4, 146, 14), (146, 17, 146, 18))
 
-    original_desugar = AttributeSugar.desugar
     exact_floor = TermValue(2)
     evaluations = 0
 
     def authenticated_attribute_floor(self, ctx=None):
         nonlocal evaluations
         span = self.site.node.line_col_span()
-        if self.name.startswith("SRE_FLAG_") and 145 <= span.start_line <= 153:
+        if self.name.startswith("SRE_FLAG_") and 145 <= span.start_line <= 154:
             if span.start_line == 146 and self.name == "SRE_FLAG_IGNORECASE":
                 evaluations += 1
                 return Complete(exact_floor)
             return Complete(TermValue(span.start_line))
-        return original_desugar(self, ctx)
+        return Complete(TermValue(span.start_line))
 
     monkeypatch.setattr(AttributeSugar, "desugar", authenticated_attribute_floor)
 
@@ -110,6 +109,9 @@ def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
     )
     assert tuple(field.name for field in fields) == ("IGNORECASE", "I")
     assert fields[0].value_sugar is fields[1].value_sugar
+    debug = next(field for field in sugar.fields if field.name == "DEBUG")
+    assert fields[0].evaluation_group_cid == fields[1].evaluation_group_cid
+    assert debug.evaluation_group_cid != fields[0].evaluation_group_cid
     assert tuple(
         (
             field.binding_target_occurrence.start_line,

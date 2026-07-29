@@ -22,7 +22,15 @@ class ConstructedClassFieldV1:
     name: str
     definition_fragment_cid: str
     value_sugar: object = field(compare=False)
+    binding_target_occurrence: SourceFragmentCoordinateV1
     evaluation_group_cid: str | None = None
+
+    def __post_init__(self):
+        if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "ConstructedClassFieldV1 binding target must be an exact "
+                "SourceFragmentCoordinateV1"
+            )
 
 
 @dataclass(frozen=True)
