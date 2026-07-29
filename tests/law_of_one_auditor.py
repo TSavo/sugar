@@ -841,15 +841,23 @@ def audit_law_of_one(
             and symbol.name == qualified_parts[-1]
         )
 
-    def authentic_runtime_types(container: object) -> tuple[type, ...]:
+    def authentic_runtime_types(
+        container: object,
+        *,
+        stop_identity: object | None = None,
+    ) -> tuple[tuple[type, ...], int]:
         pending = [container]
         seen: set[int] = set()
         found: set[type] = set()
+        stopped = 0
         while pending:
             value = pending.pop()
             if id(value) in seen:
                 continue
             seen.add(id(value))
+            if stop_identity is not None and value is stop_identity:
+                stopped += 1
+                continue
             value_type = type(value)
             if producer_symbols_for_type(value_type):
                 found.add(value_type)
@@ -860,14 +868,36 @@ def audit_law_of_one(
                 pending.extend(value)
             elif hasattr(value, "__dict__"):
                 pending.extend(vars(value).values())
-        return tuple(sorted(found, key=lambda item: (item.__module__, item.__qualname__)))
+        return (
+            tuple(sorted(found, key=lambda item: (item.__module__, item.__qualname__))),
+            stopped,
+        )
 
+    product_runtime_types, _ = authentic_runtime_types(product)
     product_relation_types = tuple(
         runtime_type
-        for runtime_type in authentic_runtime_types(product)
+        for runtime_type in product_runtime_types
         if runtime_type is not product_type
     )
-    receipt_relation_types = authentic_runtime_types(receipt)
+    receipt_relation_types, receipt_product_backreferences = (
+        authentic_runtime_types(receipt, stop_identity=product)
+    )
+    product_only_relation_types = tuple(
+        sorted(
+            {
+                type(row)
+                for row in product.lexical_call_rows
+                if producer_symbols_for_type(type(row))
+            },
+            key=lambda item: (item.__module__, item.__qualname__),
+        )
+    )
+    assert set(product_relation_types) - set(receipt_relation_types) == set(
+        product_only_relation_types
+    ), (
+        set(product_relation_types) - set(receipt_relation_types),
+        set(product_only_relation_types),
+    )
     discovered_closed_type_set = {
         product_type,
         *product_relation_types,
@@ -1217,6 +1247,8 @@ def audit_law_of_one(
             discovered_closed_types, audited_closed_types,
             unaudited_closed_types,
             product_relation_types, receipt_relation_types,
+            product_only_relation_types,
+            receipt_product_backreferences,
         ),
         projection=ProjectionClosureEvidence(
             definition=projection_def,

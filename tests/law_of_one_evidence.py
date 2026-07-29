@@ -76,6 +76,8 @@ class PrivacyLeakEvidence:
     unaudited_closed_types: tuple[type, ...]
     product_relation_types: tuple[type, ...]
     receipt_relation_types: tuple[type, ...]
+    product_only_relation_types: tuple[type, ...]
+    receipt_product_backreferences: int
 
 
 @dataclass(frozen=True)
@@ -167,7 +169,16 @@ class LawOfOneEvidence:
         assert privacy.discovered_closed_types
         assert privacy.audited_closed_types == privacy.discovered_closed_types
         assert privacy.unaudited_closed_types == ()
-        assert privacy.product_relation_types == privacy.receipt_relation_types
+        assert privacy.receipt_product_backreferences == 1
+        assert privacy.product_only_relation_types
+        assert set(privacy.product_only_relation_types) == {
+            type(row)
+            for row in self.zero_work.constructed_product.lexical_call_rows
+        }
+        assert set(privacy.product_relation_types) == {
+            *privacy.receipt_relation_types,
+            *privacy.product_only_relation_types,
+        }
         assert set(privacy.discovered_closed_types) == {
             privacy.product_type,
             *privacy.product_relation_types,
