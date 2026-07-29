@@ -2288,7 +2288,16 @@ def _seat_import_value_use_receipts(
     unit = source_file.unit
     # Path-source law: refuse dual-door / mismatched CID loudly at mint.
     expected_cid = blake3_512_of(module.source.encode("utf-8"))
-    if module.source_cid != expected_cid or unit.source_cid != module.source_cid:
+    target_unit = target.unit
+    if (
+        module.source_cid != expected_cid
+        or unit.source_cid != module.source_cid
+        or target_unit.source_cid != module.source_cid
+        or unit.source != module.source
+        or target_unit.source != module.source
+        or unit.filename != module.source_seat
+        or target_unit.filename != module.source_seat
+    ):
         from sugar_source_tree.panic import BackendDefect
 
         raise BackendDefect(
@@ -2456,20 +2465,39 @@ def _seat_import_value_use_receipts(
                 module.source_cid,
                 *span_key,
             )
-            transported = context.source_import_value_receipts_by_site.get(
-                transport_key
-            )
-            if transported is not None and transported is not receipt:
+
+            def retain_in(owner_context) -> None:
+                transported = owner_context.source_import_value_receipts_by_site.get(
+                    transport_key
+                )
+                if transported is not None and transported is not receipt:
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        blame=coordinate,
+                        owner="manager_construction import value receipt transport",
+                        observed="conflicting receipt at exact module/use occurrence",
+                        requested="one producer-owned receipt object per exact site",
+                        fix="preserve receipt identity across parser-owned SourceUnits",
+                    )
+                owner_context.source_import_value_receipts_by_site[transport_key] = (
+                    receipt
+                )
+
+            retain_in(context)
+            target_context = target_unit.construction_context
+            if type(target_context) is not TreeConstructionContextV1:
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
                     blame=coordinate,
                     owner="manager_construction import value receipt transport",
-                    observed="conflicting receipt at exact module/use occurrence",
-                    requested="one producer-owned receipt object per exact site",
-                    fix="preserve receipt identity across parser-owned SourceUnits",
+                    observed="target SourceUnit lacks its construction context",
+                    requested="the exact context retained by the target-owned Sugar",
+                    fix="construct source-visible targets through the manager context door",
                 )
-            context.source_import_value_receipts_by_site[transport_key] = receipt
+            if target_context is not context:
+                retain_in(target_context)
             unit.seat_import_value_use_resolution(
                 span_key, receipt, source_cid=module.source_cid
             )

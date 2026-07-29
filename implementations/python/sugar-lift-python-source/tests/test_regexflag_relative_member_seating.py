@@ -165,3 +165,55 @@ def test_regexflag_receipt_transports_across_exact_parser_owned_units() -> None:
     exact_rows = context.source_import_value_receipts_by_site
     assert len(exact_rows) > 1
     assert all(key[0] == module.source_seat for key in exact_rows)
+
+
+def test_regexflag_receipt_transports_to_target_owned_context() -> None:
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    module = graph.modules["re"]
+    manager_context = TreeConstructionContextV1.for_source_call_construction()
+    target_context = TreeConstructionContextV1.for_source_call_construction()
+    manager_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=manager_context,
+    )
+    target_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=target_context,
+    )
+    regex_flag = next(
+        node
+        for node in target_file.root.body
+        if isinstance(node, ClassDef) and node.name == "RegexFlag"
+    )
+
+    _seat_import_value_use_receipts(
+        source_file=manager_file,
+        module=module,
+        target=regex_flag,
+        session=SourceResolutionSession(enabled=False),
+        context=manager_context,
+        dependency_graphs={"re": graph},
+    )
+
+    member = next(
+        node
+        for node in target_file.nodes()
+        if isinstance(node, Attribute)
+        and node.attr == "SRE_FLAG_ASCII"
+        and node.line_col_span().start_line == 145
+    )
+    value = member.sugar().desugar().value
+    span = member.line_col_span()
+    key = (
+        module.source_seat,
+        module.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+
+    assert type(value) is ImportMemberValue
+    assert manager_context is not target_context
+    assert manager_context.source_import_value_receipts_by_site[key] is value.receipt
+    assert target_context.source_import_value_receipts_by_site[key] is value.receipt
