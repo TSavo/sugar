@@ -64,44 +64,534 @@ class ImportValueUseSeatingGap(ValueError):
         super().__init__(f"{kind}: {detail}")
 
 
-def prefix_has_completed_fallthrough(module, locus) -> bool:
-    """Construction-owned five-step prefix meaning for export recognition."""
-    from sugar_lift_py_tests.outcome import Completed, true_guard
-    from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
+@dataclass(frozen=True)
+class _ModuleSourceFrameCallableV1(FloorValue):
+    """Exact module FunctionDef callable used during definition execution."""
+
+    callable_name: str
+    frame: object
+
+    def to_term(self, *, owner):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:module-source-frame-callable",
+            [str_const(self.frame.frame_cid)],
+            symbol_kind="coordinate",
+        )
+
+    def callable_application_with(self, operation, ctx):
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if operation.keyword_names:
+            raise SugarNotWritten(
+                owner="module definition source callable",
+                blame=operation.site,
+                observed="keyword decorator application lacks value pairing",
+                requested="ordered authenticated keyword actuals",
+                fix="carry keyword values with their formal names",
+            )
+        bound = self.frame.bind_actuals(operation.arguments, (), ctx)
+        call = CallSiteValue(
+            self.callable_name,
+            bound.actuals,
+            self.frame.parameters,
+            ctor(
+                "call:module-source-frame",
+                [
+                    self.to_term(owner=self.callable_name),
+                    *(
+                        item.to_term(owner=self.callable_name)
+                        for item in bound.actuals
+                    ),
+                ],
+            ),
+            self.frame.body,
+            site=operation.site,
+            source_call_frame_cid=self.frame.frame_cid,
+            formal_coordinate_cids=tuple(
+                coordinate.cid for coordinate in self.frame.formal_coordinates
+            ),
+            bound_source_actuals=bound,
+        )
+        produced = call.producer_outcome(ctx)
+        if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
+            raise SugarNotWritten(
+                owner="module definition source callable",
+                blame=operation.site,
+                observed="source decorator produced a nonlinear outcome",
+                requested="one completed retained source-call coordinate",
+                fix="sequence decorator effects before module publication",
+            )
+        projected = produced.value.project_operation_receiver_outcome(
+            ctx, owner="module definition source callable"
+        )
+        if not isinstance(projected, Complete):
+            raise SugarNotWritten(
+                owner="module definition source callable",
+                blame=operation.site,
+                observed="source decorator return projected nonlinearly",
+                requested="one completed decorator result Floor",
+                fix="sequence decorator return effects before publication",
+            )
+        return projected
+
+
+@dataclass(frozen=True)
+class _ModuleFunctionDefinitionCallableV1(FloorValue):
+    """An exact module FunctionDef whose body is constructed only when called."""
+
+    definition: FunctionDef
+
+    def to_term(self, *, owner):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:module-function-definition-callable",
+            [str_const(self.definition.fragment.seal().cid)],
+            symbol_kind="coordinate",
+        )
+
+    def callable_application_with(self, operation, ctx):
+        return _ModuleSourceFrameCallableV1(
+            self.definition.name,
+            self.definition.source_visible_call_frame(),
+        ).callable_application_with(operation, ctx)
+
+
+@dataclass(frozen=True)
+class _ModuleFunctionDefinitionBindingSugar:
+    definition: FunctionDef
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.definition.decorators:
+            raise SugarNotWritten(
+                owner="module function definition execution",
+                blame=self.definition.fragment,
+                observed="decorated FunctionDef has no completed publication",
+                requested="the exact final decorated function Floor",
+                fix="execute and authenticate the function decorator chain",
+            )
+        return Complete(
+            ScopeRebind(
+                self.definition.name,
+                _ModuleFunctionDefinitionCallableV1(self.definition),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class _ModuleClassDefinitionBindingSugar:
+    """Execute one module ClassDef and bind its exact constructed Floor.
+
+    This is deliberately a producer-owned wrapper rather than a Name-based
+    reconstruction in the prefix consumer.  Decorated definitions require the
+    separate publication chain and remain loud here until that chain supplies
+    the final class Floor.
+    """
+
+    definition: ClassDef
+    module_construction_receipt_cid: str
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor import ClassDefinitionValue
+        from sugar_lift_py_tests.callable_application import CallableApplication
+        from sugar_lift_py_tests.floor.decorated_class_value import (
+            DecoratedClassPublicationV1,
+            DecoratedClassValue,
+            DecoratorApplicationPublicationV1,
+            MetaclassClassValue,
+            _mint_metaclass_class_publication,
+        )
+        from sugar_lift_py_tests.floor import DictValue, StringValue, TupleValue
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        sugar = self.definition.sugar()
+        outcome = sugar.desugar(ctx)
+
+        def bind(value):
+            if type(value) is not ClassDefinitionValue:
+                raise SugarNotWritten(
+                    owner="module definition execution",
+                    blame=self.definition.fragment,
+                    observed=f"ClassDef constructed {type(value).__name__}",
+                    requested="one exact ClassDefinitionValue",
+                    fix="keep nonlinear or substituted class construction loud",
+                )
+            metaclass_keywords = tuple(
+                keyword
+                for keyword in self.definition.keywords
+                if keyword.arg == "metaclass"
+            )
+            if len(metaclass_keywords) > 1:
+                raise SugarNotWritten(
+                    owner="module definition execution",
+                    blame=self.definition.fragment,
+                    observed="multiple metaclass keyword occurrences",
+                    requested="one exact metaclass application",
+                    fix="preserve the parser-owned class keyword roster",
+                )
+            if metaclass_keywords:
+                if sugar.decorator_sugars:
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=self.definition.fragment,
+                        observed="combined metaclass and decorator publication",
+                        requested="one ordered metaclass-then-decorator publication",
+                        fix="compose both authenticated application products",
+                    )
+                keyword = metaclass_keywords[0]
+                metaclass_outcome = keyword.value.sugar().desugar(ctx)
+                if not isinstance(metaclass_outcome, Complete) or type(
+                    metaclass_outcome.value
+                ) is not ClassDefinitionValue:
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=keyword.value.fragment,
+                        observed="metaclass expression did not construct a source class",
+                        requested="one exact ClassDefinitionValue metaclass",
+                        fix="retain the metaclass binding and source definition",
+                    )
+                metaclass_floor = metaclass_outcome.value
+                constructors = tuple(
+                    method
+                    for method in metaclass_floor.methods
+                    if method.name == "__new__"
+                )
+                if len(constructors) != 1:
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=keyword.value.fragment,
+                        observed=f"metaclass has {len(constructors)} __new__ methods",
+                        requested="one exact source-visible metaclass constructor",
+                        fix="preserve unique method-definition testimony",
+                    )
+                constructor = constructors[0]
+                callable_floor = _ModuleSourceFrameCallableV1(
+                    constructor.name, constructor.source_call_frame
+                )
+                class_name_floor = StringValue(self.definition.name)
+                bases_floor = TupleValue(tuple(value.base_classes))
+                namespace_floor = DictValue(
+                    tuple(
+                        (StringValue(field.name), field.value)
+                        for field in value.class_fields
+                    )
+                )
+                occurrence = _call_coordinate(keyword.value)
+                applied = CallableApplication(
+                    (
+                        metaclass_floor,
+                        class_name_floor,
+                        bases_floor,
+                        namespace_floor,
+                    ),
+                    (),
+                    occurrence,
+                    owner="module metaclass application",
+                    call_occurrence=occurrence,
+                ).apply(callable_floor, ctx)
+                if not isinstance(applied, Complete):
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=keyword.value.fragment,
+                        observed="metaclass application reduced nonlinearly",
+                        requested="one completed published class Floor",
+                        fix="sequence metaclass effects before module publication",
+                    )
+                publication = _mint_metaclass_class_publication(
+                    source_cid=self.definition.unit.source_cid,
+                    definition=_call_coordinate(self.definition),
+                    binding_occurrence=sugar.binding_target_occurrence,
+                    metaclass_occurrence=occurrence,
+                    raw_class=value,
+                    metaclass_floor=metaclass_floor,
+                    metaclass_callable=callable_floor,
+                    class_name_floor=class_name_floor,
+                    bases_floor=bases_floor,
+                    namespace_floor=namespace_floor,
+                    final_class=applied.value,
+                    module_construction_receipt_cid=(
+                        self.module_construction_receipt_cid
+                    ),
+                )
+                return Complete(
+                    ScopeRebind(
+                        self.definition.name, MetaclassClassValue(publication)
+                    )
+                )
+            if not sugar.decorator_sugars:
+                return Complete(ScopeRebind(self.definition.name, value))
+            decorator_floors = []
+            for decorator_sugar in sugar.decorator_sugars:
+                decorator_outcome = decorator_sugar.desugar(ctx)
+                if not isinstance(decorator_outcome, Complete):
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=self.definition.fragment,
+                        observed="decorator expression reduced nonlinearly",
+                        requested="one completed source decorator callable",
+                        fix="sequence decorator expression effects before publication",
+                    )
+                decorator_floors.append(decorator_outcome.value)
+            current = value
+            applications = []
+            for callable_floor, occurrence in reversed(
+                tuple(
+                    zip(
+                        decorator_floors,
+                        sugar.decorator_occurrences,
+                        strict=True,
+                    )
+                )
+            ):
+                from sugar_lift_py_tests.floor import CallSiteValue
+
+                if (
+                    type(callable_floor) is CallSiteValue
+                    and callable_floor.body is not None
+                    and callable_floor.source_call_frame_cid is not None
+                ):
+                    callable_floor = callable_floor.force_floor(
+                        ctx,
+                        owner="module authenticated decorator factory return",
+                    )
+                before = current
+                applied = CallableApplication(
+                    (before,),
+                    (),
+                    occurrence,
+                    owner="module decorated class application",
+                    call_occurrence=occurrence,
+                ).apply(callable_floor, ctx)
+                if not isinstance(applied, Complete):
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=occurrence,
+                        observed="decorator application reduced nonlinearly",
+                        requested="one completed final class Floor",
+                        fix="sequence decorator application effects before publication",
+                    )
+                current = applied.value
+                applications.append(
+                    DecoratorApplicationPublicationV1.mint(
+                        occurrence=occurrence,
+                        callable_floor=callable_floor,
+                        input_floor=before,
+                        output_floor=current,
+                    )
+                )
+            publication = DecoratedClassPublicationV1.mint(
+                source_cid=self.definition.unit.source_cid,
+                definition=_call_coordinate(self.definition),
+                binding_occurrence=sugar.binding_target_occurrence,
+                raw_class=value,
+                decorator_applications=tuple(applications),
+                final_class=current,
+                module_construction_receipt_cid=(
+                    self.module_construction_receipt_cid
+                ),
+            )
+            return Complete(
+                ScopeRebind(self.definition.name, DecoratedClassValue(publication))
+            )
+
+        return outcome.and_then(bind)
+
+
+def _enroll_imported_decorator_frames(
+    *, module, definition, context, session, dependency_graphs
+) -> None:
+    """Seat exact imported Attribute decorator factories before Sugar caching."""
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.panic import BackendDefect
+
+    decorator_receipts, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    receipts_by_span = {}
+    for receipt in decorator_receipts:
+        receipt_span = (
+            receipt.use["useSite"]["startLine"],
+            receipt.use["useSite"]["startCol"],
+            receipt.use["useSite"]["endLine"],
+            receipt.use["useSite"]["endCol"],
+        )
+        if receipt_span in receipts_by_span:
+            raise BackendDefect(
+                blame=definition.fragment,
+                owner="manager_construction imported decorator enrollment",
+                observed="duplicate authenticated call receipt span",
+                requested="one exact call receipt per decorator occurrence",
+                fix="repair lexical call receipt enrollment uniqueness",
+            )
+        receipts_by_span[receipt_span] = receipt
+    for decorator in definition.decorators:
+        if not isinstance(decorator, Call) or not isinstance(
+            decorator.func, Attribute
+        ):
+            continue
+        span = decorator.line_col_span()
+        receipt = receipts_by_span.get(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if receipt is None:
+            continue
+        receipt.revalidate()
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        graph = dependency_graphs.get(top_level)
+        if graph is None:
+            from .dependency_artifact import authenticate_dependency_top_level
+
+            graph = authenticate_dependency_top_level(top_level)
+            dependency_graphs[top_level] = graph
+        resolved_decorator = resolve_import_binding(
+            receipt, graph=graph, session=session
+        )
+        if not isinstance(resolved_decorator, ResolvedPythonObjectV1):
+            continue
+        projected_decorator = resolve_source_visible_frame(
+            resolved_decorator, graph=graph, session=session
+        )
+        if isinstance(projected_decorator, ManagerConstructionGapV1):
+            continue
+        decorator_frame, decorator_target = projected_decorator
+        if not isinstance(decorator_target, FunctionDef):
+            continue
+        if any(keyword.arg is None for keyword in decorator.keywords):
+            raise SourceCallBindingGap(
+                "decorator spread keyword requires typed variadic projection"
+            )
+        try:
+            decorator_frame = decorator_frame.bind_node_actuals(
+                decorator.args,
+                tuple(
+                    (keyword.arg, keyword.value)
+                    for keyword in decorator.keywords
+                    if keyword.arg is not None
+                ),
+            )
+        except SourceCallBindingGap:
+            continue
+        _install_source_call_frame(context, decorator, decorator_frame)
+
+
+def _module_prefix_outcome(module, locus, *, graph=None, session=None):
+    """Execute the authenticated module prefix through its exact definitions."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
     from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-    from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
-    from sugar_source_tree.panic import BackendDefect, SugarNotWritten
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef, Name
 
     from .canonical import blake3_512_of
 
-    expected_cid = blake3_512_of(module.source.encode("utf-8"))
-    if module.source_cid != expected_cid:
-        return False
-    try:
-        source_file = SourceFile((module.source, module.source_seat, module.source_cid))
-    except (BackendDefect, ValueError, TypeError):
-        return False
+    if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
+        raise ValueError("module prefix source CID mismatch")
+    construction_context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=construction_context,
+    )
     locus_key = (locus.lineno, locus.col_offset)
-    prefix = []
-    for statement in source_file.root.body:
-        span = statement.line_col_span()
-        if (span.start_line, span.start_col) >= locus_key:
-            break
-        prefix.append(statement)
-    if not prefix:
-        return True
-    try:
-        sugars = tuple(
-            InertSugar(site=statement.fragment)
-            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef))
-            else statement.sugar()
-            for statement in prefix
+    prefix = tuple(
+        statement
+        for statement in source_file.root.body
+        if (
+            statement.line_col_span().start_line,
+            statement.line_col_span().start_col,
         )
-        exits = reduce_block_to_exitset(sugars)
-    except SugarNotWritten:
-        return False
-    except (BackendDefect, ValueError, TypeError):
-        return False
+        < locus_key
+    )
+
+    # Base testimony is installed from exact parser-owned module bindings,
+    # never from a class-name scan.  Only earlier module ClassDefs can be a
+    # source-visible base at this prefix boundary.
+    prefix_classes = tuple(item for item in prefix if isinstance(item, ClassDef))
+    class_roster = set(prefix_classes)
+    for definition in prefix_classes:
+        bases = []
+        for base in definition.bases:
+            if not isinstance(base, Name):
+                continue
+            bindings = tuple(
+                (definition.unit.module_direct_bindings or {}).get(base.id, ())
+            )
+            if (
+                len(bindings) == 1
+                and isinstance(bindings[0], ClassDef)
+                and bindings[0] in class_roster
+                and bindings[0].line_col_span().start_line
+                < definition.line_col_span().start_line
+            ):
+                bases.append(bindings[0].sugar())
+        definition.unit.construction_context.source_class_bases[
+            definition.fragment.seal().cid
+        ] = tuple(bases)
+
+    dependency_graphs = {}
+    if graph is not None:
+        session = session_or_new(session)
+        dependency_graphs[module.module_name.split(".", 1)[0]] = graph
+        for definition in prefix_classes:
+            _seat_import_value_use_receipts(
+                source_file=source_file,
+                module=module,
+                target=definition,
+                session=session,
+                context=construction_context,
+                dependency_graphs=dependency_graphs,
+            )
+            _enroll_imported_decorator_frames(
+                module=module,
+                definition=definition,
+                context=construction_context,
+                session=session,
+                dependency_graphs=dependency_graphs,
+            )
+
+    sugars = tuple(
+        (
+            _ModuleFunctionDefinitionBindingSugar(statement)
+            if isinstance(statement, FunctionDef)
+            else InertSugar(site=statement.fragment)
+            if isinstance(statement, AsyncFunctionDef)
+            else _ModuleClassDefinitionBindingSugar(
+                statement, source_file.construction_event_receipt_cid
+            )
+            if isinstance(statement, ClassDef)
+            else statement.sugar()
+        )
+        for statement in prefix
+    )
+    return reduce_block_to_exitset(sugars)
+
+
+def prefix_has_completed_fallthrough(
+    module, locus, *, graph=None, session=None
+) -> bool:
+    """Admit an export only through the authenticated module-prefix producer."""
+    from sugar_lift_py_tests.outcome import Completed, true_guard
+
+    exits = _module_prefix_outcome(module, locus, graph=graph, session=session)
     if len(exits.exits) != 1:
         return False
     face = exits.exits[0]
@@ -1787,86 +2277,14 @@ def _construct_reachable_decorated_class_bindings(
             dependency_graphs=dependency_graphs,
         )
 
-    def enroll_imported_decorator_frames(definition: ClassDef) -> None:
-        from pathlib import Path
-        from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
-
-        decorator_receipts, _ = authenticated_import_use_receipts(
-            Path("."), Path(module.source_seat), module.source, module.source_cid,
-            module_identities={},
-        )
-        receipts_by_span = {}
-        for receipt in decorator_receipts:
-            receipt_span = (
-                receipt.use["useSite"]["startLine"],
-                receipt.use["useSite"]["startCol"],
-                receipt.use["useSite"]["endLine"],
-                receipt.use["useSite"]["endCol"],
-            )
-            if receipt_span in receipts_by_span:
-                from sugar_source_tree.panic import BackendDefect
-
-                raise BackendDefect(
-                    blame=definition.fragment,
-                    owner="manager_construction imported decorator enrollment",
-                    observed="duplicate authenticated call receipt span",
-                    requested="one exact call receipt per decorator occurrence",
-                    fix="repair lexical call receipt enrollment uniqueness",
-                )
-            receipts_by_span[receipt_span] = receipt
-        for decorator in definition.decorators:
-            if not isinstance(decorator, Call) or not isinstance(
-                decorator.func, Attribute
-            ):
-                continue
-            span = decorator.line_col_span()
-            receipt = receipts_by_span.get(
-                (span.start_line, span.start_col, span.end_line, span.end_col)
-            )
-            if receipt is None:
-                continue
-            receipt.revalidate()
-            top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-            graph = dependency_graphs.get(top_level)
-            if graph is None:
-                from .dependency_artifact import authenticate_dependency_top_level
-
-                graph = authenticate_dependency_top_level(top_level)
-                dependency_graphs[top_level] = graph
-            resolved_decorator = resolve_import_binding(
-                receipt, graph=graph, session=session
-            )
-            if not isinstance(resolved_decorator, ResolvedPythonObjectV1):
-                continue
-            projected_decorator = resolve_source_visible_frame(
-                resolved_decorator, graph=graph, session=session
-            )
-            if isinstance(projected_decorator, ManagerConstructionGapV1):
-                continue
-            decorator_frame, decorator_target = projected_decorator
-            if not isinstance(decorator_target, FunctionDef):
-                continue
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-            if any(keyword.arg is None for keyword in decorator.keywords):
-                raise SourceCallBindingGap(
-                    "decorator spread keyword requires typed variadic projection"
-                )
-            try:
-                decorator_frame = decorator_frame.bind_node_actuals(
-                    decorator.args,
-                    tuple(
-                        (keyword.arg, keyword.value)
-                        for keyword in decorator.keywords
-                        if keyword.arg is not None
-                    ),
-                )
-            except SourceCallBindingGap:
-                continue
-            _install_source_call_frame(context, decorator, decorator_frame)
-
     for definition in receipt_owned_classes:
-        enroll_imported_decorator_frames(definition)
+        _enroll_imported_decorator_frames(
+            module=module,
+            definition=definition,
+            context=context,
+            session=session,
+            dependency_graphs=dependency_graphs,
+        )
     for definition in module_definitions:
         if definition not in class_dependencies:
             continue

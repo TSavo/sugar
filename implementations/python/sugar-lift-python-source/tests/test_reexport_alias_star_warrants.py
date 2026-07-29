@@ -439,6 +439,248 @@ def test_prefix_raise_refuses_binding_via_completed_fallthrough(tmp_path: Path) 
     assert result.kind == "dynamic-export"
 
 
+def test_module_prefix_execution_binds_exact_class_definition_once(
+    tmp_path: Path,
+) -> None:
+    """Module definition execution retains the class Floor for later loads.
+
+    This is the producer boundary needed by authenticated module prefixes: a
+    later statement must consume the exact class constructed by the earlier
+    ClassDef, rather than seeing a reconstructed SymbolicValue with the same
+    name.
+    """
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "class Boundary:\n"
+        "    FIRST = 1\n"
+        "    SECOND = 2\n"
+        "alias = Boundary\n"
+        "def build():\n"
+        "    return alias\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-definition-prefix-pkg",
+        files={"module_definition_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_definition_prefix_pkg"
+    ]
+    locus = ast.parse(source).body[-1]
+
+    exits = manager_construction._module_prefix_outcome(module, locus)
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    boundary = completed.value.context.temporal.value_if_bound("Boundary")
+    assert type(boundary) is ClassDefinitionValue
+    assert tuple(field.name for field in boundary.class_fields) == (
+        "FIRST",
+        "SECOND",
+    )
+
+
+def test_module_prefix_defers_forward_function_body_until_prefix_temporal_is_live(
+    tmp_path: Path,
+) -> None:
+    """Construction does not execute a forward function without prefix state."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "registry: dict[str, int] = {}\n"
+        "def caller(key):\n"
+        "    return lookup(key)\n"
+        "def lookup(key):\n"
+        "    return registry[key]\n"
+        "def build():\n"
+        "    return caller\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-local-call-prefix-pkg",
+        files={"module_local_call_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_local_call_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    caller = completed.value.context.temporal.value_if_bound("caller")
+    assert type(caller).__name__ == "_ModuleFunctionDefinitionCallableV1"
+    assert caller.definition.name == "caller"
+
+
+def test_module_prefix_does_not_construct_an_uncalled_function_body(
+    tmp_path: Path,
+) -> None:
+    """Publishing a FunctionDef retains its body until authenticated application."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "def dormant(manager):\n"
+        "    with manager:\n"
+        "        return 1\n"
+        "def build():\n"
+        "    return 2\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="lazy-module-function-pkg",
+        files={"lazy_module_function_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "lazy_module_function_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    dormant = completed.value.context.temporal.value_if_bound("dormant")
+    assert type(dormant).__name__ == "_ModuleFunctionDefinitionCallableV1"
+    assert dormant.definition.name == "dormant"
+
+
+def test_module_prefix_constructs_one_subscript_delete_statement(
+    tmp_path: Path,
+) -> None:
+    """A module prefix executes its exact subscript delete target."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = "del [1, 2, 3][-2:]\nresult = 1\n"
+    dist = _dist(
+        tmp_path,
+        name="module-delete-prefix-pkg",
+        files={"module_delete_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_delete_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+
+
+def test_module_prefix_execution_publishes_exact_decorator_result(
+    tmp_path: Path,
+) -> None:
+    """A source decorator publishes its returned Floor, never the raw class."""
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.floor.decorated_class_value import DecoratedClassValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "def identity(candidate):\n"
+        "    return candidate\n"
+        "@identity\n"
+        "class Published:\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-decoration-prefix-pkg",
+        files={"module_decoration_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_decoration_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    published = completed.value.context.temporal.value_if_bound("Published")
+    assert type(published) is DecoratedClassValue
+    publication = published.publication
+    assert type(publication.raw_class) is ClassDefinitionValue
+    assert publication.final_class is publication.raw_class
+    assert len(publication.decorator_applications) == 1
+    application = publication.decorator_applications[0]
+    assert application.input_floor is publication.raw_class
+    assert application.output_floor is publication.final_class
+    assert publication.binding_occurrence == (
+        publication.raw_class.binding_target_occurrence
+    )
+
+
+def test_module_prefix_execution_publishes_exact_metaclass_result(
+    tmp_path: Path,
+) -> None:
+    """Metaclass application retains its four exact source-owned actuals."""
+    from sugar_lift_py_tests.floor import DictValue, StringValue
+    from sugar_lift_py_tests.floor.decorated_class_value import MetaclassClassValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "class Meta:\n"
+        "    def __new__(metacls, name, bases, namespace):\n"
+        "        return namespace\n"
+        "class Published(metaclass=Meta):\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-metaclass-prefix-pkg",
+        files={"module_metaclass_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_metaclass_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    published = completed.value.context.temporal.value_if_bound("Published")
+    assert type(published) is MetaclassClassValue
+    publication = published.publication
+    assert publication.metaclass_floor is (
+        completed.value.context.temporal.value_if_bound("Meta")
+    )
+    assert type(publication.namespace_floor) is DictValue
+    assert publication.final_class is publication.namespace_floor
+    assert tuple(
+        key.value
+        for key, _value in publication.namespace_floor.entries
+        if type(key) is StringValue
+    ) == ("TOKEN",)
+    assert publication.raw_class.binding_target_occurrence == (
+        publication.binding_occurrence
+    )
+
+
 def test_prefix_adapter_propagates_missing_construction_producer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -461,6 +703,43 @@ def test_prefix_adapter_propagates_missing_construction_producer(
         dependency_export_adapter._prefix_has_completed_fallthrough(
             SimpleNamespace(), locus
         )
+
+
+def test_prefix_adapter_routes_exact_graph_and_session_to_module_execution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Export admission consumes the authenticated module-prefix producer."""
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_python_source import (
+        dependency_export_adapter,
+        manager_construction,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+    source = "value = 1\ndef build():\n    return value\n"
+    dist = _dist(
+        tmp_path,
+        name="prefix-consumer-pkg",
+        files={"prefix_consumer_pkg/__init__.py": source},
+    )
+    graph = DependencyArtifactGraph.authenticate(dist)
+    module = graph.modules["prefix_consumer_pkg"]
+    locus = ast.parse(source).body[-1]
+    session = SourceResolutionSession()
+    observed = []
+
+    def completed_prefix(actual_module, actual_locus, *, graph, session):
+        observed.append((actual_module, actual_locus, graph, session))
+        return ExitSet.completed(SimpleNamespace(can_fall_through=True))
+
+    monkeypatch.setattr(
+        manager_construction, "_module_prefix_outcome", completed_prefix
+    )
+
+    assert dependency_export_adapter._prefix_has_completed_fallthrough(
+        module, locus, graph=graph, session=session
+    )
+    assert observed == [(module, locus, graph, session)]
 
 
 def test_prefix_assert_false_refuses_binding(tmp_path: Path) -> None:

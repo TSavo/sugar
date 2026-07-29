@@ -64,6 +64,21 @@ def test_spread_keyword_args_build_reference_method_call():
     assert spread.args[0].name == "d"
 
 
+def test_spread_call_is_a_constructed_method_argument_coordinate():
+    t = _out(
+        "def A(cls, values):\n"
+        "    value = str(*values)\n"
+        "    return str.__new__(cls, value)\n"
+    )
+
+    assert t.name == "call:__new__"
+    spread = t.args[2]
+    assert spread.name == "python:call"
+    assert spread.args[0].value == "str"
+    assert spread.args[1].name == "python:starred_arg"
+    assert spread.args[1].args[0].name == "values"
+
+
 if __name__ == "__main__":
     test_method_call_is_the_method_coordinate()
     test_method_chains_compose()

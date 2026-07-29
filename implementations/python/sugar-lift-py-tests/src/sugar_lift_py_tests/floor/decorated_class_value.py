@@ -10,6 +10,7 @@ from .floor_value import FloorValue
 _APPLICATION_AUTHORITY = object()
 _PUBLICATION_AUTHORITY = object()
 _MEMBER_AUTHORITY = object()
+_METACLASS_AUTHORITY = object()
 
 
 def _floor_cid(value: FloorValue) -> str:
@@ -247,6 +248,181 @@ class DecoratedClassValue(FloorValue):
 
             return Complete(TrueBoolLiteralSugar(site=site))
         return super().test_python_type(value, site)
+
+
+@dataclass(frozen=True, init=False)
+class MetaclassClassPublicationV1:
+    """One exact metaclass application during module class publication."""
+
+    source_cid: str
+    definition: object
+    binding_occurrence: object
+    metaclass_occurrence: object
+    raw_class: FloorValue = field(compare=False)
+    metaclass_floor: FloorValue = field(compare=False)
+    metaclass_callable: FloorValue = field(compare=False)
+    class_name_floor: FloorValue = field(compare=False)
+    bases_floor: FloorValue = field(compare=False)
+    namespace_floor: FloorValue = field(compare=False)
+    final_class: FloorValue = field(compare=False)
+    module_construction_receipt_cid: str
+    application_cid: str
+    publication_cid: str
+    _authority: object = field(default=None, init=False, compare=False, repr=False)
+
+    def __post_init__(self):
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+
+        if self._authority is not _METACLASS_AUTHORITY:
+            raise ValueError("metaclass class publication is not producer-minted")
+        if (
+            type(self.definition) is not SourceFragmentCoordinateV1
+            or type(self.binding_occurrence) is not SourceFragmentCoordinateV1
+            or type(self.metaclass_occurrence) is not SourceFragmentCoordinateV1
+            or self.definition.source_cid != self.source_cid
+            or self.binding_occurrence.source_cid != self.source_cid
+            or self.metaclass_occurrence.source_cid != self.source_cid
+            or type(self.raw_class) is not ClassDefinitionValue
+            or self.raw_class.binding_target_occurrence != self.binding_occurrence
+        ):
+            raise ValueError("metaclass class publication coordinate mismatch")
+        application_cid, publication_cid = _metaclass_publication_cids(
+            source_cid=self.source_cid,
+            definition=self.definition,
+            binding_occurrence=self.binding_occurrence,
+            metaclass_occurrence=self.metaclass_occurrence,
+            raw_class=self.raw_class,
+            metaclass_floor=self.metaclass_floor,
+            metaclass_callable=self.metaclass_callable,
+            class_name_floor=self.class_name_floor,
+            bases_floor=self.bases_floor,
+            namespace_floor=self.namespace_floor,
+            final_class=self.final_class,
+            module_construction_receipt_cid=self.module_construction_receipt_cid,
+        )
+        if (
+            self.application_cid != application_cid
+            or self.publication_cid != publication_cid
+        ):
+            raise ValueError("metaclass class publication CID mismatch")
+
+
+def _metaclass_publication_cids(
+    *,
+    source_cid,
+    definition,
+    binding_occurrence,
+    metaclass_occurrence,
+    raw_class,
+    metaclass_floor,
+    metaclass_callable,
+    class_name_floor,
+    bases_floor,
+    namespace_floor,
+    final_class,
+    module_construction_receipt_cid,
+):
+    application_cid = cid_of_json(
+        {
+            "kind": "metaclass-class-application",
+            "schemaVersion": "1",
+            "occurrence": metaclass_occurrence.wire(),
+            "metaclassFloorCid": _floor_cid(metaclass_floor),
+            "metaclassCallableCid": _floor_cid(metaclass_callable),
+            "actualFloorCids": [
+                _floor_cid(metaclass_floor),
+                _floor_cid(class_name_floor),
+                _floor_cid(bases_floor),
+                _floor_cid(namespace_floor),
+            ],
+            "resultFloorCid": _floor_cid(final_class),
+        }
+    )
+    publication_cid = cid_of_json(
+        {
+            "kind": "metaclass-class-publication",
+            "schemaVersion": "1",
+            "sourceCid": source_cid,
+            "definition": definition.wire(),
+            "bindingOccurrence": binding_occurrence.wire(),
+            "rawClassCid": _floor_cid(raw_class),
+            "applicationCid": application_cid,
+            "moduleConstructionReceiptCid": module_construction_receipt_cid,
+        }
+    )
+    return application_cid, publication_cid
+
+
+def _mint_metaclass_class_publication(
+    *,
+    source_cid,
+    definition,
+    binding_occurrence,
+    metaclass_occurrence,
+    raw_class,
+    metaclass_floor,
+    metaclass_callable,
+    class_name_floor,
+    bases_floor,
+    namespace_floor,
+    final_class,
+    module_construction_receipt_cid,
+):
+    application_cid, publication_cid = _metaclass_publication_cids(
+        source_cid=source_cid,
+        definition=definition,
+        binding_occurrence=binding_occurrence,
+        metaclass_occurrence=metaclass_occurrence,
+        raw_class=raw_class,
+        metaclass_floor=metaclass_floor,
+        metaclass_callable=metaclass_callable,
+        class_name_floor=class_name_floor,
+        bases_floor=bases_floor,
+        namespace_floor=namespace_floor,
+        final_class=final_class,
+        module_construction_receipt_cid=module_construction_receipt_cid,
+    )
+    value = object.__new__(MetaclassClassPublicationV1)
+    for name, field_value in (
+        ("source_cid", source_cid),
+        ("definition", definition),
+        ("binding_occurrence", binding_occurrence),
+        ("metaclass_occurrence", metaclass_occurrence),
+        ("raw_class", raw_class),
+        ("metaclass_floor", metaclass_floor),
+        ("metaclass_callable", metaclass_callable),
+        ("class_name_floor", class_name_floor),
+        ("bases_floor", bases_floor),
+        ("namespace_floor", namespace_floor),
+        ("final_class", final_class),
+        ("module_construction_receipt_cid", module_construction_receipt_cid),
+        ("application_cid", application_cid),
+        ("publication_cid", publication_cid),
+    ):
+        object.__setattr__(value, name, field_value)
+    object.__setattr__(value, "_authority", _METACLASS_AUTHORITY)
+    value.__post_init__()
+    return value
+
+
+@dataclass(frozen=True)
+class MetaclassClassValue(FloorValue):
+    publication: MetaclassClassPublicationV1
+
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:metaclass_class_publication",
+            [str_const(self.publication.publication_cid)],
+            symbol_kind="coordinate",
+        )
 
 
 @dataclass(frozen=True)

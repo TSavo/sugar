@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace as _replace
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    Sugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
@@ -200,7 +204,7 @@ class SpreadDictSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class SpreadCallSugar(Sugar):
+class SpreadCallSugar(ConstructedTermSugar):
     """A call containing ``*``/``**``, using the reference call vocabulary.
 
     When an authenticated source-visible callee frame is enrolled (class
@@ -224,6 +228,31 @@ class SpreadCallSugar(Sugar):
             truthful="tuple(z)",
             lying="tuple((*z, 0))",
         )
+
+    def to_term(self, *, owner: str):
+        """Project the same call coordinate used by completed spread reduction."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        if self.callee_name is not None:
+            callee_term = str_const(self.callee_name)
+        else:
+            callee = require_constructed_term_sugar(
+                self.callee, owner="SpreadCallSugar.callee"
+            )
+            callee_term = callee.to_term(owner=owner)
+        arg_terms = []
+        for role, name, sugar in self.arguments:
+            term = require_constructed_term_sugar(
+                sugar, owner="SpreadCallSugar.arguments"
+            ).to_term(owner=owner)
+            if role == "star":
+                term = ctor("python:starred_arg", [term])
+            elif role == "double-star":
+                term = ctor("python:double_starred_kwarg", [term])
+            elif role == "keyword":
+                term = ctor("python:kwarg", [str_const(name), term])
+            arg_terms.append(term)
+        return ctor("python:call", [callee_term, *arg_terms])
 
     def desugar(self, ctx: object = None) -> Outcome:
         def after_callee(callee_value):
