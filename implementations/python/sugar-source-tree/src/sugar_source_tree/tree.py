@@ -30,10 +30,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
-from .backend import Backend, materialize
+from .backend import Backend
 from .fragment import SourceFragment
 from .nodes import Module, Node, SourceUnit
-from .panic import backend_defect
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
 
@@ -89,25 +88,12 @@ class SourceFile:
             # hands it to every child it resolves. An audit walk passes a
             # CollectingReporter; everyone else takes the do-nothing default.
             self.reporter = reporter
-            with reduction_span(sugar="BackendRoot", role="file", site=site):
-                backend_root = self.backend.root(self.unit)
-            with reduction_span(sugar="MaterializeRoot", role="file", site=site):
-                root = materialize(self.unit, backend_root, reporter)
-            if not isinstance(root, Module):
-                backend_defect(
-                    blame=root.fragment,
-                    owner="tree.SourceFile",
-                    observed=f"backend root constructed as {type(root).__name__}",
-                    requested="a Module at the root",
-                    fix="the backend must hand up a module root",
-                )
-                raise AssertionError("unreachable")
-            self.root: Module = root
-            # Identity queries on SourceUnit (module-level function slots,
-            # exception-type lexical bindings) read this already-materialized
-            # Module — never a second source parse as semantic authority.
-            with reduction_span(sugar="BindTypedModule", role="file", site=site):
-                self.unit.bind_typed_module(root)
+            with reduction_span(sugar="MaterializeModule", role="file", site=site):
+                constructed_module = self.backend.materialize_module(self.unit, reporter)
+            self.constructed_module = constructed_module
+            self.root: Module = constructed_module.root
+            self.closed_roll_call = constructed_module.closed_roll_call
+            self.provider_member_rows = constructed_module.provider_member_rows
 
     @classmethod
     def from_path(
@@ -174,8 +160,6 @@ class SourceFile:
         down: a function yields nothing further until asked.
         """
         from sugar_lift_py_tests.engine_log import reduction_span
-        from .nodes import AsyncFunctionDef, FunctionDef
-
         # First full walk materializes the typed tree (field data memo).
         # Span names that cost so file-level exclusive heat is not a black box.
         with reduction_span(
@@ -183,11 +167,7 @@ class SourceFile:
             role="file",
             site=self.unit.filename,
         ):
-            found = [
-                node
-                for node in self.root.walk()
-                if isinstance(node, (FunctionDef, AsyncFunctionDef))
-            ]
+            found = self.constructed_module.function_nodes
         yield from found
 
     def nodes(self) -> Iterator[Node]:
