@@ -118,12 +118,18 @@ class SubscriptSugar(ConstructedTermSugar):
         receiver_partitioned = isinstance(receiver_outcome, _ExitSet)
         index_partitioned = isinstance(index_outcome, _ExitSet)
         if receiver_partitioned or index_partitioned:
-            subscripted = outcome_to_exitset(receiver_outcome).and_then(
-                lambda receiver: outcome_to_exitset(index_outcome).and_then(
-                    lambda index: outcome_to_exitset(
-                        self._subscript(receiver, index, ctx)
-                    )
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            def subscript_receiver(receiver):
+                return NativeOperationExitCarrierV1.compose_prefix(
+                    outcome_to_exitset(index_outcome),
+                    lambda index: self._subscript(receiver, index, ctx),
                 )
+
+            subscripted = NativeOperationExitCarrierV1.compose_prefix(
+                outcome_to_exitset(receiver_outcome), subscript_receiver
             )
         else:
             # Single-outcome path: undecided lookups raise SugarNotWritten
