@@ -6267,17 +6267,27 @@ class If(Statement):
         from .shadow import ShadowNode, rewrite
 
         try:
-            self.branch_result_slot_id
+            existing_slot_id = self.branch_result_slot_id
+            existing_authenticated_slot_id = (
+                self.authenticated_branch_result_slot_id
+            )
         except AttributeError:
             pass
         else:
-            backend_defect(
-                blame=self.fragment,
-                owner="If._rewrite_with_slot",
-                observed="If attempted to mint a second branch-result slot",
-                requested="the one slot authenticated for this exact If.test",
-                fix="route the source If through ordinary substitution exactly once",
-            )
+            if existing_slot_id != existing_authenticated_slot_id:
+                backend_defect(
+                    blame=self.fragment,
+                    owner="If._rewrite_with_slot",
+                    observed="nested substitution carried a foreign branch-result slot",
+                    requested="the one slot authenticated for this exact If.test",
+                    fix="preserve the source condition slot across lexical substitution",
+                )
+            # An outer function substitutes captured names through a nested
+            # function before the nested function opens and substitutes its own
+            # formal scope.  Its transformed test can therefore address a new
+            # formal coordinate; it cannot mint a new source-branch identity.
+            # The sealed stored/authenticated pair remains the authority.
+            return rewrite(self, **changed)
         rewritten = rewrite(self, **changed)
         if authenticated_slot is None:
             authenticated_slot = branch_result_slot(rewritten.test)

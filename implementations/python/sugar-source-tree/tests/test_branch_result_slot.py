@@ -78,3 +78,26 @@ def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(
         if node.kind == "Call" and node.fragment.text == "predicate()"
     }
     assert len(predicate_cids) == 1
+
+
+def test_nested_function_reuses_source_if_slot_across_lexical_substitution(tmp_path):
+    path = tmp_path / "nested_if.py"
+    path.write_text(
+        "def outer(captured):\n"
+        " def inner(condition):\n"
+        "  if condition:\n"
+        "   return captured\n"
+        "  return condition\n"
+        " return inner(captured)\n",
+        encoding="utf-8",
+    )
+    reporter = CollectingReporter()
+    outer = next(SourceFile(path_source(path), reporter=reporter).functions())
+
+    sugar = outer.sugar()
+
+    inner = sugar.statements[0]
+    nested_if = inner.statements[0]
+    assert nested_if.branch_slot.slot_id.startswith("branch-result:")
+    source_ifs = [node for node in reporter.present if node.kind == "If"]
+    assert len({node.fragment.seal().cid for node in source_ifs}) == 1
