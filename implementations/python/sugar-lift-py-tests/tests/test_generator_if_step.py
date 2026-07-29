@@ -52,7 +52,9 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.ir import atomic
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
@@ -154,6 +156,22 @@ def test_pre_yield_if_with_raise_is_raise_step_inside_if() -> None:
     assert isinstance(steps[1], YieldStepV1)
 
 
+def test_raise_step_has_canonical_generator_construction_testimony() -> None:
+    steps = _steps(
+        "def g(c):\n"
+        "    if c:\n"
+        "        raise ValueError('boom')\n"
+        "    yield 1\n"
+    )
+
+    preimage = _machine(steps).construction_term_preimage()
+
+    raise_row = preimage["steps"][0]["thenSteps"][0]
+    assert raise_row["kind"] == "raise"
+    assert raise_row["exception"]["kind"] == "term-cid"
+    assert raise_row["cause"] == {"kind": "null"}
+
+
 # -- the three transition arms -----------------------------------------------
 
 
@@ -183,6 +201,49 @@ def test_an_undecided_guard_partitions_into_two_faces() -> None:
     outcome = _machine(_steps("def g(c):\n    if c:\n        yield 1\n")).resume()
 
     assert isinstance(outcome, ExitSet)
+
+
+def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
+    monkeypatch,
+) -> None:
+    """Guard evaluation exits are paths, not a reason to discard the branch."""
+    halted_guard = atomic("test.guard.halted", [])
+    completed_guard = atomic("test.guard.completed", [])
+    effect = RaiseEffect(exception_name="GuardError", occurrence="guard:site")
+    halted = Halted(halted_guard, effect, state="guard-state")
+    guard_outcome = ExitSet(
+        (
+            halted,
+            Completed(completed_guard, TrueBoolLiteralSugar(site="guard:true")),
+        )
+    )
+    guard = TrueBoolLiteralSugar(site="guard")
+
+    def guard_truth(self, value):
+        del self
+        if value is guard:
+            return guard_outcome
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(value)
+
+    monkeypatch.setattr(GeneratorConstructionV1, "_guard_truth", guard_truth)
+    step = IfStepV1(
+        guard,
+        (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
+        (),
+        "frag",
+    )
+
+    outcome = _machine((step, ReturnStepV1())).resume()
+
+    assert isinstance(outcome, ExitSet)
+    halted_faces = [face for face in outcome.exits if isinstance(face, Halted)]
+    completed_faces = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert halted_faces == [halted]
+    assert len(completed_faces) == 1
+    assert completed_faces[0].guard == completed_guard
+    assert isinstance(completed_faces[0].value, YieldEffect)
 
 
 # -- the arm count: factoring holds, so sequencing does not multiply ---------

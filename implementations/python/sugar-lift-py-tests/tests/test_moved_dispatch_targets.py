@@ -29,6 +29,13 @@ from sugar_lift_py_tests.floor.function_callable import FunctionCallable
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.ir import _Ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.ir import ctor
+from sugar_source_tree.nodes import Name
+from sugar_source_tree.tree import SourceFile
+from sugar_lift_python_source.canonical import blake3_512_of
 
 
 def _resolves(module: str) -> bool:
@@ -64,6 +71,36 @@ def test_floor_to_term_arms_project_through_the_value_s_own_to_term() -> None:
 def test_the_deleted_floor_terms_shim_is_not_quietly_back() -> None:
     """Discriminating face: the module must stay gone, not be re-added."""
     assert not _resolves("sugar_lift_py_tests.sugar.floor_terms")
+
+
+def test_dynamic_isinstance_projects_the_value_through_its_owned_term_door() -> None:
+    source = "subject\n"
+    tree = SourceFile((source, "dynamic-isinstance.py", blake3_512_of(source.encode())))
+    site = next(node for node in tree.nodes() if isinstance(node, Name)).fragment
+    value = SymbolicValue(make_var("subject"))
+    dynamic_type = SymbolicValue(make_var("RuntimeType"))
+
+    outcome = dynamic_type.test_python_type(value, site)
+
+    assert isinstance(outcome, Incomplete)
+    expected = ctor(
+        "adt.is_python_type",
+        [value.to_term(owner="isinstance value"), dynamic_type.term],
+    )
+    assert outcome.effect.witness.operation == expected
+    assert outcome.effect.witness.operand == dynamic_type.term
+    assert outcome.effect.witness.site is site
+
+
+def test_dynamic_isinstance_keeps_a_value_owned_term_refusal_loud() -> None:
+    source = "subject\n"
+    tree = SourceFile((source, "dynamic-isinstance-lie.py", blake3_512_of(source.encode())))
+    site = next(node for node in tree.nodes() if isinstance(node, Name)).fragment
+
+    with pytest.raises(ConstructionPanic):
+        SymbolicValue(make_var("RuntimeType")).test_python_type(
+            FloorValue(), site
+        )
 
 
 # -- sugar.for_sugar cap -> floor/sequence_repetition.py --------------------

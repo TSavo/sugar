@@ -69,6 +69,167 @@ class SourceFragmentCoordinateV1:
             "endCol": self.end_col,
         }
 
+    @property
+    def cid(self) -> str:
+        """Canonical CID of this owner's existing wire representation."""
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(self.wire())
+
+
+_IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY = object()
+
+
+@dataclass(frozen=True)
+class ImportedCallValueSubsumptionV1:
+    source_cid: str
+    module_identity_cid: str
+    import_binding_cid: str
+    target_symbol: str
+    exported_member_path: tuple[str, ...]
+    call_coordinate: SourceFragmentCoordinateV1
+    callee_coordinate: SourceFragmentCoordinateV1
+    call_use_cid: str
+    value_use_cid: str
+    resolution_kind: str
+    resolved_object_cid: str
+    relation_cid: str
+    _authority: object = field(
+        init=False, repr=False, compare=False, default=None
+    )
+
+    def __post_init__(self) -> None:
+        if self._authority is not _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY:
+            raise ValueError("import call/value subsumption lacks producer authority")
+        if not all(
+            (
+                self.source_cid,
+                self.module_identity_cid,
+                self.import_binding_cid,
+                self.target_symbol,
+                self.call_use_cid,
+                self.value_use_cid,
+                self.resolution_kind,
+                self.resolved_object_cid,
+                self.relation_cid,
+            )
+        ) or not self.exported_member_path:
+            raise ValueError("import call/value subsumption lacks binding testimony")
+        if (
+            self.call_coordinate.source_cid != self.source_cid
+            or self.callee_coordinate.source_cid != self.source_cid
+        ):
+            raise ValueError("import call/value subsumption crosses source identity")
+        if (
+            self.call_coordinate.start_line,
+            self.call_coordinate.start_col,
+        ) != (
+            self.callee_coordinate.start_line,
+            self.callee_coordinate.start_col,
+        ) or (
+            self.call_coordinate.end_line,
+            self.call_coordinate.end_col,
+        ) < (
+            self.callee_coordinate.end_line,
+            self.callee_coordinate.end_col,
+        ):
+            raise ValueError("import call/value subsumption has unrelated occurrences")
+        if self.relation_cid != self._expected_cid():
+            raise ValueError("import call/value subsumption CID is stale")
+
+    def _expected_cid(self) -> str:
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(
+            {
+                "schemaVersion": 1,
+                "kind": "imported-call-value-subsumption",
+                "sourceCid": self.source_cid,
+                "moduleIdentityCid": self.module_identity_cid,
+                "importBindingCid": self.import_binding_cid,
+                "targetSymbol": self.target_symbol,
+                "exportedMemberPath": list(self.exported_member_path),
+                "callCoordinate": self.call_coordinate.wire(),
+                "calleeCoordinate": self.callee_coordinate.wire(),
+                "callUseCid": self.call_use_cid,
+                "valueUseCid": self.value_use_cid,
+                "resolutionKind": self.resolution_kind,
+                "resolvedObjectCid": self.resolved_object_cid,
+            }
+        )
+
+
+def _mint_import_call_value_subsumption(
+    *,
+    call_receipt,
+    value_receipt,
+    call_coordinate: SourceFragmentCoordinateV1,
+    callee_coordinate: SourceFragmentCoordinateV1,
+    resolution_kind: str,
+    resolved_object_cid: str,
+) -> ImportedCallValueSubsumptionV1:
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    if (
+        type(call_receipt) is not AuthenticatedImportUseV1
+        or type(value_receipt) is not AuthenticatedImportUseV1
+    ):
+        raise ValueError("import call/value subsumption requires exact receipts")
+    call_receipt.revalidate()
+    value_receipt.revalidate()
+    exported = tuple(value_receipt.use["exportedMemberPath"])
+    call_site = call_receipt.use["useSite"]
+    value_site = value_receipt.use["useSite"]
+    if (
+        call_receipt.demand.get("kind") != "call-contract-demand"
+        or value_receipt.demand.get("kind") != "import-value-use-demand"
+        or value_receipt.use.get("role") != "value-use"
+        or value_receipt.demand.get("role") != "value-use"
+        or call_receipt.source_cid != value_receipt.source_cid
+        or call_receipt.target_symbol != value_receipt.target_symbol
+        or call_receipt.import_binding.cid != value_receipt.import_binding.cid
+        or call_coordinate.source_cid != call_receipt.source_cid
+        or callee_coordinate.source_cid != value_receipt.source_cid
+        or (
+            call_coordinate.start_line,
+            call_coordinate.start_col,
+            call_coordinate.end_line,
+            call_coordinate.end_col,
+        )
+        != (
+            call_site["startLine"],
+            call_site["startCol"],
+            call_site["endLine"],
+            call_site["endCol"],
+        )
+        or callee_coordinate.wire() != value_site
+    ):
+        raise ValueError("import call/value subsumption receipts are cross-wired")
+    module_identity = call_receipt.import_binding.value["target"]["moduleIdentity"]
+    relation = object.__new__(ImportedCallValueSubsumptionV1)
+    values = {
+        "source_cid": call_receipt.source_cid,
+        "module_identity_cid": cid_of_json(module_identity),
+        "import_binding_cid": call_receipt.import_binding.cid,
+        "target_symbol": call_receipt.target_symbol,
+        "exported_member_path": exported,
+        "call_coordinate": call_coordinate,
+        "callee_coordinate": callee_coordinate,
+        "call_use_cid": call_receipt.use["cid"],
+        "value_use_cid": value_receipt.use["cid"],
+        "resolution_kind": resolution_kind,
+        "resolved_object_cid": resolved_object_cid,
+    }
+    for name, value in values.items():
+        object.__setattr__(relation, name, value)
+    object.__setattr__(relation, "relation_cid", relation._expected_cid())
+    object.__setattr__(
+        relation, "_authority", _IMPORT_CALL_VALUE_SUBSUMPTION_AUTHORITY
+    )
+    relation.__post_init__()
+    return relation
+
 
 @dataclass(frozen=True)
 class OpaqueSourceCallObligationV1:
@@ -78,6 +239,21 @@ class OpaqueSourceCallObligationV1:
     target_name: str
     resolved_object_cid: str
     resolution_kind: str = "opaque-call-target"
+    import_call_value_subsumption: ImportedCallValueSubsumptionV1 | None = None
+
+    def __post_init__(self) -> None:
+        relation = self.import_call_value_subsumption
+        if relation is None:
+            return
+        if type(relation) is not ImportedCallValueSubsumptionV1:
+            raise ValueError("opaque call has malformed import subsumption")
+        if (
+            relation.call_coordinate != self.coordinate
+            or relation.target_symbol != self.target_name
+            or relation.resolution_kind != self.resolution_kind
+            or relation.resolved_object_cid != self.resolved_object_cid
+        ):
+            raise ValueError("opaque call/subsumption testimony is cross-wired")
 
 
 @dataclass(frozen=True)

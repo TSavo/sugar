@@ -21,7 +21,8 @@ def fixture(value, items):
     unique = {a for a, (b, *c) in items}
     mapped = {a: b for a, (b, *c) in items}
     recursive = [b for a, *rest in items for b in rest]
-    return listed, unique, mapped, recursive
+    generated = tuple(a for a, (b, *c) in items)
+    return listed, unique, mapped, recursive, generated
 """
 
 LIVE_SOURCE = """\
@@ -47,6 +48,7 @@ EXPECTED = {
     ("DictComp", 7, 0): (("a", ("generators", 0, "target", 0)), ("b", ("generators", 0, "target", 1, 0)), ("c", ("generators", 0, "target", 1, 1, "star"))),
     ("ListComp", 8, 0): (("a", ("generators", 0, "target", 0)), ("rest", ("generators", 0, "target", 1, "star"))),
     ("ListComp", 8, 1): (("b", ("generators", 1, "target")),),
+    ("GeneratorExp", 9, 0): (("a", ("generators", 0, "target", 0)), ("b", ("generators", 0, "target", 1, 0)), ("c", ("generators", 0, "target", 1, 1, "star"))),
 }
 
 
@@ -193,6 +195,63 @@ def test_same_unit_foreign_for_cannot_claim_local_target(tmp_path: Path):
     assert source_file.unit.target_pattern_construction_count == before
     assert loops[0].target_patterns[0] is first_pattern
     assert loops[1].target_patterns[0] is second_pattern
+
+
+def test_assign_rhs_rewrite_retains_its_authenticated_target_pattern(
+    tmp_path: Path,
+):
+    path = tmp_path / "rewritten_unpack.py"
+    path.write_text(
+        "def selected(value):\n"
+        "    key = normalize(value)\n"
+        "    root, leaf = split(key)\n"
+        "    return root[leaf]\n"
+    )
+    source_file = SourceFile.from_path(path)
+    function, = tuple(source_file.functions())
+    original = next(
+        node
+        for node in function.walk()
+        if node.kind == "Assign" and node.line_col_span().start_line == 3
+    )
+    original_pattern, = original.target_patterns
+
+    frame = function.source_visible_call_frame()
+
+    assert frame.owner is function
+    assert source_file.unit.require_target_pattern(
+        original, original.targets[0]
+    ) is original_pattern
+    assert source_file.unit.target_pattern_construction_count == 1
+
+
+def test_attribute_only_unpack_is_not_minted_as_a_binding_pattern(
+    tmp_path: Path,
+):
+    path = tmp_path / "attribute_unpack.py"
+    path.write_text(
+        "class Holder:\n"
+        "    def install(self, left, right):\n"
+        "        self.left, self.right = left, right\n"
+    )
+
+    source_file = SourceFile.from_path(path)
+
+    assert source_file.unit.target_pattern_construction_count == 0
+
+
+def test_mixed_attribute_unpack_is_not_a_lexical_target_pattern(tmp_path: Path):
+    path = tmp_path / "mixed_store_target.py"
+    path.write_text(
+        "class Holder:\n"
+        "    def bind(self, func, args, kwds):\n"
+        "        self.func, self.args, self.kwds = func, args, kwds\n"
+    )
+    source_file = SourceFile.from_path(path)
+    assignment = next(node for node in source_file.nodes() if node.kind == "Assign")
+
+    assert assignment.target_patterns == ()
+    assert source_file.unit.target_pattern_construction_count == 0
 
 
 def test_legacy_reharvest_manifestations_are_retired():

@@ -1063,18 +1063,29 @@ def _resolve_source_visible_frame_uncached(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
     )
+    from sugar_lift_python_source.value_pins import scan_module_value_pins
+    from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
+
+    pin_scan = scan_module_value_pins(
+        source_file.root, source=module.source, source_path=module.source_seat
+    )
+    mutable_global_bindings = tuple(
+        MutableGlobalBindingV1(
+            source_cid=pin.source_cid,
+            binding_occurrence=pin.binding_occurrence,
+            name=pin.name,
+            kind=pin.kind,
+            term=pin.term,
+            line=pin.line,
+            col=pin.col,
+        )
+        for pin in pin_scan.mutable_global_pins
+    )
+
+    def with_mutable_globals(frame):
+        return replace(frame, mutable_global_bindings=mutable_global_bindings)
     dependency_graphs = dict(dependency_graphs or {})
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
-    # Seat final-checked import value-use receipts into THIS frame's SourceUnit
-    # before any construction.  Identity operands (e.g. ``pd.array``) bind via
-    # authenticated definition coordinates on this unit — never cross-unit spans.
-    _seat_import_value_use_receipts(
-        source_file=source_file,
-        module=module,
-        session=session,
-        context=context,
-        dependency_graphs=dependency_graphs,
-    )
     definitions = tuple(
         item
         for item in source_file.root.body
@@ -1106,6 +1117,18 @@ def _resolve_source_visible_frame_uncached(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "resolved definition coordinate"
         )
+    # Seat final-checked import value-use receipts owned by THIS resolved
+    # definition before constructing its frame. Identity operands bind via
+    # authenticated coordinates on this unit; unrelated sibling definitions
+    # never acquire authority merely by sharing the module source.
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=target,
+        session=session,
+        context=context,
+        dependency_graphs=dependency_graphs,
+    )
     # Nested method export: project its ordinary frame without requiring the
     # enclosing class to be the export target. Leading ``self`` is the bound
     # instance for ``name = Class()`` callables and is not supplied by the
@@ -1115,7 +1138,7 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
-        frame = target.source_visible_call_frame()
+        frame = with_mutable_globals(target.source_visible_call_frame())
         if frame.parameters and frame.parameters[0] == "self":
             frame = replace(
                 frame,
@@ -1153,15 +1176,18 @@ def _resolve_source_visible_frame_uncached(
     reachable_names = _reachable_local_definition_names(target, definitions_by_name)
     definitions = tuple(item for item in definitions if item.name in reachable_names)
 
-    # Imported calls inside the authenticated factory body are ordinary source
-    # calls too.  In particular, a function-local ``import package`` followed
-    # by ``return package.factory(...)`` is invisible to a module-import-only
-    # scan and cannot be recovered from the outer With-head spelling.  Reuse
-    # the lexical import testimony at the exact inner call coordinate, then
-    # project the imported callable through the same artifact/frame doors.
+    # Imported Attribute calls inside an authenticated reachable definition are
+    # ordinary source calls too.  Candidate discovery deliberately knows only
+    # that the callee is an Attribute: the exact call-contract receipt at that
+    # same source span is the sole authority that it is imported and names its
+    # dependency.  This includes both function-local and module-level imports
+    # without reconstructing either binding from the callee spelling.
     from pathlib import Path
 
-    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_use_receipts,
+        authenticated_import_value_use_receipts,
+    )
 
     reachable_calls = {
         (
@@ -1172,7 +1198,7 @@ def _resolve_source_visible_frame_uncached(
         ): call
         for definition in definitions
         for function in _scanned_definitions(definition)
-        for call in _local_imported_attribute_calls(function)
+        for call in _reachable_attribute_calls(function)
     }
     if reachable_calls:
         module_path = Path(module.source_seat)
@@ -1183,8 +1209,16 @@ def _resolve_source_visible_frame_uncached(
             module.source_cid,
             module_identities={},
         )
+        value_receipts, _ = authenticated_import_value_use_receipts(
+            Path("."),
+            module_path,
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
     else:
         import_receipts = ()
+        value_receipts = ()
     for receipt in import_receipts:
         raw_site = receipt.use["useSite"]
         call = reachable_calls.get(
@@ -1197,6 +1231,57 @@ def _resolve_source_visible_frame_uncached(
         )
         if call is None:
             continue
+        receipt.revalidate()
+        callee_coordinate = _call_callee_coordinate(call)
+        matching_values = tuple(
+            value
+            for value in value_receipts
+            if value.source_cid == receipt.source_cid
+            and value.target_symbol == receipt.target_symbol
+            and value.import_binding.cid == receipt.import_binding.cid
+            and value.use["useSite"]
+            == {
+                "sourceCid": callee_coordinate.source_cid,
+                "startLine": callee_coordinate.start_line,
+                "startCol": callee_coordinate.start_col,
+                "endLine": callee_coordinate.end_line,
+                "endCol": callee_coordinate.end_col,
+            }
+        )
+        if len(matching_values) > 1:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=call.fragment,
+                owner="manager_construction imported call receipt pairing",
+                observed="multiple value-use receipts claim one imported callee",
+                requested="one exact call/value receipt pair",
+                fix="repair lexical import-use enrollment uniqueness",
+            )
+        if matching_values:
+            matching_values[0].revalidate()
+        def obligation(relation_kind: str) -> OpaqueSourceCallObligationV1:
+            subsumption = None
+            if matching_values:
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    _mint_import_call_value_subsumption,
+                )
+
+                subsumption = _mint_import_call_value_subsumption(
+                    call_receipt=receipt,
+                    value_receipt=matching_values[0],
+                    call_coordinate=_call_coordinate(call),
+                    callee_coordinate=callee_coordinate,
+                    resolution_kind=relation_kind,
+                    resolved_object_cid=resolved.cid,
+                )
+            return OpaqueSourceCallObligationV1(
+                _call_coordinate(call),
+                receipt.target_symbol,
+                resolved.cid,
+                resolution_kind=relation_kind,
+                import_call_value_subsumption=subsumption,
+            )
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
@@ -1211,12 +1296,7 @@ def _resolve_source_visible_frame_uncached(
                 _install_opaque_call_obligation(
                     context,
                     call,
-                    OpaqueSourceCallObligationV1(
-                        _call_coordinate(call),
-                        receipt.target_symbol,
-                        resolved.cid,
-                        resolution_kind="call-target-source-absent",
-                    ),
+                    obligation("call-target-source-absent"),
                 )
                 continue
             dependency_graphs[top_level] = dependency_graph
@@ -1227,12 +1307,7 @@ def _resolve_source_visible_frame_uncached(
             _install_opaque_call_obligation(
                 context,
                 call,
-                OpaqueSourceCallObligationV1(
-                    _call_coordinate(call),
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind="call-target-source-absent",
-                ),
+                obligation("call-target-source-absent"),
             )
             continue
         from sugar_source_tree.panic import SugarNotWritten
@@ -1250,12 +1325,7 @@ def _resolve_source_visible_frame_uncached(
             _install_opaque_call_obligation(
                 context,
                 call,
-                OpaqueSourceCallObligationV1(
-                    _call_coordinate(call),
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind="call-target-export-unresolved",
-                ),
+                obligation("call-target-export-unresolved"),
             )
             del exc
             continue
@@ -1268,12 +1338,7 @@ def _resolve_source_visible_frame_uncached(
             _install_opaque_call_obligation(
                 context,
                 call,
-                OpaqueSourceCallObligationV1(
-                    _call_coordinate(call),
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind=kind,
-                ),
+                obligation(kind),
             )
             continue
         imported_frame, _ = projected
@@ -1445,7 +1510,18 @@ def _resolve_source_visible_frame_uncached(
                     nested = external_frames.get(call.func.id)
                 if nested is not None:
                     _install_source_call_frame(context, call, nested)
-            frames[function.name] = function.source_visible_call_frame()
+            if function is not target:
+                _seat_import_value_use_receipts(
+                    source_file=source_file,
+                    module=module,
+                    target=function,
+                    session=session,
+                    context=context,
+                    dependency_graphs=dependency_graphs,
+                )
+            frames[function.name] = with_mutable_globals(
+                function.source_visible_call_frame()
+            )
             pending.remove(function)
             progressed = True
         if not progressed:
@@ -1457,7 +1533,254 @@ def _resolve_source_visible_frame_uncached(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "ordinary source call frame"
         )
+    decorated_class_bindings = _construct_reachable_decorated_class_bindings(
+        source_file=source_file,
+        target=target,
+        module_definitions=tuple(source_file.root.body),
+        reachable_definitions=definitions,
+        frames=frames,
+    )
+    if decorated_class_bindings:
+        frame = replace(frame, decorated_class_bindings=decorated_class_bindings)
     return frame, target, source_file
+
+
+def _construct_reachable_decorated_class_bindings(
+    *, source_file, target, module_definitions, reachable_definitions, frames
+):
+    """Execute exact decorated classes reached by the selected frame."""
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import FloorValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.decorated_class_value import (
+        DecoratedClassPublicationV1,
+        DecoratedClassValue,
+        DecoratorApplicationPublicationV1,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.source_call_frame import DecoratedClassBindingV1
+    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_source_tree.panic import SugarNotWritten
+
+    @dataclass(frozen=True)
+    class _SourceFrameCallableV1(FloorValue):
+        definition: FunctionDef
+        frame: object
+
+        def to_term(self, *, owner):
+            del owner
+            return ctor(
+                "python:source-frame-callable",
+                [str_const(self.frame.frame_cid)],
+                symbol_kind="coordinate",
+            )
+
+        def callable_application_with(self, operation, ctx):
+            keywords = tuple(zip(operation.keyword_names, (), strict=True))
+            bound = self.frame.bind_actuals(operation.arguments, keywords, ctx)
+            call = CallSiteValue(
+                self.definition.name,
+                bound.actuals,
+                self.frame.parameters,
+                ctor(
+                    "call:source-frame",
+                    [
+                        self.to_term(owner=self.definition.name),
+                        *(
+                            item.to_term(owner=self.definition.name)
+                            for item in bound.actuals
+                        ),
+                    ],
+                ),
+                self.frame.body,
+                site=operation.site,
+                source_call_frame_cid=self.frame.frame_cid,
+                formal_coordinate_cids=tuple(
+                    coordinate.cid for coordinate in self.frame.formal_coordinates
+                ),
+                bound_source_actuals=bound,
+            )
+            produced = call.producer_outcome(ctx)
+            if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
+                raise SugarNotWritten(
+                    owner="manager_construction decorated class application",
+                    blame=operation.site,
+                    observed="decorator source call produced a nonlinear outcome",
+                    requested="one completed retained source-call coordinate",
+                    fix="sequence the decorator's effects before module publication",
+                )
+            projected = produced.value.project_operation_receiver_outcome(
+                ctx, owner="manager_construction decorated class application"
+            )
+            if not isinstance(projected, Complete):
+                raise SugarNotWritten(
+                    owner="manager_construction decorated class application",
+                    blame=operation.site,
+                    observed="decorator source return projected nonlinearly",
+                    requested="one completed decorator result Floor",
+                    fix="sequence the decorator's effects before module publication",
+                )
+            return projected
+
+    if not isinstance(target, FunctionDef):
+        return ()
+    module_classes = {
+        item.name: item for item in module_definitions if isinstance(item, ClassDef)
+    }
+    module_functions = {
+        item.name: item for item in module_definitions if isinstance(item, FunctionDef)
+    }
+    reached = []
+    for function in reachable_definitions:
+        if not isinstance(function, FunctionDef):
+            continue
+        table = function.unit.function_symtable(
+            function.name, function.line_col_span().start_line
+        )
+        for node in function.walk():
+            if not isinstance(node, Name):
+                continue
+            candidate = module_classes.get(node.id)
+            if candidate is None or not candidate.decorators:
+                continue
+            bindings = tuple(
+                (function.unit.module_direct_bindings or {}).get(node.id, ())
+            )
+            if table.lookup(node.id).is_global() and bindings == (candidate,):
+                if candidate not in reached:
+                    reached.append(candidate)
+    if not reached:
+        return ()
+
+    decorator_functions = set()
+    for definition in reached:
+        for decorator in definition.decorators:
+            if isinstance(decorator, Name):
+                bindings = tuple(
+                    (definition.unit.module_direct_bindings or {}).get(decorator.id, ())
+                )
+                if len(bindings) == 1 and isinstance(bindings[0], FunctionDef):
+                    decorator_functions.add(bindings[0])
+    temporal = TemporalContext.empty()
+    for definition in decorator_functions:
+        frame = frames.get(definition.name)
+        if frame is None:
+            frame = definition.source_visible_call_frame()
+        temporal = temporal.bind_value(
+            definition.name, _SourceFrameCallableV1(definition, frame)
+        )
+
+    ctx = ReduceContext.root(owner="manager decorated class publication")
+    raw_classes = {}
+    class_dependencies = set()
+    for function in decorator_functions:
+        function_table = function.unit.function_symtable(
+            function.name, function.line_col_span().start_line
+        )
+        for node in function.walk():
+            if not isinstance(node, Name):
+                continue
+            candidate = module_classes.get(node.id)
+            bindings = tuple((function.unit.module_direct_bindings or {}).get(node.id, ()))
+            if (
+                candidate is not None
+                and function_table.lookup(node.id).is_global()
+                and bindings == (candidate,)
+            ):
+                class_dependencies.add(candidate)
+    for definition in module_definitions:
+        if definition not in class_dependencies:
+            continue
+        outcome = definition.sugar().desugar(ctx)
+        if not isinstance(outcome, Complete):
+            raise SugarNotWritten(
+                owner="manager_construction decorated class dependency",
+                blame=definition.fragment,
+                observed="decorator class dependency reduced nonlinearly",
+                requested="one completed source class Floor",
+                fix="sequence module definition effects before decorator execution",
+            )
+        raw_classes[definition.name] = outcome.value
+        temporal = temporal.bind_value(definition.name, outcome.value)
+    ctx = replace(ctx, temporal=temporal, module_temporal=temporal)
+
+    result = []
+    for definition in reached:
+        sugar = definition.sugar()
+        raw_outcome = sugar.desugar(ctx)
+        if not isinstance(raw_outcome, Complete):
+            raise SugarNotWritten(
+                owner="manager_construction decorated raw class",
+                blame=definition.fragment,
+                observed="raw class reduced nonlinearly",
+                requested="one completed raw ClassDefinitionValue",
+                fix="sequence module definition effects before decorator execution",
+            )
+        decorator_floors = []
+        for decorator_sugar in sugar.decorator_sugars:
+            outcome = decorator_sugar.desugar(ctx)
+            if not isinstance(outcome, Complete):
+                raise SugarNotWritten(
+                    owner="manager_construction decorated callable",
+                    blame=definition.fragment,
+                    observed="decorator expression reduced nonlinearly",
+                    requested="one completed decorator callable Floor",
+                    fix="sequence decorator expression effects before application",
+                )
+            decorator_floors.append(outcome.value)
+        current = raw_outcome.value
+        applications = []
+        for callable_floor, occurrence in reversed(
+            tuple(zip(decorator_floors, sugar.decorator_occurrences, strict=True))
+        ):
+            before = current
+            outcome = CallableApplication(
+                (before,),
+                (),
+                occurrence,
+                owner="manager decorated class application",
+                call_occurrence=occurrence,
+            ).apply(callable_floor, ctx)
+            if not isinstance(outcome, Complete):
+                raise SugarNotWritten(
+                    owner="manager_construction decorated class application",
+                    blame=occurrence,
+                    observed="decorator application reduced nonlinearly",
+                    requested="one completed decorator result Floor",
+                    fix="sequence decorator application effects before publication",
+                )
+            current = outcome.value
+            applications.append(
+                DecoratorApplicationPublicationV1.mint(
+                    occurrence=occurrence,
+                    callable_floor=callable_floor,
+                    input_floor=before,
+                    output_floor=current,
+                )
+            )
+        publication = DecoratedClassPublicationV1.mint(
+            source_cid=source_file.unit.source_cid,
+            definition=_call_coordinate(definition),
+            binding_occurrence=sugar.binding_target_occurrence,
+            raw_class=raw_outcome.value,
+            decorator_applications=tuple(applications),
+            final_class=current,
+            module_construction_receipt_cid=(
+                source_file.construction_event_receipt_cid
+            ),
+        )
+        result.append(
+            DecoratedClassBindingV1(
+                definition.name,
+                publication,
+                DecoratedClassValue(publication),
+            )
+        )
+    return tuple(result)
 
 
 def _resolve_external_call_frame(
@@ -1769,39 +2092,27 @@ def _local_named_calls(function: FunctionDef):
         stack.extend(reversed(children))
 
 
-def _local_imported_attribute_calls(function: FunctionDef):
-    """Direct attribute calls rooted in an import bound by this function.
+def _reachable_attribute_calls(function: FunctionDef):
+    """Attribute-call candidates owned by one reachable definition.
 
-    The lexical receipt remains the authority at each use coordinate.  This
-    syntax walk only bounds the expensive receipt pass to the missing native
-    shape; it does not decide what module or callable the spelling denotes.
+    This walk grants no import or target authority.  The caller admits a
+    candidate only when the lexical pass returns one exact call-contract
+    receipt for the candidate's full source span.
     """
-    imported_slots: set[str] = set()
     stack = list(reversed(function.body))
     calls: list[Call] = []
     while stack:
         node = stack.pop()
         if isinstance(node, (FunctionDef, ClassDef)):
             continue
-        if isinstance(node, (Import, ImportFrom)):
-            imported_slots.update(
-                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
-            )
-        elif (
+        if (
             isinstance(node, Call)
             and isinstance(node.func, Attribute)
-            and isinstance(node.func.value, Name)
         ):
             calls.append(node)
         children = [child for _, _, child in node.children()]
         stack.extend(reversed(children))
-    return tuple(
-        call
-        for call in calls
-        if isinstance(call.func, Attribute)
-        and isinstance(call.func.value, Name)
-        and call.func.value.id in imported_slots
-    )
+    return tuple(calls)
 
 
 def _has_non_higher_order_return(
@@ -1855,15 +2166,31 @@ def _call_coordinate(call: Call):
     )
 
 
+def _call_callee_coordinate(call: Call):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    span = call.func.line_col_span()
+    return SourceFragmentCoordinateV1(
+        call.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+
+
 def _seat_import_value_use_receipts(
     *,
     source_file,
     module,
+    target: Node,
     session: SourceResolutionSession,
     context: TreeConstructionContextV1,
     dependency_graphs: dict[str, DependencyArtifactGraph],
 ) -> None:
-    """Seat authenticated value-use receipts on this frame unit only.
+    """Seat authenticated value-use receipts owned by this exact frame target.
 
     Receipts are minted once via ``authenticated_import_value_use_receipts``
     (source-CID authenticated; dual-door / mismatch raises).  Resolution uses
@@ -1904,6 +2231,41 @@ def _seat_import_value_use_receipts(
         module.source_cid,
         module_identities={},
     )
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+    call_receipts, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    calls_by_cid = {}
+    for call_receipt in call_receipts:
+        cid = call_receipt.use["cid"]
+        if cid in calls_by_cid:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import call/value receipt subsumption",
+                observed="duplicate authenticated call receipt CID",
+                requested="one call receipt for each authenticated use CID",
+                fix="repair lexical call receipt enrollment uniqueness",
+            )
+        calls_by_cid[cid] = call_receipt
+    owned_spans = [target.line_col_span()]
+    owned_spans.extend(
+        decorator.line_col_span()
+        for decorator in getattr(target, "decorators", ())
+    )
+    owned_ranges = tuple(
+        (
+            (span.start_line, span.start_col),
+            (span.end_line, span.end_col),
+        )
+        for span in owned_spans
+    )
     for receipt in receipts:
         if receipt.source_cid != module.source_cid:
             raise ImportValueUseSeatingGap(
@@ -1929,6 +2291,89 @@ def _seat_import_value_use_receipts(
             site["endLine"],
             site["endCol"],
         )
+        use_start = (site["startLine"], site["startCol"])
+        use_end = (site["endLine"], site["endCol"])
+        if not any(
+            start <= use_start and use_end <= end for start, end in owned_ranges
+        ):
+            continue
+        receipt.revalidate()
+        paired_obligations = []
+        for obligation in context.opaque_source_call_obligations.values():
+            relation = obligation.import_call_value_subsumption
+            if relation is None or relation.value_use_cid != receipt.use["cid"]:
+                continue
+            call_receipt = calls_by_cid.get(relation.call_use_cid)
+            if call_receipt is None:
+                raise ImportValueUseSeatingGap(
+                    "missing-call-receipt",
+                    "subsumption relation cites no authenticated call receipt",
+                )
+            call_receipt.revalidate()
+            from sugar_lift_python_source.canonical import cid_of_json
+
+            identity = call_receipt.import_binding.value["target"]["moduleIdentity"]
+            call_site = call_receipt.use["useSite"]
+            value_site = receipt.use["useSite"]
+            expected = (
+                relation.source_cid == module.source_cid == receipt.source_cid
+                and relation.module_identity_cid == cid_of_json(identity)
+                and relation.import_binding_cid
+                == call_receipt.import_binding.cid
+                == receipt.import_binding.cid
+                and relation.target_symbol
+                == call_receipt.target_symbol
+                == receipt.target_symbol
+                and relation.exported_member_path
+                == tuple(receipt.use["exportedMemberPath"])
+                and relation.call_use_cid == call_receipt.use["cid"]
+                and relation.value_use_cid == receipt.use["cid"]
+                and (
+                    relation.call_coordinate.start_line,
+                    relation.call_coordinate.start_col,
+                    relation.call_coordinate.end_line,
+                    relation.call_coordinate.end_col,
+                )
+                == (
+                    call_site["startLine"],
+                    call_site["startCol"],
+                    call_site["endLine"],
+                    call_site["endCol"],
+                )
+                and relation.callee_coordinate.wire() == value_site
+                and relation.callee_coordinate == coordinate
+                and relation.call_coordinate == obligation.coordinate
+                and relation.resolution_kind == obligation.resolution_kind
+                and relation.resolved_object_cid == obligation.resolved_object_cid
+            )
+            if not expected:
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=coordinate,
+                    owner="manager_construction import call/value receipt subsumption",
+                    observed="parked call/value relation disagrees with authenticated receipts",
+                    requested="byte-identical one-to-one imported call/value relation",
+                    fix="re-mint the relation from the exact lexical call and value receipts",
+                )
+            paired_obligations.append(obligation)
+        paired_obligations = tuple(paired_obligations)
+        if len(paired_obligations) > 1:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=coordinate,
+                owner="manager_construction import call/value receipt subsumption",
+                observed="multiple parked calls claim one imported value occurrence",
+                requested="one exact parked call/value receipt relation",
+                fix="repair call receipt uniqueness before value seating",
+            )
+
+        def seat_receipt() -> None:
+            unit.seat_import_value_use_resolution(
+                span_key, receipt, source_cid=module.source_cid
+            )
+
         identity = receipt.import_binding.value["target"]["moduleIdentity"]
         if identity["kind"] == "authenticated-python-module":
             dependency_module = identity["moduleName"]
@@ -1947,6 +2392,7 @@ def _seat_import_value_use_receipts(
             # An absent graph carries no source authority.  Leave the exact
             # import-use coordinate unseated; any consumer that needs it stays
             # typed-loud at its ordinary resolution door.
+            seat_receipt()
             continue
         binding_target = receipt.import_binding.value["target"]
         if (
@@ -1957,15 +2403,33 @@ def _seat_import_value_use_receipts(
             # is not a callable definition to seat on this SourceUnit.  Its
             # attributed member carries its own later receipt and exact use
             # coordinate; only that member may become a source call frame.
+            seat_receipt()
             continue
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
+            if imported.kind in {"dynamic-export", "static-export-absent"}:
+                # Honest open-world value exports carry no definition
+                # coordinate to seat. Leave the exact use unresolved so its
+                # ordinary consumer remains typed-loud if execution reaches
+                # it; unrelated construction must not turn that absence into
+                # module-wide refusal.
+                seat_receipt()
+                continue
+            if imported.kind == "ambiguous-static-export" and len(
+                paired_obligations
+            ) == 1:
+                # The exact call receipt already owns this callable occurrence
+                # and remains parked/loud at the full Call coordinate.  Its
+                # duplicate Attribute value receipt is deliberately unseated;
+                # no candidate definition or runtime branch is selected.
+                continue
             raise ImportValueUseSeatingGap(
                 f"resolution-{imported.kind}",
                 "authenticated value-use receipt did not resolve",
             )
+        seat_receipt()
         context.source_import_value_resolutions[coordinate] = imported
         unit.seat_import_value_use_resolution(
             span_key, imported, source_cid=module.source_cid

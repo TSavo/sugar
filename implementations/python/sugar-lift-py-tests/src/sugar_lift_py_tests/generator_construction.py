@@ -34,6 +34,7 @@ class FormalFloorBindingV1:
 
     coordinate_cid: str
     floor_value: object = field(compare=False, repr=False)
+    coordinate: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -51,6 +52,19 @@ class FormalFloorBindingV1:
                 "FormalFloorBindingV1.floor_value must be a FloorValue, "
                 f"got {type(self.floor_value).__name__}"
             )
+        if self.coordinate is not None:
+            from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+            if (
+                type(self.coordinate) is not BindingCoordinateV1
+                or self.coordinate.cid != self.coordinate_cid
+                or cid_of_json(self.coordinate.preimage) != self.coordinate.cid
+                or BindingCoordinateV1.decode(self.coordinate.wire())
+                != self.coordinate
+            ):
+                raise FormalFloorBindingGap(
+                    "projected formal floor binding has foreign coordinate testimony"
+                )
 
 
 @dataclass(frozen=True)
@@ -738,10 +752,21 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             ],
         }
     if isinstance(step, RaiseStepV1):
+        from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+
+        if not isinstance(step.raise_sugar, RaiseSugar):
+            raise TypeError(
+                f"{owner} requires RaiseSugar for RaiseStepV1, got "
+                f"{type(step.raise_sugar).__name__}"
+            )
         return {
             "kind": "raise",
             "fragmentCid": step.fragment_cid,
-            "raiseSugar": _generator_value_testimony(step.raise_sugar, owner=owner),
+            "exception": _generator_value_testimony(
+                step.raise_sugar.exception, owner=owner
+            ),
+            "cause": _generator_value_testimony(step.raise_sugar.cause, owner=owner),
+            "inFlightSlot": step.raise_sugar.in_flight_slot,
         }
     if isinstance(step, TermStepV1):
         return {
@@ -909,7 +934,20 @@ class GeneratorConstructionV1:
             for entry in binding_state
             if isinstance(entry, BindingEntryV1)
         )
-        floor_cids = tuple(item.coordinate_cid for item in formal_floor_bindings)
+        root_floor_bindings = tuple(
+            item for item in formal_floor_bindings if item.coordinate is None
+        )
+        projected_floor_bindings = tuple(
+            item for item in formal_floor_bindings if item.coordinate is not None
+        )
+        projected_cids = tuple(
+            item.coordinate_cid for item in projected_floor_bindings
+        )
+        if len(projected_cids) != len(set(projected_cids)):
+            raise FormalFloorBindingGap(
+                "projected formal floor bindings must not duplicate a coordinate"
+            )
+        floor_cids = tuple(item.coordinate_cid for item in root_floor_bindings)
         if len(floor_cids) != len(set(floor_cids)):
             raise FormalFloorBindingGap(
                 "formal floor bindings must not duplicate a formal coordinate"
@@ -920,6 +958,37 @@ class GeneratorConstructionV1:
                 f"formal roster; floors={sorted(floor_cids)!r} "
                 f"sealed={sorted(sealed_formal_cids)!r}"
             )
+        sealed_coordinates = tuple(
+            entry.coordinate
+            for entry in binding_state
+            if isinstance(entry, BindingEntryV1)
+        )
+        for binding in projected_floor_bindings:
+            coordinate = binding.coordinate
+            parents = tuple(
+                root
+                for root in sealed_coordinates
+                if coordinate.scope_owner_cid == root.scope_owner_cid
+                and coordinate.binding_site == root.binding_site
+                and coordinate.projection_path[: len(root.projection_path)]
+                == root.projection_path
+            )
+            suffix = (
+                coordinate.projection_path[len(parents[0].projection_path) :]
+                if len(parents) == 1
+                else ()
+            )
+            if (
+                len(parents) != 1
+                or len(suffix) != 2
+                or suffix[0] != "variadic"
+                or not isinstance(suffix[1], int)
+                or isinstance(suffix[1], bool)
+                or coordinate != parents[0].project(*suffix)
+            ):
+                raise FormalFloorBindingGap(
+                    "projected formal floor coordinate is foreign to sealed formal roster"
+                )
         if reduction_context is not None and not callable(
             getattr(reduction_context, "with_temporal", None)
         ):
@@ -1070,13 +1139,53 @@ class GeneratorConstructionV1:
             value = self._reduce_value(step.value, requested)
             if isinstance(value, GeneratorTransitionGapV1):
                 return value
-            binding = GeneratorAssignBindingV1(step.name, value, step.fragment_cid)
-            machine = replace(
-                self,
-                cursor=self.cursor + 1,
-                binding_state=(*self.binding_state, binding),
+
+            def transition_assign(resolved_value):
+                binding = GeneratorAssignBindingV1(
+                    step.name, resolved_value, step.fragment_cid
+                )
+                machine = replace(
+                    self,
+                    cursor=self.cursor + 1,
+                    binding_state=(*self.binding_state, binding),
+                )
+                return machine._transition(requested)
+
+            def continue_assign(resolved_value):
+                from sugar_lift_py_tests.caller_parameter_contract import (
+                    NativeOperationExitCarrierV1,
+                )
+                from sugar_lift_py_tests.outcome import Complete, Incomplete
+                from sugar_source_tree.panic import SugarNotWritten
+
+                result = transition_assign(resolved_value)
+                if isinstance(result, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=step,
+                        observed=result.observed,
+                        requested=result.requested,
+                        fix=(
+                            "implement that next transition before deferred "
+                            "normalization"
+                        ),
+                    )
+                if isinstance(
+                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
+                ):
+                    return result
+                return Complete(result)
+
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
             )
-            return machine._transition(requested)
+            from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+
+            if isinstance(value, NativeOperationExitCarrierV1):
+                return value.and_then(continue_assign)
+            if isinstance(value, (Incomplete, ExitSet)):
+                return outcome_to_exitset(value).and_then(continue_assign)
+            return transition_assign(value)
         if isinstance(step, AttributeAssignStepV1):
             from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
@@ -1214,7 +1323,38 @@ class GeneratorConstructionV1:
             value = self._reduce_value(step.value, requested)
             if isinstance(value, GeneratorTransitionGapV1):
                 return value
-            return GeneratorTerminationV1(value, self.binding_state)
+
+            def transition_return(resolved_value):
+                return GeneratorTerminationV1(resolved_value, self.binding_state)
+
+            def continue_return(resolved_value):
+                from sugar_lift_py_tests.outcome import Complete
+                from sugar_source_tree.panic import SugarNotWritten
+
+                result = transition_return(resolved_value)
+                if isinstance(result, GeneratorTransitionGapV1):
+                    raise SugarNotWritten(
+                        owner="GeneratorConstructionV1.transition",
+                        blame=step,
+                        observed=result.observed,
+                        requested=result.requested,
+                        fix=(
+                            "implement that next transition before deferred "
+                            "normalization"
+                        ),
+                    )
+                return Complete(result)
+
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+            from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+
+            if isinstance(value, NativeOperationExitCarrierV1):
+                return value.and_then(continue_return)
+            if isinstance(value, (Incomplete, ExitSet)):
+                return outcome_to_exitset(value).and_then(continue_return)
+            return transition_return(value)
         value = self._reduce_value(step.value, requested)
         if isinstance(value, GeneratorTransitionGapV1):
             return value
@@ -1224,7 +1364,38 @@ class GeneratorConstructionV1:
             cursor=self.cursor + 1,
             suspended_resume_coordinate=resume_coordinate,
         )
-        return YieldEffect(value, resume_coordinate, machine)
+
+        def transition_yield(resolved_value):
+            return YieldEffect(resolved_value, resume_coordinate, machine)
+
+        def continue_yield(resolved_value):
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_source_tree.panic import SugarNotWritten
+
+            result = transition_yield(resolved_value)
+            if isinstance(result, GeneratorTransitionGapV1):
+                raise SugarNotWritten(
+                    owner="GeneratorConstructionV1.transition",
+                    blame=step,
+                    observed=result.observed,
+                    requested=result.requested,
+                    fix=(
+                        "implement that next transition before deferred "
+                        "normalization"
+                    ),
+                )
+            return Complete(result)
+
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+
+        if isinstance(value, NativeOperationExitCarrierV1):
+            return value.and_then(continue_yield)
+        if isinstance(value, (Incomplete, ExitSet)):
+            return outcome_to_exitset(value).and_then(continue_yield)
+        return transition_yield(value)
 
     def _transition_for(self, step: ForStepV1, requested: str):
         from sugar_lift_py_tests.operations import IteratorOperation
@@ -1480,63 +1651,136 @@ class GeneratorConstructionV1:
 
         from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, partition
 
-        from sugar_lift_py_tests.outcome import Complete, Halted, Incomplete
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        def _refuse_transition(result):
+            if isinstance(result, GeneratorTransitionGapV1):
+                observed = result.observed
+                requested_result = result.requested
+            else:
+                observed = "If carrying a suspension"
+                requested_result = requested
+            raise SugarNotWritten(
+                owner="GeneratorConstructionV1.transition",
+                blame=step,
+                observed=observed,
+                requested=requested_result,
+                fix=(
+                    "implement that next branch transition before deferred "
+                    "normalization"
+                ),
+            )
+
+        def _transition_truth(truth):
+            decided = self._decide_guard(truth)
+            if decided is True:
+                return self._spliced(step.then_steps)._transition(requested)
+            if decided is False:
+                return self._spliced(step.else_steps)._transition(requested)
+
+            guard_formula = self._guard_formula(truth)
+            if guard_formula is None:
+                return self._gap(requested, "If carrying a suspension")
+
+            then_face, else_face = partition(
+                ("generator.branch", self.instance_coordinate, step.fragment_cid)
+            )
+            from sugar_lift_py_tests.ir import not_
+
+            branches = ExitSet(
+                (
+                    Completed(
+                        guard_formula,
+                        self._spliced(step.then_steps),
+                        frozenset({then_face}),
+                        (),
+                    ),
+                    Completed(
+                        not_(guard_formula),
+                        self._spliced(step.else_steps),
+                        frozenset({else_face}),
+                        (),
+                    ),
+                )
+            )
+
+            def _transition_branch_machine(machine):
+                transitioned = machine._transition(requested)
+                if isinstance(transitioned, GeneratorTransitionGapV1):
+                    _refuse_transition(transitioned)
+                if isinstance(
+                    transitioned,
+                    (Incomplete, ExitSet, NativeOperationExitCarrierV1),
+                ):
+                    return transitioned
+                return Complete(transitioned)
+
+            transitioned = NativeOperationExitCarrierV1.compose_prefix(
+                branches, _transition_branch_machine
+            )
+            if isinstance(transitioned, ExitSet):
+                factored = transitioned.factor_completed()
+                branch_faces = frozenset({then_face, else_face})
+                return ExitSet(
+                    tuple(
+                        Completed(
+                            exit_.guard,
+                            exit_.value,
+                            exit_.faces | branch_faces,
+                            exit_.pending_contracts,
+                        )
+                        if isinstance(exit_, Completed)
+                        else exit_
+                        for exit_ in factored.exits
+                    )
+                )
+            return transitioned
+
+        def _project_guard_operand(value):
+            projected = self._guard_truth(value)
+            if projected is None or isinstance(
+                projected, GeneratorTransitionGapV1
+            ):
+                _refuse_transition(projected)
+            return projected
+
+        def _transition_projected_truth(truth):
+            transitioned = _transition_truth(truth)
+            if transitioned is None or isinstance(
+                transitioned, GeneratorTransitionGapV1
+            ):
+                _refuse_transition(transitioned)
+            if isinstance(
+                transitioned,
+                (Incomplete, ExitSet, NativeOperationExitCarrierV1),
+            ):
+                return transitioned
+            return Complete(transitioned)
 
         guard_outcome = self._guard_truth(step.guard)
         if isinstance(guard_outcome, ExitSet):
-            if guard_outcome.exits and all(
-                isinstance(face, Halted) for face in guard_outcome.exits
-            ):
-                return ExitSet(
-                    tuple(
-                        Halted(
-                            face.guard,
-                            face.effect,
-                            self,
-                            face.faces,
-                            face.pending_contracts,
-                        )
-                        for face in guard_outcome.exits
-                    )
-                )
-            return self._gap(requested, "If guard has mixed completed/halted faces")
+            projected = NativeOperationExitCarrierV1.compose_prefix(
+                guard_outcome, _project_guard_operand
+            )
+        elif isinstance(guard_outcome, NativeOperationExitCarrierV1):
+            projected = guard_outcome.and_then(_project_guard_operand)
+        else:
+            projected = guard_outcome
         if isinstance(guard_outcome, Incomplete):
             return ExitSet.halted(guard_outcome.effect, state=self)
-        if not isinstance(guard_outcome, Complete):
-            return self._gap(requested, "If carrying a suspension")
-
-        truth = guard_outcome.value
-        decided = self._decide_guard(truth)
-        if decided is True:
-            return self._spliced(step.then_steps)._transition(requested)
-        if decided is False:
-            return self._spliced(step.else_steps)._transition(requested)
-
-        guard_formula = self._guard_formula(truth)
-        if guard_formula is None:
-            return self._gap(requested, "If carrying a suspension")
-
-        then_face, else_face = partition(
-            ("generator.branch", self.instance_coordinate, step.fragment_cid)
-        )
-        from sugar_lift_py_tests.ir import not_
-
-        return ExitSet(
-            (
-                Completed(
-                    guard_formula,
-                    self._spliced(step.then_steps),
-                    frozenset({then_face}),
-                    (),
-                ),
-                Completed(
-                    not_(guard_formula),
-                    self._spliced(step.else_steps),
-                    frozenset({else_face}),
-                    (),
-                ),
+        if isinstance(projected, ExitSet):
+            return NativeOperationExitCarrierV1.compose_prefix(
+                projected, _transition_projected_truth
             )
-        ).factor_completed()
+        if isinstance(projected, NativeOperationExitCarrierV1):
+            return projected.and_then(_transition_projected_truth)
+        if not isinstance(projected, Complete):
+            return self._gap(requested, "If carrying a suspension")
+        return _transition_truth(projected.value)
 
     def _spliced(self, branch_steps: tuple) -> "GeneratorConstructionV1":
         """This machine with the branch's steps in place of the `If`."""
@@ -1599,6 +1843,9 @@ class GeneratorConstructionV1:
         BindingCoordinateRefSugar resolves binder Floors at the exact
         coordinate CID (and only there).
         """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
         from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
         from sugar_source_tree.panic import SugarNotWritten
@@ -1615,7 +1862,7 @@ class GeneratorConstructionV1:
                 return None
             if isinstance(outcome, Incomplete):
                 return outcome
-            if isinstance(outcome, ExitSet):
+            if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
                 return outcome
             if not isinstance(outcome, Complete):
                 return None
@@ -1627,7 +1874,10 @@ class GeneratorConstructionV1:
         # handlers cannot silence it. Do not catch BaseException here — that
         # would reclassify incomplete floors as undecided suspension gaps.
         outcome = truth(self.instance_coordinate)
-        if isinstance(outcome, (Complete, Incomplete)):
+        if isinstance(
+            outcome,
+            (Complete, Incomplete, ExitSet, NativeOperationExitCarrierV1),
+        ):
             return outcome
         return None
 
@@ -1661,7 +1911,10 @@ class GeneratorConstructionV1:
     def _reduce_value(self, value: object, requested: str):
         if value is None:
             return None
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -1675,6 +1928,8 @@ class GeneratorConstructionV1:
             return self._gap(requested, str(observed))
         if isinstance(outcome, Complete):
             return outcome.value
+        if isinstance(outcome, (Incomplete, ExitSet, NativeOperationExitCarrierV1)):
+            return outcome
         return self._gap(requested, type(outcome).__name__)
 
     def _reduce_finally(self, step: FinallyStepV1) -> ExitSet:

@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
 @dataclass(frozen=True)
-class ImportMemberSugar(Sugar):
+class ImportMemberSugar(ConstructedTermSugar):
     """``import M as h; h.a.b`` as the closed coordinate ``M.a.b``."""
 
     qualified_name: str
@@ -30,3 +30,8 @@ class ImportMemberSugar(Sugar):
         from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 
         return Complete(ImportMemberValue(self.qualified_name))
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+
+        return ImportMemberValue(self.qualified_name).to_term(owner=owner)

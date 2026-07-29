@@ -132,6 +132,12 @@ class FloorValue:
         del ctx, owner
         return self
 
+    def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
+        """Sequence an ordinary scalar receiver through the Outcome algebra."""
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self.project_operation_receiver(ctx, owner=owner))
+
     def _floor_gap(
         self,
         *,
@@ -347,6 +353,11 @@ class FloorValue:
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "callable_application_with")
+
+    def subscript_with_occurrence(self, index, site, occurrence):
+        """Typed source occurrence is optional; ordinary floors retain site law."""
+        del occurrence
+        return self.subscript(index, site)
 
     def call_method_with(
         self, operation: MethodCallOperation, ctx: ReduceContext | None

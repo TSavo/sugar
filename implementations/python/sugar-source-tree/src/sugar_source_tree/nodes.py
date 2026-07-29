@@ -445,12 +445,8 @@ class SourceUnit:
     ) -> None:
         """Seat one final-checked import value-use resolution on this unit only.
 
-        Requires:
-        - ``source_cid`` equals this unit's authenticated ``source_cid``
-        - ``span`` is a 4-tuple of ints that projects inside this unit's LineTable
-        - ``resolved`` is a ``ResolvedPythonObjectV1`` (typed, not arbitrary object)
-
-        Foreign/malformed/tampered seating is typed-loud (never silent table write).
+        This is a closed per-occurrence state machine.  An authenticated value-use
+        receipt seats first; an exact resolved object may then refine that receipt.
         """
         from sugar_source_tree.panic import BackendDefect
 
@@ -487,19 +483,87 @@ class SourceUnit:
                 requested="start <= end in unit source",
                 fix="repair authenticated useSite coordinates",
             )
+        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
         from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
-        if not isinstance(resolved, ResolvedPythonObjectV1):
+
+        admitted_receipt = type(resolved) is AuthenticatedImportUseV1
+        admitted_resolution = type(resolved) is ResolvedPythonObjectV1
+        if not admitted_receipt and not admitted_resolution:
             raise BackendDefect(
                 blame=span,
                 owner="SourceUnit.seat_import_value_use_resolution",
                 observed=type(resolved).__name__,
-                requested="ResolvedPythonObjectV1",
-                fix="seat only resolve_import_binding products, never arbitrary objects",
+                requested="exact AuthenticatedImportUseV1 or ResolvedPythonObjectV1",
+                fix="seat only the closed import value-use producer products",
             )
         table = self._import_value_use_resolutions
         if table is None:
             table = {}
             object.__setattr__(self, "_import_value_use_resolutions", table)
+        existing = table.get(span)
+        if admitted_receipt:
+            resolved.revalidate()
+            use = resolved.use
+            demand = resolved.demand
+            site = use.get("useSite") or {}
+            receipt_span = (
+                site.get("startLine"),
+                site.get("startCol"),
+                site.get("endLine"),
+                site.get("endCol"),
+            )
+            exported = use.get("exportedMemberPath")
+            if (
+                resolved.source_cid != self.source_cid
+                or site.get("sourceCid") != self.source_cid
+                or demand.get("sourceCid") != self.source_cid
+                or receipt_span != span
+                or demand.get("kind") != "import-value-use-demand"
+                or use.get("role") != "value-use"
+                or demand.get("role") != "value-use"
+                or use.get("importBindingCid") != resolved.import_binding.cid
+                or demand.get("importBindingCid") != resolved.import_binding.cid
+                or not isinstance(exported, list)
+                or demand.get("exportedMemberPath") != exported
+            ):
+                raise BackendDefect(
+                    blame=span,
+                    owner="SourceUnit.seat_import_value_use_resolution",
+                    observed="receipt testimony does not match exact value-use seat",
+                    requested="same-source value-use role, binding, member path, and span",
+                    fix="seat the producer-minted receipt only at its own occurrence",
+                )
+            if existing is resolved:
+                return
+            if existing is not None:
+                raise BackendDefect(
+                    blame=span,
+                    owner="SourceUnit.seat_import_value_use_resolution",
+                    observed="receipt conflicts with occupied value-use occurrence",
+                    requested="one exact receipt identity before resolution",
+                    fix="preserve the producer-owned per-occurrence state transition",
+                )
+            table[span] = resolved
+            return
+
+        if existing is resolved:
+            return
+        if type(existing) is not AuthenticatedImportUseV1:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed="resolved object has no exact seated receipt predecessor",
+                requested="AuthenticatedImportUseV1 -> ResolvedPythonObjectV1",
+                fix="seat the authenticated receipt before dependency resolution",
+            )
+        if resolved.import_binding_cid != existing.import_binding.cid:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed="resolved object cites a different import binding",
+                requested=existing.import_binding.cid,
+                fix="resolve only the exact receipt already seated at this occurrence",
+            )
         table[span] = resolved
 
     def import_value_use_resolution(
@@ -551,10 +615,11 @@ class SourceUnit:
                     (target, ("targets", target_index))
                     for target_index, target in enumerate(consumer.targets)
                     if isinstance(target, (Tuple_, List))
+                    and self._is_binding_target_pattern(target)
                 )
             elif isinstance(consumer, For):
                 targets = ((consumer.target, ("target",)),)
-            elif isinstance(consumer, (ListComp, SetComp, DictComp)):
+            elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
                 targets = tuple(
                     (generator.target, ("generators", index, "target"))
                     for index, generator in enumerate(consumer.generators)
@@ -562,10 +627,17 @@ class SourceUnit:
             if not targets:
                 continue
             owned = tuple(
-                self._construct_target_pattern(consumer, target, prefix)
+                pattern
                 for target, prefix in targets
+                if (
+                    pattern := self._construct_target_pattern(
+                        consumer, target, prefix
+                    )
+                )
+                is not None
             )
-            patterns[consumer.ref] = owned
+            if owned:
+                patterns[consumer.ref] = owned
             patterns_by_target.update(
                 (pattern.target_occurrence.ref, pattern) for pattern in owned
             )
@@ -576,7 +648,23 @@ class SourceUnit:
         # Identity keys include spans against the bound module; drop stale rows.
         object.__setattr__(self, "_exception_type_identity_cache", {})
 
-    def _construct_target_pattern(self, consumer, target, prefix) -> TargetPatternV1:
+    @staticmethod
+    def _is_binding_target_pattern(target) -> bool:
+        """True only when every leaf is a lexical binding occurrence."""
+        if isinstance(target, Name):
+            return True
+        if isinstance(target, Starred):
+            return SourceUnit._is_binding_target_pattern(target.value)
+        if isinstance(target, (Tuple_, List)):
+            return all(
+                SourceUnit._is_binding_target_pattern(child)
+                for child in target.elts
+            )
+        return False
+
+    def _construct_target_pattern(
+        self, consumer, target, prefix
+    ) -> TargetPatternV1 | None:
         from .binding_state import mint_binding_coordinate_v1
 
         ordered = []
@@ -592,6 +680,11 @@ class SourceUnit:
                 for index, child in enumerate(node.elts):
                     visit(child, (*path, index))
                 return
+            if isinstance(node, (Attribute, Subscript)):
+                # Store leaves carry runtime store obligations; they do not
+                # introduce lexical bindings and therefore own no binding
+                # coordinate in this pattern.
+                return
             raise TargetPatternConstructionGapV1(
                 "unsupported-target-leaf",
                 consumer_occurrence=consumer,
@@ -600,11 +693,7 @@ class SourceUnit:
 
         visit(target, prefix)
         if not ordered:
-            raise TargetPatternConstructionGapV1(
-                "empty-target-pattern",
-                consumer_occurrence=consumer,
-                target_occurrence=target,
-            )
+            return None
         owner_cid = (
             consumer.owned_loop_target.target_cid
             if isinstance(consumer, For) and consumer.owned_loop_target is not None
@@ -2869,25 +2958,21 @@ class FunctionDef(Statement):
             SourceVisibleFunctionBodySugar,
         )
 
-        substituted_body, _ = self._substitute_body(self.body, formal_scope)
-        generator_steps = self._source_visible_generator_steps_from(substituted_body)
-        lexical_definitions = tuple(
-            row.definition_occurrence
-            for row in self.unit.constructed_module.lexical_call_rows
+        lexical_rows = self.unit.constructed_module.lexical_call_rows
+        filtered_body = tuple(
+            statement
+            for statement in self.body
+            if all(
+                statement is not row.definition_occurrence for row in lexical_rows
+            )
         )
+        substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
+        generator_steps = self._source_visible_generator_steps_from(substituted_body)
         body = SourceVisibleFunctionBodySugar(
             (
                 ()
                 if generator_steps is not None
-                else tuple(
-                    substituted.sugar()
-                    for original, substituted in zip(
-                        self.body, substituted_body, strict=True
-                    )
-                    if not any(
-                        original is definition for definition in lexical_definitions
-                    )
-                )
+                else tuple(statement.sugar() for statement in substituted_body)
             ),
             self.fragment,
         )
@@ -3774,12 +3859,32 @@ class AsyncFunctionDef(Statement):
 
 class ClassDef(Statement):
     name: str
+    binding_target: Name
     bases: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
     body: Tuple[Statement, ...]
     decorators: Tuple[Expression, ...]
     type_params: Tuple[TypeParam, ...]
-    _child_fields = ("decorators", "type_params", "bases", "keywords", "body")
+    _child_fields = (
+        "binding_target",
+        "decorators",
+        "type_params",
+        "bases",
+        "keywords",
+        "body",
+    )
+
+    def __post_init__(self):
+        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=self.fragment,
+                owner="ClassDef",
+                observed="class binding target does not match its definition name",
+                requested="the exact identifier child bound by this ClassDef",
+                fix="carry the parser-owned ClassDef name occurrence as binding_target",
+            )
 
     def _method_descriptor_kind(self, method: "FunctionDef") -> Optional[str]:
         """Authenticate one language descriptor decorator by lexical binding.
@@ -3833,6 +3938,16 @@ class ClassDef(Statement):
         Instantiation/receiver fields remain a typed coordinate gap in the
         resulting floor value.  No class body is interpreted beside this door.
         """
+        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=self.fragment,
+                owner="ClassDef._construct_sugar",
+                observed="class binding target does not match its definition name",
+                requested="the exact identifier child bound by this ClassDef",
+                fix="carry the parser-owned ClassDef name occurrence as binding_target",
+            )
         methods = tuple(item for item in self.body if isinstance(item, FunctionDef))
         docstring_cid = None
         if self.body:
@@ -3882,6 +3997,9 @@ class ClassDef(Statement):
         from sugar_lift_py_tests.floor import (
             ConstructedClassFieldV1,
             ConstructedClassMethodV1,
+        )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
         )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ClassDefinitionSugar,
@@ -3991,6 +4109,24 @@ class ClassDef(Statement):
                 item.fragment.seal().cid for item in annotated_assignments
             ),
             decorator_cids=tuple(item.fragment.seal().cid for item in self.decorators),
+            binding_target_occurrence=SourceFragmentCoordinateV1(
+                self.binding_target.unit.source_cid,
+                self.binding_target.line_col_span().start_line,
+                self.binding_target.line_col_span().start_col,
+                self.binding_target.line_col_span().end_line,
+                self.binding_target.line_col_span().end_col,
+            ),
+            decorator_sugars=tuple(item.sugar() for item in self.decorators),
+            decorator_occurrences=tuple(
+                SourceFragmentCoordinateV1(
+                    item.unit.source_cid,
+                    item.line_col_span().start_line,
+                    item.line_col_span().start_col,
+                    item.line_col_span().end_line,
+                    item.line_col_span().end_col,
+                )
+                for item in self.decorators
+            ),
             base_sugars=base_sugars,
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
@@ -9706,6 +9842,7 @@ class Call(Expression):
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                call_occurrence=coordinate,
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
@@ -10471,6 +10608,54 @@ class Attribute(Expression):
         decides whether source testimony supplies a value or exceptional exit;
         when neither is known, the producer refuses instead of inventing a
         completed ``py.getattr`` projection or guessing ``AttributeError``."""
+        span = self.line_col_span()
+        receipt = self.unit.import_value_use_resolution(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+        if type(receipt) is AuthenticatedImportUseV1:
+            receipt.revalidate()
+            site = receipt.use["useSite"]
+            if (
+                receipt.source_cid != self.unit.source_cid
+                or site.get("sourceCid") != self.unit.source_cid
+                or (
+                    site.get("startLine"),
+                    site.get("startCol"),
+                    site.get("endLine"),
+                    site.get("endCol"),
+                )
+                != (span.start_line, span.start_col, span.end_line, span.end_col)
+            ):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=self.fragment,
+                    owner="Attribute._construct_sugar",
+                    observed="import value-use receipt does not own this Attribute",
+                    requested="same-source exact full-Attribute occurrence testimony",
+                    fix="consume the receipt only at its producer-minted useSite",
+                )
+            from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+
+            qualified_name = receipt.target_symbol
+            if not qualified_name.startswith("python:"):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=self.fragment,
+                    owner="Attribute._construct_sugar",
+                    observed=f"target_symbol={qualified_name!r}",
+                    requested="authenticated python: import target symbol",
+                    fix="preserve the lexical receipt targetSymbol unchanged",
+                )
+            qualified_name = qualified_name[len("python:") :]
+            return ImportMemberSugar(
+                qualified_name=qualified_name,
+                site=self.fragment,
+            )
+
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
@@ -10537,11 +10722,27 @@ class Subscript(Expression):
         carrying whatever the call term guarantees and nothing invented.
         Withholding it here was the gap, not the construct."""
         from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        occurrence = None
+        if isinstance(self.unit.construction_context, TreeConstructionContextV1):
+            span = self.line_col_span()
+            occurrence = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
 
         return SubscriptSugar(
             receiver=self.value.sugar(),
             index=self.slice_.sugar(),
             site=self.fragment,
+            use_occurrence=occurrence,
         )
 
 

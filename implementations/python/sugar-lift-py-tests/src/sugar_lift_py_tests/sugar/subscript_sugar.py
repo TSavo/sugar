@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
@@ -28,10 +30,19 @@ class SubscriptSugar(ConstructedTermSugar):
     receiver: ConstructedTermSugar
     index: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+    use_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="SubscriptSugar.receiver")
         require_constructed_term_sugar(self.index, owner="SubscriptSugar.index")
+        if self.use_occurrence is not None and type(
+            self.use_occurrence
+        ) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "SubscriptSugar.use_occurrence must be SourceFragmentCoordinateV1"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -72,12 +83,9 @@ class SubscriptSugar(ConstructedTermSugar):
         # sole re-attachment door and is itself loud when the joined outcome has
         # nowhere to carry the demand: nothing here drops an obligation quietly.
         #
-        # Operand reduction may also publish a dual-edge ExitSet (undecided
-        # Compare/BinOp dispatch: Halted raise face + Completed solver face).
-        # Sequence those partitions so Halted faces bypass the subscript step;
-        # an undecided completed face that cannot honestly subscript contributes
-        # no face rather than aborting the partition with SugarNotWritten and
-        # erasing the sibling halt.
+        # Operand reduction may also publish a dual-edge ExitSet. Sequence its
+        # completed faces through the receiver floor; a typed refusal remains a
+        # refusal and must never be converted into an empty outcome.
         from dataclasses import replace
 
         from sugar_lift_py_tests.caller_parameter_contract import merge_demands
@@ -85,8 +93,7 @@ class SubscriptSugar(ConstructedTermSugar):
             pending_demand,
             rewrap_pending,
         )
-        from sugar_lift_py_tests.outcome import ExitSet, outcome_to_exitset, true_guard
-        from sugar_source_tree.panic import SugarNotWritten
+        from sugar_lift_py_tests.outcome import outcome_to_exitset, true_guard
 
         # A subscript expression has no guard of its own, so both obligations
         # hoist unconditionally.
@@ -106,14 +113,6 @@ class SubscriptSugar(ConstructedTermSugar):
             plain.append(value_outcome)
         receiver_outcome, index_outcome = plain
 
-        def _subscript_face(receiver, index):
-            try:
-                return outcome_to_exitset(self._subscript(receiver, index, ctx))
-            except SugarNotWritten:
-                # Completion path cannot decide the lookup. Sibling halt faces
-                # from the index/receiver partition already survive sequence.
-                return ExitSet(())
-
         from sugar_lift_py_tests.outcome import ExitSet as _ExitSet
 
         receiver_partitioned = isinstance(receiver_outcome, _ExitSet)
@@ -121,28 +120,11 @@ class SubscriptSugar(ConstructedTermSugar):
         if receiver_partitioned or index_partitioned:
             subscripted = outcome_to_exitset(receiver_outcome).and_then(
                 lambda receiver: outcome_to_exitset(index_outcome).and_then(
-                    lambda index: _subscript_face(receiver, index)
+                    lambda index: outcome_to_exitset(
+                        self._subscript(receiver, index, ctx)
+                    )
                 )
             )
-            if isinstance(subscripted, _ExitSet) and not subscripted.exits:
-                # Every completed face refused and no halt survived: surface the
-                # undecided lookup as the named refusal (not an empty partition).
-                raise SugarNotWritten(
-                    owner="SubscriptSugar",
-                    observed=(
-                        "undecided subscript after partitioned operand faces "
-                        "refused without a surviving halt"
-                    ),
-                    requested=(
-                        "authenticated exceptional exit or named undecided "
-                        "refusal at the receiver floor"
-                    ),
-                    fix=(
-                        "preserve a Halted face from the index/receiver "
-                        "partition, or name the undecided lookup on the "
-                        "receiver floor"
-                    ),
-                )
         else:
             # Single-outcome path: undecided lookups raise SugarNotWritten
             # from the receiver floor (named refusal), exact exits Complete.
@@ -171,4 +153,6 @@ class SubscriptSugar(ConstructedTermSugar):
                 blame=self.site,
                 ctx=ctx,
             )
-        return receiver.subscript(index, self.site)
+        return receiver.subscript_with_occurrence(
+            index, self.site, self.use_occurrence
+        )

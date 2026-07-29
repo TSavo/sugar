@@ -70,8 +70,12 @@ def _consumer(root: Path, source: str):
     return path, source_file, context
 
 
-def _frame_for_box_expected(tmp_path: Path, helpers: str):
-    distribution = _distribution(tmp_path, helpers)
+def _frame_for_box_expected(
+    tmp_path: Path,
+    helpers: str,
+    types: str = "class ArrayType:\n    pass\n",
+):
+    distribution = _distribution(tmp_path, helpers, types)
     path, source_file, context = _consumer(
         tmp_path,
         "from unprivileged import box_expected, ArrayType\n"
@@ -96,6 +100,31 @@ def _frame_for_box_expected(tmp_path: Path, helpers: str):
         context.source_call_resolutions[coordinate], SourceCallPreconstructionRefV1
     )
     return context.source_call_frames[coordinate]
+
+
+def test_sibling_dynamic_import_use_does_not_block_selected_runtime_frame(
+    tmp_path: Path,
+) -> None:
+    """Truthful: only the authenticated selected definition owns frame uses."""
+    frame = _frame_for_box_expected(
+        tmp_path,
+        "from unprivileged.types import ArrayType, F\n"
+        "def unrelated(value):\n"
+        "    return F\n"
+        "def box_expected(expected, box_cls=None):\n"
+        "    return expected if box_cls is None else box_cls\n",
+        "class ArrayType:\n"
+        "    pass\n"
+        "def choose_type():\n"
+        "    return object()\n"
+        "F = choose_type()\n",
+    )
+
+    assert frame.owner.name == "box_expected"
+    assert all(
+        resolved.definition.name != "F"
+        for resolved in frame.owner.unit._import_value_use_resolutions.values()
+    )
 
 
 def test_frame_seats_import_value_use_receipts_on_own_unit(tmp_path: Path) -> None:
@@ -340,3 +369,161 @@ def test_no_broad_exception_swallow_in_same_unit_rehost() -> None:
                 except_types.append(node.type.id)
     assert "authenticate_dependency_top_level" not in call_names
     assert "ValueError" not in except_types
+
+
+def test_exact_import_value_receipt_seats_and_constructs_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sugar_lift_py_tests.import_binding import (
+        AuthenticatedImportUseV1,
+        authenticated_import_value_use_receipts,
+    )
+    from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+    from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
+    from sugar_lift_python_source.manager_construction import (
+        _seat_import_value_use_receipts,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_source_tree.nodes import Attribute
+
+    source = "import re\ndef selected():\n    return re.I\n"
+    path, source_file, context = _consumer(tmp_path, source)
+    function = next(node for node in source_file.nodes() if isinstance(node, FunctionDef))
+    attribute = next(node for node in source_file.nodes() if isinstance(node, Attribute))
+    receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_file.unit.source_cid, module_identities={}
+    )
+    receipt = next(row for row in receipts if row.target_symbol == "python:re.I")
+    module = AuthenticatedModuleSourceV1(
+        module_name="consumer",
+        source_seat="consumer.py",
+        source_cid=source_file.unit.source_cid,
+        source=source,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=function,
+        session=SourceResolutionSession(),
+        context=context,
+        dependency_graphs={},
+    )
+    span = attribute.line_col_span()
+    span_key = (span.start_line, span.start_col, span.end_line, span.end_col)
+    seated = source_file.unit.import_value_use_resolution(span_key)
+
+    assert type(seated) is AuthenticatedImportUseV1
+    assert seated.use["cid"] == receipt.use["cid"]
+    assert seated.demand == receipt.demand
+    assert seated.use["importBindingCid"] == receipt.use["importBindingCid"]
+    assert seated.target_symbol == receipt.target_symbol
+    sugar = attribute.sugar()
+    assert isinstance(sugar, ImportMemberSugar)
+    assert sugar.qualified_name == "re.I"
+    assert sugar.to_term(owner="test") == sugar.desugar(context).value.to_term(
+        owner="test"
+    )
+
+
+def test_import_value_receipt_state_refuses_wrong_span_foreign_and_conflict(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
+    from sugar_source_tree.nodes import Attribute
+    from sugar_source_tree.panic import BackendDefect
+
+    source = "import re\ndef selected():\n    return re.I\n"
+    path, source_file, _ = _consumer(tmp_path, source)
+    attribute = next(node for node in source_file.nodes() if isinstance(node, Attribute))
+    receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_file.unit.source_cid, module_identities={}
+    )
+    receipt = next(row for row in receipts if row.target_symbol == "python:re.I")
+    second_receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path, path, source, source_file.unit.source_cid, module_identities={}
+    )
+    conflicting = next(
+        row for row in second_receipts if row.target_symbol == "python:re.I"
+    )
+    span = attribute.line_col_span()
+    span_key = (span.start_line, span.start_col, span.end_line, span.end_col)
+
+    with pytest.raises(BackendDefect, match="receipt testimony"):
+        source_file.unit.seat_import_value_use_resolution(
+            (span.start_line, span.start_col, span.end_line, span.end_col - 1),
+            receipt,
+            source_cid=source_file.unit.source_cid,
+        )
+    source_file.unit.seat_import_value_use_resolution(
+        span_key, receipt, source_cid=source_file.unit.source_cid
+    )
+    source_file.unit.seat_import_value_use_resolution(
+        span_key, receipt, source_cid=source_file.unit.source_cid
+    )
+    with pytest.raises(BackendDefect, match="receipt conflicts"):
+        source_file.unit.seat_import_value_use_resolution(
+            span_key, conflicting, source_cid=source_file.unit.source_cid
+        )
+
+    foreign_source = "import os\ndef selected():\n    return os.X\n"
+    foreign_path, foreign_file, _ = _consumer(tmp_path, foreign_source)
+    foreign_receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path,
+        foreign_path,
+        foreign_source,
+        foreign_file.unit.source_cid,
+        module_identities={},
+    )
+    foreign = next(row for row in foreign_receipts if row.target_symbol == "python:os.X")
+    with pytest.raises(BackendDefect, match="source_cid"):
+        source_file.unit.seat_import_value_use_resolution(
+            span_key, foreign, source_cid=foreign_file.unit.source_cid
+        )
+
+
+def test_receipt_backed_import_member_is_constructed_call_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+    from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+    from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
+    from sugar_lift_python_source.manager_construction import (
+        _seat_import_value_use_receipts,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+
+    source = (
+        "import re\n"
+        "def selected(value):\n"
+        "    return re.search('', value, re.I)\n"
+    )
+    _path, source_file, context = _consumer(tmp_path, source)
+    function = next(node for node in source_file.nodes() if isinstance(node, FunctionDef))
+    call = next(node for node in source_file.nodes() if isinstance(node, Call))
+    module = AuthenticatedModuleSourceV1(
+        module_name="consumer",
+        source_seat="consumer.py",
+        source_cid=source_file.unit.source_cid,
+        source=source,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=function,
+        session=SourceResolutionSession(),
+        context=context,
+        dependency_graphs={},
+    )
+    sugar = call.sugar()
+
+    assert isinstance(sugar, CallSiteSugar)
+    member = sugar.args[-1]
+    assert isinstance(member, ImportMemberSugar)
+    assert member.qualified_name == "re.I"
+    assert member.to_term(owner="test") == member.desugar(context).value.to_term(
+        owner="test"
+    )

@@ -1699,6 +1699,7 @@ def _funcdef(unit: SourceUnit, node: ParsoNode) -> Description:
         anchors=(),
         slots=(
             ("name", SlotLeaf(name)),
+            ("binding_target", Child(_h(unit, kids[1]))),
             ("params", Children(_flatten_params(unit, params_node))),
             ("body", Children(body)),
             ("decorators", Children(())),

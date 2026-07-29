@@ -26,6 +26,33 @@ _ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
 _CALLSITE_COORDINATE: dict[int, tuple["weakref.ReferenceType", tuple]] = {}
 
 
+@dataclass(frozen=True)
+class _RetainedSourceCompletionV1:
+    """Private exact completed Floor carried by one projected arm.
+
+    The constant hash is deliberate: completion Floors may be unhashable, while
+    equality must still compare their exact immutable content.  Hash collisions
+    are resolved by equality and never grant identity.
+    """
+
+    value: object
+
+    def __hash__(self) -> int:
+        return 0x52455441
+
+
+def _retained_completion_invariant(*, owner: str, callsite: "CallSiteValue", observed: str):
+    from sugar_source_tree.panic import BackendDefect
+
+    raise BackendDefect(
+        owner=owner,
+        blame=callsite.site,
+        observed=observed,
+        requested="one private retained source completion relation",
+        fix="consume the retained completion; never replay or reseat the source producer",
+    )
+
+
 def _callsite_coordinate_memo_size() -> int:
     """Live memo entries (test / diagnostics only)."""
     return len(_CALLSITE_COORDINATE)
@@ -133,6 +160,9 @@ class CallSiteValue(FloorValue):
         default=None, compare=False
     )
     bound_source_actuals: object | None = dataclass_field(default=None, compare=False)
+    _retained_source_completion: object | None = dataclass_field(
+        default=None, init=False, compare=False, repr=False
+    )
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
@@ -151,6 +181,37 @@ class CallSiteValue(FloorValue):
         if projected is None or isinstance(projected, BlockValue):
             return self
         return projected
+
+    def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
+        """Project the completion retained by the sole producer reduction."""
+        del ctx
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.body is None:
+            return Complete(self)
+        retained = self._retained_source_completion
+        if retained is None:
+            raise SugarNotWritten(
+                owner="CallSiteValue.project_operation_receiver_outcome",
+                blame=self.site,
+                observed="body-bearing call lacks retained source completion",
+                requested="producer-retained source completion testimony",
+                fix="project the source body once at CallSiteValue.producer_outcome",
+            )
+        if type(retained) is not _RetainedSourceCompletionV1:
+            _retained_completion_invariant(
+                owner="CallSiteValue.project_operation_receiver_outcome",
+                callsite=self,
+                observed="retained source completion has wrong exact type",
+            )
+        if not isinstance(retained.value, FloorValue):
+            _retained_completion_invariant(
+                owner="CallSiteValue.project_operation_receiver_outcome",
+                callsite=self,
+                observed="retained source completion value is not FloorValue",
+            )
+        return Complete(_project_authenticated_source_return(retained.value))
 
     def runtime_type_is_decided(self) -> bool:
         """Undecided: no citation fixes an unexecuted call's result type.
@@ -200,6 +261,8 @@ class CallSiteValue(FloorValue):
             self.parameters,
             _term_cycle_key(self.term),
         )
+        if self._retained_source_completion is not None:
+            coordinate = (*coordinate, self._retained_source_completion)
 
         def _on_die(ref: weakref.ReferenceType, *, _cid: int = cid) -> None:
             current = _CALLSITE_COORDINATE.get(_cid)
@@ -443,10 +506,8 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-        index_term = floor_to_term(index, owner="CallSiteValue.setitem index")
-        value_term = floor_to_term(value, owner="CallSiteValue.setitem value")
+        index_term = index.to_term(owner="CallSiteValue.setitem index")
+        value_term = value.to_term(owner="CallSiteValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",
@@ -535,9 +596,7 @@ class CallSiteValue(FloorValue):
 
         def list_append_coordinate(prior):
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-            value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
+            value_term = value.to_term(owner="CallSiteValue.append_with value")
             return Complete(
                 CallSiteValue(
                     target_name="list.append",
@@ -679,9 +738,7 @@ class CallSiteValue(FloorValue):
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-        index_term = floor_to_term(index, owner="CallSiteValue.delitem index")
+        index_term = index.to_term(owner="CallSiteValue.delitem index")
         return Complete(
             CallSiteValue(
                 target_name="delitem",
@@ -1118,39 +1175,54 @@ class CallSiteValue(FloorValue):
             self.arg_values,
             self.formal_coordinate_cids,
         )
-        active_demand = _ACTIVE_DIG_DEMAND.get()
-        nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
-        if active_demand >= nested_budget:
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="callsite value demand budget exhausted",
-                fix=(
-                    f"nested callsite dig exceeded force_floor budget "
-                    f"{nested_budget}; "
-                    "leave the recursive bridge as axiomatic"
-                ),
+        retained = self._retained_source_completion
+        if retained is not None:
+            if type(retained) is not _RetainedSourceCompletionV1:
+                _retained_completion_invariant(
+                    owner="CallSiteValue._dig_floor_or_none",
+                    callsite=self,
+                    observed="retained source completion has wrong exact type",
+                )
+            if not isinstance(retained.value, FloorValue):
+                _retained_completion_invariant(
+                    owner="CallSiteValue._dig_floor_or_none",
+                    callsite=self,
+                    observed="retained source completion value is not FloorValue",
+                )
+            value = _project_authenticated_source_return(retained.value)
+        else:
+            active_demand = _ACTIVE_DIG_DEMAND.get()
+            nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
+            if active_demand >= nested_budget:
+                _force_floor_gap(
+                    owner=owner,
+                    target_name=self.target_name,
+                    observed="callsite value demand budget exhausted",
+                    fix=(
+                        f"nested callsite dig exceeded force_floor budget "
+                        f"{nested_budget}; "
+                        "leave the recursive bridge as axiomatic"
+                    ),
+                )
+            token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
+            try:
+                outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+            finally:
+                _ACTIVE_DIG_DEMAND.reset(token)
+            from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+            if isinstance(outcome, NativeOperationExitCarrierV1):
+                actuals = self.bound_native_actuals_by_coordinate
+                if actuals is None and self.bound_source_actuals is not None:
+                    outcome = self.bound_source_actuals.project_native_carrier(outcome)
+                if actuals is not None:
+                    outcome = outcome.discharge(actuals)
+            if isinstance(outcome, Incomplete):
+                if incomplete_outcome is not None:
+                    incomplete_outcome.append(outcome)
+                return None
+            value = _project_authenticated_source_return(
+                complete_value(outcome, owner=owner)
             )
-        token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
-        try:
-            outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
-        finally:
-            _ACTIVE_DIG_DEMAND.reset(token)
-        from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
-        if isinstance(outcome, NativeOperationExitCarrierV1):
-            actuals = self.bound_native_actuals_by_coordinate
-            if actuals is None and self.bound_source_actuals is not None:
-                outcome = self.bound_source_actuals.project_native_carrier(outcome)
-            if actuals is not None:
-                outcome = outcome.discharge(actuals)
-        # ConstructionPanic is BaseException and process-terminal: dig must not convert
-        # it into opacity/None (python-sole-construction; #5238).
-        if isinstance(outcome, Incomplete):
-            if incomplete_outcome is not None:
-                incomplete_outcome.append(outcome)
-            return None
-        value = complete_value(outcome, owner=owner)
-        value = _project_authenticated_source_return(value)
         if isinstance(value, CallSiteValue):
             return value._dig_floor_or_none(
                 reduce_ctx,
@@ -1221,18 +1293,34 @@ class CallSiteValue(FloorValue):
             self.arg_values,
             self.formal_coordinate_cids,
         )
-        outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
-        if isinstance(outcome, Incomplete):
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="Incomplete",
-                fix=(
-                    f"callsite `{self.target_name}` reduced to a runtime effect: "
-                    f"{outcome.reason}; leave the floor absent and record a DigBoundary"
-                ),
-            )
-        value = complete_value(outcome, owner=owner)
+        retained = self._retained_source_completion
+        if retained is not None:
+            if type(retained) is not _RetainedSourceCompletionV1:
+                _retained_completion_invariant(
+                    owner="CallSiteValue.force_floor",
+                    callsite=self,
+                    observed="retained source completion has wrong exact type",
+                )
+            if not isinstance(retained.value, FloorValue):
+                _retained_completion_invariant(
+                    owner="CallSiteValue.force_floor",
+                    callsite=self,
+                    observed="retained source completion value is not FloorValue",
+                )
+            value = retained.value
+        else:
+            outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+            if isinstance(outcome, Incomplete):
+                _force_floor_gap(
+                    owner=owner,
+                    target_name=self.target_name,
+                    observed="Incomplete",
+                    fix=(
+                        f"callsite `{self.target_name}` reduced to a runtime effect: "
+                        f"{outcome.reason}; leave the floor absent and record a DigBoundary"
+                    ),
+                )
+            value = complete_value(outcome, owner=owner)
         floor = force_floor(
             value,
             reduce_ctx,
@@ -1259,6 +1347,12 @@ class CallSiteValue(FloorValue):
         ExitSet, including method halts.  This uses the identical explicit call
         frame/curry path as ``force_floor`` and never reconstructs source.
         """
+        if self._retained_source_completion is not None:
+            _retained_completion_invariant(
+                owner="CallSiteValue.reduce_source_outcome",
+                callsite=self,
+                observed="retained source completion already seated",
+            )
         if self.body is None or len(self.parameters) != len(self.arg_values):
             _force_floor_gap(
                 owner="CallSiteValue.reduce_source_outcome",
@@ -1285,6 +1379,12 @@ class CallSiteValue(FloorValue):
         replacing completed block records with the call coordinate they
         compute.
         """
+        if self._retained_source_completion is not None:
+            _retained_completion_invariant(
+                owner="CallSiteValue.producer_outcome",
+                callsite=self,
+                observed="retained source completion already seated",
+            )
         if self.body is None:
             from sugar_lift_py_tests.outcome import Complete
 
@@ -1296,11 +1396,33 @@ class CallSiteValue(FloorValue):
     def project_producer_outcome(self, outcome, *, carrier_actuals: dict | None = None):
         """Project a source-authenticated callee outcome onto this Call node."""
 
+        if self._retained_source_completion is not None:
+            _retained_completion_invariant(
+                owner="CallSiteValue.project_producer_outcome",
+                callsite=self,
+                observed="retained source completion already seated",
+            )
+
         from dataclasses import replace
 
         from sugar_lift_py_tests.effect import RaiseEffect
         from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+
+        def retaining(value):
+            if not isinstance(value, FloorValue):
+                _retained_completion_invariant(
+                    owner="CallSiteValue.project_producer_outcome",
+                    callsite=self,
+                    observed="source producer completion is not FloorValue",
+                )
+            retained = replace(self)
+            object.__setattr__(
+                retained,
+                "_retained_source_completion",
+                _RetainedSourceCompletionV1(value),
+            )
+            return retained
 
         def call_owned(effect):
             if isinstance(effect, RaiseEffect):
@@ -1308,7 +1430,7 @@ class CallSiteValue(FloorValue):
             return effect
 
         if isinstance(outcome, Complete):
-            return Complete(self)
+            return Complete(retaining(outcome.value))
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
             if self.bound_source_actuals is not None:
@@ -1334,7 +1456,7 @@ class CallSiteValue(FloorValue):
                 (
                     Completed(
                         exit_.guard,
-                        self,
+                        retaining(exit_.value),
                         exit_.faces,
                         exit_.pending_contracts,
                     )

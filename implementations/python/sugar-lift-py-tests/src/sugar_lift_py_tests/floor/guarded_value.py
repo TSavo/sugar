@@ -67,6 +67,10 @@ class GuardedValue(FloorValue):
         """Resolve both binding arms when a joined name is read."""
         return self._map("answer", ctx)
 
+    def length(self, site):
+        """Distribute length through both authenticated guarded arms."""
+        return self._map("length", site)
+
     def _map(self, method: str, *args):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -349,6 +353,10 @@ class GuardedValue(FloorValue):
 
     def subscript(self, index, site):
         return self._map("subscript", index, site)
+
+    def subscript_with_occurrence(self, index, site, occurrence):
+        """Distribute one authenticated Subscript occurrence to both arms."""
+        return self._map("subscript_with_occurrence", index, site, occurrence)
 
     def attribute(self, name, site):
         """Distribute attribute projection over both branch faces.

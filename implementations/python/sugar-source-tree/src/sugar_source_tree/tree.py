@@ -94,6 +94,9 @@ class SourceFile:
             self.root: Module = constructed_module.root
             self.closed_roll_call = constructed_module.closed_roll_call
             self.provider_member_rows = constructed_module.provider_member_rows
+            self.construction_event_receipt_cid = (
+                constructed_module.construction_event_receipt_cid
+            )
 
     @classmethod
     def from_path(
@@ -101,6 +104,7 @@ class SourceFile:
         path: Path | str,
         backend: Optional[Backend] = None,
         reporter: AuditReporter = NULL_REPORTER,
+        construction_context: object | None = None,
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
         is the oracle's loud ``SourceUnavailable``, never a swallow."""
@@ -110,7 +114,12 @@ class SourceFile:
         path_s = str(path)
         with reduction_span(sugar="OraclePathSource", role="file", site=path_s):
             identity = path_source(path_s)
-        return cls(identity, backend=backend, reporter=reporter)
+        return cls(
+            identity,
+            backend=backend,
+            reporter=reporter,
+            construction_context=construction_context,
+        )
 
     @classmethod
     def from_module(

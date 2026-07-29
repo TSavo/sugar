@@ -32,6 +32,8 @@ behind the tree today.
 from __future__ import annotations
 
 import ast
+import io
+import tokenize
 from typing import Optional, Tuple
 
 from .backend import (
@@ -138,6 +140,68 @@ class _ParamHandle(BackendNode):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<ast-param-handle {self._arg.arg!r} in {self._unit.filename}>"
+
+
+class _ClassNameHandle(BackendNode):
+    """The exact identifier token bound by one CPython ``ClassDef``."""
+
+    __slots__ = ("_unit", "_node", "_desc")
+
+    def __init__(self, unit: SourceUnit, node: ast.ClassDef) -> None:
+        self._unit = unit
+        self._node = node
+        self._desc: Optional[Description] = None
+
+    @property
+    def minting_unit(self):
+        return self._unit
+
+    def describe(self) -> Description:
+        if self._desc is None:
+            unit = self._unit
+            node_span = _node_span(unit, self._node)
+            tokens = tokenize.generate_tokens(io.StringIO(unit.source).readline)
+            saw_class = False
+            name_span = None
+            for token in tokens:
+                start = unit.line_table.offset(*token.start)
+                end = unit.line_table.offset(*token.end)
+                if end <= node_span.start:
+                    continue
+                if start >= node_span.end:
+                    break
+                if not saw_class:
+                    saw_class = token.type == tokenize.NAME and token.string == "class"
+                    continue
+                if token.type == tokenize.NAME:
+                    if token.string != self._node.name:
+                        vocabulary_missing(
+                            blame=self._node,
+                            owner="cpython_adapter._ClassNameHandle",
+                            observed="ClassDef binding token differs from ast name",
+                            requested="the first NAME after the exact class keyword",
+                            fix="preserve CPython's class header token identity",
+                        )
+                    name_span = Span(start, end)
+                    break
+            if name_span is None:
+                vocabulary_missing(
+                    blame=self._node,
+                    owner="cpython_adapter._ClassNameHandle",
+                    observed="ClassDef header has no binding identifier token",
+                    requested="the first NAME after the exact class keyword",
+                    fix="preserve CPython's class header token identity",
+                )
+            self._desc = Description(
+                kind="Name",
+                raw_span=name_span,
+                anchors=(),
+                slots=(("id", Leaf(self._node.name)),),
+            )
+        return self._desc
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ast-class-name-handle {self._node.name!r} in {self._unit.filename}>"
 
 
 class _FormatSpecHandle(_Handle):
@@ -350,6 +414,9 @@ def _describe(unit: SourceUnit, node: ast.AST) -> Description:
             anchors=(),
             slots=(("items", Children(items)),),
         )
+
+    if isinstance(node, ast.ClassDef):
+        slots.append(("binding_target", Child(_ClassNameHandle(unit, node))))
 
     for field_name, value in ast.iter_fields(node):
         if field_name in _DROPPED_FIELDS:

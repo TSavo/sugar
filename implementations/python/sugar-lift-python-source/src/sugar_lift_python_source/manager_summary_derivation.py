@@ -2358,7 +2358,9 @@ def _construct_decorator_function(
     from sugar_source_tree.nodes import FunctionDef, Name
 
     from .dependency_artifact import (
+        DependencyArtifactAuthenticationError,
         ResolvedPythonObjectV1,
+        authenticate_dependency_top_level,
         resolve_authenticated_module_export,
     )
     from .manager_construction import (
@@ -2380,8 +2382,32 @@ def _construct_decorator_function(
         graphs.append(graph)
     top_level = module_name.split(".", 1)[0]
     authenticated_dependency = (dependency_graphs or {}).get(top_level)
+    if authenticated_dependency is None:
+        try:
+            authenticated_dependency = authenticate_dependency_top_level(
+                top_level, distribution_index=distribution_index
+            )
+        except DependencyArtifactAuthenticationError:
+            authenticated_dependency = None
+        else:
+            if dependency_graphs is not None:
+                dependency_graphs[top_level] = authenticated_dependency
     if authenticated_dependency is not None and authenticated_dependency not in graphs:
         graphs.append(authenticated_dependency)
+    if not any(module_name in candidate.modules for candidate in graphs):
+        from .dependency_artifact import (
+            DependencyArtifactAuthenticationError,
+            authenticate_dependency_top_level,
+        )
+
+        try:
+            authenticated_dependency = authenticate_dependency_top_level(
+                top_level, distribution_index=distribution_index
+            )
+        except DependencyArtifactAuthenticationError:
+            return None
+        if authenticated_dependency not in graphs:
+            graphs.append(authenticated_dependency)
     resolved = None
     resolved_graph = None
     for candidate in graphs:

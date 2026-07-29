@@ -4,6 +4,8 @@ import builtins
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.sugar_base import (
@@ -53,12 +55,21 @@ class CallSiteSugar(ConstructedTermSugar):
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
     expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
     native_operation_formal_coordinates: tuple = dataclass_field(default=(), compare=False)
+    call_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         for argument in self.args:
             require_constructed_term_sugar(argument, owner="CallSiteSugar.args")
         for _name, argument in self.keywords:
             require_constructed_term_sugar(argument, owner="CallSiteSugar.keywords")
+        if self.call_occurrence is not None and type(
+            self.call_occurrence
+        ) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "CallSiteSugar.call_occurrence must be SourceFragmentCoordinateV1"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -92,9 +103,29 @@ class CallSiteSugar(ConstructedTermSugar):
             )
         definition_authority = []
         if self.exception_type_coordinate is not None:
-            definition_authority.append(
-                str_const(self.exception_type_coordinate.cid)
-            )
+            coordinate_cid = getattr(self.exception_type_coordinate, "cid", None)
+            if coordinate_cid is not None:
+                definition_authority.append(str_const(coordinate_cid))
+            else:
+                from sugar_lift_py_tests.ir import (
+                    _ConstBool,
+                    _ConstInt,
+                    _ConstReal,
+                    _ConstStr,
+                    _Ctor,
+                    _Lambda,
+                    _Var,
+                )
+
+                if not isinstance(
+                    self.exception_type_coordinate,
+                    (_Ctor, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Var, _Lambda),
+                ):
+                    raise TypeError(
+                        f"{owner} requires authenticated exception definition "
+                        "coordinate or term"
+                    )
+                definition_authority.append(self.exception_type_coordinate)
         definition_authority.extend(
             str_const(cid) for cid in self.formal_coordinate_cids
         )
@@ -189,15 +220,12 @@ class CallSiteSugar(ConstructedTermSugar):
         if remaining:
             head, *rest = remaining
             return head.desugar(ctx).and_then(
-                lambda value: self._collect(
-                    tuple(rest),
-                    accumulated
-                    + (
-                        value.project_operation_receiver(
-                            ctx, owner="CallSiteSugar positional actual"
-                        ),
-                    ),
-                    ctx,
+                lambda value: value.project_operation_receiver_outcome(
+                    ctx, owner="CallSiteSugar positional actual"
+                ).and_then(
+                    lambda actual: self._collect(
+                        tuple(rest), accumulated + (actual,), ctx
+                    )
                 )
             )
         return self._collect_kwargs(self.keywords, (), accumulated, ctx)
@@ -208,19 +236,15 @@ class CallSiteSugar(ConstructedTermSugar):
         if remaining:
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
-                lambda value: self._collect_kwargs(
-                    tuple(rest),
-                    kw_values
-                    + (
-                        (
-                            name,
-                            value.project_operation_receiver(
-                                ctx, owner="CallSiteSugar keyword actual"
-                            ),
-                        ),
-                    ),
-                    positional,
-                    ctx,
+                lambda value: value.project_operation_receiver_outcome(
+                    ctx, owner="CallSiteSugar keyword actual"
+                ).and_then(
+                    lambda actual: self._collect_kwargs(
+                        tuple(rest),
+                        kw_values + ((name, actual),),
+                        positional,
+                        ctx,
+                    )
                 )
             )
         if ctx is not None:
@@ -234,6 +258,7 @@ class CallSiteSugar(ConstructedTermSugar):
                         positional + tuple(value for _, value in kw_values),
                         tuple(name for name, _ in kw_values),
                         self.site,
+                        call_occurrence=self.call_occurrence,
                     ),
                     ctx,
                 )
@@ -308,6 +333,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
                 )
+            ctx = _with_frame_mutable_globals(ctx, source_call_frame)
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
@@ -350,7 +376,10 @@ class CallSiteSugar(ConstructedTermSugar):
                 # BindingCoordinateRefs match this frame's formal coordinates,
                 # not the caller's inlined formal nodes.
                 declaration_frame = owner.source_visible_call_frame()
-                if declaration_frame.frame_cid != source_call_frame.frame_cid:
+                if (
+                    declaration_frame.frame_cid
+                    != source_call_frame.declaration_frame_cid
+                ):
                     from sugar_source_tree.panic import BackendDefect
 
                     raise BackendDefect(
@@ -383,6 +412,13 @@ class CallSiteSugar(ConstructedTermSugar):
                         positional,
                         strict=True,
                     )
+                ) + tuple(
+                    FormalFloorBindingV1(
+                        pair.coordinate.cid,
+                        pair.actual,
+                        coordinate=pair.coordinate,
+                    )
+                    for pair in bound_source_actuals.projected_pairs
                 )
                 return Complete(
                     GeneratorConstructionV1.allocate(
@@ -528,3 +564,33 @@ class CallSiteSugar(ConstructedTermSugar):
                 term, reference.contract_cid, reference.member_cid, callsite
             )
         )
+
+
+def _with_frame_mutable_globals(ctx, frame):
+    bindings = frame.mutable_global_bindings
+    decorated_bindings = getattr(frame, "decorated_class_bindings", ())
+    if not bindings and not decorated_bindings:
+        return ctx
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    if ctx is None:
+        ctx = ReduceContext.root(owner="CallSiteSugar mutable module globals")
+    module_temporal = ctx.module_temporal or TemporalContext.empty()
+    temporal = ctx.temporal
+    for binding in bindings:
+        value = MutableGlobalValue(
+            name=binding.name,
+            kind=binding.kind,
+            pin_source_cid=binding.source_cid,
+            binding_memento=binding.binding_occurrence,
+        )
+        module_temporal = module_temporal.bind_value(binding.name, value)
+        temporal = temporal.bind_value(binding.name, value)
+    for binding in decorated_bindings:
+        module_temporal = module_temporal.bind_value(binding.name, binding.value)
+        temporal = temporal.bind_value(binding.name, binding.value)
+    return replace(ctx, temporal=temporal, module_temporal=module_temporal)

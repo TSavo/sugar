@@ -5,8 +5,38 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.binding_provenance import BoundBindingStateV1
 from sugar_source_tree.binding_state import BindingEntryV1
+from sugar_source_tree.fragment import SourceMemento
 
 from .context_manager_resolution import SourceFragmentCoordinateV1
+
+
+@dataclass(frozen=True)
+class MutableGlobalBindingV1:
+    source_cid: str
+    binding_occurrence: SourceMemento
+    name: str
+    kind: str
+    term: object = field(compare=False)
+    line: int
+    col: int
+    cid: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.binding_occurrence.source_cid != self.source_cid:
+            raise ValueError("mutable global binding occurrence/source CID mismatch")
+        if not self.name or self.kind not in {"dict", "list", "set"}:
+            raise ValueError("mutable global binding requires a closed mutable kind")
+        object.__setattr__(self, "cid", cid_of_json({
+            "kind": "mutable-global-binding",
+            "schemaVersion": "1",
+            "sourceCid": self.source_cid,
+            "bindingOccurrence": self.binding_occurrence.to_dict(),
+            "name": self.name,
+            "mutableKind": self.kind,
+            "term": self.term,
+            "line": self.line,
+            "col": self.col,
+        }))
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
@@ -96,6 +126,32 @@ class BoundFormalActualV1:
     actual: object
 
 
+@dataclass(frozen=True)
+class DecoratedClassBindingV1:
+    """One module binding produced by an authenticated class publication."""
+
+    name: str
+    publication: object
+    value: object = field(compare=False)
+
+    def __post_init__(self):
+        from sugar_lift_py_tests.floor.decorated_class_value import (
+            DecoratedClassMemberValue,
+            DecoratedClassPublicationV1,
+            DecoratedClassValue,
+        )
+
+        if (
+            not self.name
+            or type(self.publication) is not DecoratedClassPublicationV1
+            or type(self.value) not in (DecoratedClassValue, DecoratedClassMemberValue)
+            or self.value.publication is not self.publication
+        ):
+            raise SourceCallBindingGap(
+                "decorated class binding lacks exact publication testimony"
+            )
+
+
 @dataclass(frozen=True, eq=False)
 class BoundSourceCallActualsV1:
     """One binder result with its authenticated coordinate testimony."""
@@ -103,6 +159,7 @@ class BoundSourceCallActualsV1:
     actuals: tuple
     formal_coordinates: tuple[BindingCoordinateV1, ...]
     native_formal_coordinates: tuple = ()
+    projected_pairs: tuple[BoundFormalActualV1, ...] = ()
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
@@ -113,6 +170,39 @@ class BoundSourceCallActualsV1:
             raise SourceCallBindingGap("bound actual coordinate arity mismatch")
         _reauthenticate_binding_coordinates(self.formal_coordinates)
         _reauthenticate_native_coordinates(self.native_formal_coordinates)
+        _reauthenticate_binding_coordinates(
+            tuple(pair.coordinate for pair in self.projected_pairs)
+        )
+        from sugar_lift_py_tests.floor import TupleValue
+
+        roots = tuple(zip(self.formal_coordinates, self.actuals, strict=True))
+        for pair in self.projected_pairs:
+            matching = tuple(
+                (root, actual)
+                for root, actual in roots
+                if pair.coordinate.scope_owner_cid == root.scope_owner_cid
+                and pair.coordinate.binding_site == root.binding_site
+                and pair.coordinate.projection_path[: len(root.projection_path)]
+                == root.projection_path
+            )
+            suffix = pair.coordinate.projection_path[
+                len(matching[0][0].projection_path) :
+            ] if len(matching) == 1 else ()
+            if (
+                len(matching) != 1
+                or len(suffix) != 2
+                or suffix[0] != "variadic"
+                or not isinstance(suffix[1], int)
+                or isinstance(suffix[1], bool)
+                or type(matching[0][1]) is not TupleValue
+                or suffix[1] < 0
+                or suffix[1] >= len(matching[0][1].elements)
+                or pair.actual is not matching[0][1].elements[suffix[1]]
+                or pair.coordinate != matching[0][0].project(*suffix)
+            ):
+                raise SourceCallBindingGap(
+                    "projected formal coordinate is foreign or cross-wired"
+                )
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, BoundSourceCallActualsV1):
@@ -120,6 +210,7 @@ class BoundSourceCallActualsV1:
                 self.actuals == other.actuals
                 and self.formal_coordinates == other.formal_coordinates
                 and self.native_formal_coordinates == other.native_formal_coordinates
+                and self.projected_pairs == other.projected_pairs
             )
         return NotImplemented
 
@@ -212,9 +303,30 @@ class SourceVisibleCallFrameV1:
     )
     generator_steps: tuple | None = field(default=None, compare=False, repr=False)
     generator_step_fragment_cids: tuple[str, ...] = ()
+    mutable_global_bindings: tuple[MutableGlobalBindingV1, ...] = field(
+        default=(), compare=False
+    )
+    decorated_class_bindings: tuple[DecoratedClassBindingV1, ...] = field(
+        default=(), compare=False
+    )
+    declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if any(
+            binding.source_cid != self.source_identity_cid
+            for binding in self.mutable_global_bindings
+        ):
+            raise SourceCallBindingGap(
+                "mutable global binding source does not match source frame identity"
+            )
+        if any(
+            binding.publication.source_cid != self.source_identity_cid
+            for binding in self.decorated_class_bindings
+        ):
+            raise SourceCallBindingGap(
+                "decorated class binding source does not match source frame identity"
+            )
         preimage = {
             "kind": "source-visible-call-frame",
             "schemaVersion": "1",
@@ -230,8 +342,19 @@ class SourceVisibleCallFrameV1:
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
+            "mutableGlobalBindingCids": [
+                item.cid for item in self.mutable_global_bindings
+            ],
+            "decoratedClassBindingCids": [
+                item.publication.publication_cid
+                for item in self.decorated_class_bindings
+            ],
         }
+        if self.declaration_frame_cid is not None:
+            preimage["declarationFrameCid"] = self.declaration_frame_cid
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
+        if self.declaration_frame_cid is None:
+            object.__setattr__(self, "declaration_frame_cid", self.frame_cid)
 
     def bind_actuals(
         self, positional: tuple, keywords: tuple, ctx=None
@@ -270,6 +393,7 @@ class SourceVisibleCallFrameV1:
                 raise SourceCallBindingGap("duplicate keyword actual")
             named[key] = value
         bound = []
+        projected_pairs = []
         for index, (name, kind, default) in enumerate(
             zip(
                 self.parameters,
@@ -279,7 +403,13 @@ class SourceVisibleCallFrameV1:
             )
         ):
             if kind == "vararg":
-                bound.append(TupleValue(tuple(remaining)))
+                values = tuple(remaining)
+                root = self.formal_coordinates[index]
+                projected_pairs.extend(
+                    BoundFormalActualV1(root.project("variadic", ordinal), actual)
+                    for ordinal, actual in enumerate(values)
+                )
+                bound.append(TupleValue(values))
                 remaining.clear()
                 continue
             if kind == "kwarg":
@@ -317,6 +447,7 @@ class SourceVisibleCallFrameV1:
             tuple(bound),
             self.formal_coordinates,
             self.native_operation_formal_coordinates,
+            tuple(projected_pairs),
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:
