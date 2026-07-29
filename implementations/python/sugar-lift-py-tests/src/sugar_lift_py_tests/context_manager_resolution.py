@@ -571,6 +571,10 @@ class TreeConstructionContextV1:
     # of the frame's own SourceUnit (source_cid-matched).  Never carries
     # cross-unit spans; keyed by SourceFragmentCoordinateV1 of this unit.
     source_import_value_resolutions: dict = field(default_factory=dict)
+    # Producer-minted value-use receipt roster, retained once per exact source
+    # CID so repeated frame/class publication transports object identity rather
+    # than reminting an equivalent receipt at an occupied SourceUnit seat.
+    source_import_value_receipts: dict = field(default_factory=dict)
     # When projecting an authenticated definition into a call frame, dual-mode
     # factory bodies may contain With sites only on non-manager return paths
     # (e.g. pytest.raises function form). Soft projection does not require
