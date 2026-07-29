@@ -150,6 +150,7 @@ class _Candidate:
     line: int
     confession: str | None
     col: int = 0
+    binding_site: Json | None = None
 
 
 def scan_module_value_pins(
@@ -195,7 +196,7 @@ def scan_module_value_pins(
                         name=candidate.name,
                         kind=mutable_kind,
                         term=mutable_global_pin_term(candidate.name, mutable_kind),
-                        binding_site=candidate.value.fragment.seal().wire(),
+                        binding_site=candidate.binding_site,
                     )
                 )
             continue
@@ -486,6 +487,7 @@ def _collect_candidates(tree: typed.Module) -> dict[str, _Candidate]:
             line=stmt.lineno,
             confession=confession,
             col=name_node.col_offset,
+            binding_site=name_node.fragment.seal().wire(),
         )
     # A duplicated candidate name surfaces through the binding-event scan
     # (two assignment events), so the first occurrence remains the candidate
