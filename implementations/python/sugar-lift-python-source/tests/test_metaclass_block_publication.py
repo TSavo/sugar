@@ -2,54 +2,91 @@
 
 from __future__ import annotations
 
-import ast
-import enum
+from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
-from sugar_lift_python_source.manager_construction import _module_prefix_outcome
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.manager_construction import (
+    _project_metaclass_final_class,
+)
 from sugar_lift_py_tests.floor import BlockValue, TermValue
-from sugar_lift_py_tests.floor.decorated_class_value import _floor_cid
+from sugar_lift_py_tests.floor.decorated_class_value import (
+    _metaclass_publication_cids,
+)
+from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.raise_value import RaiseValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Completed
+from sugar_lift_py_tests.floor.source_return_projection import (
+    project_authenticated_source_return,
+)
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_source_tree.panic import SugarNotWritten
 
 
-def test_enum_metaclass_publication_projects_completed_final_class() -> None:
-    source, seat, source_cid = path_source(enum.__file__)
-    parsed = ast.parse(source, filename=seat)
-    definition = next(
-        node
-        for node in parsed.body
-        if isinstance(node, ast.ClassDef) and node.name == "Enum"
-    )
-    module = AuthenticatedModuleSourceV1(
-        module_name="enum",
-        source_seat=seat,
-        source_cid=source_cid,
-        source=source,
+def test_module_metaclass_publication_projects_completed_final_class() -> None:
+    returned = TermValue(17)
+    body = BlockValue(
+        (ReturnValue(returned),), fall_through=(false_guard(),), can_fall_through=False
     )
 
-    exits = _module_prefix_outcome(module, definition)
+    assert _project_metaclass_final_class(body, blame="enum.py:712") is returned
 
-    assert len(exits.exits) == 1
-    completed = exits.exits[0]
-    assert isinstance(completed, Completed)
-    published = completed.value.context.temporal.value_if_bound("Enum")
-    assert published.publication.final_class is not published.publication.raw_class
-    assert type(published.publication.final_class) is not BlockValue
-    assert published.publication.source_cid == source_cid
+
+def test_source_return_projection_selects_one_unconditional_returned_floor() -> None:
+    returned = TermValue("authenticated-class")
+    body = BlockValue(
+        (ReturnValue(returned),), fall_through=(false_guard(),), can_fall_through=False
+    )
+
+    assert project_authenticated_source_return(body) is returned
+
+
+@pytest.mark.parametrize(
+    "ambiguous",
+    (
+        BlockValue(
+            (ReturnValue(TermValue("first")), ReturnValue(TermValue("second"))),
+            can_fall_through=False,
+        ),
+        BlockValue(
+            (ReturnValue(TermValue("returned")),),
+            fall_through=(true_guard(),),
+            can_fall_through=True,
+        ),
+        BlockValue(
+            (ReturnValue(TermValue("returned")),),
+            can_fall_through=True,
+        ),
+        BlockValue(
+            (
+                ReturnValue(TermValue("returned")),
+                RaiseValue(RaiseEffect(exception_name="RuntimeError")),
+            ),
+            can_fall_through=False,
+        ),
+        BlockValue(
+            (GuardedReturn((make_var("undecided"),), TermValue("guarded")),),
+            can_fall_through=False,
+        ),
+    ),
+    ids=(
+        "two-returns",
+        "fall-through-guard",
+        "fall-through-capability",
+        "raise-arm",
+        "undecided-guard",
+    ),
+)
+def test_source_return_projection_preserves_ambiguous_control_flow(ambiguous) -> None:
+    assert project_authenticated_source_return(ambiguous) is ambiguous
 
 
 @pytest.mark.parametrize(
     "lying_final",
     (
         BlockValue((TermValue("foreign"),)),
-        BlockValue((ReturnValue(TermValue("malformed")),), can_fall_through=False),
         BlockValue(
             (RaiseValue(RaiseEffect(exception_name="RuntimeError")),),
             can_fall_through=False,
@@ -57,8 +94,47 @@ def test_enum_metaclass_publication_projects_completed_final_class() -> None:
     ),
 )
 def test_raw_block_final_class_controls_remain_loud(lying_final) -> None:
-    with pytest.raises(
-        ConstructionPanic,
-        match="owner=decorated class publication blame=BlockValue",
-    ):
-        _floor_cid(lying_final)
+    with pytest.raises(SugarNotWritten, match="no unique authenticated returned class"):
+        _project_metaclass_final_class(lying_final, blame="enum.py:712")
+
+
+@dataclass(frozen=True)
+class _Coordinate:
+    name: str
+
+    def wire(self):
+        return {"name": self.name}
+
+
+def test_metaclass_publication_identity_separates_returned_floor_and_call_site() -> None:
+    shared = dict(
+        source_cid="source-cid",
+        definition=_Coordinate("definition"),
+        binding_occurrence=_Coordinate("binding"),
+        raw_class=TermValue(1),
+        metaclass_floor=TermValue(2),
+        metaclass_callable=TermValue(3),
+        class_name_floor=TermValue(4),
+        bases_floor=TermValue(5),
+        namespace_floor=TermValue(6),
+        module_construction_receipt_cid="receipt-cid",
+    )
+    first_application, first_publication = _metaclass_publication_cids(
+        **shared,
+        metaclass_occurrence=_Coordinate("call:first"),
+        final_class=TermValue(7),
+    )
+    changed_result, changed_result_publication = _metaclass_publication_cids(
+        **shared,
+        metaclass_occurrence=_Coordinate("call:first"),
+        final_class=TermValue(8),
+    )
+    changed_call, _ = _metaclass_publication_cids(
+        **shared,
+        metaclass_occurrence=_Coordinate("call:second"),
+        final_class=TermValue(7),
+    )
+
+    assert changed_result != first_application
+    assert changed_result_publication != first_publication
+    assert changed_call != first_application

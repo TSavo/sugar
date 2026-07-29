@@ -65,6 +65,30 @@ class ImportValueUseSeatingGap(ValueError):
         super().__init__(f"{kind}: {detail}")
 
 
+def _project_metaclass_final_class(value: FloorValue, *, blame) -> FloorValue:
+    """Select the sole authenticated returned class for module publication."""
+    from sugar_lift_py_tests.floor.source_return_projection import (
+        project_authenticated_source_return,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    final_class = project_authenticated_source_return(value)
+    if isinstance(final_class, BlockValue) or not isinstance(final_class, FloorValue):
+        raise SugarNotWritten(
+            owner="module definition execution",
+            blame=blame,
+            observed=(
+                "metaclass application has no unique authenticated returned class Floor"
+            ),
+            requested="one non-block returned class Floor",
+            fix=(
+                "preserve multi-return, guarded, fall-through, raise, and halted "
+                "metaclass bodies as typed loud"
+            ),
+        )
+    return final_class
+
+
 @dataclass(frozen=True)
 class _ModuleSourceFrameCallableV1(FloorValue):
     """Exact module FunctionDef callable used during definition execution."""
@@ -396,6 +420,9 @@ class _ModuleClassDefinitionBindingSugar:
                         requested="one completed published class Floor",
                         fix="sequence metaclass effects before module publication",
                     )
+                final_class = _project_metaclass_final_class(
+                    applied.value, blame=keyword.value.fragment
+                )
                 publication = _mint_metaclass_class_publication(
                     source_cid=self.definition.unit.source_cid,
                     definition=_call_coordinate(self.definition),
@@ -407,7 +434,7 @@ class _ModuleClassDefinitionBindingSugar:
                     class_name_floor=class_name_floor,
                     bases_floor=bases_floor,
                     namespace_floor=namespace_floor,
-                    final_class=applied.value,
+                    final_class=final_class,
                     module_construction_receipt_cid=(
                         self.module_construction_receipt_cid
                     ),
