@@ -200,6 +200,7 @@ def test_non_floor_completion_is_a_producer_defect() -> None:
         parameters=(),
         term=ctor("call:source_value", ()),
         body=SugarBody(body, SugarRole.CONTROL_FLOW_BODY),
+        site="source.py:4:11",
     )
 
     with pytest.raises(BackendDefect, match="Floor|completion|producer"):
