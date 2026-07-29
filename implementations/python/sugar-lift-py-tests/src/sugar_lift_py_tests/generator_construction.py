@@ -209,6 +209,41 @@ class AttributeAssignStepV1:
 
 
 @dataclass(frozen=True)
+class AssertStepV1:
+    """One authenticated source Assert executed by the generator machine."""
+
+    assert_sugar: object
+    assert_cid: str
+    assert_coordinate: object
+    occurrence: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
+
+        if not isinstance(self.assert_sugar, AssertSugar):
+            raise TypeError("AssertStepV1 requires AssertSugar")
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+
+        try:
+            span = self.occurrence.line_col_span
+            observed_coordinate = SourceFragmentCoordinateV1(
+                self.occurrence.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+        except (AttributeError, TypeError) as exc:
+            raise TypeError("AssertStepV1 requires an authenticated occurrence") from exc
+        if observed_coordinate != self.assert_coordinate:
+            raise TypeError(
+                "AssertStepV1 assert occurrence does not match its authenticated coordinate"
+            )
+
+
+@dataclass(frozen=True)
 class FinallyStepV1:
     """Cleanup suite as ConstructedTermSugar payloads only.
 
@@ -399,6 +434,7 @@ GeneratorStepV1 = (
     | InertStepV1
     | AssignStepV1
     | AttributeAssignStepV1
+    | AssertStepV1
     | FinallyStepV1
     | ForStepV1
     | RaiseStepV1
@@ -534,6 +570,15 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "targetCid": step.target_cid,
             "receiver": _generator_value_testimony(step.receiver, owner=owner),
             "value": _generator_value_testimony(step.value, owner=owner),
+        }
+    if isinstance(step, AssertStepV1):
+        return {
+            "kind": "assert",
+            "assertCid": step.assert_cid,
+            "assertCoordinate": step.assert_coordinate.wire(),
+            "test": _generator_value_testimony(
+                step.assert_sugar.test, owner=owner
+            ),
         }
     if isinstance(step, FinallyStepV1):
         return {
@@ -917,6 +962,18 @@ class GeneratorConstructionV1:
             if not isinstance(outcome, Complete):
                 return self._gap(
                     requested, f"attribute store returned {type(outcome).__name__}"
+                )
+            machine = replace(self, cursor=self.cursor + 1)
+            return machine._transition(requested)
+        if isinstance(step, AssertStepV1):
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+            outcome = step.assert_sugar.desugar(self._guard_evaluation_context())
+            if isinstance(outcome, Incomplete):
+                return ExitSet.halted(outcome.effect, state=self)
+            if not isinstance(outcome, Complete):
+                return self._gap(
+                    requested, f"assert returned {type(outcome).__name__}"
                 )
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
