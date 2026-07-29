@@ -124,6 +124,8 @@ class ConstructedCallActualV1:
         )
         if observed != self.testimony.semantic_value_cid:
             raise ValueError("constructed actual does not match its source testimony")
+        if self.node.fragment.seal().cid != self.testimony.source_fragment_cid:
+            raise ValueError("constructed actual has a foreign source occurrence")
 
 
 @dataclass(frozen=True)
@@ -738,10 +740,11 @@ def construct_manager_behavior(
         return frame_result
     frame, _target = frame_result
     try:
-        values = frame.bind_actuals(
+        bound_actuals = frame.bind_actuals(
             tuple(item.value for item in actuals),
             tuple((name, item.value) for name, item in keyword_actuals),
         )
+        values = bound_actuals.actuals
         declaration_body = frame.body
         frame = frame.bind_node_actuals(
             tuple(item.node for item in actuals),
@@ -756,8 +759,17 @@ def construct_manager_behavior(
             id(item.node): item.testimony
             for item in (*actuals, *(item for _, item in keyword_actuals))
         }
+        bound_by_coordinate = {
+            pair.coordinate.cid: pair for pair in bound_actuals.pairs
+        }
         authenticated_entries = []
-        for entry, value in zip(frame.runtime_entries, values, strict=True):
+        for entry in frame.runtime_entries:
+            pair = bound_by_coordinate.get(entry.coordinate.cid)
+            if pair is None or pair.coordinate != entry.coordinate:
+                raise SourceCallBindingGap(
+                    "runtime entry has a foreign formal coordinate"
+                )
+            value = pair.actual
             testimony = supplied.get(id(entry.state))
             if testimony is None:
                 testimony = ConstructedValueTestimonyV1.mint(
