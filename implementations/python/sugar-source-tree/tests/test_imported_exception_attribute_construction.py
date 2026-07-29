@@ -200,6 +200,53 @@ def test_module_name_arrow_exception_identity_is_import_coordinate(tmp_path):
     )
 
 
+def test_imported_exception_identity_rejects_a_foreign_attribute_occurrence(tmp_path):
+    """A same-span Attribute from another module cannot borrow this import floor."""
+    truthful_path = tmp_path / "truthful.py"
+    truthful_path.write_text(
+        "import pyarrow as errors\n"
+        "def f():\n"
+        "    raise errors.ArrowInvalid\n",
+        encoding="utf-8",
+    )
+    foreign_path = tmp_path / "foreign.py"
+    foreign_path.write_text(
+        "import pandas as errors\n"
+        "def f():\n"
+        "    raise errors.ArrowInvalid\n",
+        encoding="utf-8",
+    )
+    truthful = SourceFile(path_source(str(truthful_path)))
+    foreign = SourceFile(path_source(str(foreign_path)))
+    truthful_occurrence = _attribute(truthful, "ArrowInvalid")
+    foreign_occurrence = _attribute(foreign, "ArrowInvalid")
+
+    assert truthful.unit.imported_exception_type_identity(
+        truthful_occurrence
+    ) == ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const("pyarrow.ArrowInvalid")],
+    )
+    raised = next(node for node in truthful.nodes() if node.kind == "Raise")
+    raised_value = raised.sugar().desugar().effect.raised_value
+    assert isinstance(raised_value, AuthenticatedExceptionTypeValue)
+    assert isinstance(raised_value.value, ExceptionClassValue)
+    assert raised_value.value.qualified_name == "pyarrow.ArrowInvalid"
+    assert foreign.unit.imported_exception_type_identity(foreign_occurrence) == ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const("pandas.ArrowInvalid")],
+    )
+    from sugar_source_tree.panic import BackendDefect
+
+    with pytest.raises(BackendDefect) as wrong_occurrence:
+        truthful.unit.imported_exception_type_identity(foreign_occurrence)
+    assert (
+        wrong_occurrence.value.owner
+        == "SourceUnit.imported_exception_type_identity"
+    )
+    assert wrong_occurrence.value.blame.node is foreign_occurrence
+
+
 def test_import_bound_exception_desugars_to_authenticated_type(tmp_path):
     """Truthful twin: manager arg is AuthenticatedExceptionTypeValue, not Attribute."""
     boundary = _boundary(

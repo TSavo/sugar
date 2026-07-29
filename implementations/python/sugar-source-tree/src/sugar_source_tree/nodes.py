@@ -1025,6 +1025,21 @@ class SourceUnit:
         """
         from sugar_lift_py_tests.ir import ctor, str_const
 
+        # Spans are meaningful only inside the SourceUnit that minted them.
+        # A same-shaped Attribute from another module can occupy the identical
+        # line/column coordinate; never let it index this unit's reaching-import
+        # table and borrow exception authority from an unrelated occurrence.
+        if node.unit is not self:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=node.fragment,
+                owner="SourceUnit.imported_exception_type_identity",
+                observed="foreign imported-exception Attribute occurrence",
+                requested="an Attribute occurrence owned by this SourceUnit",
+                fix="ask the SourceUnit that constructed the occurrence for its identity",
+            )
+
         link = node
         attributes = []
         while isinstance(link, Attribute):
