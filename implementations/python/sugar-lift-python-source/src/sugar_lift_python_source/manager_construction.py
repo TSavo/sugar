@@ -1628,12 +1628,9 @@ def _construct_reachable_decorated_class_bindings(
 
     if not isinstance(target, FunctionDef):
         return ()
-    module_classes = {
-        item.name: item for item in module_definitions if isinstance(item, ClassDef)
-    }
-    module_functions = {
-        item.name: item for item in module_definitions if isinstance(item, FunctionDef)
-    }
+    module_classes = tuple(
+        item for item in module_definitions if isinstance(item, ClassDef)
+    )
     reached = []
     for function in reachable_definitions:
         if not isinstance(function, FunctionDef):
@@ -1644,13 +1641,17 @@ def _construct_reachable_decorated_class_bindings(
         for node in function.walk():
             if not isinstance(node, Name):
                 continue
-            candidate = module_classes.get(node.id)
-            if candidate is None or not candidate.decorators:
-                continue
             bindings = tuple(
                 (function.unit.module_direct_bindings or {}).get(node.id, ())
             )
-            if table.lookup(node.id).is_global() and bindings == (candidate,):
+            if (
+                table.lookup(node.id).is_global()
+                and len(bindings) == 1
+                and isinstance(bindings[0], ClassDef)
+                and any(bindings[0] is item for item in module_classes)
+                and bindings[0].decorators
+            ):
+                candidate = bindings[0]
                 if candidate not in reached:
                     reached.append(candidate)
     if not reached:
@@ -1670,12 +1671,21 @@ def _construct_reachable_decorated_class_bindings(
         frame = frames.get(definition.name)
         if frame is None:
             frame = definition.source_visible_call_frame()
+        elif frame.owner is not definition:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                owner="manager_construction decorated callable frame",
+                blame=definition.fragment,
+                observed="name-keyed frame does not belong to bound decorator definition",
+                requested="the exact module-direct-binding FunctionDef frame",
+                fix="preserve definition identity when indexing source call frames",
+            )
         temporal = temporal.bind_value(
             definition.name, _SourceFrameCallableV1(definition, frame)
         )
 
     ctx = ReduceContext.root(owner="manager decorated class publication")
-    raw_classes = {}
     class_dependencies = set()
     for function in decorator_functions:
         function_table = function.unit.function_symtable(
@@ -1684,14 +1694,14 @@ def _construct_reachable_decorated_class_bindings(
         for node in function.walk():
             if not isinstance(node, Name):
                 continue
-            candidate = module_classes.get(node.id)
             bindings = tuple((function.unit.module_direct_bindings or {}).get(node.id, ()))
             if (
-                candidate is not None
-                and function_table.lookup(node.id).is_global()
-                and bindings == (candidate,)
+                function_table.lookup(node.id).is_global()
+                and len(bindings) == 1
+                and isinstance(bindings[0], ClassDef)
+                and any(bindings[0] is item for item in module_classes)
             ):
-                class_dependencies.add(candidate)
+                class_dependencies.add(bindings[0])
     for definition in module_definitions:
         if definition not in class_dependencies:
             continue
@@ -1704,7 +1714,6 @@ def _construct_reachable_decorated_class_bindings(
                 requested="one completed source class Floor",
                 fix="sequence module definition effects before decorator execution",
             )
-        raw_classes[definition.name] = outcome.value
         temporal = temporal.bind_value(definition.name, outcome.value)
     ctx = replace(ctx, temporal=temporal, module_temporal=temporal)
 

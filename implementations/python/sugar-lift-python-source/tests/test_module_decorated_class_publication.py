@@ -55,6 +55,25 @@ def test_backend_module_construction_owns_a_stable_receipt_cid(
     )
 
 
+def test_backend_module_construction_receipt_discriminates_foreign_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    truthful = _tree(tmp_path, monkeypatch)
+    foreign_path = Path("foreign_decorated_module.py")
+    foreign_path.write_text(
+        "def replace(raw):\n    return raw\n\n"
+        "@replace\nclass Original:\n    token = 8\n",
+        encoding="utf-8",
+    )
+    foreign = SourceFile.from_path(
+        foreign_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+
+    assert truthful.unit.source_cid != foreign.unit.source_cid
+    assert truthful.construction_event_receipt_cid != foreign.construction_event_receipt_cid
+
+
 def test_class_definition_carries_ordered_decorator_sugars_and_occurrences(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -104,6 +123,14 @@ def _install(root: Path) -> importlib.metadata.Distribution:
         "@replace\n"
         "class Original:\n"
         "    stale = 1\n"
+        "\n"
+        "@replace\n"
+        "class Unreachable:\n"
+        "    stale = 2\n"
+        "\n"
+        "def shadowed(value):\n"
+        "    Original = value\n"
+        "    return isinstance(value, Original)\n"
         "\n"
         "def worker(value):\n"
         "    return isinstance(value, Original)\n"
@@ -171,3 +198,25 @@ def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
     assert binding.value.publication is binding.publication
     assert binding.value.published_floor is binding.publication.final_class
     assert binding.publication.final_class is not binding.publication.raw_class
+    original = next(
+        item
+        for item in target.unit.constructed_module.root.body
+        if isinstance(item, ClassDef) and item.name == "Original"
+    )
+    sugar = original.sugar()
+    assert binding.publication.binding_occurrence == sugar.binding_target_occurrence
+    assert len(binding.publication.decorator_applications) == 2
+    first, second = binding.publication.decorator_applications
+    assert first.occurrence == sugar.decorator_occurrences[1]
+    assert second.occurrence == sugar.decorator_occurrences[0]
+    assert first.input_floor is binding.publication.raw_class
+    assert second.input_floor is first.output_floor
+    assert second.output_floor is binding.publication.final_class
+    assert binding.publication.final_class.class_name == "Replacement"
+    assert tuple(
+        field.name for field in binding.publication.final_class.class_fields
+    ) == ("token",)
+    assert binding.publication.raw_class.class_name == "Original"
+    assert tuple(field.name for field in binding.publication.raw_class.class_fields) == (
+        "stale",
+    )

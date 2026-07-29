@@ -53,6 +53,7 @@ class ClassDefinitionSugar(Sugar):
                 return {
                     "name": item.name,
                     "definitionFragmentCid": item.definition_fragment_cid,
+                    "evaluationGroupCid": item.evaluation_group_cid,
                 }
             return {
                 "kind": "conditional",
@@ -110,6 +111,8 @@ class ClassDefinitionSugar(Sugar):
                 )
             base_values.append(outcome.value)
 
+        evaluated_groups = {}
+
         def append_field(item):
             if isinstance(item, ConstructedClassConditionalFieldsV1):
                 condition = item.condition_sugar.desugar(ctx)
@@ -143,7 +146,15 @@ class ClassDefinitionSugar(Sugar):
                 for child in selected:
                     append_field(child)
                 return
-            outcome = item.value_sugar.desugar(ctx)
+            outcome = (
+                evaluated_groups.get(item.evaluation_group_cid)
+                if item.evaluation_group_cid is not None
+                else None
+            )
+            if outcome is None:
+                outcome = item.value_sugar.desugar(ctx)
+                if item.evaluation_group_cid is not None:
+                    evaluated_groups[item.evaluation_group_cid] = outcome
             if not isinstance(outcome, Complete):
                 from sugar_source_tree.panic import SugarNotWritten
 

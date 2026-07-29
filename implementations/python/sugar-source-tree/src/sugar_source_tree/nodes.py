@@ -3979,8 +3979,8 @@ class ClassDef(Statement):
             )
             and not (
                 isinstance(item, Assign)
-                and len(item.targets) == 1
-                and isinstance(item.targets[0], Name)
+                and item.targets
+                and all(isinstance(target, Name) for target in item.targets)
             )
             and not (isinstance(item, AnnAssign) and isinstance(item.target, Name))
         )
@@ -4011,15 +4011,18 @@ class ClassDef(Statement):
             for item in statements:
                 if (
                     isinstance(item, Assign)
-                    and len(item.targets) == 1
-                    and isinstance(item.targets[0], Name)
+                    and item.targets
+                    and all(isinstance(target, Name) for target in item.targets)
                 ):
-                    fields.append(
+                    value_sugar = item.value.sugar()
+                    fields.extend(
                         ConstructedClassFieldV1(
-                            item.targets[0].id,
+                            target.id,
+                            target.fragment.seal().cid,
+                            value_sugar,
                             item.fragment.seal().cid,
-                            item.value.sugar(),
                         )
+                        for target in item.targets
                     )
                     continue
                 if isinstance(item, AnnAssign) and isinstance(item.target, Name):
