@@ -1,73 +1,105 @@
-"""RED producer contract for source-defined ``__new__`` instance construction.
+"""Authenticated source-visible ``__new__`` producer contract.
 
-These tests intentionally stay red until the existing ClassDefinitionValue
-construction door can authenticate ``__new__`` and produce an ObjectValue.
-They do not add a compatibility constructor or production behavior.
+This is a consumer-facing instrument for the existing constructor door in
+``ClassDef``.  It deliberately uses no new receipt or constructor helper.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
-from sugar_lift_py_tests.callable_application import CallableApplication
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import ClassDefinitionValue, ObjectValue, StringValue
+from sugar_lift_py_tests.context_manager_resolution import (
+    SourceFragmentCoordinateV1,
+    TreeConstructionContextV1,
+)
+from sugar_lift_py_tests.floor import ObjectValue, StringValue
+from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 
-def _named_constant_class(*, filename: str = "named_constant.py") -> ClassDefinitionValue:
-    source = (
-        "class NamedIntConstant:\n"
-        "    def __new__(cls, i, name):\n"
-        "        item = object.__new__(cls)\n"
-        "        item.name = name\n"
-        "        return item\n"
-        "    marker = 'unrelated'\n"
+def _coordinate(node) -> SourceFragmentCoordinateV1:
+    span = node.line_col_span()
+    return SourceFragmentCoordinateV1(
+        node.unit.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
     )
+
+
+def _source(source: str) -> tuple[SourceFile, ClassDef, Call]:
+    context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
-        (source, filename, blake3_512_of(source.encode("utf-8"))),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        (source, "named_constant.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=context,
     )
-    definition = next(
-        node for node in tree.root.body if node.kind == "ClassDef"
+    definition = next(node for node in tree.nodes() if isinstance(node, ClassDef))
+    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
+    context.source_call_frames[_coordinate(call)] = (
+        definition.source_visible_constructor_frame()
     )
-    outcome = definition.sugar().desugar()
-    assert type(outcome.value) is ClassDefinitionValue
-    return outcome.value
+    return tree, definition, call
 
 
-def _apply(value, arguments):
-    return CallableApplication(
-        tuple(arguments), (), "named-int-constant.__new__"
-    ).apply(value, None)
-
-
-def test_truthful_new_constructs_object_and_preserves_unrelated_field():
-    value = _named_constant_class()
-    outcome = _apply(value, (StringValue("7"), StringValue("X")))
-    assert type(outcome.value) is ObjectValue
-    assert outcome.value.attribute("name", "site").value == StringValue("X")
-    assert value.class_fields[0].name == "marker"
+def test_truthful_new_uses_existing_constructor_door_and_preserves_unrelated_field():
+    source = (
+        "class NamedIntConstant(int):\n"
+        "    def __new__(cls, value, label):\n"
+        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
+        "        self.label = label\n"
+        "        return self\n"
+        "    marker = 'unrelated'\n"
+        "\nNamedIntConstant(7, 'seven')\n"
+    )
+    tree, definition, call = _source(source)
+    shape = definition._authenticated_new_constructor_shape()
+    assert shape is not None
+    assert isinstance(shape[0], FunctionDef)
+    outcome = call.sugar().desugar()
+    assert isinstance(outcome, Complete)
+    receiver = outcome.value.force_floor(
+        None, owner="named-int-constant-truthful", project_callsite=False
+    )
+    assert isinstance(receiver, ObjectValue)
+    assert receiver.attribute("label", call.fragment).value == StringValue("seven")
+    assert definition.source_visible_constructor_frame().owner is definition
 
 
 @pytest.mark.parametrize(
-    "lying",
+    "source",
     [
-        "foreign same-signature __new__",
-        "foreign call occurrence",
-        "swapped formal coordinates",
-        "wrong cls testimony",
-        "non-ObjectValue return",
-        "missing __new__ owner",
+        "class Named(int):\n    def __new__(other, value, label):\n        return value\n\nNamed(7, 'x')\n",
+        "class Named(int):\n    def __new__(cls, value, label):\n        return value\n\nNamed(7, 'x')\n",
+        "class Named(int):\n    def __new__(cls, label, value):\n        return value\n\nNamed(7, 'x')\n",
     ],
 )
-def test_lying_new_testimony_refuses_before_object_mutation(lying: str):
-    value = _named_constant_class(filename=f"{lying.replace(' ', '_')}.py")
-    if lying == "foreign same-signature __new__":
-        value = replace(value, class_definition_cid="foreign-class-cid")
-    with pytest.raises(SugarNotWritten, match=lying):
-        _apply(value, (StringValue("7"), StringValue("X")))
+def test_malformed_or_foreign_new_shape_is_loud(source: str):
+    _, definition, call = _source(source)
+    assert definition._authenticated_new_constructor_shape() is None
+    with pytest.raises(SourceCallBindingGap):
+        call.sugar()
+
+
+def test_foreign_new_return_is_bodyless_loud():
+    _, definition, call = _source(
+        "class Named(int):\n"
+        "    def __new__(cls, value, label):\n"
+        "        self = super(Named, cls).__new__(cls, value)\n"
+        "        self.label = label\n"
+        "        return value\n"
+        "\nNamed(7, 'x')\n"
+    )
+    assert definition._authenticated_new_constructor_shape() is None
+    with pytest.raises(SourceCallBindingGap):
+        call.sugar()
+
+
+def test_no_new_control_has_no_authenticated_new_shape():
+    _, definition, _ = _source(
+        "class Plain:\n    marker = 'unrelated'\n\nPlain()\n"
+    )
+    assert definition._authenticated_new_constructor_shape() is None
