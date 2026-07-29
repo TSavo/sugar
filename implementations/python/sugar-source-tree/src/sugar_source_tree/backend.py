@@ -446,6 +446,7 @@ class _BackendConstructionEventReceiptV1(_SealedBackendRelation):
     constructed_module_identity: object
     root_identity: object
     backend_fingerprint: str
+    receipt_cid: str
     _copy_message = "copied sealed construction event"
     _tamper_message = "sealed construction event receipt"
 
@@ -876,6 +877,17 @@ class Backend:
         observed_registered = tuple(getattr(reporter, "registered", ()))
         registered = observed_registered or constructed_nodes
         receipt = object.__new__(_BackendConstructionEventReceiptV1)
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        receipt_cid = cid_of_json(
+            {
+                "kind": "backend-module-construction-receipt",
+                "schemaVersion": "1",
+                "sourceCid": unit.source_cid,
+                "rootFragmentCid": root.fragment.seal().cid,
+                "backendFingerprint": self.fingerprint(),
+            }
+        )
         _close_private(
             receipt,
             construction_event_identity=event_identity,
@@ -887,6 +899,7 @@ class Backend:
             constructed_module_identity=module_identity,
             root_identity=root_identity,
             backend_fingerprint=self.fingerprint(),
+            receipt_cid=receipt_cid,
         )
         reporter.present_construction(root, receipt)
         product = object.__new__(_ConstructedModuleV1)

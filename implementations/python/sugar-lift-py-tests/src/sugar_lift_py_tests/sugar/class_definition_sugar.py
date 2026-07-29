@@ -34,6 +34,8 @@ class ClassDefinitionSugar(Sugar):
     base_sugars: tuple[Sugar, ...]
     base_fragment_cids: tuple[str, ...]
     site: object = field(compare=False)
+    decorator_sugars: tuple[Sugar, ...] = field(default=(), compare=False)
+    decorator_occurrences: tuple[object, ...] = field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):

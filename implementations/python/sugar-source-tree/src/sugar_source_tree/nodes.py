@@ -3968,6 +3968,9 @@ class ClassDef(Statement):
             ConstructedClassFieldV1,
             ConstructedClassMethodV1,
         )
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ClassDefinitionSugar,
             ConstructedClassConditionalFieldsV1,
@@ -4076,6 +4079,17 @@ class ClassDef(Statement):
                 item.fragment.seal().cid for item in annotated_assignments
             ),
             decorator_cids=tuple(item.fragment.seal().cid for item in self.decorators),
+            decorator_sugars=tuple(item.sugar() for item in self.decorators),
+            decorator_occurrences=tuple(
+                SourceFragmentCoordinateV1(
+                    item.unit.source_cid,
+                    item.line_col_span().start_line,
+                    item.line_col_span().start_col,
+                    item.line_col_span().end_line,
+                    item.line_col_span().end_col,
+                )
+                for item in self.decorators
+            ),
             base_sugars=base_sugars,
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
