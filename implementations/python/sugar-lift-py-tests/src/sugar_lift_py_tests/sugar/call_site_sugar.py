@@ -49,9 +49,6 @@ class CallSiteSugar(ConstructedTermSugar):
     expected_source_call_frame_owner: Any = dataclass_field(
         default=None, compare=False
     )
-    missing_closure_binding_testimony: bool = dataclass_field(
-        default=False, compare=False
-    )
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
     expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
@@ -280,7 +277,10 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="the lexical row's exact definition-owned source frame",
                     fix="retain the authenticated frame at the exact call coordinate or keep loud",
                 )
-        if self.missing_closure_binding_testimony:
+        if (
+            source_call_frame is not None
+            and source_call_frame.owner.lacks_captured_binding_testimony()
+        ):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(

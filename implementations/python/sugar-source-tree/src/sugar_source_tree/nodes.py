@@ -9512,10 +9512,9 @@ class Call(Expression):
                     name=self.func.attr,
                     args=tuple(a.sugar() for a in self.args),
                     site=self.fragment,
-                keywords=keyword_sugars,
-                source_call_frame=bound_frame,
-                expected_definition_ref=bound_frame.owner.ref,
-            )
+                    keywords=keyword_sugars,
+                    source_call_frame=bound_frame,
+                )
             return CallSiteSugar(
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
                 args=tuple(a.sugar() for a in self.args),
@@ -9532,11 +9531,6 @@ class Call(Expression):
                     lexical_row.definition_occurrence_identity
                     if lexical_row is not None
                     else None
-                ),
-                missing_closure_binding_testimony=(
-                    function_definition.lacks_captured_binding_testimony()
-                    if lexical_row is not None
-                    else False
                 ),
             )
         if isinstance(self.func, Name):
