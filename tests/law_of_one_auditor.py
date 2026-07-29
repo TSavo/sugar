@@ -785,15 +785,38 @@ def audit_law_of_one(
 
     assert is_dataclass(product), "constructed product must expose closed fields"
 
-    producer_reachable = set(backend_door_symbols)
-    changed = True
-    while changed:
-        changed = False
-        for edge in graph.calls:
-            if edge.caller in producer_reachable and not set(edge.targets) <= producer_reachable:
-                producer_reachable.update(edge.targets)
-                changed = True
-    producer_roster = graph.class_symbols & producer_reachable
+    producer_edges = tuple(
+        edge
+        for edge in graph.calls
+        if edge.caller in backend_door_symbols
+        and edge.expression == "object.__new__"
+        and any(
+            set(argument) & graph.class_symbols
+            for argument in edge.argument_producers
+        )
+    )
+    producer_roster = frozenset(
+        symbol
+        for edge in producer_edges
+        for argument in edge.argument_producers
+        for symbol in argument
+        if symbol in graph.class_symbols
+    )
+
+    def producer_symbols_for_type(runtime_type: type) -> frozenset[object]:
+        defining_module = inspect.getmodule(runtime_type)
+        if defining_module is None or getattr(defining_module, "__file__", None) is None:
+            return frozenset()
+        source_path = Path(inspect.getsourcefile(runtime_type) or "").resolve()
+        qualified_parts = tuple(runtime_type.__qualname__.split("."))
+        return frozenset(
+            symbol
+            for symbol in producer_roster
+            if symbol.path.resolve() == source_path
+            and symbol.module == runtime_type.__module__
+            and symbol.lexical == qualified_parts[:-1]
+            and symbol.name == qualified_parts[-1]
+        )
 
     def authentic_runtime_types(container: object) -> tuple[type, ...]:
         pending = [container]
@@ -805,12 +828,7 @@ def audit_law_of_one(
                 continue
             seen.add(id(value))
             value_type = type(value)
-            location = Path(inspect.getsourcefile(value_type) or "").resolve()
-            if any(
-                symbol.path.resolve() == location
-                and symbol.line == inspect.getsourcelines(value_type)[1]
-                for symbol in producer_roster
-            ):
+            if producer_symbols_for_type(value_type):
                 found.add(value_type)
             if isinstance(value, dict):
                 pending.extend(value.keys())
@@ -843,10 +861,15 @@ def audit_law_of_one(
 
     type_locations = {}
     for runtime_type in discovered_closed_types:
-        type_locations[runtime_type] = (
-            Path(inspect.getsourcefile(runtime_type) or "").resolve(),
-            inspect.getsourcelines(runtime_type)[1],
-        )
+        matching_symbols = producer_symbols_for_type(runtime_type)
+        if len(matching_symbols) == 1:
+            symbol = next(iter(matching_symbols))
+            type_locations[runtime_type] = (symbol.path.resolve(), symbol.line)
+        else:
+            type_locations[runtime_type] = (
+                Path(inspect.getsourcefile(runtime_type) or "").resolve(),
+                inspect.getsourcelines(runtime_type)[1],
+            )
 
     definitions = []
     constructions = []
@@ -865,8 +888,23 @@ def audit_law_of_one(
         if set(producers) & opaque_symbols
     }
     closed_producers = opaque_symbols | closed_factories
+    def edge_value_producers(edge: object) -> set[object]:
+        return {
+            *edge.targets,
+            *(symbol for argument in edge.argument_producers for symbol in argument),
+        }
+
     opaque_edges = [
-        edge for edge in graph.calls if set(edge.targets) & closed_producers
+        edge
+        for edge in graph.calls
+        if set(edge.targets) & closed_producers
+        or (
+            edge.expression == "object.__new__"
+            and any(
+                set(argument) & opaque_symbols
+                for argument in edge.argument_producers
+            )
+        )
     ]
     constructions.extend(EvidenceSite(e.path, e.line, e.caller.lexical, e.caller.name) for e in opaque_edges)
     function_owners = {
@@ -1012,7 +1050,7 @@ def audit_law_of_one(
             target.path.resolve() == type_locations[runtime_type][0]
             and target.line == type_locations[runtime_type][1]
             for edge in opaque_edges
-            for target in edge.targets
+            for target in edge_value_producers(edge)
         )
     )
     unaudited_closed_types = tuple(
@@ -1039,7 +1077,7 @@ def audit_law_of_one(
           for symbol in audited_opaque_symbols),
         *(EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
           for edge in opaque_edges
-          if set(edge.targets) & audited_opaque_symbols),
+          if edge_value_producers(edge) & audited_opaque_symbols),
         *(EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.name)
           for binding in opaque_bindings
           if set(binding.targets) & audited_opaque_symbols),
@@ -1062,7 +1100,7 @@ def audit_law_of_one(
     audited_capabilities = ordered_sites({
         *(EvidenceSite(edge.path, edge.line, edge.caller.lexical, "construct")
           for edge in opaque_edges
-          if set(edge.targets) & audited_opaque_symbols),
+          if edge_value_producers(edge) & audited_opaque_symbols),
         *(EvidenceSite(binding.path, binding.line, binding.owner.lexical, binding.kind)
           for binding in opaque_bindings
           if set(binding.targets) & audited_opaque_symbols),
