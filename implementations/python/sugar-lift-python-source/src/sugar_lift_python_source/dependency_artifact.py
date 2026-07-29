@@ -844,9 +844,8 @@ def resolve_import_binding(
     base = module_name.split(".")
     bound = list(bound_path)
     if bound:
-        member_path = list(authenticated_use.use.get("exportedMemberPath") or ())
-        expected = base + bound + member_path
-        if requested != expected or len(bound) != 1:
+        binding_prefix = base + bound
+        if len(bound) != 1:
             return _gap(
                 "target-outside-binding",
                 binding_cid,
@@ -854,9 +853,24 @@ def resolve_import_binding(
                 module_name,
                 target_symbol,
             )
-        if member_path:
-            nested_module = ".".join(base + bound)
-            if len(member_path) != 1 or nested_module not in graph.modules:
+        if requested == binding_prefix:
+            exported_name = bound[0]
+        else:
+            suffix = requested[len(binding_prefix) :]
+            nested_module = ".".join(binding_prefix)
+            demand_kind = authenticated_use.demand.get("kind")
+            if (
+                requested[: len(binding_prefix)] != binding_prefix
+                or len(suffix) != 1
+                or nested_module not in graph.modules
+                or (
+                    demand_kind == "import-value-use-demand"
+                    and list(
+                        authenticated_use.use.get("exportedMemberPath") or ()
+                    )
+                    != suffix
+                )
+            ):
                 return _gap(
                     "target-outside-binding",
                     binding_cid,
@@ -865,9 +879,7 @@ def resolve_import_binding(
                     target_symbol,
                 )
             module_name = nested_module
-            exported_name = member_path[0]
-        else:
-            exported_name = bound[0]
+            exported_name = suffix[0]
     elif requested[: len(base)] == base and len(requested) == len(base) + 1:
         exported_name = requested[-1]
     else:
