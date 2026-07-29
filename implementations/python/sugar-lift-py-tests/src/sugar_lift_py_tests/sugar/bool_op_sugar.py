@@ -200,14 +200,33 @@ class BoolOpSugar(ConstructedTermSugar):
                 rhs_face, stop_face = partition(
                     ("BoolOpSugar", str(self.site), index, self.op_kind)
                 )
-                rhs = outcome_to_exitset(reduce_from(index + 1)).guarded(
-                    rhs_guard, rhs_face
-                )
                 stopped = ExitSet.completed(value, complement_guard(rhs_guard)).guarded(
                     true_guard(), stop_face
                 )
+                rhs_outcome = reduce_from(index + 1)
+                from sugar_lift_py_tests.caller_parameter_contract import (
+                    NativeOperationExitCarrierV1,
+                )
+
+                if isinstance(rhs_outcome, NativeOperationExitCarrierV1):
+                    return rhs_outcome.short_circuit(
+                        continuing_guard=rhs_guard,
+                        stopped=stopped,
+                        continuing_face=rhs_face,
+                        stopped_face=stop_face,
+                    )
+                rhs = outcome_to_exitset(rhs_outcome).guarded(rhs_guard, rhs_face)
                 return rhs.union(stopped)
 
-            return factored_operand(operand.desugar(ctx)).and_then(project_truth)
+            projected_operand = factored_operand(operand.desugar(ctx))
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            if isinstance(projected_operand, ExitSet):
+                return NativeOperationExitCarrierV1.compose_prefix(
+                    projected_operand, project_truth
+                )
+            return projected_operand.and_then(project_truth)
 
         return reduce_from(0)
