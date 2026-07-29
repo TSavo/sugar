@@ -575,6 +575,9 @@ class TreeConstructionContextV1:
     # CID so repeated frame/class publication transports object identity rather
     # than reminting an equivalent receipt at an occupied SourceUnit seat.
     source_import_value_receipts: dict = field(default_factory=dict)
+    # Exact module-seat/use-occurrence transport shared by parser-owned units
+    # in this construction only. Never global and never source-CID-only.
+    source_import_value_receipts_by_site: dict = field(default_factory=dict)
     # When projecting an authenticated definition into a call frame, dual-mode
     # factory bodies may contain With sites only on non-manager return paths
     # (e.g. pytest.raises function form). Soft projection does not require
