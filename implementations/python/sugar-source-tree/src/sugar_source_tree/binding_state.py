@@ -1216,7 +1216,16 @@ def _cv2_leaf(value: object) -> Any:
                     "method": "BinaryOperator.project_inplace",
                 }
             }
+    from sugar_source_tree.backend import _validated_construction_event_receipt_cid
     from sugar_source_tree.nodes import Node, TargetPatternV1
+
+    construction_event_receipt_cid = _validated_construction_event_receipt_cid(
+        value
+    )
+    if construction_event_receipt_cid is not None:
+        return {
+            "backendConstructionEventReceiptCid": construction_event_receipt_cid
+        }
 
     if type(value) is TargetPatternV1:
         receipt = value.receipt
@@ -1360,6 +1369,14 @@ def constructed_value_cid_v2(value: object) -> str:
     A value reached while it is still being expanded is a CYCLE: a typed gap,
     loudly, never a truncation or a placeholder.
     """
+    from sugar_source_tree.backend import _validated_construction_event_receipt_cid
+
+    construction_event_receipt_cid = _validated_construction_event_receipt_cid(
+        value
+    )
+    if construction_event_receipt_cid is not None:
+        return construction_event_receipt_cid
+
     from .construction_cache import (
         constructed_value_cid_v2_for,
         remember_constructed_value_cid_v2,

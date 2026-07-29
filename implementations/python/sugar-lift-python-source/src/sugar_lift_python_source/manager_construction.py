@@ -586,7 +586,6 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         reduce_block_to_exitset,
     )
     from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-    from sugar_source_tree.backend import materialize
     from sugar_source_tree.binding_state import (
         ConstructionTestimonyReporterV1,
         SubstitutionTraceBuilderV1,
@@ -610,15 +609,13 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     )
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
+        reporter=producer_reporter,
         construction_context=construction_context,
-    )
-    producer_root = materialize(
-        source_file.unit, source_file.root.ref, producer_reporter
     )
     locus_key = (locus.lineno, locus.col_offset)
     prefix = tuple(
         statement
-        for statement in producer_root.body
+        for statement in source_file.root.body
         if (
             statement.line_col_span().start_line,
             statement.line_col_span().start_col,
