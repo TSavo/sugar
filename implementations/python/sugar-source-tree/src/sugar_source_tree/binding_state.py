@@ -1056,6 +1056,7 @@ def _cv2_leaf(value: object) -> Any:
     enum type and member tags and never recurses into ``.value``.
     """
     from sugar_source_tree.fragment import SourceFragment, SourceMemento
+    from types import MethodType
 
     if value is None:
         return {"null": None}
@@ -1084,6 +1085,30 @@ def _cv2_leaf(value: object) -> Any:
         return {"sourceFragment": value.seal().to_dict()}
     if isinstance(value, SourceMemento):
         return {"sourceMemento": value.to_dict()}
+    if type(value) is MethodType:
+        from sugar_source_tree.operators import (
+            AUGASSIGN_BINARY_OPERATOR_CLASSES,
+            BinaryOperator,
+        )
+
+        operator = value.__self__
+        operator_type = type(operator)
+        if (
+            operator_type in AUGASSIGN_BINARY_OPERATOR_CLASSES
+            and operator is operator_type.instance()
+            and value.__func__ is BinaryOperator.project_inplace
+        ):
+            return {
+                "sourceOperatorMethod": {
+                    "operatorType": (
+                        f"{operator_type.__module__}.{operator_type.__qualname__}"
+                    ),
+                    "kind": operator.kind,
+                    "symbol": operator.symbol,
+                    "inplaceOperator": operator.inplace_operator,
+                    "method": "BinaryOperator.project_inplace",
+                }
+            }
     from sugar_source_tree.nodes import Node
 
     if isinstance(value, Node):
