@@ -133,6 +133,7 @@ class BoundSourceCallActualsV1:
     actuals: tuple
     formal_coordinates: tuple[BindingCoordinateV1, ...]
     native_formal_coordinates: tuple = ()
+    projected_pairs: tuple[BoundFormalActualV1, ...] = ()
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
@@ -142,6 +143,9 @@ class BoundSourceCallActualsV1:
         ):
             raise SourceCallBindingGap("bound actual coordinate arity mismatch")
         _reauthenticate_binding_coordinates(self.formal_coordinates)
+        _reauthenticate_binding_coordinates(
+            tuple(pair.coordinate for pair in self.projected_pairs)
+        )
         _reauthenticate_native_coordinates(self.native_formal_coordinates)
 
     def __eq__(self, other: object) -> bool:
@@ -150,6 +154,7 @@ class BoundSourceCallActualsV1:
                 self.actuals == other.actuals
                 and self.formal_coordinates == other.formal_coordinates
                 and self.native_formal_coordinates == other.native_formal_coordinates
+                and self.projected_pairs == other.projected_pairs
             )
         return NotImplemented
 
@@ -318,6 +323,7 @@ class SourceVisibleCallFrameV1:
                 raise SourceCallBindingGap("duplicate keyword actual")
             named[key] = value
         bound = []
+        projected_pairs = []
         for index, (name, kind, default) in enumerate(
             zip(
                 self.parameters,
@@ -327,7 +333,15 @@ class SourceVisibleCallFrameV1:
             )
         ):
             if kind == "vararg":
-                bound.append(TupleValue(tuple(remaining)))
+                values = tuple(remaining)
+                bound.append(TupleValue(values))
+                projected_pairs.extend(
+                    BoundFormalActualV1(
+                        self.formal_coordinates[index].project("variadic", ordinal),
+                        value,
+                    )
+                    for ordinal, value in enumerate(values)
+                )
                 remaining.clear()
                 continue
             if kind == "kwarg":
@@ -365,6 +379,7 @@ class SourceVisibleCallFrameV1:
             tuple(bound),
             self.formal_coordinates,
             self.native_operation_formal_coordinates,
+            tuple(projected_pairs),
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:

@@ -394,6 +394,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 from sugar_lift_py_tests.generator_construction import (
                     FormalFloorBindingV1,
                     GeneratorConstructionV1,
+                    ProjectedFormalFloorBindingV1,
                 )
 
                 # Binder boundary: pair each formal coordinate with the exact
@@ -415,6 +416,10 @@ class CallSiteSugar(ConstructedTermSugar):
                         binding_state=source_call_frame.runtime_entries,
                         steps=source_call_frame.generator_steps,
                         formal_floor_bindings=formal_floor_bindings,
+                        projected_formal_floor_bindings=tuple(
+                            ProjectedFormalFloorBindingV1(pair.coordinate, pair.actual)
+                            for pair in bound_source_actuals.projected_pairs
+                        ),
                         reduction_context=ctx,
                     )
                 )

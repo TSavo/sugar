@@ -54,6 +54,21 @@ class FormalFloorBindingV1:
 
 
 @dataclass(frozen=True)
+class ProjectedFormalFloorBindingV1:
+    coordinate: object
+    floor_value: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.floor.floor_value import FloorValue
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        if not isinstance(self.coordinate, BindingCoordinateV1):
+            raise FormalFloorBindingGap("projected formal requires BindingCoordinateV1")
+        if not isinstance(self.floor_value, FloorValue):
+            raise FormalFloorBindingGap("projected formal floor must be FloorValue")
+
+
+@dataclass(frozen=True)
 class _BinderOnlyReduceCtx:
     """Context-free test shell: temporal is the only field that exists.
 
@@ -885,6 +900,9 @@ class GeneratorConstructionV1:
     formal_floor_bindings: tuple[FormalFloorBindingV1, ...] = field(
         default=(), compare=False, repr=False
     )
+    projected_formal_floor_bindings: tuple[ProjectedFormalFloorBindingV1, ...] = field(
+        default=(), compare=False, repr=False
+    )
     # Caller reduction context preserved from CallSiteSugar.desugar; guard
     # evaluation extends its temporal rather than fabricating a temporal-only
     # substitute context.
@@ -899,6 +917,7 @@ class GeneratorConstructionV1:
         binding_state: tuple[object, ...],
         steps: tuple[GeneratorStepV1, ...],
         formal_floor_bindings: tuple[FormalFloorBindingV1, ...] = (),
+        projected_formal_floor_bindings: tuple[ProjectedFormalFloorBindingV1, ...] = (),
         reduction_context: object | None = None,
     ) -> "GeneratorConstructionV1":
         from sugar_source_tree.binding_state import (
@@ -911,6 +930,7 @@ class GeneratorConstructionV1:
         # a delayed BindingStateWireGap on a "successfully" sealed state.
         binding_state = seal_generator_binding_state_v1(binding_state)
         formal_floor_bindings = tuple(formal_floor_bindings)
+        projected_formal_floor_bindings = tuple(projected_formal_floor_bindings)
         # Roster law: every sealed formal BindingEntryV1 has exactly one
         # FormalFloorBindingV1 at the same coordinate CID, and no foreign
         # coordinates are admitted.  Unrelated coordinate + arbitrary object
@@ -931,6 +951,30 @@ class GeneratorConstructionV1:
                 f"formal roster; floors={sorted(floor_cids)!r} "
                 f"sealed={sorted(sealed_formal_cids)!r}"
             )
+        roots = tuple(
+            entry.coordinate
+            for entry in binding_state
+            if isinstance(entry, BindingEntryV1)
+        )
+        projected_cids = []
+        for projected in projected_formal_floor_bindings:
+            child = projected.coordinate
+            matching = tuple(
+                root
+                for root in roots
+                if child.scope_owner_cid == root.scope_owner_cid
+                and child.binding_site == root.binding_site
+                and child.projection_path[:-2] == root.projection_path
+                and child.projection_path[-2] == "variadic"
+                and isinstance(child.projection_path[-1], int)
+            )
+            if len(matching) != 1:
+                raise FormalFloorBindingGap(
+                    "projected formal coordinate is not an authenticated variadic child"
+                )
+            projected_cids.append(child.cid)
+        if len(projected_cids) != len(set(projected_cids)):
+            raise FormalFloorBindingGap("projected formal coordinates must be unique")
         if reduction_context is not None and not callable(
             getattr(reduction_context, "with_temporal", None)
         ):
@@ -948,6 +992,7 @@ class GeneratorConstructionV1:
                 "formalFloorCoordinateCids": [
                     item.coordinate_cid for item in formal_floor_bindings
                 ],
+                "projectedFormalFloorCoordinateCids": projected_cids,
             }
         )
         return cls(
@@ -957,6 +1002,7 @@ class GeneratorConstructionV1:
             steps=tuple(steps),
             instance_coordinate=instance_coordinate,
             formal_floor_bindings=formal_floor_bindings,
+            projected_formal_floor_bindings=projected_formal_floor_bindings,
             reduction_context=reduction_context,
         )
 
@@ -1578,6 +1624,8 @@ class GeneratorConstructionV1:
             temporal = temporal.bind_value(
                 binding.coordinate_cid, binding.floor_value
             )
+        for binding in self.projected_formal_floor_bindings:
+            temporal = temporal.bind_value(binding.coordinate.cid, binding.floor_value)
         for item in self.binding_state:
             if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
                 temporal = temporal.bind_value(item.name, item.value)
