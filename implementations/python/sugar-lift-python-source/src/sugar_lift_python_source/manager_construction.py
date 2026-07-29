@@ -336,6 +336,17 @@ class _ModuleClassDefinitionBindingSugar:
                     )
                 )
             ):
+                from sugar_lift_py_tests.floor import CallSiteValue
+
+                if (
+                    type(callable_floor) is CallSiteValue
+                    and callable_floor.body is not None
+                    and callable_floor.source_call_frame_cid is not None
+                ):
+                    callable_floor = callable_floor.force_floor(
+                        ctx,
+                        owner="module authenticated decorator factory return",
+                    )
                 before = current
                 applied = CallableApplication(
                     (before,),
@@ -379,7 +390,91 @@ class _ModuleClassDefinitionBindingSugar:
         return outcome.and_then(bind)
 
 
-def _module_prefix_outcome(module, locus):
+def _enroll_imported_decorator_frames(
+    *, module, definition, context, session, dependency_graphs
+) -> None:
+    """Seat exact imported Attribute decorator factories before Sugar caching."""
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.panic import BackendDefect
+
+    decorator_receipts, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    receipts_by_span = {}
+    for receipt in decorator_receipts:
+        receipt_span = (
+            receipt.use["useSite"]["startLine"],
+            receipt.use["useSite"]["startCol"],
+            receipt.use["useSite"]["endLine"],
+            receipt.use["useSite"]["endCol"],
+        )
+        if receipt_span in receipts_by_span:
+            raise BackendDefect(
+                blame=definition.fragment,
+                owner="manager_construction imported decorator enrollment",
+                observed="duplicate authenticated call receipt span",
+                requested="one exact call receipt per decorator occurrence",
+                fix="repair lexical call receipt enrollment uniqueness",
+            )
+        receipts_by_span[receipt_span] = receipt
+    for decorator in definition.decorators:
+        if not isinstance(decorator, Call) or not isinstance(
+            decorator.func, Attribute
+        ):
+            continue
+        span = decorator.line_col_span()
+        receipt = receipts_by_span.get(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if receipt is None:
+            continue
+        receipt.revalidate()
+        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+        graph = dependency_graphs.get(top_level)
+        if graph is None:
+            from .dependency_artifact import authenticate_dependency_top_level
+
+            graph = authenticate_dependency_top_level(top_level)
+            dependency_graphs[top_level] = graph
+        resolved_decorator = resolve_import_binding(
+            receipt, graph=graph, session=session
+        )
+        if not isinstance(resolved_decorator, ResolvedPythonObjectV1):
+            continue
+        projected_decorator = resolve_source_visible_frame(
+            resolved_decorator, graph=graph, session=session
+        )
+        if isinstance(projected_decorator, ManagerConstructionGapV1):
+            continue
+        decorator_frame, decorator_target = projected_decorator
+        if not isinstance(decorator_target, FunctionDef):
+            continue
+        if any(keyword.arg is None for keyword in decorator.keywords):
+            raise SourceCallBindingGap(
+                "decorator spread keyword requires typed variadic projection"
+            )
+        try:
+            decorator_frame = decorator_frame.bind_node_actuals(
+                decorator.args,
+                tuple(
+                    (keyword.arg, keyword.value)
+                    for keyword in decorator.keywords
+                    if keyword.arg is not None
+                ),
+            )
+        except SourceCallBindingGap:
+            continue
+        _install_source_call_frame(context, decorator, decorator_frame)
+
+
+def _module_prefix_outcome(module, locus, *, graph=None, session=None):
     """Execute the authenticated module prefix through its exact definitions."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
@@ -431,6 +526,27 @@ def _module_prefix_outcome(module, locus):
         definition.unit.construction_context.source_class_bases[
             definition.fragment.seal().cid
         ] = tuple(bases)
+
+    dependency_graphs = {}
+    if graph is not None:
+        session = session_or_new(session)
+        dependency_graphs[module.module_name.split(".", 1)[0]] = graph
+        for definition in prefix_classes:
+            _seat_import_value_use_receipts(
+                source_file=source_file,
+                module=module,
+                target=definition,
+                session=session,
+                context=construction_context,
+                dependency_graphs=dependency_graphs,
+            )
+            _enroll_imported_decorator_frames(
+                module=module,
+                definition=definition,
+                context=construction_context,
+                session=session,
+                dependency_graphs=dependency_graphs,
+            )
 
     sugars = tuple(
         (
@@ -2172,86 +2288,14 @@ def _construct_reachable_decorated_class_bindings(
             dependency_graphs=dependency_graphs,
         )
 
-    def enroll_imported_decorator_frames(definition: ClassDef) -> None:
-        from pathlib import Path
-        from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
-
-        decorator_receipts, _ = authenticated_import_use_receipts(
-            Path("."), Path(module.source_seat), module.source, module.source_cid,
-            module_identities={},
-        )
-        receipts_by_span = {}
-        for receipt in decorator_receipts:
-            receipt_span = (
-                receipt.use["useSite"]["startLine"],
-                receipt.use["useSite"]["startCol"],
-                receipt.use["useSite"]["endLine"],
-                receipt.use["useSite"]["endCol"],
-            )
-            if receipt_span in receipts_by_span:
-                from sugar_source_tree.panic import BackendDefect
-
-                raise BackendDefect(
-                    blame=definition.fragment,
-                    owner="manager_construction imported decorator enrollment",
-                    observed="duplicate authenticated call receipt span",
-                    requested="one exact call receipt per decorator occurrence",
-                    fix="repair lexical call receipt enrollment uniqueness",
-                )
-            receipts_by_span[receipt_span] = receipt
-        for decorator in definition.decorators:
-            if not isinstance(decorator, Call) or not isinstance(
-                decorator.func, Attribute
-            ):
-                continue
-            span = decorator.line_col_span()
-            receipt = receipts_by_span.get(
-                (span.start_line, span.start_col, span.end_line, span.end_col)
-            )
-            if receipt is None:
-                continue
-            receipt.revalidate()
-            top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-            graph = dependency_graphs.get(top_level)
-            if graph is None:
-                from .dependency_artifact import authenticate_dependency_top_level
-
-                graph = authenticate_dependency_top_level(top_level)
-                dependency_graphs[top_level] = graph
-            resolved_decorator = resolve_import_binding(
-                receipt, graph=graph, session=session
-            )
-            if not isinstance(resolved_decorator, ResolvedPythonObjectV1):
-                continue
-            projected_decorator = resolve_source_visible_frame(
-                resolved_decorator, graph=graph, session=session
-            )
-            if isinstance(projected_decorator, ManagerConstructionGapV1):
-                continue
-            decorator_frame, decorator_target = projected_decorator
-            if not isinstance(decorator_target, FunctionDef):
-                continue
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-            if any(keyword.arg is None for keyword in decorator.keywords):
-                raise SourceCallBindingGap(
-                    "decorator spread keyword requires typed variadic projection"
-                )
-            try:
-                decorator_frame = decorator_frame.bind_node_actuals(
-                    decorator.args,
-                    tuple(
-                        (keyword.arg, keyword.value)
-                        for keyword in decorator.keywords
-                        if keyword.arg is not None
-                    ),
-                )
-            except SourceCallBindingGap:
-                continue
-            _install_source_call_frame(context, decorator, decorator_frame)
-
     for definition in receipt_owned_classes:
-        enroll_imported_decorator_frames(definition)
+        _enroll_imported_decorator_frames(
+            module=module,
+            definition=definition,
+            context=context,
+            session=session,
+            dependency_graphs=dependency_graphs,
+        )
     for definition in module_definitions:
         if definition not in class_dependencies:
             continue
