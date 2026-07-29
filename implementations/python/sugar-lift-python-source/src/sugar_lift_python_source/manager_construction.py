@@ -1216,8 +1216,8 @@ def _resolve_source_visible_frame_uncached(
             module.source_cid,
             module_identities={},
         )
-        value_receipts = context.source_import_value_receipts.setdefault(
-            module.source_cid, tuple(value_receipts)
+        value_receipts = _retain_import_value_receipt_roster(
+            context, module, tuple(value_receipts)
         )
     else:
         import_receipts = ()
@@ -2299,7 +2299,8 @@ def _seat_import_value_use_receipts(
             fix="refuse dual-door repair; re-mint module via path_source",
         )
     # No ValueError swallow: authenticated mint refuses tamper/mismatch loud.
-    receipts = context.source_import_value_receipts.get(module.source_cid)
+    roster_key = (module.module_name, module.source_seat, module.source_cid)
+    receipts = context.source_import_value_receipts.get(roster_key)
     if receipts is None:
         minted, _ = authenticated_import_value_use_receipts(
             Path("."),
@@ -2308,8 +2309,9 @@ def _seat_import_value_use_receipts(
             module.source_cid,
             module_identities={},
         )
-        receipts = tuple(minted)
-        context.source_import_value_receipts[module.source_cid] = receipts
+        receipts = _retain_import_value_receipt_roster(
+            context, module, tuple(minted)
+        )
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
     call_receipts, _ = authenticated_import_use_receipts(
@@ -2517,6 +2519,93 @@ def _seat_import_value_use_receipts(
         unit.seat_import_value_use_resolution(
             span_key, imported, source_cid=module.source_cid
         )
+
+
+def _retain_import_value_receipt_roster(
+    context: TreeConstructionContextV1,
+    module,
+    receipts: tuple,
+) -> tuple:
+    """Retain one producer roster under its exact authenticated module seat."""
+    from sugar_lift_py_tests.import_binding import module_name_for_path
+    from sugar_source_tree.panic import BackendDefect
+
+    key = (module.module_name, module.source_seat, module.source_cid)
+    seen = set()
+    identities = []
+    for receipt in receipts:
+        receipt.revalidate()
+        receipt_module = module_name_for_path(receipt.root, receipt.path)
+        try:
+            receipt_seat = receipt.path.relative_to(receipt.root).as_posix()
+        except ValueError:
+            receipt_seat = ""
+        if (
+            receipt.source_cid != module.source_cid
+            or receipt.source != module.source
+            or receipt_module != module.module_name
+            or receipt_seat != module.source_seat
+        ):
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import value receipt roster",
+                observed="receipt has foreign authenticated module identity",
+                requested="same module name, source seat, source CID, and bytes",
+                fix="retain the producer roster only under its own module identity",
+            )
+        site = receipt.use["useSite"]
+        row_key = (
+            site["startLine"],
+            site["startCol"],
+            site["endLine"],
+            site["endCol"],
+        )
+        if row_key in seen:
+            raise BackendDefect(
+                blame=row_key,
+                owner="manager_construction import value receipt roster",
+                observed="duplicate exact value-use row",
+                requested="one producer receipt per exact occurrence",
+                fix="repair lexical receipt enrollment before retaining the roster",
+            )
+        seen.add(row_key)
+        identities.append(
+            (
+                row_key,
+                receipt.target_symbol,
+                receipt.import_binding.cid,
+                receipt.use["cid"],
+                tuple(receipt.use["exportedMemberPath"]),
+            )
+        )
+    existing = context.source_import_value_receipts.get(key)
+    if existing is None:
+        context.source_import_value_receipts[key] = receipts
+        return receipts
+    existing_identities = tuple(
+        (
+            (
+                row.use["useSite"]["startLine"],
+                row.use["useSite"]["startCol"],
+                row.use["useSite"]["endLine"],
+                row.use["useSite"]["endCol"],
+            ),
+            row.target_symbol,
+            row.import_binding.cid,
+            row.use["cid"],
+            tuple(row.use["exportedMemberPath"]),
+        )
+        for row in existing
+    )
+    if existing_identities != tuple(identities):
+        raise BackendDefect(
+            blame=module.source_seat,
+            owner="manager_construction import value receipt roster",
+            observed="conflicting exact value-use row identities",
+            requested="byte-identical target/binding/use/member roster",
+            fix="preserve the first producer-owned roster unchanged",
+        )
+    return existing
 
 
 def _install_opaque_call_obligation(
