@@ -260,6 +260,9 @@ def builtin_name_temporal():
         "len", BuiltinSemanticCallable(operation="python.len")
     )
     temporal = temporal.bind_value(
+        "hasattr", BuiltinSemanticCallable(operation="python.hasattr")
+    )
+    temporal = temporal.bind_value(
         "set", BuiltinSemanticCallable(operation="python.set.construct")
     )
     temporal = temporal.bind_value(

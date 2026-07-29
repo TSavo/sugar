@@ -48,6 +48,8 @@ class BuiltinSemanticCallable(FloorValue):
             return self._isinstance(operation)
         if self.operation == "python.len":
             return self._len(operation)
+        if self.operation == "python.hasattr":
+            return self._hasattr(operation)
         if self.operation != "python.issubclass":
             return super().callable_application_with(operation, None)
         if len(operation.arguments) != 2 or operation.keyword_names:
@@ -64,6 +66,38 @@ class BuiltinSemanticCallable(FloorValue):
         subtype = self._resolve_type_operand(subtype, operation.site)
         supertype = self._resolve_type_operand(supertype, operation.site)
         return subtype.test_python_subtype(supertype, operation.site)
+
+    def _hasattr(self, operation):
+        """Retain authenticated ``hasattr`` as an opaque boolean coordinate."""
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import Complete
+
+        if (
+            len(operation.arguments) != 2
+            or operation.keyword_names
+            or type(operation.arguments[1]) is not StringValue
+        ):
+            construction_panic_gap(
+                owner="BuiltinSemanticCallable.python.hasattr",
+                blame=str(operation.site),
+                observed=(
+                    tuple(type(value).__name__ for value in operation.arguments),
+                    operation.keyword_names,
+                ),
+                requested="exact receiver plus concrete string member operand",
+                fix="construct Python hasattr operands exactly or keep it loud",
+            )
+        receiver, member = operation.arguments
+        return Complete(
+            OpaqueOpCallsite(
+                callee="hasattr",
+                arg=receiver,
+                computed=None,
+                extra_args=(member,),
+            )
+        )
 
     def _unhandled_construct(self, operation, name: str):
         """Opaque construct operands stay a dig cue, not a ConstructionPanic.
