@@ -554,7 +554,7 @@ class SourceUnit:
                 )
             elif isinstance(consumer, For):
                 targets = ((consumer.target, ("target",)),)
-            elif isinstance(consumer, (ListComp, SetComp, DictComp)):
+            elif isinstance(consumer, (ListComp, SetComp, DictComp, GeneratorExp)):
                 targets = tuple(
                     (generator.target, ("generators", index, "target"))
                     for index, generator in enumerate(consumer.generators)
@@ -562,10 +562,17 @@ class SourceUnit:
             if not targets:
                 continue
             owned = tuple(
-                self._construct_target_pattern(consumer, target, prefix)
+                pattern
                 for target, prefix in targets
+                if (
+                    pattern := self._construct_target_pattern(
+                        consumer, target, prefix
+                    )
+                )
+                is not None
             )
-            patterns[consumer.ref] = owned
+            if owned:
+                patterns[consumer.ref] = owned
             patterns_by_target.update(
                 (pattern.target_occurrence.ref, pattern) for pattern in owned
             )
@@ -576,7 +583,9 @@ class SourceUnit:
         # Identity keys include spans against the bound module; drop stale rows.
         object.__setattr__(self, "_exception_type_identity_cache", {})
 
-    def _construct_target_pattern(self, consumer, target, prefix) -> TargetPatternV1:
+    def _construct_target_pattern(
+        self, consumer, target, prefix
+    ) -> TargetPatternV1 | None:
         from .binding_state import mint_binding_coordinate_v1
 
         ordered = []
@@ -592,6 +601,11 @@ class SourceUnit:
                 for index, child in enumerate(node.elts):
                     visit(child, (*path, index))
                 return
+            if isinstance(node, (Attribute, Subscript)):
+                # Store leaves carry runtime store obligations; they do not
+                # introduce lexical bindings and therefore own no binding
+                # coordinate in this pattern.
+                return
             raise TargetPatternConstructionGapV1(
                 "unsupported-target-leaf",
                 consumer_occurrence=consumer,
@@ -600,11 +614,7 @@ class SourceUnit:
 
         visit(target, prefix)
         if not ordered:
-            raise TargetPatternConstructionGapV1(
-                "empty-target-pattern",
-                consumer_occurrence=consumer,
-                target_occurrence=target,
-            )
+            return None
         owner_cid = (
             consumer.owned_loop_target.target_cid
             if isinstance(consumer, For) and consumer.owned_loop_target is not None

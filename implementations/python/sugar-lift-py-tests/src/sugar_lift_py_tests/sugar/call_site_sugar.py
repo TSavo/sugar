@@ -92,9 +92,29 @@ class CallSiteSugar(ConstructedTermSugar):
             )
         definition_authority = []
         if self.exception_type_coordinate is not None:
-            definition_authority.append(
-                str_const(self.exception_type_coordinate.cid)
-            )
+            coordinate_cid = getattr(self.exception_type_coordinate, "cid", None)
+            if coordinate_cid is not None:
+                definition_authority.append(str_const(coordinate_cid))
+            else:
+                from sugar_lift_py_tests.ir import (
+                    _ConstBool,
+                    _ConstInt,
+                    _ConstReal,
+                    _ConstStr,
+                    _Ctor,
+                    _Lambda,
+                    _Var,
+                )
+
+                if not isinstance(
+                    self.exception_type_coordinate,
+                    (_Ctor, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Var, _Lambda),
+                ):
+                    raise TypeError(
+                        f"{owner} requires authenticated exception definition "
+                        "coordinate or term"
+                    )
+                definition_authority.append(self.exception_type_coordinate)
         definition_authority.extend(
             str_const(cid) for cid in self.formal_coordinate_cids
         )
