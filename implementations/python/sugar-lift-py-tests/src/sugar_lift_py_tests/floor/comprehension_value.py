@@ -231,10 +231,43 @@ class ComprehensionValue(GuardStableValue):
         return super().multiply(other, site)
 
     def subscript(self, index, site):
-        # A runtime comprehension still has Python collection semantics, but
-        # neither its members nor its cardinality are available at lift time.
-        # Preserve the real lookup as a proof-bearing coordinate; do not invent
-        # an element or silently assume the lookup succeeds.
+        # A producer-authenticated finite comprehension owns its exact ordered
+        # members. Project an integer position directly from that testimony;
+        # never reconstruct a list or fabricate a member. Testimony-absent
+        # comprehensions retain the proof-bearing symbolic lookup below.
+        if self.finite_elements is not None:
+            from sugar_lift_py_tests.floor.term_value import TermValue
+            from sugar_lift_py_tests.outcome import Complete
+
+            if type(index) is TermValue and isinstance(index.value, int):
+                position = index.value
+                length = len(self.finite_elements)
+                if -length <= position < length:
+                    return Complete(self.finite_elements[position])
+                from sugar_lift_py_tests.floor.ground_index_error import (
+                    ground_index_error,
+                )
+
+                return ground_index_error(
+                    owner="ComprehensionValue.subscript",
+                    operation="comprehension subscript",
+                    index=position,
+                    length=length,
+                    site=site,
+                )
+            if index.python_index_protocol() is False:
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
+                )
+
+                return ground_exceptional_exit(
+                    exception_name="TypeError",
+                    site=site,
+                    owner="ComprehensionValue.subscript",
+                )
+            return self.undecided_subscript(
+                index, site, owner="ComprehensionValue.subscript"
+            )
         return self.py_subscript_coordinate(index, site)
 
     def setitem(  # pyright: ignore[reportIncompatibleMethodOverride]
