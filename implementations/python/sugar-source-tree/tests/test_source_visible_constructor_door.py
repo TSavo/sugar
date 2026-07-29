@@ -182,6 +182,19 @@ def test_repeated_initializer_uses_the_last_class_binding() -> None:
     context.source_call_frames[_coordinate(call)] = (
         class_node.source_visible_constructor_frame()
     )
+    initializers = tuple(
+        item
+        for item in class_node.body
+        if isinstance(item, FunctionDef) and item.name == "__init__"
+    )
+    frame = context.source_call_frames[_coordinate(call)]
+
+    assert frame.formal_declaration_sites == (
+        initializers[-1].params[1].fragment.seal().to_dict(),
+    )
+    assert frame.formal_declaration_sites != (
+        initializers[0].params[1].fragment.seal().to_dict(),
+    )
 
     receiver = (
         call.sugar()

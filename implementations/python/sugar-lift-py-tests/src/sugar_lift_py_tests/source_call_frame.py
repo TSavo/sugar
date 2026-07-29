@@ -151,6 +151,8 @@ class SourceVisibleCallFrameV1:
     definition_fragment_cid: str
     parameters: tuple[str, ...]
     formal_coordinates: tuple[BindingCoordinateV1, ...]
+    formal_declaration_sites: tuple[dict, ...]
+    formal_projection_paths: tuple[tuple[str | int, ...], ...]
     parameter_kinds: tuple[str, ...]
     default_sugars: tuple[object | None, ...] = field(compare=False)
     default_nodes: tuple[object | None, ...] = field(compare=False)
@@ -176,6 +178,10 @@ class SourceVisibleCallFrameV1:
             "definitionFragmentCid": self.definition_fragment_cid,
             "parameters": list(self.parameters),
             "formalCoordinates": [item.wire() for item in self.formal_coordinates],
+            "formalDeclarationSites": list(self.formal_declaration_sites),
+            "formalProjectionPaths": [
+                list(path) for path in self.formal_projection_paths
+            ],
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
@@ -269,6 +275,17 @@ class SourceVisibleCallFrameV1:
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:
+        owner = self.owner
+        owner_fragment = getattr(owner, "fragment", None)
+        if owner_fragment is None or self.definition_site != _source_coordinate(owner):
+            raise SourceCallBindingGap(
+                "source call frame has a foreign definition site"
+            )
+        if owner_fragment.seal().cid != self.definition_fragment_cid:
+            raise SourceCallBindingGap(
+                "source call frame has a foreign definition fragment"
+            )
+
         coordinates = self.formal_coordinates
         if len(coordinates) != len(self.parameters):
             raise SourceCallBindingGap("formal coordinate roster is missing an entry")
@@ -276,9 +293,11 @@ class SourceVisibleCallFrameV1:
         cids = tuple(coordinate.cid for coordinate in coordinates)
         if len(set(cids)) != len(cids):
             raise SourceCallBindingGap("formal coordinate roster contains a duplicate")
-        if any(
-            coordinate.projection_path != ("formal", index)
-            for index, coordinate in enumerate(coordinates)
+        if len(self.formal_projection_paths) != len(coordinates) or any(
+            coordinate.projection_path != expected
+            for coordinate, expected in zip(
+                coordinates, self.formal_projection_paths, strict=True
+            )
         ):
             raise SourceCallBindingGap("formal coordinate roster is reordered")
         if any(
@@ -288,11 +307,11 @@ class SourceVisibleCallFrameV1:
             raise SourceCallBindingGap(
                 "formal coordinate roster has a foreign scope owner"
             )
-        owner_parameters = tuple(self.owner.params)
-        if len(owner_parameters) != len(coordinates) or any(
-            coordinate.binding_site != parameter.fragment.seal().to_dict()
-            for coordinate, parameter in zip(
-                coordinates, owner_parameters, strict=True
+        declaration_sites = self.formal_declaration_sites
+        if len(declaration_sites) != len(coordinates) or any(
+            coordinate.binding_site != declaration_site
+            for coordinate, declaration_site in zip(
+                coordinates, declaration_sites, strict=True
             )
         ):
             raise SourceCallBindingGap(
@@ -302,6 +321,7 @@ class SourceVisibleCallFrameV1:
         native = self.native_operation_formal_coordinates
         if not native:
             return
+        owner_parameters = tuple(self.owner.params)
         _reauthenticate_native_coordinates(native)
         native_cids = tuple(coordinate.coordinate_cid for coordinate in native)
         expected_kinds = {

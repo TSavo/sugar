@@ -2774,6 +2774,12 @@ class FunctionDef(Statement):
             definition_fragment_cid=self.fragment.seal().cid,
             parameters=parameters,
             formal_coordinates=coordinates,
+            formal_declaration_sites=tuple(
+                param.fragment.seal().to_dict() for param in self.params
+            ),
+            formal_projection_paths=tuple(
+                ("formal", index) for index, _ in enumerate(self.params)
+            ),
             parameter_kinds=tuple(param.param_kind for param in self.params),
             default_sugars=tuple(
                 param.default.sugar() if param.default is not None else None
@@ -3787,6 +3793,8 @@ class ClassDef(Statement):
                 definition_fragment_cid=owner_cid,
                 parameters=("args",),
                 formal_coordinates=(args_coordinate,),
+                formal_declaration_sites=(self.fragment.seal().to_dict(),),
+                formal_projection_paths=(("inherited-exception-args", 0),),
                 parameter_kinds=("vararg",),
                 default_sugars=(None,),
                 default_nodes=(None,),
@@ -3810,6 +3818,12 @@ class ClassDef(Statement):
             definition_fragment_cid=owner_cid,
             parameters=tuple(param.name for param in params),
             formal_coordinates=coordinates,
+            formal_declaration_sites=tuple(
+                param.fragment.seal().to_dict() for param in params
+            ),
+            formal_projection_paths=tuple(
+                ("formal", index) for index, _ in enumerate(params)
+            ),
             parameter_kinds=tuple(param.param_kind for param in params),
             default_sugars=tuple(
                 param.default.sugar() if param.default is not None else None
@@ -8174,6 +8188,12 @@ class Lambda(Expression):
             definition_fragment_cid=owner_cid,
             parameters=tuple(param.name for param in self.params),
             formal_coordinates=coordinates,
+            formal_declaration_sites=tuple(
+                param.fragment.seal().to_dict() for param in self.params
+            ),
+            formal_projection_paths=tuple(
+                ("formal", index) for index, _ in enumerate(self.params)
+            ),
             parameter_kinds=tuple(param.param_kind for param in self.params),
             default_sugars=tuple(
                 param.default.sugar() if param.default is not None else None
