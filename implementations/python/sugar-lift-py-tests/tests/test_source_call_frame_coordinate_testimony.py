@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.source_call_frame import (
@@ -29,6 +29,53 @@ def _frame(*, name: str = "helper", filename: str = "bound_coordinates.py"):
     return function.source_visible_call_frame().with_native_operation_projection(
         function.formal_coordinates(), function.sugar().desugar(None)
     )
+
+
+def _vararg_frame(*, filename: str = "bound_vararg_coordinates.py"):
+    source = "def helper(*values):\n    return values[0]\n"
+    tree = SourceFile(
+        (source, filename, blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function.source_visible_call_frame()
+
+
+def test_vararg_binder_retains_authenticated_child_coordinate_actuals() -> None:
+    frame = _vararg_frame()
+    first = TermValue(1)
+    second = TermValue(2)
+
+    bound = frame.bind_actuals((first, second), ())
+
+    assert bound.actuals == (TupleValue((first, second)),)
+    assert tuple(pair.coordinate for pair in bound.projected_pairs) == (
+        frame.formal_coordinates[0].project("variadic", 0),
+        frame.formal_coordinates[0].project("variadic", 1),
+    )
+    assert tuple(pair.actual for pair in bound.projected_pairs) == (first, second)
+
+
+@pytest.mark.parametrize("variant", ("wrong-child", "foreign-root"))
+def test_vararg_binder_refuses_cross_wired_child_projection(variant: str) -> None:
+    frame = _vararg_frame()
+    foreign = _vararg_frame(filename="foreign_vararg_coordinates.py")
+    first = TermValue(1)
+    truthful = frame.bind_actuals((first,), ())
+    child = truthful.projected_pairs[0]
+    coordinate = (
+        frame.formal_coordinates[0].project("variadic", 1)
+        if variant == "wrong-child"
+        else foreign.formal_coordinates[0].project("variadic", 0)
+    )
+
+    with pytest.raises(SourceCallBindingGap, match="projected formal coordinate"):
+        BoundSourceCallActualsV1(
+            truthful.actuals,
+            truthful.formal_coordinates,
+            truthful.native_formal_coordinates,
+            (replace(child, coordinate=coordinate),),
+        )
 
 
 def test_binder_returns_ordered_typed_coordinate_testimony() -> None:
