@@ -341,9 +341,14 @@ class CallSiteSugar(ConstructedTermSugar):
                 else ()
             ),
             bound_native_actuals_by_coordinate=(
-                None
-                if native_operation_actuals is None
-                else native_operation_actuals.by_formal_coordinate
+                native_operation_actuals.by_formal_coordinate
+                if native_operation_actuals is not None
+                else (
+                    bound_source_actuals.by_native_formal_coordinate
+                    if bound_source_actuals is not None
+                    and bound_source_actuals.native_formal_coordinates
+                    else None
+                )
             ),
             bound_native_source_actuals=(
                 None
@@ -356,7 +361,10 @@ class CallSiteSugar(ConstructedTermSugar):
             pending = self.source_call_frame.pending_native_operation.discharge(
                 native_operation_actuals.by_formal_coordinate
             )
-            return callsite.project_producer_outcome(pending)
+            return callsite.project_producer_outcome(
+                pending,
+                carrier_actuals=callsite.bound_native_actuals_by_coordinate,
+            )
         if self.formal_function_sugar is not None:
             pending = self.formal_function_sugar.desugar(ctx)
             from sugar_lift_py_tests.caller_parameter_contract import (
@@ -372,38 +380,14 @@ class CallSiteSugar(ConstructedTermSugar):
                     actuals = bound_source_actuals.by_native_formal_coordinate
                 if actuals is not None:
                     pending = pending.discharge(actuals)
-            return callsite.project_producer_outcome(pending)
+            return callsite.project_producer_outcome(
+                pending,
+                carrier_actuals=callsite.bound_native_actuals_by_coordinate,
+            )
         produced = callsite.producer_outcome(
             ctx,
-            carrier_actuals=(
-                native_operation_actuals.by_formal_coordinate
-                if native_operation_actuals is not None
-                else (
-                    {
-                        coordinate.coordinate_cid: actual
-                        for coordinate, actual in zip(
-                            self.native_operation_formal_coordinates,
-                            bound_source_actuals.actuals,
-                            strict=True,
-                        )
-                    }
-                    if self.native_operation_formal_coordinates
-                    and bound_source_actuals is not None
-                    else None
-                )
-            ),
+            carrier_actuals=callsite.bound_native_actuals_by_coordinate,
         )
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        if isinstance(produced, NativeOperationExitCarrierV1):
-            actuals = (
-                None
-                if bound_source_actuals is None
-                else bound_source_actuals.by_native_formal_coordinate
-            )
-            if actuals is not None:
-                produced = produced.discharge(actuals)
         return produced
 
     def _collect_bridged(self, positional: tuple) -> Outcome:
