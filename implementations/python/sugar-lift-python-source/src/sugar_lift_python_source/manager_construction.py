@@ -1661,6 +1661,13 @@ def _resolve_source_visible_frame_uncached(
     dependency_graphs: dict[str, DependencyArtifactGraph] | None,
     session: SourceResolutionSession,
 ) -> tuple[object, Node, object] | ManagerConstructionGapV1:
+    from sugar_source_tree.backend import materialize
+    from sugar_source_tree.binding_state import (
+        ConstructionTestimonyReporterV1,
+        SubstitutionTraceBuilderV1,
+    )
+    from sugar_source_tree.reporter import NULL_REPORTER
+
     # frame_projection: dual-mode factories may nest With only on non-CM
     # branches; soft-require those so call-frame projection can complete.
     context = TreeConstructionContextV1.for_source_call_construction(
@@ -1669,6 +1676,12 @@ def _resolve_source_visible_frame_uncached(
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
+    )
+    producer_reporter = ConstructionTestimonyReporterV1(
+        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+    )
+    producer_root = materialize(
+        source_file.unit, source_file.root.ref, producer_reporter
     )
     from sugar_lift_python_source.value_pins import scan_module_value_pins
     from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
@@ -1695,7 +1708,7 @@ def _resolve_source_visible_frame_uncached(
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
     definitions = tuple(
         item
-        for item in source_file.root.body
+        for item in producer_root.body
         if isinstance(item, (FunctionDef, ClassDef))
     )
     target = next(

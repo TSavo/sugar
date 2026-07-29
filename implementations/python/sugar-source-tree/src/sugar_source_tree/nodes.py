@@ -9805,7 +9805,14 @@ class Call(Expression):
                     )
         if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
             return value
-        return replace(value, expected_definition_ref=definition)
+        source_call_frame = value.source_call_frame
+        if source_call_frame is not None:
+            source_call_frame = replace(source_call_frame, owner=definition)
+        return replace(
+            value,
+            expected_definition_ref=definition,
+            source_call_frame=source_call_frame,
+        )
 
     def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
