@@ -2929,6 +2929,16 @@ class FunctionDef(Statement):
             ),
         )
 
+    def lacks_captured_binding_testimony(self) -> bool:
+        """Whether CPython classifies a closure binding we cannot yet seat."""
+        table = self.unit.function_symtable(
+            self.name, self.line_col_span().start_line
+        )
+        return any(
+            symbol.is_free() or symbol.is_nonlocal()
+            for symbol in table.get_symbols()
+        )
+
     def _source_visible_body(self, scope):
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
@@ -3589,22 +3599,6 @@ class FunctionDef(Statement):
             FunctionUniverseSugar,
         )
 
-        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
-        free_names = tuple(
-            symbol.get_name()
-            for symbol in table.get_symbols()
-            if symbol.is_free() or symbol.is_nonlocal()
-        )
-        if free_names:
-            from .panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="FunctionDef._construct_sugar",
-                blame=self.fragment,
-                observed=f"closure bindings lack producer coordinates: {free_names!r}",
-                requested="captured binding coordinate testimony",
-                fix="enroll producer-owned closure actuals before binary dispatch",
-            )
 
         # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
         # function while it substitutes+constructs, so the engine log's
@@ -9535,9 +9529,14 @@ class Call(Expression):
                     coordinate if lexical_row is not None else None
                 ),
                 expected_source_call_frame_owner=(
-                    lexical_row.definition_occurrence
+                    lexical_row.definition_occurrence_identity
                     if lexical_row is not None
                     else None
+                ),
+                missing_closure_binding_testimony=(
+                    function_definition.lacks_captured_binding_testimony()
+                    if lexical_row is not None
+                    else False
                 ),
             )
         if isinstance(self.func, Name):

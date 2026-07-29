@@ -44,6 +44,14 @@ class CallSiteSugar(ConstructedTermSugar):
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
+    source_call_frame_table: Any = dataclass_field(default=None, compare=False)
+    source_call_frame_coordinate: Any = dataclass_field(default=None, compare=False)
+    expected_source_call_frame_owner: Any = dataclass_field(
+        default=None, compare=False
+    )
+    missing_closure_binding_testimony: bool = dataclass_field(
+        default=False, compare=False
+    )
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
     expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
@@ -149,6 +157,25 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="authenticated lexical definition owner",
                     fix="retain the seated frame or keep the call loud",
                 )
+            owner = self.source_call_frame.owner
+            table = self.source_call_frame.owner.unit.function_symtable(
+                owner.name, owner.line_col_span().start_line
+            )
+            free_names = tuple(
+                symbol.get_name()
+                for symbol in table.get_symbols()
+                if symbol.is_free() or symbol.is_nonlocal()
+            )
+            if free_names and not getattr(
+                self.source_call_frame, "captured_binding_coordinates", ()
+            ):
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    blame=self.site,
+                    observed=f"closure bindings lack producer coordinates: {free_names!r}",
+                    requested="captured binding coordinate testimony",
+                    fix="enroll producer-owned closure actuals before body reduction",
+                )
         if self.contract_resolution_gap is not None:
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
@@ -234,29 +261,58 @@ class CallSiteSugar(ConstructedTermSugar):
         source_frame_cid = None
         native_operation_actuals = None
         bound_source_actuals = None
-        if self.source_call_frame is not None:
-            from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+        source_call_frame = self.source_call_frame
+        if self.source_call_frame_table is not None:
             from sugar_source_tree.panic import SugarNotWritten
 
-            if not isinstance(self.source_call_frame, SourceVisibleCallFrameV1):
+            source_call_frame = self.source_call_frame_table.get(
+                self.source_call_frame_coordinate
+            )
+            if (
+                source_call_frame is None
+                or source_call_frame.owner.ref
+                is not self.expected_source_call_frame_owner
+            ):
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,
-                    observed=type(self.source_call_frame).__name__,
+                    observed="seated source frame has foreign lexical owner",
+                    requested="the lexical row's exact definition-owned source frame",
+                    fix="retain the authenticated frame at the exact call coordinate or keep loud",
+                )
+        if self.missing_closure_binding_testimony:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="CallSiteSugar.desugar",
+                blame=self.site,
+                observed="free or nonlocal source binding has no captured coordinate testimony",
+                requested="producer-owned captured binding coordinates for every closure read",
+                fix="construct closure bindings at the lexical frame boundary or keep loud",
+            )
+        if source_call_frame is not None:
+            from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if not isinstance(source_call_frame, SourceVisibleCallFrameV1):
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    blame=self.site,
+                    observed=type(source_call_frame).__name__,
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
                 )
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
-                if self.source_call_frame.pending_native_operation is None:
-                    bound_source_actuals = self.source_call_frame.bind_actuals(
+                if source_call_frame.pending_native_operation is None:
+                    bound_source_actuals = source_call_frame.bind_actuals(
                         positional, kw_values, ctx
                     )
                     positional = bound_source_actuals.actuals
                 else:
                     native_operation_actuals = (
-                        self.source_call_frame.bind_native_operation_actuals(
+                        source_call_frame.bind_native_operation_actuals(
                             positional, kw_values, ctx
                         )
                     )
@@ -277,8 +333,8 @@ class CallSiteSugar(ConstructedTermSugar):
             # Class.__init__). force_floor curries THIS frame's formal cids
             # with FloorValue actuals; mismatched outer formal refs stay
             # unspecialized and abort source-derived manager construction.
-            source_body = self.source_call_frame.body
-            owner = getattr(self.source_call_frame, "owner", None)
+            source_body = source_call_frame.body
+            owner = getattr(source_call_frame, "owner", None)
             if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
                 source_body = owner.source_visible_constructor_frame().body
             elif owner is not None and hasattr(owner, "source_visible_call_frame"):
@@ -288,7 +344,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 # BindingCoordinateRefs match this frame's formal coordinates,
                 # not the caller's inlined formal nodes.
                 declaration_frame = owner.source_visible_call_frame()
-                if declaration_frame.frame_cid != self.source_call_frame.frame_cid:
+                if declaration_frame.frame_cid != source_call_frame.frame_cid:
                     from sugar_source_tree.panic import BackendDefect
 
                     raise BackendDefect(
@@ -299,12 +355,12 @@ class CallSiteSugar(ConstructedTermSugar):
                         fix="retain the callee declaration frame across node binding",
                     )
                 source_body = declaration_frame.body
-            source_frame_cid = self.source_call_frame.frame_cid
+            source_frame_cid = source_call_frame.frame_cid
             # bind_actuals returned the complete formal-ordered tuple,
             # including keyword/default actuals. They must not be appended a
             # second time below.
             kw_values = ()
-            if self.source_call_frame.generator_steps is not None:
+            if source_call_frame.generator_steps is not None:
                 from sugar_lift_py_tests.generator_construction import (
                     FormalFloorBindingV1,
                     GeneratorConstructionV1,
@@ -317,7 +373,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 formal_floor_bindings = tuple(
                     FormalFloorBindingV1(coordinate.cid, floor)
                     for coordinate, floor in zip(
-                        self.source_call_frame.formal_coordinates,
+                        source_call_frame.formal_coordinates,
                         positional,
                         strict=True,
                     )
@@ -325,9 +381,9 @@ class CallSiteSugar(ConstructedTermSugar):
                 return Complete(
                     GeneratorConstructionV1.allocate(
                         allocation_coordinate=str(self.site),
-                        frame_coordinate=self.source_call_frame.frame_cid,
-                        binding_state=self.source_call_frame.runtime_entries,
-                        steps=self.source_call_frame.generator_steps,
+                        frame_coordinate=source_call_frame.frame_cid,
+                        binding_state=source_call_frame.runtime_entries,
+                        steps=source_call_frame.generator_steps,
                         formal_floor_bindings=formal_floor_bindings,
                         reduction_context=ctx,
                     )
@@ -336,8 +392,8 @@ class CallSiteSugar(ConstructedTermSugar):
             target_name=self.target_name,
             arg_values=positional + tuple(value for _, value in kw_values),
             parameters=(
-                self.source_call_frame.parameters
-                if self.source_call_frame is not None
+                source_call_frame.parameters
+                if source_call_frame is not None
                 else ()
             ),
             term=term,
@@ -348,8 +404,8 @@ class CallSiteSugar(ConstructedTermSugar):
             exception_type_mro=self.exception_type_mro,
             source_call_frame_cid=source_frame_cid,
             formal_coordinate_cids=(
-                tuple(item.cid for item in self.source_call_frame.formal_coordinates)
-                if self.source_call_frame is not None
+                tuple(item.cid for item in source_call_frame.formal_coordinates)
+                if source_call_frame is not None
                 else ()
             ),
             bound_native_actuals_by_coordinate=(
@@ -370,7 +426,7 @@ class CallSiteSugar(ConstructedTermSugar):
             bound_source_actuals=bound_source_actuals,
         )
         if native_operation_actuals is not None:
-            pending = self.source_call_frame.pending_native_operation.discharge(
+            pending = source_call_frame.pending_native_operation.discharge(
                 native_operation_actuals.by_formal_coordinate
             )
             return callsite.project_producer_outcome(
