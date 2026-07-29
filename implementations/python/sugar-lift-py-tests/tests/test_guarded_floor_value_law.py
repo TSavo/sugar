@@ -10,8 +10,11 @@ from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
+from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+from sugar_lift_py_tests.floor.term_value import TermValue
+from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, ctor, implies
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -92,3 +95,34 @@ def test_unknown_floor_value_stays_loud_under_guard() -> None:
         RenamedUnguardableValue().guarded(GUARD)
     assert excinfo.value.info.owner == "guarded"
     assert excinfo.value.info.observed == "RenamedUnguardableValue"
+
+
+def test_guarded_length_distributes_over_both_authenticated_arms() -> None:
+    guarded = GuardedValue(
+        GUARD,
+        TupleValue((TermValue(1), TermValue(2))),
+        ListValue((TermValue(3),)),
+    )
+
+    outcome = guarded.length("renamed-length-site")
+
+    assert isinstance(outcome.value, GuardedValue)
+    assert outcome.value.guard == GUARD
+    assert outcome.value.when_true == TermValue(2)
+    assert outcome.value.when_false == TermValue(1)
+
+
+def test_guarded_length_keeps_one_missing_arm_typed_loud() -> None:
+    class RenamedLengthlessValue(FloorValue):
+        pass
+
+    guarded = GuardedValue(
+        GUARD,
+        TupleValue((TermValue(1),)),
+        RenamedLengthlessValue(),
+    )
+
+    with pytest.raises(ConstructionPanic) as excinfo:
+        guarded.length("renamed-length-site")
+    assert excinfo.value.info.owner == "length"
+    assert excinfo.value.info.observed == "RenamedLengthlessValue"
