@@ -2464,6 +2464,24 @@ def _seat_import_value_use_receipts(
                 fix="repair call receipt uniqueness before value seating",
             )
 
+        def exact_parked_callee() -> bool:
+            if len(paired_obligations) != 1:
+                return False
+            relation = paired_obligations[0].import_call_value_subsumption
+            if relation is None:
+                return False
+            stack = [target]
+            while stack:
+                node = stack.pop()
+                if (
+                    isinstance(node, Call)
+                    and _call_coordinate(node) == relation.call_coordinate
+                    and _call_callee_coordinate(node) == relation.callee_coordinate
+                ):
+                    return True
+                stack.extend(child for _, _, child in node.children())
+            return False
+
         def seat_receipt() -> None:
             transport_key = (
                 unit.filename,
@@ -2535,13 +2553,18 @@ def _seat_import_value_use_receipts(
                 # module-wide refusal.
                 seat_receipt()
                 continue
-            if imported.kind == "ambiguous-static-export" and len(
-                paired_obligations
-            ) == 1:
+            if imported.kind == "ambiguous-static-export" and exact_parked_callee():
                 # The exact call receipt already owns this callable occurrence
                 # and remains parked/loud at the full Call coordinate.  Its
                 # duplicate Attribute value receipt is deliberately unseated;
                 # no candidate definition or runtime branch is selected.
+                continue
+            if imported.kind == "ambiguous-static-export":
+                # Ambiguity at a non-callee value site cannot borrow a nearby
+                # parked Call's refusal.  Preserve the authenticated value row
+                # for its own Attribute consumer, which remains responsible
+                # for deciding whether that value is usable.
+                seat_receipt()
                 continue
             raise ImportValueUseSeatingGap(
                 f"resolution-{imported.kind}",

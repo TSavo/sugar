@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
+from sugar_lift_python_source.dependency_artifact import (
+    ResolvedPythonObjectV1,
+    resolve_import_binding,
+)
 from sugar_lift_python_source.manager_construction import (
     _seat_import_value_use_receipts,
 )
@@ -16,6 +21,8 @@ from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import Attribute, ClassDef
 from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 from sugar_source_tree.tree import SourceFile
+from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
 
 def test_regexflag_relative_member_receipt_survives_repeated_frame_seating() -> None:
@@ -285,3 +292,61 @@ def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
     )
     with pytest.raises(SugarNotWritten, match="SymbolicValue.attribute"):
         foreign_member.sugar().desugar()
+
+
+def test_regexflag_field_is_not_swallowed_by_a_parked_imported_call(
+    tmp_path: Path,
+) -> None:
+    consumer = "import re\nresult = re.search('x', subject)\n"
+    path = tmp_path / "consumer.py"
+    path.write_text(consumer, encoding="utf-8")
+    source_cid = blake3_512_of(consumer.encode("utf-8"))
+    calls, _ = authenticated_import_use_receipts(
+        tmp_path, path, consumer, source_cid, module_identities={}
+    )
+    call = next(row for row in calls if row.target_symbol == "python:re.search")
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    resolved = resolve_import_binding(call, graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    from sugar_lift_python_source.manager_construction import (
+        resolve_source_visible_frame,
+    )
+
+    projected = resolve_source_visible_frame(resolved, graph=graph)
+    assert isinstance(projected, tuple)
+    frame, _ = projected
+    context = frame.owner.unit.construction_context
+    assert context is not None
+    assert context.opaque_source_call_obligations
+
+    module = graph.modules["re"]
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    regex_flag = next(
+        node
+        for node in source_file.root.body
+        if isinstance(node, ClassDef) and node.name == "RegexFlag"
+    )
+    parked_before = dict(context.opaque_source_call_obligations)
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=regex_flag,
+        session=SourceResolutionSession(enabled=False),
+        context=context,
+        dependency_graphs={"re": graph},
+    )
+    member = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Attribute)
+        and node.attr == "SRE_FLAG_ASCII"
+        and node.line_col_span().start_line == 145
+    )
+    value = member.sugar().desugar().value
+
+    assert type(value) is ImportMemberValue
+    assert context.opaque_source_call_obligations == parked_before
+    assert value.receipt.target_symbol == "python:re._compiler.SRE_FLAG_ASCII"
