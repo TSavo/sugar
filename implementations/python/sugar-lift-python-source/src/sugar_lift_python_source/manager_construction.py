@@ -1126,7 +1126,7 @@ def _resolve_source_visible_frame_uncached(
         module=module,
         target=target,
         session=session,
-        context=context,
+        context=target.unit.construction_context,
         dependency_graphs=dependency_graphs,
     )
     # Nested method export: project its ordinary frame without requiring the
@@ -1482,7 +1482,7 @@ def _resolve_source_visible_frame_uncached(
             module=module,
             target=item,
             session=session,
-            context=context,
+            context=item.unit.construction_context,
             dependency_graphs=dependency_graphs,
         )
         frames[item.name] = item.source_visible_constructor_frame()
@@ -1529,7 +1529,7 @@ def _resolve_source_visible_frame_uncached(
                     module=module,
                     target=function,
                     session=session,
-                    context=context,
+                    context=function.unit.construction_context,
                     dependency_graphs=dependency_graphs,
                 )
             frames[function.name] = with_mutable_globals(
@@ -2285,21 +2285,28 @@ def _seat_import_value_use_receipts(
     )
     from sugar_lift_python_source.canonical import blake3_512_of
 
-    unit = source_file.unit
-    unit_context = unit.construction_context
-    if type(unit_context) is not TreeConstructionContextV1:
+    unit = target.unit
+    owned_context = unit.construction_context
+    if type(owned_context) is not TreeConstructionContextV1:
         from sugar_source_tree.panic import BackendDefect
 
         raise BackendDefect(
-            blame=unit,
+            blame=target.fragment,
             owner="manager_construction._seat_import_value_use_receipts",
             observed="target SourceUnit has no exact construction context",
-            requested="the exact SourceUnit-owned TreeConstructionContextV1",
+            requested="the target SourceUnit-owned TreeConstructionContextV1",
             fix="construct the target SourceUnit with its manager-owned context",
         )
-    # The target SourceUnit owns the context consumed by AttributeSugar.  A
-    # caller's distinct context has no authority to receive this unit's rows.
-    context = unit_context
+    if context is not owned_context:
+        from sugar_source_tree.panic import BackendDefect
+
+        raise BackendDefect(
+            blame=target.fragment,
+            owner="manager_construction._seat_import_value_use_receipts",
+            observed="target SourceUnit construction context disagrees with seating context",
+            requested="the exact target SourceUnit-owned construction context",
+            fix="route receipt seating through target.unit.construction_context",
+        )
     # Path-source law: refuse dual-door / mismatched CID loudly at mint.
     expected_cid = blake3_512_of(module.source.encode("utf-8"))
     if module.source_cid != expected_cid or unit.source_cid != module.source_cid:

@@ -217,14 +217,14 @@ def test_regexflag_cached_class_sugar_retains_manager_context_product() -> None:
     ]
 
 
-def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
+def test_import_receipt_seating_requires_the_target_unit_owned_context() -> None:
     graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
     module = graph.modules["re"]
-    external_context = TreeConstructionContextV1.for_source_call_construction()
-    unit_context = TreeConstructionContextV1.for_source_call_construction()
+    owned_context = TreeConstructionContextV1.for_source_call_construction()
+    foreign_context = TreeConstructionContextV1.for_source_call_construction()
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
-        construction_context=unit_context,
+        construction_context=owned_context,
     )
     regex_flag = next(
         node
@@ -232,14 +232,34 @@ def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
         if isinstance(node, ClassDef) and node.name == "RegexFlag"
     )
 
+    with pytest.raises(
+        BackendDefect,
+        match="target SourceUnit construction context disagrees",
+    ):
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=regex_flag,
+            session=SourceResolutionSession(enabled=False),
+            context=foreign_context,
+            dependency_graphs={"re": graph},
+        )
+
+    assert not foreign_context.source_import_value_receipts
+    assert not foreign_context.source_import_value_receipts_by_site
+    assert not owned_context.source_import_value_receipts
+
     _seat_import_value_use_receipts(
         source_file=source_file,
         module=module,
         target=regex_flag,
         session=SourceResolutionSession(enabled=False),
-        context=external_context,
+        context=owned_context,
         dependency_graphs={"re": graph},
     )
+    assert owned_context is regex_flag.unit.construction_context
+    assert owned_context.source_import_value_receipts
+    assert owned_context.source_import_value_receipts_by_site
 
     member = next(
         node
@@ -259,22 +279,17 @@ def test_import_receipts_seat_the_exact_source_unit_owned_context() -> None:
         span.end_line,
         span.end_col,
     )
-
     assert type(outcome.value) is ImportMemberValue
-    assert outcome.value.receipt is unit_context.source_import_value_receipts_by_site[
+    assert outcome.value.receipt is owned_context.source_import_value_receipts_by_site[
         site_key
     ]
-    assert outcome.value.receipt in unit_context.source_import_value_receipts[
+    assert outcome.value.receipt in owned_context.source_import_value_receipts[
         roster_key
     ]
-    assert len(unit_context.source_import_value_receipts_by_site) > 1
-    assert not external_context.source_import_value_receipts
-    assert not external_context.source_import_value_receipts_by_site
-    assert not external_context.source_import_value_resolutions
 
     foreign = SourceFile(
         (module.source, module.source_seat, module.source_cid),
-        construction_context=external_context,
+        construction_context=foreign_context,
     )
     foreign_member = next(
         node
