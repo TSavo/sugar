@@ -34,6 +34,7 @@ class FormalFloorBindingV1:
 
     coordinate_cid: str
     floor_value: object = field(compare=False, repr=False)
+    coordinate: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -51,6 +52,19 @@ class FormalFloorBindingV1:
                 "FormalFloorBindingV1.floor_value must be a FloorValue, "
                 f"got {type(self.floor_value).__name__}"
             )
+        if self.coordinate is not None:
+            from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+            if (
+                type(self.coordinate) is not BindingCoordinateV1
+                or self.coordinate.cid != self.coordinate_cid
+                or cid_of_json(self.coordinate.preimage) != self.coordinate.cid
+                or BindingCoordinateV1.decode(self.coordinate.wire())
+                != self.coordinate
+            ):
+                raise FormalFloorBindingGap(
+                    "projected formal floor binding has foreign coordinate testimony"
+                )
 
 
 @dataclass(frozen=True)
@@ -920,7 +934,20 @@ class GeneratorConstructionV1:
             for entry in binding_state
             if isinstance(entry, BindingEntryV1)
         )
-        floor_cids = tuple(item.coordinate_cid for item in formal_floor_bindings)
+        root_floor_bindings = tuple(
+            item for item in formal_floor_bindings if item.coordinate is None
+        )
+        projected_floor_bindings = tuple(
+            item for item in formal_floor_bindings if item.coordinate is not None
+        )
+        projected_cids = tuple(
+            item.coordinate_cid for item in projected_floor_bindings
+        )
+        if len(projected_cids) != len(set(projected_cids)):
+            raise FormalFloorBindingGap(
+                "projected formal floor bindings must not duplicate a coordinate"
+            )
+        floor_cids = tuple(item.coordinate_cid for item in root_floor_bindings)
         if len(floor_cids) != len(set(floor_cids)):
             raise FormalFloorBindingGap(
                 "formal floor bindings must not duplicate a formal coordinate"
@@ -931,6 +958,37 @@ class GeneratorConstructionV1:
                 f"formal roster; floors={sorted(floor_cids)!r} "
                 f"sealed={sorted(sealed_formal_cids)!r}"
             )
+        sealed_coordinates = tuple(
+            entry.coordinate
+            for entry in binding_state
+            if isinstance(entry, BindingEntryV1)
+        )
+        for binding in projected_floor_bindings:
+            coordinate = binding.coordinate
+            parents = tuple(
+                root
+                for root in sealed_coordinates
+                if coordinate.scope_owner_cid == root.scope_owner_cid
+                and coordinate.binding_site == root.binding_site
+                and coordinate.projection_path[: len(root.projection_path)]
+                == root.projection_path
+            )
+            suffix = (
+                coordinate.projection_path[len(parents[0].projection_path) :]
+                if len(parents) == 1
+                else ()
+            )
+            if (
+                len(parents) != 1
+                or len(suffix) != 2
+                or suffix[0] != "variadic"
+                or not isinstance(suffix[1], int)
+                or isinstance(suffix[1], bool)
+                or coordinate != parents[0].project(*suffix)
+            ):
+                raise FormalFloorBindingGap(
+                    "projected formal floor coordinate is foreign to sealed formal roster"
+                )
         if reduction_context is not None and not callable(
             getattr(reduction_context, "with_temporal", None)
         ):

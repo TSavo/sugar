@@ -133,6 +133,7 @@ class BoundSourceCallActualsV1:
     actuals: tuple
     formal_coordinates: tuple[BindingCoordinateV1, ...]
     native_formal_coordinates: tuple = ()
+    projected_pairs: tuple[BoundFormalActualV1, ...] = ()
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
@@ -143,6 +144,39 @@ class BoundSourceCallActualsV1:
             raise SourceCallBindingGap("bound actual coordinate arity mismatch")
         _reauthenticate_binding_coordinates(self.formal_coordinates)
         _reauthenticate_native_coordinates(self.native_formal_coordinates)
+        _reauthenticate_binding_coordinates(
+            tuple(pair.coordinate for pair in self.projected_pairs)
+        )
+        from sugar_lift_py_tests.floor import TupleValue
+
+        roots = tuple(zip(self.formal_coordinates, self.actuals, strict=True))
+        for pair in self.projected_pairs:
+            matching = tuple(
+                (root, actual)
+                for root, actual in roots
+                if pair.coordinate.scope_owner_cid == root.scope_owner_cid
+                and pair.coordinate.binding_site == root.binding_site
+                and pair.coordinate.projection_path[: len(root.projection_path)]
+                == root.projection_path
+            )
+            suffix = pair.coordinate.projection_path[
+                len(matching[0][0].projection_path) :
+            ] if len(matching) == 1 else ()
+            if (
+                len(matching) != 1
+                or len(suffix) != 2
+                or suffix[0] != "variadic"
+                or not isinstance(suffix[1], int)
+                or isinstance(suffix[1], bool)
+                or type(matching[0][1]) is not TupleValue
+                or suffix[1] < 0
+                or suffix[1] >= len(matching[0][1].elements)
+                or pair.actual is not matching[0][1].elements[suffix[1]]
+                or pair.coordinate != matching[0][0].project(*suffix)
+            ):
+                raise SourceCallBindingGap(
+                    "projected formal coordinate is foreign or cross-wired"
+                )
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, BoundSourceCallActualsV1):
@@ -150,6 +184,7 @@ class BoundSourceCallActualsV1:
                 self.actuals == other.actuals
                 and self.formal_coordinates == other.formal_coordinates
                 and self.native_formal_coordinates == other.native_formal_coordinates
+                and self.projected_pairs == other.projected_pairs
             )
         return NotImplemented
 
@@ -318,6 +353,7 @@ class SourceVisibleCallFrameV1:
                 raise SourceCallBindingGap("duplicate keyword actual")
             named[key] = value
         bound = []
+        projected_pairs = []
         for index, (name, kind, default) in enumerate(
             zip(
                 self.parameters,
@@ -327,7 +363,13 @@ class SourceVisibleCallFrameV1:
             )
         ):
             if kind == "vararg":
-                bound.append(TupleValue(tuple(remaining)))
+                values = tuple(remaining)
+                root = self.formal_coordinates[index]
+                projected_pairs.extend(
+                    BoundFormalActualV1(root.project("variadic", ordinal), actual)
+                    for ordinal, actual in enumerate(values)
+                )
+                bound.append(TupleValue(values))
                 remaining.clear()
                 continue
             if kind == "kwarg":
@@ -365,6 +407,7 @@ class SourceVisibleCallFrameV1:
             tuple(bound),
             self.formal_coordinates,
             self.native_operation_formal_coordinates,
+            tuple(projected_pairs),
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:

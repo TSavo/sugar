@@ -407,6 +407,13 @@ class CallSiteSugar(ConstructedTermSugar):
                         positional,
                         strict=True,
                     )
+                ) + tuple(
+                    FormalFloorBindingV1(
+                        pair.coordinate.cid,
+                        pair.actual,
+                        coordinate=pair.coordinate,
+                    )
+                    for pair in bound_source_actuals.projected_pairs
                 )
                 return Complete(
                     GeneratorConstructionV1.allocate(
