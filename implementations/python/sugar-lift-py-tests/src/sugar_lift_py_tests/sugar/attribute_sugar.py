@@ -148,7 +148,7 @@ class AttributeSugar(ConstructedTermSugar):
                 )
                 from sugar_lift_py_tests.outcome import Complete
 
-                return Complete(ImportMemberValue(target.removeprefix("python:")))
+                return Complete(ImportMemberValue.mint(receipt))
         return receiver.attribute(name, site)
 
     def desugar(self, ctx: object = None) -> Outcome:

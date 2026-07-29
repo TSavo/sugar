@@ -13,6 +13,7 @@ class ImportMemberSugar(ConstructedTermSugar):
     """``import M as h; h.a.b`` as the closed coordinate ``M.a.b``."""
 
     qualified_name: str
+    receipt: object = dataclass_field(compare=False, repr=False)
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -29,9 +30,12 @@ class ImportMemberSugar(ConstructedTermSugar):
         del ctx
         from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 
-        return Complete(ImportMemberValue(self.qualified_name))
+        value = ImportMemberValue.mint(self.receipt)
+        if value.qualified_name != self.qualified_name:
+            raise ValueError("ImportMemberSugar receipt target mismatch")
+        return Complete(value)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 
-        return ImportMemberValue(self.qualified_name).to_term(owner=owner)
+        return ImportMemberValue.mint(self.receipt).to_term(owner=owner)
