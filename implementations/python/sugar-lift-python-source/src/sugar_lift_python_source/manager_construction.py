@@ -1472,6 +1472,16 @@ def _resolve_source_visible_frame_uncached(
             continue
         # Target class (or a local class the target actually reaches): panics
         # stay loud. There is no soft-green for a reached broken definition.
+        # Seat its exact imported member coordinates before constructor-frame
+        # construction can cache an AttributeSugar for a class-body field.
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=item,
+            session=session,
+            context=context,
+            dependency_graphs=dependency_graphs,
+        )
         frames[item.name] = item.source_visible_constructor_frame()
 
     pending = [item for item in definitions if isinstance(item, FunctionDef)]
@@ -1772,14 +1782,6 @@ def _construct_reachable_decorated_class_bindings(
 
     result = []
     for definition in reached:
-        _seat_import_value_use_receipts(
-            source_file=source_file,
-            module=module,
-            target=definition,
-            session=session,
-            context=context,
-            dependency_graphs=dependency_graphs,
-        )
         sugar = definition.sugar()
         raw_outcome = sugar.desugar(ctx)
         if not isinstance(raw_outcome, Complete):
