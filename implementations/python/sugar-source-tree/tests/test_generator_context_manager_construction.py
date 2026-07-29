@@ -169,27 +169,31 @@ def test_docstring_is_stepped_and_is_never_the_blocker():
     )
 
 
-def test_inert_step_does_not_swallow_a_call_expression():
-    """LYING TWIN. An `Expr` that is not a `Constant` still owes execution.
-
-    `record()` is spelled like the docstring -- a bare expression statement --
-    and is exactly what a spelling-based admission would step past. It owes a
-    call, so it stays opaque and loud. If this node goes green the inert row
-    has been widened past what it can prove.
-    """
+def test_term_step_executes_a_call_expression_before_yield():
+    """A constructed call is an explicit TermStep, never an inert Expr."""
     sugar = _with_sugar("    record()\n    yield 7")
 
-    with pytest.raises(SugarNotWritten, match="opaque generator transition: Expr"):
-        sugar.desugar()
+    outcome = sugar.desugar()
+    assert isinstance(outcome, Complete)
+    assert outcome.value.statements[0].formula == eq(
+        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+    )
 
 
-def test_inert_step_does_not_swallow_a_binding():
-    """LYING TWIN. A binding is real work and must remain the named blocker.
-
-    This is the pandas `__tracebackhide__ = True` shape, and it is what the
-    machine must report once the docstring ahead of it is stepped.
-    """
+def test_assign_step_executes_a_name_binding_before_yield():
+    """A simple name binding is an explicit AssignStep, never inert work."""
     sugar = _with_sugar("    '''Doc.'''\n    hidden = True\n    yield 7")
+
+    outcome = sugar.desugar()
+    assert isinstance(outcome, Complete)
+    assert outcome.value.statements[0].formula == eq(
+        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+    )
+
+
+def test_assign_step_refuses_an_unowned_attribute_binding():
+    """Discrimination: only the producer-owned simple-name assignment advances."""
+    sugar = _with_sugar("    holder.hidden = True\n    yield 7")
 
     with pytest.raises(SugarNotWritten, match="opaque generator transition: Assign"):
         sugar.desugar()
