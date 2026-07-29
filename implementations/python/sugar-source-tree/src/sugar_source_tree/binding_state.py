@@ -426,8 +426,21 @@ class ConstructionTestimonyReporterV1:
             and isinstance(value, CallSiteSugar)
             and value.expected_definition_ref is not None
         ):
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+
             definition = value.expected_definition_ref
             resolved_definition = node.unit.source_function_definition_for_call(node)
+            span = node.line_col_span()
+            call_occurrence = SourceFragmentCoordinateV1(
+                node.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+            frame = value.source_call_frame
             if (
                 not isinstance(definition, (FunctionDef, AsyncFunctionDef))
                 or definition.ref not in self._materialized_by_ref
@@ -438,6 +451,10 @@ class ConstructionTestimonyReporterV1:
                 )
                 or resolved_definition.ref is not definition.ref
                 or resolved_definition.line_col_span() != definition.line_col_span()
+                or value.call_occurrence != call_occurrence
+                or frame is None
+                or frame.owner.ref is not definition.ref
+                or frame.definition_site.source_cid != node.unit.source_cid
             ):
                 self._testimony_gap(
                     node,
