@@ -1274,7 +1274,7 @@ class CallSiteValue(FloorValue):
         )
         return _reduce_callsite_body(self.body, reduce_ctx, blame=self.target_name)
 
-    def producer_outcome(self, ctx: Any = None):
+    def producer_outcome(self, ctx: Any = None, *, carrier_actuals: dict | None = None):
         """Publish authenticated source-body halts at the Call expression.
 
         A completed source body still denotes this ordinary call coordinate;
@@ -1291,9 +1291,9 @@ class CallSiteValue(FloorValue):
             return Complete(self)
 
         outcome = self.reduce_source_outcome(ctx)
-        return self.project_producer_outcome(outcome)
+        return self.project_producer_outcome(outcome, carrier_actuals=carrier_actuals)
 
-    def project_producer_outcome(self, outcome):
+    def project_producer_outcome(self, outcome, *, carrier_actuals: dict | None = None):
         """Project a source-authenticated callee outcome onto this Call node."""
 
         from dataclasses import replace
@@ -1311,7 +1311,7 @@ class CallSiteValue(FloorValue):
             return Complete(self)
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
-            actuals = self.bound_native_actuals_by_coordinate
+            actuals = carrier_actuals or self.bound_native_actuals_by_coordinate
             if actuals is None and self.bound_source_actuals is not None:
                 actuals = self.bound_source_actuals.by_native_formal_coordinate
             if actuals is None:
