@@ -1140,7 +1140,7 @@ class CallSiteValue(FloorValue):
         if isinstance(outcome, NativeOperationExitCarrierV1):
             actuals = self.bound_native_actuals_by_coordinate
             if actuals is None and self.bound_source_actuals is not None:
-                actuals = self.bound_source_actuals.by_native_formal_coordinate
+                outcome = self.bound_source_actuals.project_native_carrier(outcome)
             if actuals is not None:
                 outcome = outcome.discharge(actuals)
         # ConstructionPanic is BaseException and process-terminal: dig must not convert
@@ -1311,15 +1311,22 @@ class CallSiteValue(FloorValue):
             return Complete(self)
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
-            actuals = carrier_actuals
             if self.bound_source_actuals is not None:
-                actuals = self.bound_source_actuals.actuals_for_native_carrier(
-                    outcome
-                )
-            elif actuals is None:
+                outcome = self.bound_source_actuals.project_late_carrier(outcome)
+                actuals = None
+            else:
                 actuals = self.bound_native_actuals_by_coordinate
             if actuals is None:
-                return outcome
+                if not isinstance(outcome, NativeOperationExitCarrierV1):
+                    return outcome
+                from sugar_source_tree.panic import SugarNotWritten
+                raise SugarNotWritten(
+                    owner="CallSiteValue.project_producer_outcome",
+                    blame=self.target_name,
+                    observed="late native carrier lacks bound source testimony",
+                    requested="the producer-owned source bind result",
+                    fix="retain the carrier at its producer boundary",
+                )
             outcome = outcome.discharge(actuals)
         exits = outcome_to_exitset(outcome)
         return ExitSet(
