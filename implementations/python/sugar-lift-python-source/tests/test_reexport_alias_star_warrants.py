@@ -681,6 +681,78 @@ def test_module_prefix_execution_publishes_exact_metaclass_result(
     )
 
 
+@pytest.mark.parametrize(
+    ("class_keywords", "observed"),
+    (
+        ("flag=True", "unsupported class creation keyword flag"),
+        ("**{'flag': True}", "unsupported class creation keyword **"),
+    ),
+)
+def test_module_prefix_refuses_untransported_class_creation_keywords(
+    tmp_path: Path, class_keywords: str, observed: str
+) -> None:
+    """Only the exact metaclass keyword has a constructed publication path."""
+    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        f"class Published({class_keywords}):\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-class-keyword-prefix-pkg",
+        files={"module_class_keyword_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_class_keyword_prefix_pkg"
+    ]
+
+    with pytest.raises(SugarNotWritten) as raised:
+        manager_construction._module_prefix_outcome(
+            module, ast.parse(source).body[-1]
+        )
+
+    assert raised.value.owner == "module definition execution"
+    assert raised.value.observed == observed
+    assert raised.value.requested == "one transported class creation keyword roster"
+
+
+def test_module_prefix_without_class_creation_keywords_still_publishes(
+    tmp_path: Path,
+) -> None:
+    """Truthful twin: an empty keyword roster needs no invented transport."""
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "class Published:\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-class-no-keyword-prefix-pkg",
+        files={"module_class_no_keyword_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_class_no_keyword_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+    published = exits.exits[0].value.context.temporal.value_if_bound("Published")
+    assert type(published) is ClassDefinitionValue
+
+
 def test_prefix_adapter_propagates_missing_construction_producer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
