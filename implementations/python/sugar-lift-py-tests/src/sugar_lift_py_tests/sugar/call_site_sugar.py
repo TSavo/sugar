@@ -377,11 +377,7 @@ class CallSiteSugar(ConstructedTermSugar):
             carrier_actuals=(
                 native_operation_actuals.by_formal_coordinate
                 if native_operation_actuals is not None
-                else (
-                    None
-                    if bound_source_actuals is None
-                    else bound_source_actuals.by_native_formal_coordinate
-                )
+                else None
             ),
         )
         from sugar_lift_py_tests.caller_parameter_contract import (
