@@ -4007,6 +4007,16 @@ class ClassDef(Statement):
         )
 
         def conditional_fields(statements):
+            def binding_occurrence(target):
+                span = target.line_col_span()
+                return SourceFragmentCoordinateV1(
+                    target.unit.source_cid,
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                )
+
             fields = []
             for item in statements:
                 if (
@@ -4020,6 +4030,7 @@ class ClassDef(Statement):
                             target.id,
                             target.fragment.seal().cid,
                             value_sugar,
+                            binding_occurrence(target),
                             item.fragment.seal().cid,
                         )
                         for target in item.targets
@@ -4032,6 +4043,7 @@ class ClassDef(Statement):
                                 item.target.id,
                                 item.fragment.seal().cid,
                                 item.value.sugar(),
+                                binding_occurrence(item.target),
                             )
                         )
                     continue
@@ -4041,6 +4053,7 @@ class ClassDef(Statement):
                             item.name,
                             item.fragment.seal().cid,
                             item.sugar(),
+                            binding_occurrence(item.binding_target),
                         )
                     )
                     continue
