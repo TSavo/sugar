@@ -209,16 +209,19 @@ def builtin_name_temporal():
     # so every ordinary lexical scope starts with this one builtin floor.
     temporal = TemporalContext()
     for name in sorted(builtin_callable_names()):
+        if name == "object":
+            continue
         temporal = temporal.bind_value(
             name,
-            (
-                BuiltinObjectClassValue(
-                    name=name, bases=(), record=BlockValue(())
-                )
-                if name == "object"
-                else ClassValue(name=name, bases=(), record=BlockValue(()))
-            ),
+            ClassValue(name=name, bases=(), record=BlockValue(())),
         )
+    # ``object`` is Python language vocabulary, not a host-discovered callable.
+    # Its typed owner remains enrolled even when host builtin enumeration is
+    # absent or substituted.
+    temporal = temporal.bind_value(
+        "object",
+        BuiltinObjectClassValue(name="object", bases=(), record=BlockValue(())),
+    )
     for name in sorted(builtin_constant_names()):
         temporal = temporal.bind_value(
             name,
