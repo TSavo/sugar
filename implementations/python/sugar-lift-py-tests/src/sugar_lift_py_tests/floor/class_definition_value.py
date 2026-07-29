@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_source_tree.panic import SugarNotWritten
 
 from .guard_stable_value import GuardStableValue
@@ -30,11 +31,19 @@ class ClassDefinitionValue(GuardStableValue):
     class_definition_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
     initializer: ConstructedClassMethodV1 | None
+    binding_target_occurrence: SourceFragmentCoordinateV1 = field(compare=False)
     class_fields: tuple[object, ...] = ()
     docstring_cid: str | None = None
     annotation_cids: tuple[str, ...] = ()
     decorator_cids: tuple[str, ...] = ()
     base_classes: tuple["ClassDefinitionValue", ...] = ()
+
+    def __post_init__(self):
+        if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "ClassDefinitionValue binding target must be an exact "
+                "SourceFragmentCoordinateV1"
+            )
 
     def to_term(self, *, owner: str):
         del owner

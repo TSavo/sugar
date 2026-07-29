@@ -1,5 +1,6 @@
 import pytest
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor import ClassDefinitionValue, TermValue
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
@@ -19,7 +20,13 @@ def _sites(tmp_path):
 
 
 def _value():
-    return ClassDefinitionValue("C", "class-cid", (), None)
+    return ClassDefinitionValue(
+        "C",
+        "class-cid",
+        (),
+        None,
+        SourceFragmentCoordinateV1("source-cid", 1, 6, 1, 7),
+    )
 
 
 @pytest.mark.parametrize(

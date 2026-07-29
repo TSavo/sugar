@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
@@ -36,6 +37,9 @@ GUARD = atomic("renamed_guard", [])
             "blake3-512:renamed-class-definition",
             (),
             None,
+            SourceFragmentCoordinateV1(
+                "blake3-512:renamed-source", 1, 6, 1, 18
+            ),
         ),
         ComprehensionValue(ctor("renamed-comprehension", [])),
         GuardedValue(
