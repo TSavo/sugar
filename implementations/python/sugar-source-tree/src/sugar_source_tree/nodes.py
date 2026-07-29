@@ -9832,14 +9832,6 @@ class Call(Expression):
                             )
                     else:
                         source_call_frame = function_definition.source_visible_call_frame()
-                elif source_call_frame is None:
-                    pending = formal_function_sugar.desugar(None)
-                    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-
-                    if isinstance(pending, NativeOperationExitCarrierV1):
-                        source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
-                            formal_coordinates, pending
-                        )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None

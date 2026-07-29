@@ -484,6 +484,43 @@ def test_module_prefix_execution_binds_exact_class_definition_once(
     )
 
 
+def test_module_prefix_defers_forward_function_body_until_prefix_temporal_is_live(
+    tmp_path: Path,
+) -> None:
+    """Construction does not execute a forward function without prefix state."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "registry: dict[str, int] = {}\n"
+        "def caller(key):\n"
+        "    return lookup(key)\n"
+        "def lookup(key):\n"
+        "    return registry[key]\n"
+        "def build():\n"
+        "    return caller\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-local-call-prefix-pkg",
+        files={"module_local_call_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_local_call_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    caller = completed.value.context.temporal.value_if_bound("caller")
+    assert type(caller).__name__ == "_ModuleSourceFrameCallableV1"
+    assert caller.frame.owner.name == "caller"
+
+
 def test_module_prefix_execution_publishes_exact_decorator_result(
     tmp_path: Path,
 ) -> None:
