@@ -53,7 +53,9 @@ def test_regexflag_relative_member_receipt_survives_repeated_frame_seating() -> 
     assert outcome.value.qualified_name == "re._compiler.SRE_FLAG_ASCII"
     assert any(
         outcome.value.receipt is receipt
-        for receipt in context.source_import_value_receipts[module.source_cid]
+        for receipt in context.source_import_value_receipts[
+            (module.module_name, module.source_seat, module.source_cid)
+        ]
     )
 
 
@@ -92,7 +94,9 @@ def test_regexflag_relative_member_missing_foreign_and_crosswired_receipts_refus
     )
     receipt = next(
         row
-        for row in context.source_import_value_receipts[module.source_cid]
+        for row in context.source_import_value_receipts[
+            (module.module_name, module.source_seat, module.source_cid)
+        ]
         if row.target_symbol == "python:re._compiler.SRE_FLAG_ASCII"
     )
     span = member.line_col_span()
