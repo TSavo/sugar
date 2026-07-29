@@ -180,6 +180,35 @@ class AssignStepV1:
 
 
 @dataclass(frozen=True)
+class AttributeAssignStepV1:
+    """Authenticated generator assignment to one source Attribute target."""
+
+    receiver: ConstructedTermSugar
+    attr: str
+    value: ConstructedTermSugar
+    fragment_cid: str
+    target_cid: str
+    occurrence: object = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(
+            self.receiver, owner="AttributeAssignStepV1.receiver"
+        )
+        _require_constructed_term(self.value, owner="AttributeAssignStepV1.value")
+        try:
+            observed_target_cid = self.occurrence.seal().cid
+        except (AttributeError, TypeError) as exc:
+            raise TypeError(
+                "AttributeAssignStepV1 requires an authenticated target occurrence"
+            ) from exc
+        if observed_target_cid != self.target_cid:
+            raise TypeError(
+                "AttributeAssignStepV1 target occurrence does not match its "
+                "authenticated target CID"
+            )
+
+
+@dataclass(frozen=True)
 class FinallyStepV1:
     """Cleanup suite as ConstructedTermSugar payloads only.
 
@@ -369,6 +398,7 @@ GeneratorStepV1 = (
     | OpaqueStepV1
     | InertStepV1
     | AssignStepV1
+    | AttributeAssignStepV1
     | FinallyStepV1
     | ForStepV1
     | RaiseStepV1
@@ -494,6 +524,15 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "assign",
             "name": step.name,
             "fragmentCid": step.fragment_cid,
+            "value": _generator_value_testimony(step.value, owner=owner),
+        }
+    if isinstance(step, AttributeAssignStepV1):
+        return {
+            "kind": "attribute-assign",
+            "attr": step.attr,
+            "fragmentCid": step.fragment_cid,
+            "targetCid": step.target_cid,
+            "receiver": _generator_value_testimony(step.receiver, owner=owner),
             "value": _generator_value_testimony(step.value, owner=owner),
         }
     if isinstance(step, FinallyStepV1):
@@ -860,6 +899,26 @@ class GeneratorConstructionV1:
                 cursor=self.cursor + 1,
                 binding_state=(*self.binding_state, binding),
             )
+            return machine._transition(requested)
+        if isinstance(step, AttributeAssignStepV1):
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                AttributeStoreEffectSugar,
+            )
+
+            outcome = AttributeStoreEffectSugar(
+                receiver=step.receiver,
+                value=step.value,
+                attr=step.attr,
+                site=step.occurrence,
+            ).desugar(self._guard_evaluation_context())
+            if isinstance(outcome, Incomplete):
+                return ExitSet.halted(outcome.effect, state=self)
+            if not isinstance(outcome, Complete):
+                return self._gap(
+                    requested, f"attribute store returned {type(outcome).__name__}"
+                )
+            machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, RaiseStepV1):
             from sugar_lift_py_tests.outcome import Incomplete
