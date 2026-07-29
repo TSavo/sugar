@@ -64,6 +64,7 @@ class _OutcomeValue(ConstructedTermSugar):
 @dataclass(frozen=True)
 class _Pending:
     candidate_cid: str
+    demands: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,7 @@ class _CarrierReceiver(FloorValue):
 
     def to_term(self, *, owner: str):
         del owner
-        return TermValue("carrier-receiver").to_term(owner="carrier receiver")
+        return make_var("carrier-receiver")
 
 
 def _machine(steps):
@@ -166,9 +167,10 @@ def _install_transition_spy(monkeypatch, consumer: str):
     if consumer == "assign":
         original = GeneratorAssignBindingV1
 
-        def binding(*args, **kwargs):
-            calls.append(args)
-            return original(*args, **kwargs)
+        class binding(original):
+            def __new__(cls, *args, **kwargs):
+                calls.append(args)
+                return super().__new__(cls)
 
         monkeypatch.setattr(generator_module, "GeneratorAssignBindingV1", binding)
     elif consumer == "return":
