@@ -21,12 +21,18 @@ from sugar_lift_python_source.dependency_artifact import (
     resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
+    _import_call_value_relation_is_owned_by_target,
     _seat_import_value_use_receipts,
     resolve_source_visible_frame,
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.nodes import Attribute, Call, FunctionDef
+from sugar_lift_py_tests.context_manager_resolution import (
+    OpaqueSourceCallObligationV1,
+    SourceFragmentCoordinateV1,
+    TreeConstructionContextV1,
+    _mint_import_call_value_subsumption,
+)
+from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.panic import BackendDefect
 from sugar_source_tree.tree import SourceFile
 SOURCE = (
@@ -164,6 +170,114 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     ):
         with pytest.raises(ValueError, match="producer authority"):
             replace(relation, **change)
+
+
+def test_import_call_value_subsumption_requires_the_exact_target_owned_call(
+    tmp_path: Path,
+) -> None:
+    outer_call, _ = _receipts(tmp_path)
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    resolved = resolve_import_binding(outer_call, graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    module = graph.modules["re"]
+    module_tree = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    calls, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    values, _ = authenticated_import_value_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    warnings_call = next(
+        item
+        for item in calls
+        if item.target_symbol == "python:warnings.warn"
+        and item.use["useSite"]["startLine"] == 302
+    )
+    warnings_value = next(
+        item
+        for item in values
+        if item.target_symbol == "python:warnings.warn"
+        and item.use["useSite"]["startLine"] == 302
+    )
+    call_node = next(
+        node
+        for node in module_tree.nodes()
+        if isinstance(node, Call)
+        and node.line_col_span().start_line == 302
+        and isinstance(node.func, Attribute)
+        and node.func.attr == "warn"
+    )
+    call_span = call_node.line_col_span()
+    callee_span = call_node.func.line_col_span()
+    call_coordinate = SourceFragmentCoordinateV1(
+        module.source_cid,
+        call_span.start_line,
+        call_span.start_col,
+        call_span.end_line,
+        call_span.end_col,
+    )
+    callee_coordinate = SourceFragmentCoordinateV1(
+        module.source_cid,
+        callee_span.start_line,
+        callee_span.start_col,
+        callee_span.end_line,
+        callee_span.end_col,
+    )
+    relation = _mint_import_call_value_subsumption(
+        call_receipt=warnings_call,
+        value_receipt=warnings_value,
+        call_coordinate=call_coordinate,
+        callee_coordinate=callee_coordinate,
+        resolution_kind="call-target-export-unresolved",
+        resolved_object_cid=resolved.cid,
+    )
+    obligation = OpaqueSourceCallObligationV1(
+        call_coordinate,
+        warnings_call.target_symbol,
+        resolved.cid,
+        resolution_kind="call-target-export-unresolved",
+        import_call_value_subsumption=relation,
+    )
+    compile_function = next(
+        node
+        for node in module_tree.root.body
+        if isinstance(node, FunctionDef) and node.name == "_compile"
+    )
+    regex_flag = next(
+        node
+        for node in module_tree.root.body
+        if isinstance(node, ClassDef) and node.name == "RegexFlag"
+    )
+
+    assert _import_call_value_relation_is_owned_by_target(
+        target=compile_function,
+        receipt=warnings_value,
+        coordinate=callee_coordinate,
+        obligation=obligation,
+        relation=relation,
+        call_receipt=warnings_call,
+        module=module,
+    )
+    assert not _import_call_value_relation_is_owned_by_target(
+        target=regex_flag,
+        receipt=warnings_value,
+        coordinate=callee_coordinate,
+        obligation=obligation,
+        relation=relation,
+        call_receipt=warnings_call,
+        module=module,
+    )
 
 
 def test_duplicate_identical_call_receipt_is_loud_before_pairing(

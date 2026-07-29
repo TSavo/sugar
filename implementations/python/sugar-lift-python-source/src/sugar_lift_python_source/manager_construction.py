@@ -2256,6 +2256,90 @@ def _call_callee_coordinate(call: Call):
     )
 
 
+def _import_call_value_relation_is_owned_by_target(
+    *,
+    target: Node,
+    receipt,
+    coordinate,
+    obligation,
+    relation,
+    call_receipt,
+    module,
+) -> bool:
+    """Prove one parked imported-call relation owns this exact callee use."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        ImportedCallValueSubsumptionV1,
+        OpaqueSourceCallObligationV1,
+    )
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_source_tree.panic import BackendDefect
+
+    if (
+        type(relation) is not ImportedCallValueSubsumptionV1
+        or type(obligation) is not OpaqueSourceCallObligationV1
+        or type(receipt) is not AuthenticatedImportUseV1
+        or type(call_receipt) is not AuthenticatedImportUseV1
+    ):
+        raise BackendDefect(
+            blame=coordinate,
+            owner="manager_construction import call/value receipt subsumption",
+            observed="parked call/value relation has non-exact testimony types",
+            requested="exact authenticated call, value, relation, and obligation products",
+            fix="re-mint the relation through the closed imported-call producer",
+        )
+    receipt.revalidate()
+    call_receipt.revalidate()
+    identity = call_receipt.import_binding.value["target"]["moduleIdentity"]
+    call_site = call_receipt.use["useSite"]
+    value_site = receipt.use["useSite"]
+    expected = (
+        obligation.import_call_value_subsumption is relation
+        and relation.source_cid == module.source_cid == receipt.source_cid
+        and relation.module_identity_cid == cid_of_json(identity)
+        and relation.import_binding_cid
+        == call_receipt.import_binding.cid
+        == receipt.import_binding.cid
+        and relation.target_symbol
+        == call_receipt.target_symbol
+        == receipt.target_symbol
+        and relation.exported_member_path
+        == tuple(receipt.use["exportedMemberPath"])
+        and relation.call_use_cid == call_receipt.use["cid"]
+        and relation.value_use_cid == receipt.use["cid"]
+        and relation.call_coordinate.wire() == call_site
+        and relation.callee_coordinate.wire() == value_site
+        and relation.callee_coordinate == coordinate
+        and relation.call_coordinate == obligation.coordinate
+        and relation.resolution_kind == obligation.resolution_kind
+        and relation.resolved_object_cid == obligation.resolved_object_cid
+    )
+    if not expected:
+        raise BackendDefect(
+            blame=coordinate,
+            owner="manager_construction import call/value receipt subsumption",
+            observed="parked call/value relation disagrees with authenticated receipts",
+            requested="byte-identical one-to-one imported call/value relation",
+            fix="re-mint the relation from the exact lexical call and value receipts",
+        )
+    owned_calls = tuple(
+        call
+        for function in _scanned_definitions(target)
+        for call in _reachable_attribute_calls(function)
+        if _call_coordinate(call) == relation.call_coordinate
+        and _call_callee_coordinate(call) == relation.callee_coordinate
+    )
+    if len(owned_calls) > 1:
+        raise BackendDefect(
+            blame=coordinate,
+            owner="manager_construction import call/value receipt subsumption",
+            observed="multiple lexical Calls claim one imported callee relation",
+            requested="one exact target-owned Call and callee occurrence",
+            fix="repair reachable Attribute Call ownership before subsumption",
+        )
+    return len(owned_calls) == 1
+
+
 def _seat_import_value_use_receipts(
     *,
     source_file,
@@ -2405,52 +2489,16 @@ def _seat_import_value_use_receipts(
                     "subsumption relation cites no authenticated call receipt",
                 )
             call_receipt.revalidate()
-            from sugar_lift_python_source.canonical import cid_of_json
-
-            identity = call_receipt.import_binding.value["target"]["moduleIdentity"]
-            call_site = call_receipt.use["useSite"]
-            value_site = receipt.use["useSite"]
-            expected = (
-                relation.source_cid == module.source_cid == receipt.source_cid
-                and relation.module_identity_cid == cid_of_json(identity)
-                and relation.import_binding_cid
-                == call_receipt.import_binding.cid
-                == receipt.import_binding.cid
-                and relation.target_symbol
-                == call_receipt.target_symbol
-                == receipt.target_symbol
-                and relation.exported_member_path
-                == tuple(receipt.use["exportedMemberPath"])
-                and relation.call_use_cid == call_receipt.use["cid"]
-                and relation.value_use_cid == receipt.use["cid"]
-                and (
-                    relation.call_coordinate.start_line,
-                    relation.call_coordinate.start_col,
-                    relation.call_coordinate.end_line,
-                    relation.call_coordinate.end_col,
-                )
-                == (
-                    call_site["startLine"],
-                    call_site["startCol"],
-                    call_site["endLine"],
-                    call_site["endCol"],
-                )
-                and relation.callee_coordinate.wire() == value_site
-                and relation.callee_coordinate == coordinate
-                and relation.call_coordinate == obligation.coordinate
-                and relation.resolution_kind == obligation.resolution_kind
-                and relation.resolved_object_cid == obligation.resolved_object_cid
-            )
-            if not expected:
-                from sugar_source_tree.panic import BackendDefect
-
-                raise BackendDefect(
-                    blame=coordinate,
-                    owner="manager_construction import call/value receipt subsumption",
-                    observed="parked call/value relation disagrees with authenticated receipts",
-                    requested="byte-identical one-to-one imported call/value relation",
-                    fix="re-mint the relation from the exact lexical call and value receipts",
-                )
+            if not _import_call_value_relation_is_owned_by_target(
+                target=target,
+                receipt=receipt,
+                coordinate=coordinate,
+                obligation=obligation,
+                relation=relation,
+                call_receipt=call_receipt,
+                module=module,
+            ):
+                continue
             paired_obligations.append(obligation)
         paired_obligations = tuple(paired_obligations)
         if len(paired_obligations) > 1:
@@ -2542,6 +2590,13 @@ def _seat_import_value_use_receipts(
                 # and remains parked/loud at the full Call coordinate.  Its
                 # duplicate Attribute value receipt is deliberately unseated;
                 # no candidate definition or runtime branch is selected.
+                continue
+            if imported.kind == "ambiguous-static-export":
+                # An ordinary imported member value is still authenticated by
+                # its exact receipt even when static export resolution cannot
+                # select one definition.  Only a proven Call.func duplicate is
+                # suppressed in favor of its parked full-Call obligation.
+                seat_receipt()
                 continue
             raise ImportValueUseSeatingGap(
                 f"resolution-{imported.kind}",
