@@ -21,11 +21,18 @@ from sugar_lift_python_source.dependency_artifact import (
     resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
+    _call_callee_coordinate,
+    _call_coordinate,
+    _install_opaque_call_obligation,
     _seat_import_value_use_receipts,
     resolve_source_visible_frame,
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.context_manager_resolution import (
+    OpaqueSourceCallObligationV1,
+    TreeConstructionContextV1,
+    _mint_import_call_value_subsumption,
+)
 from sugar_source_tree.nodes import Attribute, Call, FunctionDef
 from sugar_source_tree.panic import BackendDefect
 from sugar_source_tree.tree import SourceFile
@@ -246,6 +253,118 @@ def test_duplicate_identical_call_receipt_is_loud_before_pairing(
             graph=graph,
             session=SourceResolutionSession(enabled=False),
         )
+
+
+def test_exact_ambiguous_callee_stays_parked_without_consuming_other_rows(
+    tmp_path: Path,
+) -> None:
+    outer_call, _ = _receipts(tmp_path)
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    warnings_graph = DependencyArtifactGraph.authenticate_stdlib_module("warnings")
+    resolved = resolve_import_binding(outer_call, graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    module = graph.modules["re"]
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=context,
+    )
+    target = next(
+        node
+        for node in source_file.root.body
+        if isinstance(node, FunctionDef) and node.name == "_compile"
+    )
+    warning_call_node = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Call)
+        and node.line_col_span().start_line == 302
+        and isinstance(node.func, Attribute)
+        and node.func.attr == "warn"
+    )
+    calls, _ = authenticated_import_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    values, _ = authenticated_import_value_use_receipts(
+        Path("."),
+        Path(module.source_seat),
+        module.source,
+        module.source_cid,
+        module_identities={},
+    )
+    warning_call = next(
+        row
+        for row in calls
+        if row.target_symbol == "python:warnings.warn"
+        and row.use["useSite"]["startLine"] == 302
+    )
+    warning_value = next(
+        row
+        for row in values
+        if row.target_symbol == "python:warnings.warn"
+        and row.use["useSite"]["startLine"] == 302
+    )
+    unrelated = next(
+        row
+        for row in values
+        if row.target_symbol == "python:re._compiler.SRE_FLAG_ASCII"
+    )
+    unrelated_site = unrelated.use["useSite"]
+    unrelated_span = (
+        unrelated_site["startLine"],
+        unrelated_site["startCol"],
+        unrelated_site["endLine"],
+        unrelated_site["endCol"],
+    )
+    source_file.unit.seat_import_value_use_resolution(
+        unrelated_span,
+        unrelated,
+        source_cid=module.source_cid,
+    )
+    call_coordinate = _call_coordinate(warning_call_node)
+    callee_coordinate = _call_callee_coordinate(warning_call_node)
+    relation = _mint_import_call_value_subsumption(
+        call_receipt=warning_call,
+        value_receipt=warning_value,
+        call_coordinate=call_coordinate,
+        callee_coordinate=callee_coordinate,
+        resolution_kind="call-target-export-unresolved",
+        resolved_object_cid=resolved.cid,
+    )
+    obligation = OpaqueSourceCallObligationV1(
+        call_coordinate,
+        warning_call.target_symbol,
+        resolved.cid,
+        resolution_kind="call-target-export-unresolved",
+        import_call_value_subsumption=relation,
+    )
+    _install_opaque_call_obligation(context, warning_call_node, obligation)
+
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=target,
+        session=SourceResolutionSession(enabled=False),
+        context=context,
+        dependency_graphs={"re": graph, "warnings": warnings_graph},
+    )
+
+    warning_site = warning_value.use["useSite"]
+    warning_span = (
+        warning_site["startLine"],
+        warning_site["startCol"],
+        warning_site["endLine"],
+        warning_site["endCol"],
+    )
+    assert source_file.unit.import_value_use_resolution(warning_span) is None
+    assert context.opaque_source_call_obligations[call_coordinate] is obligation
+    assert source_file.unit.import_value_use_resolution(unrelated_span) is unrelated
+    with pytest.raises(ValueError, match="producer authority"):
+        replace(relation, call_coordinate=relation.callee_coordinate)
 
 
 def test_reversed_receipt_iteration_preserves_relation_cid(
