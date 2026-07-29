@@ -527,3 +527,79 @@ def test_receipt_backed_import_member_is_constructed_call_argument(
     assert member.to_term(owner="test") == member.desugar(context).value.to_term(
         owner="test"
     )
+
+
+def test_import_member_testimony_canonicalizes_only_its_authenticated_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The enum.py:927 construction path must not expose a raw owner token."""
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_value_use_receipts,
+    )
+    from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+    from sugar_lift_python_source.dependency_artifact import AuthenticatedModuleSourceV1
+    from sugar_lift_python_source.manager_construction import (
+        _seat_import_value_use_receipts,
+    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_source_tree.backend import materialize
+    from sugar_source_tree.binding_state import (
+        ConstructionTestimonyReporterV1,
+        SubstitutionTraceBuilderV1,
+    )
+    from sugar_source_tree.nodes import Attribute
+    from sugar_source_tree.panic import BackendDefect
+    from sugar_source_tree.reporter import CollectingReporter
+
+    source = "import sys\ndef selected():\n    return sys.modules\n"
+    path, source_file, context = _consumer(tmp_path, source)
+    function = next(node for node in source_file.nodes() if isinstance(node, FunctionDef))
+    attribute = next(node for node in source_file.nodes() if isinstance(node, Attribute))
+    module = AuthenticatedModuleSourceV1(
+        module_name="consumer",
+        source_seat="consumer.py",
+        source_cid=source_file.unit.source_cid,
+        source=source,
+    )
+    monkeypatch.chdir(tmp_path)
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=function,
+        session=SourceResolutionSession(),
+        context=context,
+        dependency_graphs={},
+    )
+    reporter = ConstructionTestimonyReporterV1(
+        CollectingReporter(),
+        SubstitutionTraceBuilderV1(source_file.unit.source_cid),
+    )
+    root = materialize(source_file.unit, source_file.root.ref, reporter)
+    constructed_attribute = next(
+        node
+        for node in root.walk()
+        if isinstance(node, Attribute)
+        and node.line_col_span() == attribute.line_col_span()
+    )
+
+    member = constructed_attribute.sugar()
+    assert isinstance(member, ImportMemberSugar)
+    assert member.qualified_name == "sys.modules"
+
+    foreign_source = "import os\ndef selected():\n    return os.modules\n"
+    foreign_path, foreign_file, _ = _consumer(tmp_path, foreign_source)
+    foreign_receipts, _ = authenticated_import_value_use_receipts(
+        tmp_path,
+        foreign_path,
+        foreign_source,
+        foreign_file.unit.source_cid,
+        module_identities={},
+    )
+    foreign = next(row for row in foreign_receipts if row.target_symbol == "python:os.modules")
+    span = attribute.line_col_span()
+    with pytest.raises(BackendDefect, match="source_cid"):
+        source_file.unit.seat_import_value_use_resolution(
+            (span.start_line, span.start_col, span.end_line, span.end_col),
+            foreign,
+            source_cid=foreign_file.unit.source_cid,
+        )
