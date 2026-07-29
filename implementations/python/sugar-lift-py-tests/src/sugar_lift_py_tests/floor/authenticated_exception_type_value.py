@@ -25,6 +25,12 @@ class AuthenticatedExceptionTypeValue(FloorValue):
     def delitem(self, index, site):
         return self.value.delitem(index, site)
 
+    def setattr(self, name, value, site):
+        return self.value.setattr(name, value, site)
+
+    def delattr(self, name, site):
+        return self.value.delattr(name, site)
+
     def exception_type_identity(self) -> Term:
         return self.identity
 
