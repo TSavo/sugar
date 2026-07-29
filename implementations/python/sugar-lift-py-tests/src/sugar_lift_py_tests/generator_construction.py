@@ -1491,63 +1491,55 @@ class GeneratorConstructionV1:
 
         from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, partition
 
-        from sugar_lift_py_tests.outcome import Complete, Halted, Incomplete
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        def _transition_truth(truth):
+            decided = self._decide_guard(truth)
+            if decided is True:
+                return self._spliced(step.then_steps)._transition(requested)
+            if decided is False:
+                return self._spliced(step.else_steps)._transition(requested)
+
+            guard_formula = self._guard_formula(truth)
+            if guard_formula is None:
+                return self._gap(requested, "If carrying a suspension")
+
+            then_face, else_face = partition(
+                ("generator.branch", self.instance_coordinate, step.fragment_cid)
+            )
+            from sugar_lift_py_tests.ir import not_
+
+            return ExitSet(
+                (
+                    Completed(
+                        guard_formula,
+                        self._spliced(step.then_steps),
+                        frozenset({then_face}),
+                        (),
+                    ),
+                    Completed(
+                        not_(guard_formula),
+                        self._spliced(step.else_steps),
+                        frozenset({else_face}),
+                        (),
+                    ),
+                )
+            ).factor_completed()
 
         guard_outcome = self._guard_truth(step.guard)
         if isinstance(guard_outcome, ExitSet):
-            if guard_outcome.exits and all(
-                isinstance(face, Halted) for face in guard_outcome.exits
-            ):
-                return ExitSet(
-                    tuple(
-                        Halted(
-                            face.guard,
-                            face.effect,
-                            self,
-                            face.faces,
-                            face.pending_contracts,
-                        )
-                        for face in guard_outcome.exits
-                    )
-                )
-            return self._gap(requested, "If guard has mixed completed/halted faces")
+            def _transition_completed(truth):
+                transitioned = _transition_truth(truth)
+                if isinstance(transitioned, ExitSet):
+                    return transitioned
+                return ExitSet.completed(transitioned)
+
+            return guard_outcome.sequence(_transition_completed)
         if isinstance(guard_outcome, Incomplete):
             return ExitSet.halted(guard_outcome.effect, state=self)
         if not isinstance(guard_outcome, Complete):
             return self._gap(requested, "If carrying a suspension")
-
-        truth = guard_outcome.value
-        decided = self._decide_guard(truth)
-        if decided is True:
-            return self._spliced(step.then_steps)._transition(requested)
-        if decided is False:
-            return self._spliced(step.else_steps)._transition(requested)
-
-        guard_formula = self._guard_formula(truth)
-        if guard_formula is None:
-            return self._gap(requested, "If carrying a suspension")
-
-        then_face, else_face = partition(
-            ("generator.branch", self.instance_coordinate, step.fragment_cid)
-        )
-        from sugar_lift_py_tests.ir import not_
-
-        return ExitSet(
-            (
-                Completed(
-                    guard_formula,
-                    self._spliced(step.then_steps),
-                    frozenset({then_face}),
-                    (),
-                ),
-                Completed(
-                    not_(guard_formula),
-                    self._spliced(step.else_steps),
-                    frozenset({else_face}),
-                    (),
-                ),
-            )
-        ).factor_completed()
+        return _transition_truth(guard_outcome.value)
 
     def _spliced(self, branch_steps: tuple) -> "GeneratorConstructionV1":
         """This machine with the branch's steps in place of the `If`."""
