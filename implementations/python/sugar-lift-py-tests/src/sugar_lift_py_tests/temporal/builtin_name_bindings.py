@@ -182,6 +182,14 @@ BUILTIN_EXCEPTION_BASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# Closed runtime surface currently carried by the builtin producer. Extending
+# this roster is an explicit language/runtime testimony change; attribute
+# consumers never infer membership from spelling or host getattr/dir.
+BUILTIN_CLASS_MEMBER_SURFACE: dict[str, tuple[str, ...]] = {
+    "object": ("__str__",),
+}
+
+
 def builtin_name_temporal():
     """Return the shared immutable lexical floor for Python's builtin names.
 
@@ -202,15 +210,25 @@ def builtin_name_temporal():
         SymbolicValue,
     )
     from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.floor.builtin_class_member_value import (
+        _mint_builtin_class_member,
+    )
+    from sugar_lift_py_tests.floor.object_field import ObjectField
     from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
 
     # Construct the raw root directly. TemporalContext.empty() delegates here
     # so every ordinary lexical scope starts with this one builtin floor.
     temporal = TemporalContext()
     for name in sorted(builtin_callable_names()):
+        class_record = BlockValue(
+            tuple(
+                ObjectField(member, _mint_builtin_class_member(name, member))
+                for member in BUILTIN_CLASS_MEMBER_SURFACE.get(name, ())
+            )
+        )
         temporal = temporal.bind_value(
             name,
-            ClassValue(name=name, bases=(), record=BlockValue(())),
+            ClassValue(name=name, bases=(), record=class_record),
         )
     for name in sorted(builtin_constant_names()):
         temporal = temporal.bind_value(

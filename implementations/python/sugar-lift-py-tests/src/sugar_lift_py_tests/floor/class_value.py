@@ -85,6 +85,27 @@ class ClassValue(FloorValue):
         producer panics on BuiltinExceptionClassValue and exit summary stays
         exit-may-halt rather than sealing ExpectsMode.
         """
+        from sugar_lift_py_tests.floor.object_field import ObjectField
+
+        carried = tuple(
+            statement
+            for statement in self.record.statements
+            if type(statement) is ObjectField and statement.name == name
+        )
+        if len(carried) > 1:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=site,
+                owner="ClassValue.attribute",
+                observed="duplicate authenticated class member fields",
+                requested="one producer-owned class member coordinate",
+                fix="apply class-body overwrite ordering before publication",
+            )
+        if carried:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(carried[0].value)
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.floor.string_value import StringValue
             from sugar_lift_py_tests.outcome import Complete
