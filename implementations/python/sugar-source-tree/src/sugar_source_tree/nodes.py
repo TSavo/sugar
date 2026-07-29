@@ -4417,6 +4417,23 @@ class Delete(Statement):
             operations.append(operation)
         return operations[0] if len(operations) == 1 else _Splice(tuple(operations))
 
+    def _construct_sugar(self):
+        """Construct the exact module-level subscript-delete statement."""
+        if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
+            target = self.targets[0]
+            return self._make_delete_subscript(
+                target.value, target.slice_, target.span
+            ).sugar()
+        from .panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=self.fragment,
+            owner="Delete._construct_sugar",
+            observed="delete statement is not one exact subscript target",
+            requested="one source-authenticated subscript delete occurrence",
+            fix="lower other delete targets through their typed construction owner",
+        )
+
     def _make_delete_name(
         self, name: str, prior: BindingState, span: Span | None = None
     ) -> "Node":

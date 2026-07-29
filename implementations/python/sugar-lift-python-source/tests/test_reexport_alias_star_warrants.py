@@ -556,6 +556,31 @@ def test_module_prefix_does_not_construct_an_uncalled_function_body(
     assert dormant.definition.name == "dormant"
 
 
+def test_module_prefix_constructs_one_subscript_delete_statement(
+    tmp_path: Path,
+) -> None:
+    """A module prefix executes its exact subscript delete target."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = "del [1, 2, 3][-2:]\nresult = 1\n"
+    dist = _dist(
+        tmp_path,
+        name="module-delete-prefix-pkg",
+        files={"module_delete_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_delete_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+
+
 def test_module_prefix_execution_publishes_exact_decorator_result(
     tmp_path: Path,
 ) -> None:
