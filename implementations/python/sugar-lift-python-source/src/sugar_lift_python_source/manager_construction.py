@@ -586,6 +586,11 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         reduce_block_to_exitset,
     )
     from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+    from sugar_source_tree.backend import materialize
+    from sugar_source_tree.binding_state import (
+        ConstructionTestimonyReporterV1,
+        SubstitutionTraceBuilderV1,
+    )
     from sugar_source_tree.nodes import (
         AsyncFunctionDef,
         Delete,
@@ -593,20 +598,27 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         Name,
         Subscript,
     )
+    from sugar_source_tree.reporter import NULL_REPORTER
 
     from .canonical import blake3_512_of
 
     if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
         raise ValueError("module prefix source CID mismatch")
     construction_context = TreeConstructionContextV1.for_source_call_construction()
+    producer_reporter = ConstructionTestimonyReporterV1(
+        NULL_REPORTER, SubstitutionTraceBuilderV1(module.source_cid)
+    )
     source_file = SourceFile(
         (module.source, module.source_seat, module.source_cid),
         construction_context=construction_context,
     )
+    producer_root = materialize(
+        source_file.unit, source_file.root.ref, producer_reporter
+    )
     locus_key = (locus.lineno, locus.col_offset)
     prefix = tuple(
         statement
-        for statement in source_file.root.body
+        for statement in producer_root.body
         if (
             statement.line_col_span().start_line,
             statement.line_col_span().start_col,

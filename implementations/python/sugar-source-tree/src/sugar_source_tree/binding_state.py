@@ -401,7 +401,17 @@ class ConstructionTestimonyReporterV1:
         self._trace_builder = trace_builder
 
     def register(self, node: Node) -> None:
-        self._materialized_by_ref[node.ref] = node
+        if node.reporter is not self:
+            # Registration is construction-owned.  A later caller cannot turn
+            # a Node built under another reporter into testimony by replaying
+            # this public protocol method.
+            return
+        existing = self._materialized_by_ref.get(node.ref)
+        if existing is None:
+            # Lazy child access can rematerialize a view for the same backend
+            # ref.  The first constructor contact owns the testimony; a later
+            # view must not replace it.
+            self._materialized_by_ref[node.ref] = node
         self._delegate.register(node)
 
     def materialized_node_for_ref(self, ref: object) -> Node | None:
@@ -418,7 +428,8 @@ class ConstructionTestimonyReporterV1:
             else producer._materialized_by_ref.get(node.ref)
         )
         if (
-            not isinstance(registered, type(node))
+            registered is not node
+            or not isinstance(registered, type(node))
             or registered.unit.source_cid != node.unit.source_cid
             or registered.line_col_span() != node.line_col_span()
         ):
