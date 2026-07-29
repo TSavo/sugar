@@ -233,6 +233,24 @@ class _ModuleClassDefinitionBindingSugar:
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
+        unsupported_keywords = tuple(
+            keyword
+            for keyword in self.definition.keywords
+            if keyword.arg != "metaclass"
+        )
+        if unsupported_keywords:
+            keyword = unsupported_keywords[0]
+            label = keyword.arg if keyword.arg is not None else "**"
+            raise SugarNotWritten(
+                owner="module definition execution",
+                blame=keyword.value.fragment,
+                observed=f"unsupported class creation keyword {label}",
+                requested="one transported class creation keyword roster",
+                fix=(
+                    "transport the exact parser-owned class keyword through "
+                    "the metaclass call or keep publication loud"
+                ),
+            )
         sugar = self.definition.sugar()
         outcome = sugar.desugar(ctx)
 
