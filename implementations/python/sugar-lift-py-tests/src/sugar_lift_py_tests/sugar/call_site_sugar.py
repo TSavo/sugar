@@ -4,6 +4,8 @@ import builtins
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.sugar_base import (
@@ -53,12 +55,21 @@ class CallSiteSugar(ConstructedTermSugar):
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
     expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
     native_operation_formal_coordinates: tuple = dataclass_field(default=(), compare=False)
+    call_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         for argument in self.args:
             require_constructed_term_sugar(argument, owner="CallSiteSugar.args")
         for _name, argument in self.keywords:
             require_constructed_term_sugar(argument, owner="CallSiteSugar.keywords")
+        if self.call_occurrence is not None and type(
+            self.call_occurrence
+        ) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "CallSiteSugar.call_occurrence must be SourceFragmentCoordinateV1"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -254,6 +265,7 @@ class CallSiteSugar(ConstructedTermSugar):
                         positional + tuple(value for _, value in kw_values),
                         tuple(name for name, _ in kw_values),
                         self.site,
+                        call_occurrence=self.call_occurrence,
                     ),
                     ctx,
                 )

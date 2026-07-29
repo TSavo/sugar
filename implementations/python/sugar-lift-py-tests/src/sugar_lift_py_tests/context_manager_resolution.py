@@ -69,6 +69,13 @@ class SourceFragmentCoordinateV1:
             "endCol": self.end_col,
         }
 
+    @property
+    def cid(self) -> str:
+        """Canonical CID of this owner's existing wire representation."""
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(self.wire())
+
 
 @dataclass(frozen=True)
 class OpaqueSourceCallObligationV1:

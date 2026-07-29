@@ -348,6 +348,11 @@ class FloorValue:
         del ctx
         return self._operation_construction_gap(operation, "callable_application_with")
 
+    def subscript_with_occurrence(self, index, site, occurrence):
+        """Typed source occurrence is optional; ordinary floors retain site law."""
+        del occurrence
+        return self.subscript(index, site)
+
     def call_method_with(
         self, operation: MethodCallOperation, ctx: ReduceContext | None
     ) -> Outcome:

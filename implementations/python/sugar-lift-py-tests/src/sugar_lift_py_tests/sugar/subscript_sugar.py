@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
@@ -28,10 +30,19 @@ class SubscriptSugar(ConstructedTermSugar):
     receiver: ConstructedTermSugar
     index: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+    use_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="SubscriptSugar.receiver")
         require_constructed_term_sugar(self.index, owner="SubscriptSugar.index")
+        if self.use_occurrence is not None and type(
+            self.use_occurrence
+        ) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "SubscriptSugar.use_occurrence must be SourceFragmentCoordinateV1"
+            )
 
     @classmethod
     def witnesses(cls):
@@ -142,4 +153,6 @@ class SubscriptSugar(ConstructedTermSugar):
                 blame=self.site,
                 ctx=ctx,
             )
-        return receiver.subscript(index, self.site)
+        return receiver.subscript_with_occurrence(
+            index, self.site, self.use_occurrence
+        )

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor import FloorValue
@@ -18,6 +20,15 @@ class CallableApplication:
     site: object
 
     owner: str = "ComputedCallableSugar"
+    call_occurrence: SourceFragmentCoordinateV1 | None = None
+
+    def __post_init__(self) -> None:
+        if self.call_occurrence is not None and type(
+            self.call_occurrence
+        ) is not SourceFragmentCoordinateV1:
+            raise TypeError(
+                "CallableApplication.call_occurrence must be SourceFragmentCoordinateV1"
+            )
 
     def apply(
         self, receiver: "FloorValue", ctx: "ReduceContext | None"

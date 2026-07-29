@@ -9727,6 +9727,7 @@ class Call(Expression):
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                call_occurrence=coordinate,
                 keywords=keyword_sugars,
                 contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
@@ -10558,11 +10559,27 @@ class Subscript(Expression):
         carrying whatever the call term guarantees and nothing invented.
         Withholding it here was the gap, not the construct."""
         from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+            TreeConstructionContextV1,
+        )
+
+        occurrence = None
+        if isinstance(self.unit.construction_context, TreeConstructionContextV1):
+            span = self.line_col_span()
+            occurrence = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
 
         return SubscriptSugar(
             receiver=self.value.sugar(),
             index=self.slice_.sugar(),
             site=self.fragment,
+            use_occurrence=occurrence,
         )
 
 

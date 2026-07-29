@@ -218,6 +218,22 @@ class BuiltinSemanticCallable(FloorValue):
             return Complete(TupleValue(tuple(key for key, _ in source.entries)))
         if isinstance(source, ComprehensionValue) and source.finite_elements is not None:
             return Complete(TupleValue(tuple(source.finite_elements)))
+        if isinstance(source, ComprehensionValue):
+            from sugar_lift_py_tests.context_manager_resolution import (
+                SourceFragmentCoordinateV1,
+            )
+            from sugar_lift_py_tests.floor.tuple_coordinate_value import (
+                TupleCoordinateValue,
+            )
+
+            if type(operation.call_occurrence) is SourceFragmentCoordinateV1:
+                return Complete(
+                    TupleCoordinateValue._from_builtin_construct(
+                        source=source,
+                        call_occurrence=operation.call_occurrence,
+                        runtime=self.runtime_identity,
+                    )
+                )
         return None
 
     def test_python_type(self, value, site):

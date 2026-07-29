@@ -88,6 +88,7 @@ from .term_value import TermValue
 from .testimony_value import TestimonyValue
 from .tuple_literal_value import TupleLiteralValue
 from .tuple_value import TupleValue
+from .tuple_coordinate_value import TupleCoordinateValue
 from .universe_value import UniverseValue
 
 REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
@@ -157,6 +158,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     TestimonyValue,
     TupleLiteralValue,
     TupleValue,
+    TupleCoordinateValue,
     UniverseValue,
     EffectCoordinate,
     ExceptionInfoCoordinate,
@@ -244,6 +246,7 @@ __all__ = [
     "TestimonyValue",
     "TupleLiteralValue",
     "TupleValue",
+    "TupleCoordinateValue",
     "UniverseValue",
     "REGISTERED_FLOOR_TYPES",
     "require_floor_dispatch_surface",

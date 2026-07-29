@@ -101,6 +101,7 @@ class SourceFile:
         path: Path | str,
         backend: Optional[Backend] = None,
         reporter: AuditReporter = NULL_REPORTER,
+        construction_context: object | None = None,
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
         is the oracle's loud ``SourceUnavailable``, never a swallow."""
@@ -110,7 +111,12 @@ class SourceFile:
         path_s = str(path)
         with reduction_span(sugar="OraclePathSource", role="file", site=path_s):
             identity = path_source(path_s)
-        return cls(identity, backend=backend, reporter=reporter)
+        return cls(
+            identity,
+            backend=backend,
+            reporter=reporter,
+            construction_context=construction_context,
+        )
 
     @classmethod
     def from_module(
