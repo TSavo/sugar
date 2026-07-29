@@ -9662,6 +9662,19 @@ class Call(Expression):
         if lookup is None:
             return value
         definition = lookup(definition_ref)
+        if definition is None and value.source_call_frame is not None:
+            producer_definition = value.source_call_frame.owner
+            if (
+                isinstance(producer_definition, (FunctionDef, AsyncFunctionDef))
+                and producer_definition.ref is definition_ref
+            ):
+                retain = getattr(
+                    self.reporter, "retain_registered_node_from", None
+                )
+                if retain is not None:
+                    definition = retain(
+                        producer_definition, producer_definition.reporter
+                    )
         if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
             return value
         return replace(value, expected_definition_ref=definition)
@@ -9898,6 +9911,7 @@ class Call(Expression):
                 target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                call_occurrence=coordinate,
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
                 source_call_frame_table=(
@@ -9911,6 +9925,7 @@ class Call(Expression):
                     if lexical_row is not None
                     else None
                 ),
+                expected_definition_ref=bound_frame.owner.ref,
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar

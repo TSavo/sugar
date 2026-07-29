@@ -119,6 +119,7 @@ class CallSiteValue(FloorValue):
     body: SugarBody[Any] | FunctionBodyUniverse | None
     keyword_names: tuple[str, ...] = dataclass_field(default=(), compare=False)
     site: object = dataclass_field(default=None, compare=False)
+    call_occurrence: object | None = dataclass_field(default=None, compare=False)
     # A callee contract may cite the Python type object returned by this call.
     # Absent that citation, Python must execute the call to know whether its
     # result is a valid isinstance type operand.

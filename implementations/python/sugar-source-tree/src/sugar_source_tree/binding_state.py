@@ -408,6 +408,49 @@ class ConstructionTestimonyReporterV1:
         """The typed occurrence registered for ``ref`` in this exact roll."""
         return self._materialized_by_ref.get(ref)
 
+    def retain_registered_node_from(
+        self, node: Node, producer: "ConstructionTestimonyReporterV1"
+    ) -> Node:
+        """Retain one exact producer-roll registration in this consumer roll."""
+        registered = (
+            None
+            if type(producer) is not ConstructionTestimonyReporterV1
+            else producer._materialized_by_ref.get(node.ref)
+        )
+        if (
+            not isinstance(registered, type(node))
+            or registered.unit.source_cid != node.unit.source_cid
+            or registered.line_col_span() != node.line_col_span()
+        ):
+            from sugar_source_tree.panic import backend_defect
+
+            backend_defect(
+                blame=node.fragment,
+                owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
+                observed="foreign or absent producer node registration",
+                requested="the producer reporter's exact typed Node/ref registration",
+                fix="retain the producer registration; never remint or search by name/span",
+            )
+        existing = self._materialized_by_ref.get(node.ref)
+        if existing is not None and (
+            not isinstance(existing, type(node))
+            or existing.unit.source_cid != node.unit.source_cid
+            or existing.line_col_span() != node.line_col_span()
+        ):
+            from sugar_source_tree.panic import backend_defect
+
+            backend_defect(
+                blame=node.fragment,
+                owner="ConstructionTestimonyReporterV1.retain_registered_node_from",
+                observed="consumer roll already carries a conflicting Node/ref registration",
+                requested="zero or one exact producer registration per backend ref",
+                fix="preserve materialization identity; never select between duplicate nodes",
+            )
+        if existing is not None:
+            return existing
+        self._materialized_by_ref[node.ref] = registered
+        return registered
+
     def present_fact(self, node: Node) -> None:
         self._delegate.present_fact(node)
 
@@ -449,8 +492,8 @@ class ConstructionTestimonyReporterV1:
                 or not isinstance(
                     resolved_definition, (FunctionDef, AsyncFunctionDef)
                 )
-                or resolved_definition.ref is not definition.ref
-                or resolved_definition.line_col_span() != definition.line_col_span()
+                or resolved_definition.fragment.seal()
+                != definition.fragment.seal()
                 or value.call_occurrence != call_occurrence
                 or frame is None
                 or frame.owner.ref is not definition.ref

@@ -183,7 +183,8 @@ class CallSiteSugar(ConstructedTermSugar):
                 self.expected_definition_ref, (FunctionDef, AsyncFunctionDef)
             ):
                 owner_matches = (
-                    self.source_call_frame.owner is self.expected_definition_ref
+                    self.source_call_frame.owner.ref
+                    is self.expected_definition_ref.ref
                 )
             else:
                 owner_matches = (
@@ -454,6 +455,7 @@ class CallSiteSugar(ConstructedTermSugar):
             body=source_body,
             keyword_names=tuple(name for name, _ in kw_values),
             site=self.site,
+            call_occurrence=self.call_occurrence,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
             source_call_frame_cid=source_frame_cid,
