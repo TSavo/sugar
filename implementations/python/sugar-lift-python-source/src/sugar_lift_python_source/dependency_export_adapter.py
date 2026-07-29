@@ -137,7 +137,9 @@ def _resolve_export_uncached(
     )
     # Normal-completion authority for the prefix (statements strictly before
     # the unique export-binding locus): producer-owned Completed faces only.
-    if locus is not None and not _prefix_has_completed_fallthrough(module, locus):
+    if locus is not None and not _prefix_has_completed_fallthrough(
+        module, locus, graph=graph, session=session
+    ):
         return _gap(
             "dynamic-export", binding_cid, graph, module_name, exported_name
         )
@@ -829,7 +831,9 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state):
     return new_state, (statement if new_state is not state else None)
 
 
-def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
+def _prefix_has_completed_fallthrough(
+    module, locus: ast.stmt, *, graph=None, session=None
+) -> bool:
     """Delegate prefix meaning to the construction producer.
 
     The dependency adapter owns export recognition only. It must not import
@@ -838,7 +842,11 @@ def _prefix_has_completed_fallthrough(module, locus: ast.stmt) -> bool:
     """
     from .manager_construction import prefix_has_completed_fallthrough
 
-    return prefix_has_completed_fallthrough(module, locus)
+    if graph is None and session is None:
+        return prefix_has_completed_fallthrough(module, locus)
+    return prefix_has_completed_fallthrough(
+        module, locus, graph=graph, session=session
+    )
 
 
 def _absolute_import(
