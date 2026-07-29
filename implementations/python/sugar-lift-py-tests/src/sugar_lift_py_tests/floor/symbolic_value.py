@@ -140,11 +140,9 @@ class SymbolicValue(FloorValue):
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.outcome import Incomplete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
         operation = ctor(
             "adt.is_python_type",
-            [floor_to_term(value, owner="isinstance value"), term],
+            [value.to_term(owner="isinstance value"), term],
         )
         return Incomplete(
             DynamicTypeOperandRuntimeEffect(
@@ -821,10 +819,8 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-        index_term = floor_to_term(index, owner="SymbolicValue.setitem index")
-        value_term = floor_to_term(value, owner="SymbolicValue.setitem value")
+        index_term = index.to_term(owner="SymbolicValue.setitem index")
+        value_term = value.to_term(owner="SymbolicValue.setitem value")
         return Complete(
             CallSiteValue(
                 target_name="setitem",
@@ -850,9 +846,7 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
-
-        index_term = floor_to_term(index, owner="SymbolicValue.delitem index")
+        index_term = index.to_term(owner="SymbolicValue.delitem index")
         return Complete(
             CallSiteValue(
                 target_name="delitem",
