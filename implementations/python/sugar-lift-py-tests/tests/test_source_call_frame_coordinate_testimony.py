@@ -11,6 +11,7 @@ from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.source_call_frame import (
     BoundSourceCallActualsV1,
+    MutableGlobalBindingV1,
     SourceCallBindingGap,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -82,6 +83,24 @@ def test_bound_actuals_requires_explicit_value_projection() -> None:
     assert not isinstance(bound, Sequence)
     with pytest.raises(TypeError):
         tuple(bound)
+
+
+def test_source_frame_refuses_mutable_global_from_foreign_source() -> None:
+    frame = _frame()
+    foreign = _frame(name="other", filename="foreign_mutable_global.py")
+    occurrence = foreign.owner.fragment.seal()
+    foreign_binding = MutableGlobalBindingV1(
+        source_cid=foreign.source_identity_cid,
+        binding_occurrence=occurrence,
+        name="state",
+        kind="dict",
+        term={"kind": "opaque-state"},
+        line=1,
+        col=0,
+    )
+
+    with pytest.raises(ValueError, match="mutable global binding source identity"):
+        replace(frame, mutable_global_bindings=(foreign_binding,))
 
 
 @pytest.mark.parametrize("variant", ("missing", "duplicate", "reordered", "foreign"))
