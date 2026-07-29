@@ -1768,6 +1768,24 @@ def _construct_reachable_decorated_class_bindings(
             if not symbol.is_global() or not symbol.is_referenced():
                 continue
             class_dependencies.add(candidate)
+    # Only classes authenticated by the decorated-class reachability product
+    # own class-body/decorator import receipts here.  Seat those exact ClassDef
+    # ranges before their sugars are constructed; unrelated module siblings
+    # acquire no authority from sharing the source unit.
+    receipt_owned_classes = tuple(
+        definition
+        for definition in module_classes
+        if definition in class_dependencies or definition in reached
+    )
+    for definition in receipt_owned_classes:
+        _seat_import_value_use_receipts(
+            source_file=source_file,
+            module=module,
+            target=definition,
+            session=session,
+            context=context,
+            dependency_graphs=dependency_graphs,
+        )
     for definition in module_definitions:
         if definition not in class_dependencies:
             continue
