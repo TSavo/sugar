@@ -9395,7 +9395,6 @@ class Call(Expression):
                 fix="repair lexical call enrollment before constructing the source frame",
         )
         lexical_row = lexical_rows[0] if lexical_rows else None
-        retained_lexical_row = self.ref in self.unit._retained_lexical_call_rows
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
             if (
@@ -9406,10 +9405,8 @@ class Call(Expression):
                 or lexical_row.lexical_scope_identity
                 is not lexical_row.lexical_scope.ref
                 or (
-                    retained_lexical_row
-                    and
                     source_call_frame is not None
-                    and source_call_frame.owner is not lexical_row.lexical_scope
+                    and source_call_frame.owner is not function_definition
                 )
             ):
                 from .panic import backend_defect
