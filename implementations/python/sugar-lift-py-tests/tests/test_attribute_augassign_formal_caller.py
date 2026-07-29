@@ -398,6 +398,109 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
         assert fields["field"] == TermValue(11)
 
 
+def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
+    monkeypatch,
+) -> None:
+    """Production path: CPython ``enum.py:292`` retains the exact operation chain."""
+    from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
+    from sugar_lift_py_tests.sugar import augassign_sugar as aug_module
+    from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+    from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("enum")
+    module = graph.modules["enum"]
+    source = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    owner = min(
+        (
+            node
+            for node in source.nodes()
+            if isinstance(node, FunctionDef)
+            and node.line_col_span().start_line < 292
+            and node.line_col_span().end_line >= 292
+        ),
+        key=lambda node: node.line_col_span().end_line
+        - node.line_col_span().start_line,
+    )
+    events = []
+    original_read = AttributeSugar.project_attribute
+    original_op = aug_module.project_augmented
+    original_store = AttributeStoreEffectSugar.project_setattr
+
+    def at_target(site) -> bool:
+        return site.line_col_span().start_line == 292
+
+    def read(receiver, member, site, ctx=None):
+        if at_target(site):
+            events.append(("read", receiver, member, site))
+        return original_read(receiver, member, site, ctx)
+
+    def operate(left, right, *, operator, projector, site):
+        if at_target(site):
+            events.append(("operate", left, operator, site))
+        return original_op(
+            left,
+            right,
+            operator=operator,
+            projector=projector,
+            site=site,
+        )
+
+    def store(receiver, member, value, site):
+        if at_target(site):
+            events.append(("store", receiver, member, site))
+        return original_store(receiver, member, value, site)
+
+    monkeypatch.setattr(AttributeSugar, "project_attribute", staticmethod(read))
+    monkeypatch.setattr(aug_module, "project_augmented", operate)
+    monkeypatch.setattr(
+        AttributeStoreEffectSugar, "project_setattr", staticmethod(store)
+    )
+
+    owner.sugar().desugar(None)
+
+    assert tuple(event[0] for event in events) == ("read", "operate", "store")
+    read_event, op_event, store_event = events
+    assert read_event[1] is store_event[1]
+    assert read_event[2] == store_event[2] == "_flag_mask_"
+    assert op_event[2] == "ior"
+    assert len({event[3].source_cid for event in events}) == 1
+
+
+def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None:
+    """A renamed source helper uses the same read/inplace/store carrier chain."""
+    function, pending = _helper_definition(
+        "def renamed(receiver, increment):\n"
+        "    receiver.total += increment\n"
+    )
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "attribute_named"
+    coordinates = {
+        coordinate.declared_name: coordinate.coordinate_cid
+        for coordinate in function.sugar().formal_coordinates
+    }
+    receiver = ObjectValue(
+        "Renamed",
+        (ObjectField("total", TermValue(4)),),
+        (),
+        (),
+        "renamed-receiver",
+    )
+
+    result = pending.discharge(
+        {
+            coordinates["receiver"]: receiver,
+            coordinates["increment"]: TermValue(3),
+        }
+    )
+
+    assert isinstance(result, ExitSet)
+    assert len(result.exits) == 1
+    assert isinstance(result.exits[0], Completed)
+
+
 def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
