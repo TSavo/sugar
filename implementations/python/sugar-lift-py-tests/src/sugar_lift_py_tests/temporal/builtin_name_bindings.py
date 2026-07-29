@@ -197,6 +197,7 @@ def builtin_name_temporal():
     from sugar_lift_py_tests.floor import (
         BlockValue,
         BuiltinExceptionClassValue,
+        BuiltinObjectClassValue,
         BuiltinSemanticCallable,
         ClassValue,
         SymbolicValue,
@@ -210,7 +211,13 @@ def builtin_name_temporal():
     for name in sorted(builtin_callable_names()):
         temporal = temporal.bind_value(
             name,
-            ClassValue(name=name, bases=(), record=BlockValue(())),
+            (
+                BuiltinObjectClassValue(
+                    name=name, bases=(), record=BlockValue(())
+                )
+                if name == "object"
+                else ClassValue(name=name, bases=(), record=BlockValue(()))
+            ),
         )
     for name in sorted(builtin_constant_names()):
         temporal = temporal.bind_value(

@@ -16,6 +16,7 @@ from .native_callable_value import NativeCallableValue
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .builtin_exception_class_value import BuiltinExceptionClassValue
+from .builtin_object_class_value import BuiltinObjectClassValue
 from .builtin_semantic_callable import BuiltinSemanticCallable
 from .call_site_value import CallSiteValue
 from .class_definition_value import (
@@ -104,6 +105,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BuilderState,
     Bv32Value,
     BuiltinExceptionClassValue,
+    BuiltinObjectClassValue,
     BuiltinSemanticCallable,
     CallSiteValue,
     ClassValue,
@@ -180,6 +182,7 @@ __all__ = [
     "BuilderState",
     "Bv32Value",
     "BuiltinExceptionClassValue",
+    "BuiltinObjectClassValue",
     "BuiltinSemanticCallable",
     "CallSiteValue",
     "CurriedLoopBody",
