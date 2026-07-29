@@ -365,7 +365,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 pending,
                 carrier_actuals=callsite.bound_native_actuals_by_coordinate,
             )
-        if self.formal_function_sugar is not None:
+        if self.formal_function_sugar is not None and self.source_call_frame is None:
             pending = self.formal_function_sugar.desugar(ctx)
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
