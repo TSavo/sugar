@@ -719,7 +719,15 @@ class SourceVisibleCallFrameV1:
         # than raising on the unspecialized BindingCoordinateRef formal.
         node_scope = dict(zip(self.parameters, bound, strict=True))
         rebuild = getattr(self.owner, "_source_visible_body", None)
-        body = self.body if rebuild is None else rebuild(node_scope)
+        if rebuild is None:
+            body = self.body
+        elif self.constructed_new_method is not None:
+            body = rebuild(
+                node_scope,
+                constructed_new_method=self.constructed_new_method,
+            )
+        else:
+            body = rebuild(node_scope)
         return replace(
             self,
             runtime_entries=entries,

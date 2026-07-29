@@ -4257,10 +4257,15 @@ class ClassDef(Statement):
             None if new_shape is None else new_shape[0]
         )
         constructed_new_method = None
-        if new_shape is not None:
+        new_definitions = tuple(
+            item
+            for item in self.body
+            if isinstance(item, FunctionDef) and item.name == "__new__"
+        )
+        if len(new_definitions) == 1:
             from sugar_lift_py_tests.floor import ConstructedClassMethodV1
 
-            new_definition = new_shape[0]
+            new_definition = new_definitions[0]
             constructed_new_method = ConstructedClassMethodV1(
                 new_definition.name,
                 new_definition.fragment.seal().cid,
