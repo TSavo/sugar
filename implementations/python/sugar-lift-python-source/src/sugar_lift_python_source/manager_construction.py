@@ -1216,8 +1216,11 @@ def _resolve_source_visible_frame_uncached(
             module.source_cid,
             module_identities={},
         )
-        value_receipts = context.source_import_value_receipts.setdefault(
-            module.source_cid, tuple(value_receipts)
+        value_receipts = _cache_import_value_receipts(
+            context,
+            module,
+            dependency_graphs,
+            value_receipts,
         )
     else:
         import_receipts = ()
@@ -2256,6 +2259,120 @@ def _call_callee_coordinate(call: Call):
     )
 
 
+def _source_import_value_receipt_cache_key(module, dependency_graphs):
+    """Closed cache identity for one authenticated module source roster."""
+    from sugar_source_tree.panic import BackendDefect
+
+    graph = dependency_graphs.get(module.module_name.split(".", 1)[0])
+    if graph is None or graph.modules.get(module.module_name) is not module:
+        raise BackendDefect(
+            blame=module.source_seat,
+            owner="manager_construction import value receipt cache",
+            observed="module source is not owned by the carried dependency graph",
+            requested="exact module name/source/seat/artifact identity",
+            fix="carry the authenticated graph that minted this module source",
+        )
+    return (
+        module.module_name,
+        module.source_cid,
+        module.source_seat,
+        graph.distribution_artifact_cid,
+    )
+
+
+def _validated_import_value_receipt_roster(module, receipts):
+    """Validate and retain one exact immutable receipt roster."""
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+    from sugar_source_tree.panic import BackendDefect
+
+    roster = tuple(receipts)
+    exact_rows = {}
+    uses = {}
+    for receipt in roster:
+        if type(receipt) is not AuthenticatedImportUseV1:
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import value receipt cache",
+                observed="receipt roster contains an unadmitted product",
+                requested="exact AuthenticatedImportUseV1 rows",
+                fix="cache only lexical-pass value-use receipts",
+            )
+        receipt.revalidate()
+        exported = tuple(receipt.use.get("exportedMemberPath") or ())
+        row_key = (
+            receipt.source_cid,
+            receipt.import_binding.cid,
+            receipt.use["cid"],
+            exported,
+        )
+        if receipt.source_cid != module.source_cid:
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import value receipt cache",
+                observed="receipt roster contains a foreign source CID",
+                requested="same-module authenticated value-use rows",
+                fix="partition receipt rosters by authenticated module identity",
+            )
+        if row_key in exact_rows:
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import value receipt cache",
+                observed="duplicate exact import value receipt row",
+                requested="one row per source/binding/use/path identity",
+                fix="repair lexical receipt enrollment uniqueness",
+            )
+        prior = uses.get(receipt.use["cid"])
+        if prior is not None and prior != row_key:
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import value receipt cache",
+                observed="conflicting import value receipt use CID",
+                requested="one exact row identity for each use CID",
+                fix="repair cross-wired receipt preimages before caching",
+            )
+        exact_rows[row_key] = receipt
+        uses[receipt.use["cid"]] = row_key
+    return roster
+
+
+def _cache_import_value_receipts(context, module, dependency_graphs, minted):
+    key = _source_import_value_receipt_cache_key(module, dependency_graphs)
+    candidate = _validated_import_value_receipt_roster(module, minted)
+    existing = context.source_import_value_receipts.get(key)
+    if existing is None:
+        context.source_import_value_receipts[key] = candidate
+        return candidate
+    existing_keys = tuple(
+        (
+            row.source_cid,
+            row.import_binding.cid,
+            row.use["cid"],
+            tuple(row.use.get("exportedMemberPath") or ()),
+        )
+        for row in existing
+    )
+    candidate_keys = tuple(
+        (
+            row.source_cid,
+            row.import_binding.cid,
+            row.use["cid"],
+            tuple(row.use.get("exportedMemberPath") or ()),
+        )
+        for row in candidate
+    )
+    if existing_keys != candidate_keys:
+        from sugar_source_tree.panic import BackendDefect
+
+        raise BackendDefect(
+            blame=module.source_seat,
+            owner="manager_construction import value receipt cache",
+            observed="conflicting roster for authenticated module identity",
+            requested="byte-identical ordered receipt row identities",
+            fix="keep module receipt enrollment deterministic",
+        )
+    return existing
+
+
 def _seat_import_value_use_receipts(
     *,
     source_file,
@@ -2299,7 +2416,8 @@ def _seat_import_value_use_receipts(
             fix="refuse dual-door repair; re-mint module via path_source",
         )
     # No ValueError swallow: authenticated mint refuses tamper/mismatch loud.
-    receipts = context.source_import_value_receipts.get(module.source_cid)
+    cache_key = _source_import_value_receipt_cache_key(module, dependency_graphs)
+    receipts = context.source_import_value_receipts.get(cache_key)
     if receipts is None:
         minted, _ = authenticated_import_value_use_receipts(
             Path("."),
@@ -2308,8 +2426,9 @@ def _seat_import_value_use_receipts(
             module.source_cid,
             module_identities={},
         )
-        receipts = tuple(minted)
-        context.source_import_value_receipts[module.source_cid] = receipts
+        receipts = _cache_import_value_receipts(
+            context, module, dependency_graphs, minted
+        )
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
 
     call_receipts, _ = authenticated_import_use_receipts(

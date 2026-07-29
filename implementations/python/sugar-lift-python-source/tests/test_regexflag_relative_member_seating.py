@@ -9,6 +9,7 @@ from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 from sugar_lift_python_source.manager_construction import (
     _seat_import_value_use_receipts,
+    _source_import_value_receipt_cache_key,
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import Attribute, ClassDef
@@ -30,6 +31,7 @@ def test_regexflag_relative_member_receipt_survives_repeated_frame_seating() -> 
         if isinstance(node, ClassDef) and node.name == "RegexFlag"
     )
     session = SourceResolutionSession(enabled=False)
+    cache_key = _source_import_value_receipt_cache_key(module, {"re": graph})
 
     for _ in range(2):
         _seat_import_value_use_receipts(
@@ -53,7 +55,7 @@ def test_regexflag_relative_member_receipt_survives_repeated_frame_seating() -> 
     assert outcome.value.qualified_name == "re._compiler.SRE_FLAG_ASCII"
     assert any(
         outcome.value.receipt is receipt
-        for receipt in context.source_import_value_receipts[module.source_cid]
+        for receipt in context.source_import_value_receipts[cache_key]
     )
 
 
@@ -90,9 +92,10 @@ def test_regexflag_relative_member_missing_foreign_and_crosswired_receipts_refus
         context=context,
         dependency_graphs={"re": graph},
     )
+    cache_key = _source_import_value_receipt_cache_key(module, {"re": graph})
     receipt = next(
         row
-        for row in context.source_import_value_receipts[module.source_cid]
+        for row in context.source_import_value_receipts[cache_key]
         if row.target_symbol == "python:re._compiler.SRE_FLAG_ASCII"
     )
     span = member.line_col_span()
