@@ -5,8 +5,38 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.binding_provenance import BoundBindingStateV1
 from sugar_source_tree.binding_state import BindingEntryV1
+from sugar_source_tree.fragment import SourceMemento
 
 from .context_manager_resolution import SourceFragmentCoordinateV1
+
+
+@dataclass(frozen=True)
+class MutableGlobalBindingV1:
+    source_cid: str
+    binding_occurrence: SourceMemento
+    name: str
+    kind: str
+    term: object = field(compare=False)
+    line: int
+    col: int
+    cid: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.binding_occurrence.source_cid != self.source_cid:
+            raise ValueError("mutable global binding occurrence/source CID mismatch")
+        if not self.name or self.kind not in {"dict", "list", "set"}:
+            raise ValueError("mutable global binding requires a closed mutable kind")
+        object.__setattr__(self, "cid", cid_of_json({
+            "kind": "mutable-global-binding",
+            "schemaVersion": "1",
+            "sourceCid": self.source_cid,
+            "bindingOccurrence": self.binding_occurrence.to_dict(),
+            "name": self.name,
+            "mutableKind": self.kind,
+            "term": self.term,
+            "line": self.line,
+            "col": self.col,
+        }))
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
@@ -167,6 +197,10 @@ class SourceVisibleCallFrameV1:
     )
     generator_steps: tuple | None = field(default=None, compare=False, repr=False)
     generator_step_fragment_cids: tuple[str, ...] = ()
+    mutable_global_bindings: tuple[MutableGlobalBindingV1, ...] = field(
+        default=(), compare=False
+    )
+    declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -185,8 +219,15 @@ class SourceVisibleCallFrameV1:
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
+            "mutableGlobalBindingCids": [
+                item.cid for item in self.mutable_global_bindings
+            ],
         }
+        if self.declaration_frame_cid is not None:
+            preimage["declarationFrameCid"] = self.declaration_frame_cid
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
+        if self.declaration_frame_cid is None:
+            object.__setattr__(self, "declaration_frame_cid", self.frame_cid)
 
     def bind_actuals(
         self, positional: tuple, keywords: tuple, ctx=None

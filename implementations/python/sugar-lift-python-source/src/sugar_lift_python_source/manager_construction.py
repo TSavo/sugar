@@ -1063,6 +1063,27 @@ def _resolve_source_visible_frame_uncached(
         (module.source, module.source_seat, module.source_cid),
         construction_context=context,
     )
+    from sugar_lift_python_source.value_pins import scan_module_value_pins
+    from sugar_lift_py_tests.source_call_frame import MutableGlobalBindingV1
+
+    pin_scan = scan_module_value_pins(
+        source_file.root, source=module.source, source_path=module.source_seat
+    )
+    mutable_global_bindings = tuple(
+        MutableGlobalBindingV1(
+            source_cid=pin.source_cid,
+            binding_occurrence=pin.binding_occurrence,
+            name=pin.name,
+            kind=pin.kind,
+            term=pin.term,
+            line=pin.line,
+            col=pin.col,
+        )
+        for pin in pin_scan.mutable_global_pins
+    )
+
+    def with_mutable_globals(frame):
+        return replace(frame, mutable_global_bindings=mutable_global_bindings)
     dependency_graphs = dict(dependency_graphs or {})
     dependency_graphs[resolved.module_name.split(".", 1)[0]] = graph
     definitions = tuple(
@@ -1117,7 +1138,7 @@ def _resolve_source_visible_frame_uncached(
         and target not in definitions
         and resolved.definition.name == "__call__"
     ):
-        frame = target.source_visible_call_frame()
+        frame = with_mutable_globals(target.source_visible_call_frame())
         if frame.parameters and frame.parameters[0] == "self":
             frame = replace(
                 frame,
@@ -1447,7 +1468,9 @@ def _resolve_source_visible_frame_uncached(
                     nested = external_frames.get(call.func.id)
                 if nested is not None:
                     _install_source_call_frame(context, call, nested)
-            frames[function.name] = function.source_visible_call_frame()
+            frames[function.name] = with_mutable_globals(
+                function.source_visible_call_frame()
+            )
             pending.remove(function)
             progressed = True
         if not progressed:
