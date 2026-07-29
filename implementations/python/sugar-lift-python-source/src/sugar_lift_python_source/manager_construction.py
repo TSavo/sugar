@@ -65,6 +65,110 @@ class ImportValueUseSeatingGap(ValueError):
 
 
 @dataclass(frozen=True)
+class _ModuleSourceFrameCallableV1(FloorValue):
+    """Exact module FunctionDef callable used during definition execution."""
+
+    definition: FunctionDef
+    frame: object
+
+    def to_term(self, *, owner):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:module-source-frame-callable",
+            [str_const(self.frame.frame_cid)],
+            symbol_kind="coordinate",
+        )
+
+    def callable_application_with(self, operation, ctx):
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if operation.keyword_names:
+            raise SugarNotWritten(
+                owner="module definition source callable",
+                blame=operation.site,
+                observed="keyword decorator application lacks value pairing",
+                requested="ordered authenticated keyword actuals",
+                fix="carry keyword values with their formal names",
+            )
+        bound = self.frame.bind_actuals(operation.arguments, (), ctx)
+        call = CallSiteValue(
+            self.definition.name,
+            bound.actuals,
+            self.frame.parameters,
+            ctor(
+                "call:module-source-frame",
+                [
+                    self.to_term(owner=self.definition.name),
+                    *(
+                        item.to_term(owner=self.definition.name)
+                        for item in bound.actuals
+                    ),
+                ],
+            ),
+            self.frame.body,
+            site=operation.site,
+            source_call_frame_cid=self.frame.frame_cid,
+            formal_coordinate_cids=tuple(
+                coordinate.cid for coordinate in self.frame.formal_coordinates
+            ),
+            bound_source_actuals=bound,
+        )
+        produced = call.producer_outcome(ctx)
+        if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
+            raise SugarNotWritten(
+                owner="module definition source callable",
+                blame=operation.site,
+                observed="source decorator produced a nonlinear outcome",
+                requested="one completed retained source-call coordinate",
+                fix="sequence decorator effects before module publication",
+            )
+        projected = produced.value.project_operation_receiver_outcome(
+            ctx, owner="module definition source callable"
+        )
+        if not isinstance(projected, Complete):
+            raise SugarNotWritten(
+                owner="module definition source callable",
+                blame=operation.site,
+                observed="source decorator return projected nonlinearly",
+                requested="one completed decorator result Floor",
+                fix="sequence decorator return effects before publication",
+            )
+        return projected
+
+
+@dataclass(frozen=True)
+class _ModuleFunctionDefinitionBindingSugar:
+    definition: FunctionDef
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.definition.decorators:
+            raise SugarNotWritten(
+                owner="module function definition execution",
+                blame=self.definition.fragment,
+                observed="decorated FunctionDef has no completed publication",
+                requested="the exact final decorated function Floor",
+                fix="execute and authenticate the function decorator chain",
+            )
+        return Complete(
+            ScopeRebind(
+                self.definition.name,
+                _ModuleSourceFrameCallableV1(
+                    self.definition, self.definition.source_visible_call_frame()
+                ),
+            )
+        )
+
+
+@dataclass(frozen=True)
 class _ModuleClassDefinitionBindingSugar:
     """Execute one module ClassDef and bind its exact constructed Floor.
 
@@ -75,22 +179,22 @@ class _ModuleClassDefinitionBindingSugar:
     """
 
     definition: ClassDef
+    module_construction_receipt_cid: str
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor import ClassDefinitionValue
+        from sugar_lift_py_tests.callable_application import CallableApplication
+        from sugar_lift_py_tests.floor.decorated_class_value import (
+            DecoratedClassPublicationV1,
+            DecoratedClassValue,
+            DecoratorApplicationPublicationV1,
+        )
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
 
-        if self.definition.decorators:
-            raise SugarNotWritten(
-                owner="module definition execution",
-                blame=self.definition.fragment,
-                observed="decorated ClassDef has no completed publication",
-                requested="the exact final decorated class Floor",
-                fix="execute and authenticate the decorator publication chain",
-            )
-        outcome = self.definition.sugar().desugar(ctx)
+        sugar = self.definition.sugar()
+        outcome = sugar.desugar(ctx)
 
         def bind(value):
             if type(value) is not ClassDefinitionValue:
@@ -101,7 +205,70 @@ class _ModuleClassDefinitionBindingSugar:
                     requested="one exact ClassDefinitionValue",
                     fix="keep nonlinear or substituted class construction loud",
                 )
-            return Complete(ScopeRebind(self.definition.name, value))
+            if not sugar.decorator_sugars:
+                return Complete(ScopeRebind(self.definition.name, value))
+            decorator_floors = []
+            for decorator_sugar in sugar.decorator_sugars:
+                decorator_outcome = decorator_sugar.desugar(ctx)
+                if not isinstance(decorator_outcome, Complete):
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=self.definition.fragment,
+                        observed="decorator expression reduced nonlinearly",
+                        requested="one completed source decorator callable",
+                        fix="sequence decorator expression effects before publication",
+                    )
+                decorator_floors.append(decorator_outcome.value)
+            current = value
+            applications = []
+            for callable_floor, occurrence in reversed(
+                tuple(
+                    zip(
+                        decorator_floors,
+                        sugar.decorator_occurrences,
+                        strict=True,
+                    )
+                )
+            ):
+                before = current
+                applied = CallableApplication(
+                    (before,),
+                    (),
+                    occurrence,
+                    owner="module decorated class application",
+                    call_occurrence=occurrence,
+                ).apply(callable_floor, ctx)
+                if not isinstance(applied, Complete):
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=occurrence,
+                        observed="decorator application reduced nonlinearly",
+                        requested="one completed final class Floor",
+                        fix="sequence decorator application effects before publication",
+                    )
+                current = applied.value
+                applications.append(
+                    DecoratorApplicationPublicationV1.mint(
+                        occurrence=occurrence,
+                        callable_floor=callable_floor,
+                        input_floor=before,
+                        output_floor=current,
+                    )
+                )
+            publication = DecoratedClassPublicationV1.mint(
+                source_cid=self.definition.unit.source_cid,
+                definition=_call_coordinate(self.definition),
+                binding_occurrence=sugar.binding_target_occurrence,
+                raw_class=value,
+                decorator_applications=tuple(applications),
+                final_class=current,
+                module_construction_receipt_cid=(
+                    self.module_construction_receipt_cid
+                ),
+            )
+            return Complete(
+                ScopeRebind(self.definition.name, DecoratedClassValue(publication))
+            )
 
         return outcome.and_then(bind)
 
@@ -161,9 +328,13 @@ def _module_prefix_outcome(module, locus):
 
     sugars = tuple(
         (
-            InertSugar(site=statement.fragment)
-            if isinstance(statement, (FunctionDef, AsyncFunctionDef))
-            else _ModuleClassDefinitionBindingSugar(statement)
+            _ModuleFunctionDefinitionBindingSugar(statement)
+            if isinstance(statement, FunctionDef)
+            else InertSugar(site=statement.fragment)
+            if isinstance(statement, AsyncFunctionDef)
+            else _ModuleClassDefinitionBindingSugar(
+                statement, source_file.construction_event_receipt_cid
+            )
             if isinstance(statement, ClassDef)
             else statement.sugar()
         )

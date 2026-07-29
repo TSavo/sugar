@@ -484,6 +484,54 @@ def test_module_prefix_execution_binds_exact_class_definition_once(
     )
 
 
+def test_module_prefix_execution_publishes_exact_decorator_result(
+    tmp_path: Path,
+) -> None:
+    """A source decorator publishes its returned Floor, never the raw class."""
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.floor.decorated_class_value import DecoratedClassValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "def identity(candidate):\n"
+        "    return candidate\n"
+        "@identity\n"
+        "class Published:\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-decoration-prefix-pkg",
+        files={"module_decoration_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_decoration_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    published = completed.value.context.temporal.value_if_bound("Published")
+    assert type(published) is DecoratedClassValue
+    publication = published.publication
+    assert type(publication.raw_class) is ClassDefinitionValue
+    assert publication.final_class is publication.raw_class
+    assert len(publication.decorator_applications) == 1
+    application = publication.decorator_applications[0]
+    assert application.input_floor is publication.raw_class
+    assert application.output_floor is publication.final_class
+    assert publication.binding_occurrence == (
+        publication.raw_class.binding_target_occurrence
+    )
+
+
 def test_prefix_adapter_propagates_missing_construction_producer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
