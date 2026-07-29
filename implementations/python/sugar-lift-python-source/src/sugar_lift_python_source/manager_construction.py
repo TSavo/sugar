@@ -1468,6 +1468,15 @@ def _resolve_source_visible_frame_uncached(
                     nested = external_frames.get(call.func.id)
                 if nested is not None:
                     _install_source_call_frame(context, call, nested)
+            if function is not target:
+                _seat_import_value_use_receipts(
+                    source_file=source_file,
+                    module=module,
+                    target=function,
+                    session=session,
+                    context=context,
+                    dependency_graphs=dependency_graphs,
+                )
             frames[function.name] = with_mutable_globals(
                 function.source_visible_call_frame()
             )
@@ -1973,6 +1982,10 @@ def _seat_import_value_use_receipts(
             start <= use_start and use_end <= end for start, end in owned_ranges
         ):
             continue
+        receipt.revalidate()
+        unit.seat_import_value_use_resolution(
+            span_key, receipt, source_cid=module.source_cid
+        )
         identity = receipt.import_binding.value["target"]["moduleIdentity"]
         if identity["kind"] == "authenticated-python-module":
             dependency_module = identity["moduleName"]

@@ -445,12 +445,8 @@ class SourceUnit:
     ) -> None:
         """Seat one final-checked import value-use resolution on this unit only.
 
-        Requires:
-        - ``source_cid`` equals this unit's authenticated ``source_cid``
-        - ``span`` is a 4-tuple of ints that projects inside this unit's LineTable
-        - ``resolved`` is a ``ResolvedPythonObjectV1`` (typed, not arbitrary object)
-
-        Foreign/malformed/tampered seating is typed-loud (never silent table write).
+        This is a closed per-occurrence state machine.  An authenticated value-use
+        receipt seats first; an exact resolved object may then refine that receipt.
         """
         from sugar_source_tree.panic import BackendDefect
 
@@ -487,19 +483,87 @@ class SourceUnit:
                 requested="start <= end in unit source",
                 fix="repair authenticated useSite coordinates",
             )
+        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
         from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
-        if not isinstance(resolved, ResolvedPythonObjectV1):
+
+        admitted_receipt = type(resolved) is AuthenticatedImportUseV1
+        admitted_resolution = type(resolved) is ResolvedPythonObjectV1
+        if not admitted_receipt and not admitted_resolution:
             raise BackendDefect(
                 blame=span,
                 owner="SourceUnit.seat_import_value_use_resolution",
                 observed=type(resolved).__name__,
-                requested="ResolvedPythonObjectV1",
-                fix="seat only resolve_import_binding products, never arbitrary objects",
+                requested="exact AuthenticatedImportUseV1 or ResolvedPythonObjectV1",
+                fix="seat only the closed import value-use producer products",
             )
         table = self._import_value_use_resolutions
         if table is None:
             table = {}
             object.__setattr__(self, "_import_value_use_resolutions", table)
+        existing = table.get(span)
+        if admitted_receipt:
+            resolved.revalidate()
+            use = resolved.use
+            demand = resolved.demand
+            site = use.get("useSite") or {}
+            receipt_span = (
+                site.get("startLine"),
+                site.get("startCol"),
+                site.get("endLine"),
+                site.get("endCol"),
+            )
+            exported = use.get("exportedMemberPath")
+            if (
+                resolved.source_cid != self.source_cid
+                or site.get("sourceCid") != self.source_cid
+                or demand.get("sourceCid") != self.source_cid
+                or receipt_span != span
+                or demand.get("kind") != "import-value-use-demand"
+                or use.get("role") != "value-use"
+                or demand.get("role") != "value-use"
+                or use.get("importBindingCid") != resolved.import_binding.cid
+                or demand.get("importBindingCid") != resolved.import_binding.cid
+                or not isinstance(exported, list)
+                or demand.get("exportedMemberPath") != exported
+            ):
+                raise BackendDefect(
+                    blame=span,
+                    owner="SourceUnit.seat_import_value_use_resolution",
+                    observed="receipt testimony does not match exact value-use seat",
+                    requested="same-source value-use role, binding, member path, and span",
+                    fix="seat the producer-minted receipt only at its own occurrence",
+                )
+            if existing is resolved:
+                return
+            if existing is not None:
+                raise BackendDefect(
+                    blame=span,
+                    owner="SourceUnit.seat_import_value_use_resolution",
+                    observed="receipt conflicts with occupied value-use occurrence",
+                    requested="one exact receipt identity before resolution",
+                    fix="preserve the producer-owned per-occurrence state transition",
+                )
+            table[span] = resolved
+            return
+
+        if existing is resolved:
+            return
+        if type(existing) is not AuthenticatedImportUseV1:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed="resolved object has no exact seated receipt predecessor",
+                requested="AuthenticatedImportUseV1 -> ResolvedPythonObjectV1",
+                fix="seat the authenticated receipt before dependency resolution",
+            )
+        if resolved.import_binding_cid != existing.import_binding.cid:
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed="resolved object cites a different import binding",
+                requested=existing.import_binding.cid,
+                fix="resolve only the exact receipt already seated at this occurrence",
+            )
         table[span] = resolved
 
     def import_value_use_resolution(
@@ -10493,6 +10557,54 @@ class Attribute(Expression):
         decides whether source testimony supplies a value or exceptional exit;
         when neither is known, the producer refuses instead of inventing a
         completed ``py.getattr`` projection or guessing ``AttributeError``."""
+        span = self.line_col_span()
+        receipt = self.unit.import_value_use_resolution(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+        if type(receipt) is AuthenticatedImportUseV1:
+            receipt.revalidate()
+            site = receipt.use["useSite"]
+            if (
+                receipt.source_cid != self.unit.source_cid
+                or site.get("sourceCid") != self.unit.source_cid
+                or (
+                    site.get("startLine"),
+                    site.get("startCol"),
+                    site.get("endLine"),
+                    site.get("endCol"),
+                )
+                != (span.start_line, span.start_col, span.end_line, span.end_col)
+            ):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=self.fragment,
+                    owner="Attribute._construct_sugar",
+                    observed="import value-use receipt does not own this Attribute",
+                    requested="same-source exact full-Attribute occurrence testimony",
+                    fix="consume the receipt only at its producer-minted useSite",
+                )
+            from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+
+            qualified_name = receipt.target_symbol
+            if not qualified_name.startswith("python:"):
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    blame=self.fragment,
+                    owner="Attribute._construct_sugar",
+                    observed=f"target_symbol={qualified_name!r}",
+                    requested="authenticated python: import target symbol",
+                    fix="preserve the lexical receipt targetSymbol unchanged",
+                )
+            qualified_name = qualified_name[len("python:") :]
+            return ImportMemberSugar(
+                qualified_name=qualified_name,
+                site=self.fragment,
+            )
+
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
         return AttributeSugar(
