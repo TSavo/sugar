@@ -67,7 +67,10 @@ class WithSourceResourceSugar(Sugar):
             manager_facts = ManagerBinding(
                 self.manager_slot_id, manager_face.value
             ).to_facts(site=self.site)
-            enter_es = outcome_to_exitset(self.protocol.enter_resource_outcome(ctx))
+            enter_outcome = self.protocol.enter_resource_outcome_for(
+                manager_face.value, ctx
+            )
+            enter_es = outcome_to_exitset(enter_outcome)
             for enter_face in enter_es.exits:
                 guard = _and(manager_face.guard, enter_face.guard)
                 if isinstance(enter_face, Halted):

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, StringValue, TermValue
 from sugar_lift_py_tests.generator_construction import (
@@ -88,6 +89,39 @@ def test_enter_resource_outcome_yields_value_with_exact_machine_state():
     assert entered.machine.suspended_resume_coordinate is not None
     assert entered.protocol_construction_cid == protocol.protocol_construction_cid
     assert entered.entry_cid.startswith("blake3-512:")
+
+
+def test_enter_bound_generator_construction_preserves_exact_machine_testimony():
+    protocol = _protocol()
+    reduction_context = ReduceContext.root(owner="already-bound-generator")
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:already-bound-generator",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+        reduction_context=reduction_context,
+    )
+
+    outcome = protocol.enter_resource_outcome_for(machine)
+
+    assert isinstance(outcome, Complete)
+    entered = outcome.value
+    assert entered.machine.instance_coordinate == machine.instance_coordinate
+    assert entered.machine.allocation_coordinate == machine.allocation_coordinate
+    assert entered.machine.reduction_context is reduction_context
+
+
+def test_enter_bound_generator_construction_refuses_foreign_frame():
+    protocol = _protocol()
+    foreign = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:foreign-generator",
+        frame_coordinate=cid_of_json({"frame": "foreign-generator"}),
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+
+    with pytest.raises(SugarNotWritten, match="frame coordinate"):
+        protocol.enter_resource_outcome_for(foreign)
 
 
 def test_exit_outcome_for_resumes_exact_entered_machine_once():

@@ -99,16 +99,18 @@ class ConstructedManagerProtocolV1:
 
     def enter_resource_outcome(self, ctx: object = None):
         """Run enter once and carry each face's exact receiver into resource exit."""
-
-        def run_enter(receiver):
-            enter = _call_protocol_method(
-                receiver, "__enter__", (), self.exit_face_id, ctx
-            ).reduce_source_outcome(ctx)
-            return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
-
         if isinstance(self.receiver_state, ObjectValue):
-            return run_enter(self.receiver_state)
-        return _completed_receiver_exits(self.receiver_state).sequence(run_enter)
+            return self.enter_resource_outcome_for(self.receiver_state, ctx)
+        return _completed_receiver_exits(self.receiver_state).sequence(
+            lambda receiver: self.enter_resource_outcome_for(receiver, ctx)
+        )
+
+    def enter_resource_outcome_for(self, receiver, ctx: object = None):
+        """Run enter on the exact receiver value produced by the manager face."""
+        enter = _call_protocol_method(
+            receiver, "__enter__", (), self.exit_face_id, ctx
+        ).reduce_source_outcome(ctx)
+        return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
 
     def exit_outcome_for(self, entered: EnteredManagerStateValue, ctx: object = None):
         if not isinstance(entered, EnteredManagerStateValue):
@@ -502,6 +504,10 @@ class GeneratorBackedManagerProtocolV1:
         """Enter the authenticated generator lifecycle; return yield + machine."""
         return enter_generator_resource_outcome(self, ctx=ctx)
 
+    def enter_resource_outcome_for(self, machine, ctx: object = None):
+        """Enter the exact generator construction returned by the manager call."""
+        return enter_bound_generator_resource_outcome(self, machine, ctx=ctx)
+
     def exit_outcome_for(self, entered, ctx: object = None):
         """Resume/throw the exact entered machine once; expose suppression."""
         return exit_generator_resource_outcome_for(self, entered, ctx=ctx)
@@ -514,14 +520,9 @@ def enter_generator_resource_outcome(protocol, *, ctx: object = None):
     that duck-type the same fields. Returns ``Complete(EnteredGeneratorManagerStateV1)``
     on yield; typed-loud refusal when the machine cannot enter.
     """
-    del ctx
     from sugar_lift_py_tests.generator_construction import (
         GeneratorConstructionV1,
-        GeneratorTerminationV1,
-        GeneratorTransitionGapV1,
-        YieldEffect,
     )
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
     frame = protocol.generator_frame
@@ -541,6 +542,42 @@ def enter_generator_resource_outcome(protocol, *, ctx: object = None):
         binding_state=bindings,
         steps=steps,
     )
+    return enter_bound_generator_resource_outcome(protocol, machine, ctx=ctx)
+
+
+def enter_bound_generator_resource_outcome(
+    protocol, machine, *, ctx: object = None
+):
+    """Resume the exact authenticated generator construction at manager enter."""
+    del ctx
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorConstructionV1,
+        GeneratorTerminationV1,
+        GeneratorTransitionGapV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if type(machine) is not GeneratorConstructionV1:
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome_for",
+            observed=f"foreign construction type {type(machine).__name__}",
+            requested="exact GeneratorConstructionV1 from the manager call",
+            fix="pass the manager call's authenticated generator construction",
+        )
+    if machine.frame_coordinate != protocol.generator_frame_cid:
+        raise SugarNotWritten(
+            blame=protocol.exit_face_id,
+            owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome_for",
+            observed=f"foreign frame coordinate {machine.frame_coordinate}",
+            requested=(
+                "exact generator construction frame coordinate "
+                f"{protocol.generator_frame_cid}"
+            ),
+            fix="pass the manager call's authenticated generator construction",
+        )
     result = machine.resume()
     if isinstance(result, YieldEffect):
         enter_value = _floor_enter_value(result.value)
