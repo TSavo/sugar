@@ -439,6 +439,63 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     )
 
 
+def test_real_pandas_option_context_runs_authenticated_enter_body_and_exit():
+    """The finish-line lifecycle uses the constructed pandas body unchanged."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.floor.inv_value import InvValue
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_source_tree.nodes import Assert, With
+
+    corpus = authenticated_pandas_corpus()
+    root = corpus.root.parent
+    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = open_source_file_for_construction(
+        path, root=root, construction_context=context, populate_derived=False
+    )
+    populate_source_derived_resource_refs(tree, root=root, path=path)
+    with_node = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, With) and node.line_col_span().start_line == 78
+    )
+    body_nodes = tuple(with_node.body)
+    assert len(body_nodes) == 2
+    assert all(isinstance(node, Assert) for node in body_nodes)
+    assert tuple(node.line_col_span().start_line for node in body_nodes) == (79, 80)
+
+    resource = with_node.sugar()
+
+    assert isinstance(resource, WithSourceResourceSugar)
+    assert tuple(item.site for item in resource.body) == tuple(
+        node.fragment for node in body_nodes
+    )
+    assert isinstance(resource.enter_definition, SourceFragmentCoordinateV1)
+    assert isinstance(resource.exit_definition, SourceFragmentCoordinateV1)
+    assert resource.enter_definition.source_cid == resource.exit_definition.source_cid
+    assert resource.enter_definition != resource.exit_definition
+
+    outcome = resource.desugar()
+
+    assert isinstance(outcome, ExitSet)
+    entries = tuple(
+        entry
+        for face in outcome.exits
+        if isinstance(face, Completed)
+        for entry in face.value.entries
+    )
+    assert any(
+        isinstance(entry, InvValue)
+        and any(entry.site is node.fragment for node in body_nodes)
+        for entry in entries
+    ), "the actual pandas Assert body must produce its occurrence-bound value/effect"
+    rendered = tuple(str(entry.formula) for entry in entries if isinstance(entry, InvValue))
+    assert any("exit_type" in formula for formula in rendered)
+    assert any("exit_value" in formula for formula in rendered)
+    assert any("exit_traceback" in formula for formula in rendered)
+
+
 def test_real_option_context_published_ref_selects_source_resource_at_construction():
     """The closed generator-resource ref outranks the legacy generator path."""
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
