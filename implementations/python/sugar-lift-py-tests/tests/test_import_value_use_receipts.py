@@ -73,7 +73,7 @@ def test_non_imported_name_gets_no_value_use_receipt(tmp_path: Path) -> None:
         tmp_path, path, source, source_cid, module_identities={}
     )
     assert receipts == []
-    assert outcomes == {}
+    assert set(outcomes.values()) == {"shadowed-non-import"}
 
 
 def test_tampered_source_cid_refuses_value_use_receipts(tmp_path: Path) -> None:
@@ -348,6 +348,37 @@ def test_call_relabeled_as_value_use_refused_with_real_authority(
             module_identities={},
             _authority=ib._IMPORT_AUTHORITY,
         )
+
+
+def test_call_receipt_carries_exact_multi_segment_export_path(tmp_path: Path) -> None:
+    path = tmp_path / "multi_hop_call.py"
+    source, source_cid = _write(path, "import os\nos.path.dirname('a/b')\n")
+
+    receipts, outcomes = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+
+    assert set(outcomes.values()) == {"authenticated-import-use"}
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt.demand["kind"] == "call-contract-demand"
+    assert receipt.target_symbol == "python:os.path.dirname"
+    assert receipt.use["useSite"] == receipt.demand["useSite"]
+
+
+def test_shadowed_multi_segment_call_head_has_no_import_receipt(tmp_path: Path) -> None:
+    path = tmp_path / "shadowed_multi_hop_call.py"
+    source, source_cid = _write(
+        path,
+        "import os\ndef use(os):\n    return os.path.dirname('a/b')\n",
+    )
+
+    receipts, outcomes = authenticated_import_use_receipts(
+        tmp_path, path, source, source_cid, module_identities={}
+    )
+
+    assert receipts == []
+    assert outcomes == {}
 
 
 def test_forged_binding_head_with_real_authority_refused(tmp_path: Path) -> None:
