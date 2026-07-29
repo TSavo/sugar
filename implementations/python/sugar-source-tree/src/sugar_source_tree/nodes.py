@@ -813,6 +813,31 @@ class SourceUnit:
             ):
                 return None
 
+            # Nested definitions are owned by the containing function, not by
+            # module_direct_bindings.  Resolve only an earlier same-name
+            # definition in this exact lexical body; foreign scopes and
+            # post-call definitions remain loud.
+            owner_span = owner.line_col_span()
+            nested = [
+                candidate
+                for candidate in self.function_nodes
+                if candidate.name == call.func.id
+                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                >= (owner_span.start_line, owner_span.start_col)
+                and (candidate.line_col_span().end_line, candidate.line_col_span().end_col)
+                <= (owner_span.end_line, owner_span.end_col)
+                and (candidate.line_col_span().start_line, candidate.line_col_span().start_col)
+                < (span.start_line, span.start_col)
+            ]
+            if nested:
+                return max(
+                    nested,
+                    key=lambda item: (
+                        item.line_col_span().start_line,
+                        item.line_col_span().start_col,
+                    ),
+                )
+
         bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
         if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
             return None
