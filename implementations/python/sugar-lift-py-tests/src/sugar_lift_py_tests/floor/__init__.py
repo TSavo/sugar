@@ -10,6 +10,7 @@ from .branch_result_coordinate import (
 )
 from .bound_var import BoundVar
 from .module_bound_var import ModuleBoundVar
+from .mutable_global_value import MutableGlobalValue
 from .named_expression_value import NamedExpressionValue
 from .native_callable_value import NativeCallableValue
 from .builder_state import BuilderState
@@ -96,6 +97,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BranchResultAuthentication,
     BranchResultCoordinate,
     BoundVar,
+    MutableGlobalValue,
     NamedExpressionValue,
     NativeCallableValue,
     BuilderState,
