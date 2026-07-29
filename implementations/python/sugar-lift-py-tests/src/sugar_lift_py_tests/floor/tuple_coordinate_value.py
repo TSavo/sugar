@@ -239,12 +239,20 @@ class TupleCoordinateValue(FloorValue):
         )
 
     def length(self, site):
-        from sugar_source_tree.panic import SugarNotWritten
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.outcome import Complete
 
-        raise SugarNotWritten(
-            blame=site,
-            owner="TupleCoordinateValue.length",
-            observed="runtime tuple cardinality is not constructed",
-            requested="authenticated finite tuple members",
-            fix="retain unknown cardinality; never invent finite_elements",
+        return Complete(
+            CallSiteValue(
+                target_name="len",
+                arg_values=(self,),
+                parameters=(),
+                term=ctor(
+                    "call:len",
+                    (self.term,),
+                    symbol_kind="builtin",
+                ),
+                body=None,
+                site=site,
+            )
         )

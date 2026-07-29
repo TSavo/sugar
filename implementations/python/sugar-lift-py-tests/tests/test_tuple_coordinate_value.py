@@ -9,7 +9,12 @@ import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
-from sugar_lift_py_tests.floor import ComprehensionValue, TermValue, TupleCoordinateValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    ComprehensionValue,
+    TermValue,
+    TupleCoordinateValue,
+)
 from sugar_lift_py_tests.ir import _term_content_cid, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.nodes import Call, Subscript
@@ -80,8 +85,14 @@ def test_source_builtin_tuple_constructs_authenticated_coordinate(tmp_path: Path
     )
     assert constructed.witness.result_cid == _term_content_cid(constructed.term)
     assert not hasattr(constructed, "finite_elements")
-    with pytest.raises(SugarNotWritten):
-        constructed.length(call.fragment)
+    use_site = call.fragment
+    length = _value(constructed.length(use_site))
+    assert isinstance(length, CallSiteValue)
+    assert length.arg_values == (constructed,)
+    assert length.site is use_site
+    assert length.term == ctor(
+        "call:len", (constructed.term,), symbol_kind="builtin"
+    )
 
 
 def test_source_tuple_slice_extends_receiver_coordinate_and_occurrence(
@@ -115,8 +126,50 @@ def test_source_tuple_slice_extends_receiver_coordinate_and_occurrence(
     )
     assert sliced.coordinate_cid == expected_cid
     assert not hasattr(sliced, "finite_elements")
-    with pytest.raises(SugarNotWritten):
-        sliced.length(subscript.fragment)
+    use_site = subscript.fragment
+    length = _value(sliced.length(use_site))
+    assert isinstance(length, CallSiteValue)
+    assert length.arg_values == (sliced,)
+    assert length.site is use_site
+    assert length.term == ctor("call:len", (sliced.term,), symbol_kind="builtin")
+
+
+def test_tuple_coordinate_length_keeps_receiver_and_use_sites_distinct(
+    tmp_path: Path,
+) -> None:
+    call, subscript = _nodes(_tree(tmp_path, "length-sites.py"))
+    ctx = _context("tuple-coordinate-length-sites")
+    receiver = _value(call.sugar().desugar(ctx))
+
+    call_site = call.fragment
+    subscript_site = subscript.fragment
+    call_length = _value(receiver.length(call_site))
+    subscript_length = _value(receiver.length(subscript_site))
+
+    assert call_length.arg_values[0] is receiver
+    assert subscript_length.arg_values[0] is receiver
+    assert call_length.site is call_site
+    assert subscript_length.site is subscript_site
+    assert call_site is not subscript_site
+    assert call_site.seal().cid != subscript_site.seal().cid
+    foreign_occurrence = replace(
+        receiver.call_occurrence, source_cid="blake3-512:" + "e" * 128
+    )
+    with pytest.raises(
+        ValueError, match="tuple coordinate call occurrence does not authenticate source"
+    ):
+        replace(receiver, call_occurrence=foreign_occurrence)
+    with pytest.raises(
+        ValueError, match="tuple coordinate requires its private producer authority"
+    ):
+        TupleCoordinateValue(
+            source=receiver.source,
+            call_occurrence=receiver.call_occurrence,
+            call_occurrence_cid=receiver.call_occurrence_cid,
+            term=receiver.term,
+            witness=receiver.witness,
+            coordinate_cid=receiver.coordinate_cid,
+        )
 
 
 def test_shadowed_tuple_call_cannot_mint_tuple_coordinate(tmp_path: Path) -> None:
