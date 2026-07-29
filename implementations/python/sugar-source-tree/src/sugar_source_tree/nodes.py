@@ -9404,8 +9404,10 @@ class Call(Expression):
                 is not function_definition.ref
                 or lexical_row.lexical_scope_identity
                 is not lexical_row.lexical_scope.ref
-                or source_call_frame is None
-                or source_call_frame.owner is not lexical_row.lexical_scope
+                or (
+                    source_call_frame is not None
+                    and source_call_frame.owner is not lexical_row.lexical_scope
+                )
             ):
                 from .panic import backend_defect
 
@@ -9610,8 +9612,20 @@ class Call(Expression):
                     coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
                 if lexical_row is not None:
-                    source_call_frame = function_definition.source_visible_call_frame()
-                else:
+                    if source_call_frame is not None:
+                        if source_call_frame.owner is not lexical_row.lexical_scope:
+                            from .panic import backend_defect
+
+                            backend_defect(
+                                blame=self.fragment,
+                                owner="Call._construct_sugar",
+                                observed="seated source frame has foreign lexical owner",
+                                requested="the lexical row's authenticated scope owner",
+                                fix="retain the seated frame or keep the call loud",
+                            )
+                    else:
+                        source_call_frame = function_definition.source_visible_call_frame()
+                elif source_call_frame is None:
                     pending = formal_function_sugar.desugar(None)
                     from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
 
