@@ -190,6 +190,22 @@ class _ModuleFunctionDefinitionBindingSugar:
 
 
 @dataclass(frozen=True)
+class _ModuleNameAssignmentBindingSugar:
+    """Execute one exact module ``Name = RHS`` into prefix temporal state."""
+
+    statement: Assign
+    target: Name
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete
+
+        return self.statement.value.sugar().desugar(ctx).and_then(
+            lambda value: Complete(ScopeRebind(self.target.id, value))
+        )
+
+
+@dataclass(frozen=True)
 class _ModuleClassDefinitionBindingSugar:
     """Execute one module ClassDef and bind its exact constructed Floor.
 
@@ -578,6 +594,12 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
                 statement, source_file.construction_event_receipt_cid
             )
             if isinstance(statement, ClassDef)
+            else _ModuleNameAssignmentBindingSugar(statement, statement.targets[0])
+            if (
+                isinstance(statement, Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], Name)
+            )
             else statement.sugar()
         )
         for statement in prefix
