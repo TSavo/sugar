@@ -41,6 +41,9 @@ class MutableGlobalValue(FloorValue):
             ],
         )
 
+    def denotes_value(self) -> bool:
+        return True
+
     def subscript(self, index, site):
         if self.kind != "dict":
             return self.undecided_subscript(
@@ -90,6 +93,38 @@ class MutableGlobalValue(FloorValue):
                 ),
             )
         ).normalize()
+
+    def contains(self, item, site):
+        if self.kind != "dict":
+            return super().contains(item, site)
+        if getattr(site, "source_cid", None) != self.pin_source_cid:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                blame=site,
+                owner="MutableGlobalValue.contains",
+                observed="foreign source for mutable-global membership occurrence",
+                requested="authenticated same-source membership occurrence",
+                fix="carry the binding-owned pin into same-source module temporal state",
+            )
+
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                atomic(
+                    "py.in",
+                    [
+                        item.to_term(owner="python.mutable_dict.contains key"),
+                        self.to_term(owner="python.mutable_dict.contains dict"),
+                    ],
+                ),
+                site,
+                operand_callsites=(*item.callsites(), *self.callsites()),
+            )
+        )
 
 
 def _occurrence_key(site: object) -> tuple[object, object, object, object]:
