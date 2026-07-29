@@ -9487,20 +9487,70 @@ class Call(Expression):
             formal_function_sugar = None
             formal_coordinates = ()
             formal_coordinate_cids = ()
-            function_definition = self.unit.source_function_definition_for_call(self)
+            lexical_rows = tuple(
+                row
+                for row in self.unit.constructed_module.lexical_call_rows
+                if row.call_occurrence is self
+                or row.call_occurrence_identity is self.ref
+            )
+            if len(lexical_rows) > 1:
+                from .panic import backend_defect
+
+                backend_defect(
+                    blame=self.fragment,
+                    owner="Call._construct_sugar",
+                    observed=f"{len(lexical_rows)} lexical rows for one call occurrence",
+                    requested="zero or one sealed lexical call row",
+                    fix="repair lexical call enrollment before constructing the source frame",
+                )
+            lexical_row = lexical_rows[0] if lexical_rows else None
+            if lexical_row is not None:
+                function_definition = lexical_row.definition_occurrence
+                if (
+                    lexical_row.source_cid != self.unit.source_cid
+                    or lexical_row.call_occurrence_identity is not self.ref
+                    or not isinstance(
+                        function_definition, (FunctionDef, AsyncFunctionDef)
+                    )
+                    or lexical_row.definition_occurrence_identity
+                    is not function_definition.ref
+                    or lexical_row.lexical_scope_identity
+                    is not lexical_row.lexical_scope.ref
+                ):
+                    from .panic import backend_defect
+
+                    backend_defect(
+                        blame=self.fragment,
+                        owner="Call._construct_sugar",
+                        observed="foreign or malformed lexical source-call row",
+                        requested="this source unit's exact call, definition, and lexical scope",
+                        fix="repair lexical call enrollment before constructing the source frame",
+                    )
+            else:
+                function_definition = self.unit.source_function_definition_for_call(self)
             if function_definition is not None:
                 formal_function_sugar = function_definition.sugar()
                 formal_coordinates = function_definition.formal_coordinates()
                 formal_coordinate_cids = tuple(
                     coordinate.coordinate_cid for coordinate in formal_coordinates
                 )
-                pending = formal_function_sugar.desugar(None)
-                from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-
-                if isinstance(pending, NativeOperationExitCarrierV1):
-                    source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
-                        formal_coordinates, pending
+                if lexical_row is not None:
+                    source_call_frame = function_definition.source_visible_call_frame()
+                    print(
+                        "TRACE_LEXICAL_FRAME",
+                        self.ref,
+                        self.fragment,
+                        source_call_frame.frame_cid,
+                        flush=True,
                     )
+                else:
+                    pending = formal_function_sugar.desugar(None)
+                    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
+
+                    if isinstance(pending, NativeOperationExitCarrierV1):
+                        source_call_frame = function_definition.source_visible_call_frame().with_native_operation_projection(
+                            formal_coordinates, pending
+                        )
             definition = self.unit.source_allocation_definition_for_call(self)
             if (
                 definition is not None
