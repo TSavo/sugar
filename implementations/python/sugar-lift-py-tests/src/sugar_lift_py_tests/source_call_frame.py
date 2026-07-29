@@ -126,6 +126,32 @@ class BoundFormalActualV1:
     actual: object
 
 
+@dataclass(frozen=True)
+class DecoratedClassBindingV1:
+    """One module binding produced by an authenticated class publication."""
+
+    name: str
+    publication: object
+    value: object = field(compare=False)
+
+    def __post_init__(self):
+        from sugar_lift_py_tests.floor.decorated_class_value import (
+            DecoratedClassMemberValue,
+            DecoratedClassPublicationV1,
+            DecoratedClassValue,
+        )
+
+        if (
+            not self.name
+            or type(self.publication) is not DecoratedClassPublicationV1
+            or type(self.value) not in (DecoratedClassValue, DecoratedClassMemberValue)
+            or self.value.publication is not self.publication
+        ):
+            raise SourceCallBindingGap(
+                "decorated class binding lacks exact publication testimony"
+            )
+
+
 @dataclass(frozen=True, eq=False)
 class BoundSourceCallActualsV1:
     """One binder result with its authenticated coordinate testimony."""
@@ -280,6 +306,9 @@ class SourceVisibleCallFrameV1:
     mutable_global_bindings: tuple[MutableGlobalBindingV1, ...] = field(
         default=(), compare=False
     )
+    decorated_class_bindings: tuple[DecoratedClassBindingV1, ...] = field(
+        default=(), compare=False
+    )
     declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
 
@@ -290,6 +319,13 @@ class SourceVisibleCallFrameV1:
         ):
             raise SourceCallBindingGap(
                 "mutable global binding source does not match source frame identity"
+            )
+        if any(
+            binding.publication.source_cid != self.source_identity_cid
+            for binding in self.decorated_class_bindings
+        ):
+            raise SourceCallBindingGap(
+                "decorated class binding source does not match source frame identity"
             )
         preimage = {
             "kind": "source-visible-call-frame",
@@ -308,6 +344,10 @@ class SourceVisibleCallFrameV1:
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
             "mutableGlobalBindingCids": [
                 item.cid for item in self.mutable_global_bindings
+            ],
+            "decoratedClassBindingCids": [
+                item.publication.publication_cid
+                for item in self.decorated_class_bindings
             ],
         }
         if self.declaration_frame_cid is not None:

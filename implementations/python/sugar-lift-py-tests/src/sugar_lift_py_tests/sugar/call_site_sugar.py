@@ -568,7 +568,8 @@ class CallSiteSugar(ConstructedTermSugar):
 
 def _with_frame_mutable_globals(ctx, frame):
     bindings = frame.mutable_global_bindings
-    if not bindings:
+    decorated_bindings = getattr(frame, "decorated_class_bindings", ())
+    if not bindings and not decorated_bindings:
         return ctx
     from dataclasses import replace
 
@@ -589,4 +590,7 @@ def _with_frame_mutable_globals(ctx, frame):
         )
         module_temporal = module_temporal.bind_value(binding.name, value)
         temporal = temporal.bind_value(binding.name, value)
+    for binding in decorated_bindings:
+        module_temporal = module_temporal.bind_value(binding.name, binding.value)
+        temporal = temporal.bind_value(binding.name, binding.value)
     return replace(ctx, temporal=temporal, module_temporal=module_temporal)
