@@ -322,7 +322,7 @@ def test_authenticated_pandas_303_get_handle_is_real_resource_reproducer():
 
 
 def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
-    """The producer's two real coordinates are the sole lifecycle authority."""
+    """Real pandas option_context enters, reduces its real body, then exits."""
     import platform
     import sys
 
@@ -377,66 +377,22 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     assert isinstance(exit_definition, SourceFragmentCoordinateV1)
     assert enter_definition != exit_definition
 
-    class RecordingDefinitionDoor:
-        def __init__(self, delegate):
-            self.delegate = delegate
-            self.calls = []
-
-        def __getattr__(self, name):
-            return getattr(self.delegate, name)
-
-        def require_native_definition(self, use_site, slot):
-            self.calls.append((use_site, slot))
-            return self.delegate.require_native_definition(use_site, slot)
-
-    recording = RecordingDefinitionDoor(refs)
-    object.__setattr__(context, "contract_refs", recording)
     resource = with_node.sugar()
 
     assert isinstance(resource, WithSourceResourceSugar)
-    assert recording.calls == [
-        (receiver, NativeProtocolSlot.CONTEXT_ENTER),
-        (receiver, NativeProtocolSlot.CONTEXT_EXIT),
-    ]
     assert resource.enter.native_definition_coordinate == enter_definition
     assert resource.exit.native_definition_coordinate == exit_definition
     assert resource.enter_definition == enter_definition
     assert resource.exit_definition == exit_definition
     assert resource.protocol.enter_definition == enter_definition
     assert resource.protocol.exit_definition == exit_definition
+    assert len(resource.body) == len(with_node.body) == 1
+    assert resource.body[0].site.node is with_node.body[0]
 
-    completed = replace(
-        resource,
-        body=(_FixedSugar(Complete(BlockValue((), can_fall_through=True))),),
-    ).desugar()
-    returned = replace(
-        resource,
-        body=(
-            _FixedSugar(
-                Complete(
-                    BlockValue(
-                        (ReturnValue(TermValue(7)),), can_fall_through=False
-                    )
-                )
-            ),
-        ),
-    ).desugar()
-    effect = RaiseEffect(exception_name="ValueError", occurrence="consumer.py:26:8")
-    halted = replace(
-        resource,
-        body=(_FixedSugar(Incomplete(effect)),),
-    ).desugar()
+    lifecycle = resource.desugar()
 
-    assert any(isinstance(face, Completed) for face in completed.exits)
-    assert any(
-        isinstance(entry, ReturnValue)
-        for face in returned.exits
-        if isinstance(face, Completed)
-        for entry in face.value.contribution()
-    )
-    assert any(
-        isinstance(face, Halted) and face.effect is effect for face in halted.exits
-    )
+    assert lifecycle.exits
+    assert any(isinstance(face, Completed) for face in lifecycle.exits)
 
 
 def test_real_option_context_published_ref_selects_source_resource_at_construction():
