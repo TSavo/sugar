@@ -277,19 +277,25 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="the lexical row's exact definition-owned source frame",
                     fix="retain the authenticated frame at the exact call coordinate or keep loud",
                 )
-        if (
-            source_call_frame is not None
-            and source_call_frame.owner.lacks_captured_binding_testimony()
-        ):
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                observed="free or nonlocal source binding has no captured coordinate testimony",
-                requested="producer-owned captured binding coordinates for every closure read",
-                fix="construct closure bindings at the lexical frame boundary or keep loud",
+        if source_call_frame is not None:
+            from sugar_source_tree.nodes import (
+                AsyncFunctionDef as SourceAsyncFunctionDef,
+                FunctionDef as SourceFunctionDef,
             )
+
+            closure_owner = source_call_frame.owner
+            if isinstance(
+                closure_owner, (SourceFunctionDef, SourceAsyncFunctionDef)
+            ) and closure_owner.lacks_captured_binding_testimony():
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.desugar",
+                    blame=self.site,
+                    observed="free or nonlocal source binding has no captured coordinate testimony",
+                    requested="producer-owned captured binding coordinates for every closure read",
+                    fix="construct closure bindings at the lexical frame boundary or keep loud",
+                )
         if source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
             from sugar_source_tree.panic import SugarNotWritten
