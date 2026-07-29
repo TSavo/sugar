@@ -2835,6 +2835,7 @@ class FunctionDef(Statement):
             RaiseStepV1,
             ReturnStepV1,
             TermStepV1,
+            YieldFromStepV1,
             YieldStepV1,
         )
         from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -2859,6 +2860,15 @@ class FunctionDef(Statement):
                 value = statement.value.value
                 return _GeneratorNamedStepV1(
                     YieldStepV1(None if value is None else value.sugar())
+                )
+            if isinstance(statement, Expr) and isinstance(statement.value, YieldFrom):
+                occurrence = statement.value.fragment
+                return _GeneratorNamedStepV1(
+                    YieldFromStepV1(
+                        statement.value.value.sugar(),
+                        occurrence,
+                        occurrence.seal().cid,
+                    )
                 )
             if isinstance(statement, Return):
                 return _GeneratorNamedStepV1(
