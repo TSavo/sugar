@@ -108,11 +108,11 @@ class ValuePin:
 
 @dataclass(frozen=True)
 class MutableGlobalPin:
+    source_cid: str
     name: str
     kind: str
     term: Json
-    line: int
-    col: int
+    binding_site: Json
 
 
 @dataclass
@@ -191,11 +191,11 @@ def scan_module_value_pins(
             if mutable_kind is not None:
                 scan.mutable_global_pins.append(
                     MutableGlobalPin(
+                        source_cid=tree.unit.source_cid,
                         name=candidate.name,
                         kind=mutable_kind,
                         term=mutable_global_pin_term(candidate.name, mutable_kind),
-                        line=candidate.line,
-                        col=candidate.col,
+                        binding_site=candidate.value.fragment.seal().wire(),
                     )
                 )
             continue
@@ -411,8 +411,8 @@ def mutable_global_pin_opacity_entry(
 ) -> Json:
     return {
         "file": source_path,
-        "line": pin.line,
-        "col": pin.col,
+        "sourceCid": pin.source_cid,
+        "bindingSite": pin.binding_site,
         "name": pin.name,
         "kind": pin.kind,
         "term": pin.term,
