@@ -439,6 +439,51 @@ def test_prefix_raise_refuses_binding_via_completed_fallthrough(tmp_path: Path) 
     assert result.kind == "dynamic-export"
 
 
+def test_module_prefix_execution_binds_exact_class_definition_once(
+    tmp_path: Path,
+) -> None:
+    """Module definition execution retains the class Floor for later loads.
+
+    This is the producer boundary needed by authenticated module prefixes: a
+    later statement must consume the exact class constructed by the earlier
+    ClassDef, rather than seeing a reconstructed SymbolicValue with the same
+    name.
+    """
+    from sugar_lift_py_tests.floor import ClassDefinitionValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "class Boundary:\n"
+        "    FIRST = 1\n"
+        "    SECOND = 2\n"
+        "alias = Boundary\n"
+        "def build():\n"
+        "    return alias\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-definition-prefix-pkg",
+        files={"module_definition_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_definition_prefix_pkg"
+    ]
+    locus = ast.parse(source).body[-1]
+
+    exits = manager_construction._module_prefix_outcome(module, locus)
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    boundary = completed.value.context.temporal.value_if_bound("Boundary")
+    assert type(boundary) is ClassDefinitionValue
+    assert tuple(field.name for field in boundary.class_fields) == (
+        "FIRST",
+        "SECOND",
+    )
+
+
 def test_prefix_adapter_propagates_missing_construction_producer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -64,6 +64,114 @@ class ImportValueUseSeatingGap(ValueError):
         super().__init__(f"{kind}: {detail}")
 
 
+@dataclass(frozen=True)
+class _ModuleClassDefinitionBindingSugar:
+    """Execute one module ClassDef and bind its exact constructed Floor.
+
+    This is deliberately a producer-owned wrapper rather than a Name-based
+    reconstruction in the prefix consumer.  Decorated definitions require the
+    separate publication chain and remain loud here until that chain supplies
+    the final class Floor.
+    """
+
+    definition: ClassDef
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor import ClassDefinitionValue
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.definition.decorators:
+            raise SugarNotWritten(
+                owner="module definition execution",
+                blame=self.definition.fragment,
+                observed="decorated ClassDef has no completed publication",
+                requested="the exact final decorated class Floor",
+                fix="execute and authenticate the decorator publication chain",
+            )
+        outcome = self.definition.sugar().desugar(ctx)
+
+        def bind(value):
+            if type(value) is not ClassDefinitionValue:
+                raise SugarNotWritten(
+                    owner="module definition execution",
+                    blame=self.definition.fragment,
+                    observed=f"ClassDef constructed {type(value).__name__}",
+                    requested="one exact ClassDefinitionValue",
+                    fix="keep nonlinear or substituted class construction loud",
+                )
+            return Complete(ScopeRebind(self.definition.name, value))
+
+        return outcome.and_then(bind)
+
+
+def _module_prefix_outcome(module, locus):
+    """Execute the authenticated module prefix through its exact definitions."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+    from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef, Name
+
+    from .canonical import blake3_512_of
+
+    if module.source_cid != blake3_512_of(module.source.encode("utf-8")):
+        raise ValueError("module prefix source CID mismatch")
+    construction_context = TreeConstructionContextV1.for_source_call_construction()
+    source_file = SourceFile(
+        (module.source, module.source_seat, module.source_cid),
+        construction_context=construction_context,
+    )
+    locus_key = (locus.lineno, locus.col_offset)
+    prefix = tuple(
+        statement
+        for statement in source_file.root.body
+        if (
+            statement.line_col_span().start_line,
+            statement.line_col_span().start_col,
+        )
+        < locus_key
+    )
+
+    # Base testimony is installed from exact parser-owned module bindings,
+    # never from a class-name scan.  Only earlier module ClassDefs can be a
+    # source-visible base at this prefix boundary.
+    prefix_classes = tuple(item for item in prefix if isinstance(item, ClassDef))
+    class_roster = set(prefix_classes)
+    for definition in prefix_classes:
+        bases = []
+        for base in definition.bases:
+            if not isinstance(base, Name):
+                continue
+            bindings = tuple(
+                (definition.unit.module_direct_bindings or {}).get(base.id, ())
+            )
+            if (
+                len(bindings) == 1
+                and isinstance(bindings[0], ClassDef)
+                and bindings[0] in class_roster
+                and bindings[0].line_col_span().start_line
+                < definition.line_col_span().start_line
+            ):
+                bases.append(bindings[0].sugar())
+        definition.unit.construction_context.source_class_bases[
+            definition.fragment.seal().cid
+        ] = tuple(bases)
+
+    sugars = tuple(
+        (
+            InertSugar(site=statement.fragment)
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef))
+            else _ModuleClassDefinitionBindingSugar(statement)
+            if isinstance(statement, ClassDef)
+            else statement.sugar()
+        )
+        for statement in prefix
+    )
+    return reduce_block_to_exitset(sugars)
+
+
 def prefix_has_completed_fallthrough(module, locus) -> bool:
     """Construction-owned five-step prefix meaning for export recognition."""
     from sugar_lift_py_tests.outcome import Completed, true_guard
