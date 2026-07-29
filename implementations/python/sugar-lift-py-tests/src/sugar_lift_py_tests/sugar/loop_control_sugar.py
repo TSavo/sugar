@@ -19,7 +19,10 @@ class LoopControlSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None):
-        return ExitSet.halted(
-            LoopControlEffect(self.action, self.target_cid, self.occurrence_cid),
-            state=ctx,
+        from sugar_lift_py_tests.outcome.exit_set import _construct_nonraise_halted
+        effect = LoopControlEffect(self.action, self.target_cid, self.occurrence_cid)
+        face = _construct_nonraise_halted(
+            "loop_control_sugar", self.site, effect, ctx, effect.occurrence_cid,
+            true_guard(), frozenset(), ()
         )
+        return ExitSet((face,)).normalize()

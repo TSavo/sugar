@@ -91,10 +91,10 @@ def promote_raise_halts(exits):
                 # effect.  Keeping the raise entry in that state lets a later
                 # enclosing reducer promote the already-consumed edge again.
                 promoted.append(
-                    Halted(
-                        guard,
-                        entry.effect,
-                        replace(state, entries=tuple(prefix)),
+                    __import__("sugar_lift_py_tests.outcome.exit_set", fromlist=["_construct_halted_from_lineage"])._construct_halted_from_lineage(
+                        "promote_raise_halts", state, entry.effect,
+                        replace(state, entries=tuple(prefix)), entry.effect.occurrence_id,
+                        guard, frozenset(), ()
                     )
                 )
             else:

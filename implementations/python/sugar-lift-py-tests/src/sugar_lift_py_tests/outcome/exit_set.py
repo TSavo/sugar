@@ -602,6 +602,22 @@ class ExitSet(Generic[T]):
     def halted(
         cls, effect: Effect, guard: Formula | None = None, state=None
     ) -> "ExitSet[T]":
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+        effect = require_effect(effect)
+        if type(effect) in (RaiseEffect, GroupedRaiseEffect):
+            face = _construct_halted_from_lineage(
+                "ExitSet.halted", state, effect, state, effect.occurrence_id,
+                guard or true_guard(), frozenset(), ()
+            )
+            return cls((face,)).normalize()
+        if type(effect) is LoopControlEffect:
+            face = _construct_nonraise_halted(
+                "ExitSet.halted", state, effect, state, effect.occurrence_cid,
+                guard or true_guard(), frozenset(), ()
+            )
+            return cls((face,)).normalize()
         _legacy_halted_refusal("ExitSet.halted", effect, state)
 
     @classmethod

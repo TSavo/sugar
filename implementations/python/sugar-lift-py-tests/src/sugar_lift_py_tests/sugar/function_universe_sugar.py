@@ -154,7 +154,8 @@ def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
         if isinstance(exit_, Completed):
             enrolled.append(Completed(exit_.guard, widened, exit_.faces, ()))
         else:
-            enrolled.append(Halted(exit_.guard, exit_.effect, widened, exit_.faces, ()))
+            from sugar_lift_py_tests.outcome.exit_set import _construct_halted_from_lineage
+            enrolled.append(_construct_halted_from_lineage("function_universe", widened, exit_.effect, widened, exit_.effect.occurrence_id, exit_.guard, exit_.faces, ()))
     return ExitSet(tuple(enrolled)).normalize()
 
 
@@ -373,7 +374,7 @@ def reduce_block_to_exitset(
                             if len(entry.branch_conditions) == 1
                             else and_(list(entry.branch_conditions))
                         )
-                        exits.append(Halted(guard, entry.effect, state))
+                        exits.extend(ExitSet.halted(entry.effect, guard, state).exits)
                     else:
                         entries.append(entry)
                 completed_state = _ReducedBlock(
@@ -419,10 +420,8 @@ def reduce_block_to_exitset(
                 outcome = ExitSet(
                     tuple(
                         (
-                            Halted(
-                                exit_.guard,
-                                exit_.effect,
-                                _halt_state(state, exit_),
+                            __import__("sugar_lift_py_tests.outcome.exit_set", fromlist=["_construct_halted_from_lineage"])._construct_halted_from_lineage(
+                                "function_universe", state, exit_.effect, _halt_state(state, exit_), exit_.effect.occurrence_id, exit_.guard,
                                 # This rebuild used to state three fields, so it
                                 # dropped BOTH the arm's partition testimony and
                                 # its pending obligations on the way through --
@@ -462,7 +461,7 @@ def reduce_block_to_exitset(
 
                 return ExitSet(
                     (
-                        Halted(follow.halt_guard, outcome.effect, state),
+                        __import__("sugar_lift_py_tests.outcome.exit_set", fromlist=["_construct_halted_from_lineage"])._construct_halted_from_lineage("function_universe", state, outcome.effect, state, outcome.effect.occurrence_id, follow.halt_guard, frozenset(), ()),
                         Completed(
                             complement_guard(follow.halt_guard),
                             _ReducedBlock(
