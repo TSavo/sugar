@@ -143,48 +143,30 @@ class BoundSourceCallActualsV1:
             )
         }
 
-    def actuals_for_native_carrier(self, carrier) -> dict[str, object]:
-        """Project this one bind onto an authenticated native carrier demand."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        if not isinstance(carrier, NativeOperationExitCarrierV1):
-            raise SourceCallBindingGap(
-                "native actual projection requires a native operation carrier"
+    def project_native_carrier(self, carrier):
+        """Discharge a late carrier using this frame's retained bind result."""
+        demanded = tuple(carrier.demand.operand_coordinate_cids)
+        native = tuple(self.native_formal_coordinates)
+        by_cid = {coordinate.coordinate_cid: coordinate for coordinate in native}
+        stored = tuple(carrier.coordinates)
+        if len(stored) != len(demanded) or any(
+            (coordinate_cid is None and stored_coordinate is not None)
+            or (coordinate_cid is not None and (
+                coordinate_cid not in by_cid
+                or stored_coordinate != by_cid[coordinate_cid]
+            ))
+            for coordinate_cid, stored_coordinate in zip(
+                demanded, stored, strict=True
             )
-        projected = {}
-        for demanded_cid, demanded_coordinate in zip(
-            carrier.demand.operand_coordinate_cids,
-            carrier.coordinates,
-            strict=True,
         ):
-            if demanded_cid is None:
-                if demanded_coordinate is not None:
-                    raise SourceCallBindingGap(
-                        "native carrier has coordinate testimony without a demand"
-                    )
-                continue
-            _reauthenticate_native_coordinates((demanded_coordinate,))
-            ordinal = demanded_coordinate.ordinal
-            if (
-                demanded_coordinate.coordinate_cid != demanded_cid
-                or ordinal >= len(self.pairs)
-            ):
-                raise SourceCallBindingGap(
-                    "native carrier demand is not owned by the bound source frame"
-                )
-            pair = self.pairs[ordinal]
-            if (
-                pair.coordinate.projection_path != ("formal", ordinal)
-                or pair.coordinate.binding_site["source_cid"]
-                != demanded_coordinate.owner_source_identity_cid
-            ):
-                raise SourceCallBindingGap(
-                    "native carrier demand is cross-wired to a source formal slot"
-                )
-            projected[demanded_cid] = pair.actual
-        return projected
+            raise SourceCallBindingGap(
+                "native carrier demand is foreign to the retained source frame"
+            )
+        native_actuals = {
+            coordinate.coordinate_cid: actual
+            for coordinate, actual in zip(native, self.actuals, strict=True)
+        }
+        return carrier.discharge(native_actuals)
 
 
 @dataclass(frozen=True)
