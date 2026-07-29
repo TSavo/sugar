@@ -9148,6 +9148,20 @@ class ListComp(Expression):
             target = ListComp._comprehension_target(self, gen.target)
             if target is None:
                 return None
+            target_pattern = None
+            target_coordinates = ()
+            if target.coordinates is not None:
+                matching_patterns = tuple(
+                    pattern
+                    for pattern in self.unit.target_patterns_for(self)
+                    if pattern.target_occurrence.ref is gen.target.ref
+                )
+                if len(matching_patterns) == 1:
+                    target_pattern = matching_patterns[0]
+                    target_coordinates = target_pattern.target_coordinates
+                    self.unit.require_target_pattern_coordinates(
+                        target_pattern, target_coordinates
+                    )
             specs.append(
                 ComprehensionGeneratorSugar(
                     target=target,
@@ -9158,6 +9172,8 @@ class ListComp(Expression):
                     ).cid,
                     iterable=gen.iter.sugar(),
                     filters=tuple(guard.sugar() for guard in gen.ifs),
+                    target_coordinates=target_coordinates,
+                    target_pattern=target_pattern,
                 )
             )
         return tuple(specs)
