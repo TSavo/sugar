@@ -140,11 +140,10 @@ class SymbolicValue(FloorValue):
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.outcome import Incomplete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         operation = ctor(
             "adt.is_python_type",
-            [floor_to_term(value, owner="isinstance value"), term],
+            [value.to_term(owner="isinstance value"), term],
         )
         return Incomplete(
             DynamicTypeOperandRuntimeEffect(
