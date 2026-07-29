@@ -328,7 +328,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     requested="a closed SourceCallFrameV1 variant",
                     fix="construct a typed source frame or keep the call loud",
                 )
-            ctx = _with_frame_mutable_globals(ctx, self.source_call_frame)
+            ctx = _with_frame_mutable_globals(ctx, source_call_frame)
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
