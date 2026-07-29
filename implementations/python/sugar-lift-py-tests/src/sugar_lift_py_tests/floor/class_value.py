@@ -173,6 +173,22 @@ class ClassValue(FloorValue):
         # Recognition-era subscription tables are gone; emit the coordinate.
         return self.py_subscript_coordinate(index, site)
 
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="ClassValue.setitem"
+        )
+
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="ClassValue.delitem"
+        )
+
     def contribution(self):
         # Splice body entries (methods, assigns) into the enclosing record.
         return self.record.contribution()
