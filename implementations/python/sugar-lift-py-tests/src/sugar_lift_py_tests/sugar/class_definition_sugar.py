@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_python_source.canonical import cid_of_json
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor.class_definition_value import (
     ClassDefinitionValue,
     ConstructedClassFieldV1,
@@ -31,7 +32,7 @@ class ClassDefinitionSugar(Sugar):
     docstring_cid: str | None
     annotation_cids: tuple[str, ...]
     decorator_cids: tuple[str, ...]
-    binding_target_occurrence: object
+    binding_target_occurrence: SourceFragmentCoordinateV1
     base_sugars: tuple[Sugar, ...]
     base_fragment_cids: tuple[str, ...]
     site: object = field(compare=False)
@@ -67,6 +68,7 @@ class ClassDefinitionSugar(Sugar):
             "schemaVersion": "1",
             "sourceIdentityCid": self.source_identity_cid,
             "definitionFragmentCid": self.definition_fragment_cid,
+            "bindingTargetOccurrence": self.binding_target_occurrence.wire(),
             "methods": [
                 {
                     "name": method.name,
@@ -178,6 +180,7 @@ class ClassDefinitionSugar(Sugar):
                 self.class_definition_cid,
                 self.methods,
                 initializer,
+                self.binding_target_occurrence,
                 tuple(class_fields),
                 self.docstring_cid,
                 self.annotation_cids,

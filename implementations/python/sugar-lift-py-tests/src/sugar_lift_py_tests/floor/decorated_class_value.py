@@ -91,6 +91,7 @@ class DecoratedClassPublicationV1:
     decorator_applications: tuple[DecoratorApplicationPublicationV1, ...]
     final_class: FloorValue = field(compare=False)
     module_construction_receipt_cid: str
+    binding_occurrence_cid: str
     raw_class_cid: str
     final_class_cid: str
     publication_cid: str
@@ -111,6 +112,9 @@ class DecoratedClassPublicationV1:
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
         )
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
 
         if (
             type(definition) is not SourceFragmentCoordinateV1
@@ -119,6 +123,14 @@ class DecoratedClassPublicationV1:
             or binding_occurrence.source_cid != source_cid
         ):
             raise ValueError("decorated class publication source coordinate mismatch")
+        if (
+            type(raw_class) is not ClassDefinitionValue
+            or type(raw_class.binding_target_occurrence)
+            is not SourceFragmentCoordinateV1
+            or raw_class.binding_target_occurrence != binding_occurrence
+            or raw_class.binding_target_occurrence.cid != binding_occurrence.cid
+        ):
+            raise ValueError("decorated class publication binding target mismatch")
         applications = tuple(decorator_applications)
         current = raw_class
         for application in applications:
@@ -154,6 +166,7 @@ class DecoratedClassPublicationV1:
             applications,
             final_class,
             module_construction_receipt_cid,
+            binding_occurrence.cid,
             raw_cid,
             final_cid,
             publication_cid,
@@ -162,8 +175,25 @@ class DecoratedClassPublicationV1:
         return value
 
     def __post_init__(self):
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+
         if getattr(self, "_authority", None) is not _PUBLICATION_AUTHORITY:
             raise ValueError("decorated class publication is not producer-minted")
+        if (
+            self.binding_occurrence_cid != self.binding_occurrence.cid
+            or type(self.raw_class) is not ClassDefinitionValue
+            or type(self.raw_class.binding_target_occurrence)
+            is not SourceFragmentCoordinateV1
+            or self.raw_class.binding_target_occurrence != self.binding_occurrence
+            or self.raw_class.binding_target_occurrence.cid
+            != self.binding_occurrence_cid
+        ):
+            raise ValueError("decorated class publication binding target mismatch")
         current = self.raw_class
         for application in self.decorator_applications:
             if application.input_floor is not current:

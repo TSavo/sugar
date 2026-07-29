@@ -7,7 +7,7 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.context import ReduceContext
-from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.floor import ClassDefinitionValue, SymbolicValue
 from sugar_lift_py_tests.floor.decorated_class_value import (
     DecoratedClassMemberValue,
     DecoratedClassPublicationV1,
@@ -28,7 +28,14 @@ def _publication(tmp_path: Path, monkeypatch, *, stem: str = "publication"):
     path.write_text("class Published:\n    member = 1\n", encoding="utf-8")
     source_file = SourceFile.from_path(path)
     source = source_file.unit.source_cid
-    raw = SymbolicValue(_Var("raw_class"))
+    binding_occurrence = SourceFragmentCoordinateV1(source, 3, 6, 3, 13)
+    raw = ClassDefinitionValue(
+        "Raw",
+        "blake3-512:" + "10" * 64,
+        (),
+        None,
+        binding_target_occurrence=binding_occurrence,
+    )
     replaced = SymbolicValue(_Var("replacement_class"))
     final = SymbolicValue(_Var("published_class"))
     first = DecoratorApplicationPublicationV1.mint(
@@ -46,7 +53,7 @@ def _publication(tmp_path: Path, monkeypatch, *, stem: str = "publication"):
     publication = DecoratedClassPublicationV1.mint(
         source_cid=source,
         definition=SourceFragmentCoordinateV1(source, 3, 0, 5, 9),
-        binding_occurrence=SourceFragmentCoordinateV1(source, 3, 6, 3, 13),
+        binding_occurrence=binding_occurrence,
         raw_class=raw,
         decorator_applications=(first, second),
         final_class=final,
