@@ -91,6 +91,8 @@ class ImportedCallValueSubsumptionV1:
     callee_coordinate: SourceFragmentCoordinateV1
     call_use_cid: str
     value_use_cid: str
+    resolution_kind: str
+    resolved_object_cid: str
     relation_cid: str
     _authority: object = field(
         init=False, repr=False, compare=False, default=None
@@ -107,6 +109,8 @@ class ImportedCallValueSubsumptionV1:
                 self.target_symbol,
                 self.call_use_cid,
                 self.value_use_cid,
+                self.resolution_kind,
+                self.resolved_object_cid,
                 self.relation_cid,
             )
         ) or not self.exported_member_path:
@@ -149,6 +153,8 @@ class ImportedCallValueSubsumptionV1:
                 "calleeCoordinate": self.callee_coordinate.wire(),
                 "callUseCid": self.call_use_cid,
                 "valueUseCid": self.value_use_cid,
+                "resolutionKind": self.resolution_kind,
+                "resolvedObjectCid": self.resolved_object_cid,
             }
         )
 
@@ -159,6 +165,8 @@ def _mint_import_call_value_subsumption(
     value_receipt,
     call_coordinate: SourceFragmentCoordinateV1,
     callee_coordinate: SourceFragmentCoordinateV1,
+    resolution_kind: str,
+    resolved_object_cid: str,
 ) -> ImportedCallValueSubsumptionV1:
     from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
     from sugar_lift_python_source.canonical import cid_of_json
@@ -210,6 +218,8 @@ def _mint_import_call_value_subsumption(
         "callee_coordinate": callee_coordinate,
         "call_use_cid": call_receipt.use["cid"],
         "value_use_cid": value_receipt.use["cid"],
+        "resolution_kind": resolution_kind,
+        "resolved_object_cid": resolved_object_cid,
     }
     for name, value in values.items():
         object.__setattr__(relation, name, value)
@@ -240,6 +250,8 @@ class OpaqueSourceCallObligationV1:
         if (
             relation.call_coordinate != self.coordinate
             or relation.target_symbol != self.target_name
+            or relation.resolution_kind != self.resolution_kind
+            or relation.resolved_object_cid != self.resolved_object_cid
         ):
             raise ValueError("opaque call/subsumption testimony is cross-wired")
 

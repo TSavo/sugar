@@ -135,6 +135,19 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     assert relation.module_identity_cid == cid_of_json(
         warnings_call.import_binding.value["target"]["moduleIdentity"]
     )
+    assert relation.resolution_kind == warnings[0].resolution_kind
+    assert relation.resolved_object_cid == warnings[0].resolved_object_cid
+    wrong_kind = (
+        "call-graph-cycle"
+        if warnings[0].resolution_kind != "call-graph-cycle"
+        else "call-target-source-absent"
+    )
+    with pytest.raises(ValueError, match="cross-wired"):
+        replace(warnings[0], resolution_kind=wrong_kind)
+    with pytest.raises(ValueError, match="cross-wired"):
+        replace(
+            warnings[0], resolved_object_cid="blake3-512:" + "6" * 128
+        )
     for change in (
         {"source_cid": "blake3-512:" + "0" * 128},
         {"module_identity_cid": "blake3-512:" + "1" * 128},
@@ -143,12 +156,95 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
         {"exported_member_path": ("other",)},
         {"call_use_cid": "blake3-512:" + "3" * 128},
         {"value_use_cid": "blake3-512:" + "4" * 128},
+        {"resolution_kind": "call-target-source-absent"},
+        {"resolved_object_cid": "blake3-512:" + "6" * 128},
         {"call_coordinate": relation.callee_coordinate},
         {"callee_coordinate": relation.call_coordinate},
         {"relation_cid": "blake3-512:" + "5" * 128},
     ):
         with pytest.raises(ValueError, match="producer authority"):
             replace(relation, **change)
+
+
+def test_duplicate_identical_call_receipt_is_loud_before_pairing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call, _ = _receipts(tmp_path)
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    resolved = resolve_import_binding(call, graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+    import sugar_lift_py_tests.import_binding as import_binding
+
+    original = import_binding.authenticated_import_use_receipts
+
+    def duplicated(*args, **kwargs):
+        receipts, outcomes = original(*args, **kwargs)
+        return tuple(receipts) + tuple(receipts), outcomes
+
+    monkeypatch.setattr(
+        import_binding, "authenticated_import_use_receipts", duplicated
+    )
+    with pytest.raises(BackendDefect, match="duplicate authenticated call receipt CID"):
+        resolve_source_visible_frame(
+            resolved,
+            graph=graph,
+            session=SourceResolutionSession(enabled=False),
+        )
+
+
+def test_reversed_receipt_iteration_preserves_relation_cid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call, _ = _receipts(tmp_path)
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    resolved = resolve_import_binding(call, graph=graph)
+    assert isinstance(resolved, ResolvedPythonObjectV1)
+
+    def relation_cid(projected) -> str:
+        assert isinstance(projected, tuple)
+        _, target = projected
+        rows = tuple(
+            row
+            for row in target.unit.construction_context.opaque_source_call_obligations.values()
+            if row.target_name == "python:warnings.warn"
+        )
+        assert len(rows) == 1
+        relation = rows[0].import_call_value_subsumption
+        assert relation is not None
+        return relation.relation_cid
+
+    ordinary = relation_cid(
+        resolve_source_visible_frame(
+            resolved, graph=graph, session=SourceResolutionSession(enabled=False)
+        )
+    )
+    import sugar_lift_py_tests.import_binding as import_binding
+
+    original_calls = import_binding.authenticated_import_use_receipts
+    original_values = import_binding.authenticated_import_value_use_receipts
+
+    def reversed_calls(*args, **kwargs):
+        rows, outcomes = original_calls(*args, **kwargs)
+        return tuple(reversed(rows)), outcomes
+
+    def reversed_values(*args, **kwargs):
+        rows, outcomes = original_values(*args, **kwargs)
+        return tuple(reversed(rows)), outcomes
+
+    monkeypatch.setattr(
+        import_binding, "authenticated_import_use_receipts", reversed_calls
+    )
+    monkeypatch.setattr(
+        import_binding,
+        "authenticated_import_value_use_receipts",
+        reversed_values,
+    )
+    reversed_cid = relation_cid(
+        resolve_source_visible_frame(
+            resolved, graph=graph, session=SourceResolutionSession(enabled=False)
+        )
+    )
+    assert reversed_cid == ordinary
 
 
 def test_alias_import_search_resolves_the_same_exact_stdlib_definition(

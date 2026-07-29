@@ -1260,19 +1260,28 @@ def _resolve_source_visible_frame_uncached(
             )
         if matching_values:
             matching_values[0].revalidate()
-        subsumption = None
-        if matching_values:
-            from sugar_lift_py_tests.context_manager_resolution import (
-                _mint_import_call_value_subsumption,
+        def obligation(relation_kind: str) -> OpaqueSourceCallObligationV1:
+            subsumption = None
+            if matching_values:
+                from sugar_lift_py_tests.context_manager_resolution import (
+                    _mint_import_call_value_subsumption,
+                )
+
+                subsumption = _mint_import_call_value_subsumption(
+                    call_receipt=receipt,
+                    value_receipt=matching_values[0],
+                    call_coordinate=_call_coordinate(call),
+                    callee_coordinate=callee_coordinate,
+                    resolution_kind=relation_kind,
+                    resolved_object_cid=resolved.cid,
+                )
+            return OpaqueSourceCallObligationV1(
+                _call_coordinate(call),
+                receipt.target_symbol,
+                resolved.cid,
+                resolution_kind=relation_kind,
+                import_call_value_subsumption=subsumption,
             )
-            value = matching_values[0]
-            subsumption = _mint_import_call_value_subsumption(
-                call_receipt=receipt,
-                value_receipt=value,
-                call_coordinate=_call_coordinate(call),
-                callee_coordinate=callee_coordinate,
-            )
-        obligation_kwargs = {"import_call_value_subsumption": subsumption}
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         dependency_graph = dependency_graphs.get(top_level)
         if dependency_graph is None:
@@ -1287,13 +1296,7 @@ def _resolve_source_visible_frame_uncached(
                 _install_opaque_call_obligation(
                     context,
                     call,
-                    OpaqueSourceCallObligationV1(
-                        _call_coordinate(call),
-                        receipt.target_symbol,
-                        resolved.cid,
-                        resolution_kind="call-target-source-absent",
-                        **obligation_kwargs,
-                    ),
+                    obligation("call-target-source-absent"),
                 )
                 continue
             dependency_graphs[top_level] = dependency_graph
@@ -1304,13 +1307,7 @@ def _resolve_source_visible_frame_uncached(
             _install_opaque_call_obligation(
                 context,
                 call,
-                OpaqueSourceCallObligationV1(
-                    _call_coordinate(call),
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind="call-target-source-absent",
-                    **obligation_kwargs,
-                ),
+                obligation("call-target-source-absent"),
             )
             continue
         from sugar_source_tree.panic import SugarNotWritten
@@ -1328,13 +1325,7 @@ def _resolve_source_visible_frame_uncached(
             _install_opaque_call_obligation(
                 context,
                 call,
-                OpaqueSourceCallObligationV1(
-                    _call_coordinate(call),
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind="call-target-export-unresolved",
-                    **obligation_kwargs,
-                ),
+                obligation("call-target-export-unresolved"),
             )
             del exc
             continue
@@ -1347,13 +1338,7 @@ def _resolve_source_visible_frame_uncached(
             _install_opaque_call_obligation(
                 context,
                 call,
-                OpaqueSourceCallObligationV1(
-                    _call_coordinate(call),
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind=kind,
-                    **obligation_kwargs,
-                ),
+                obligation(kind),
             )
             continue
         imported_frame, _ = projected
@@ -2008,7 +1993,20 @@ def _seat_import_value_use_receipts(
         module.source_cid,
         module_identities={},
     )
-    calls_by_cid = {receipt.use["cid"]: receipt for receipt in call_receipts}
+    calls_by_cid = {}
+    for call_receipt in call_receipts:
+        cid = call_receipt.use["cid"]
+        if cid in calls_by_cid:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=module.source_seat,
+                owner="manager_construction import call/value receipt subsumption",
+                observed="duplicate authenticated call receipt CID",
+                requested="one call receipt for each authenticated use CID",
+                fix="repair lexical call receipt enrollment uniqueness",
+            )
+        calls_by_cid[cid] = call_receipt
     owned_spans = [target.line_col_span()]
     owned_spans.extend(
         decorator.line_col_span()
@@ -2098,6 +2096,8 @@ def _seat_import_value_use_receipts(
                 and relation.callee_coordinate.wire() == value_site
                 and relation.callee_coordinate == coordinate
                 and relation.call_coordinate == obligation.coordinate
+                and relation.resolution_kind == obligation.resolution_kind
+                and relation.resolved_object_cid == obligation.resolved_object_cid
             )
             if not expected:
                 from sugar_source_tree.panic import BackendDefect
