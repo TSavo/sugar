@@ -579,6 +579,62 @@ def enter_bound_generator_resource_outcome(
             fix="pass the manager call's authenticated generator construction",
         )
     result = machine.resume()
+    from sugar_lift_py_tests.outcome import ExitSet, outcome_to_exitset
+
+    if isinstance(result, ExitSet):
+        return result.and_then(
+            lambda value: outcome_to_exitset(
+                _project_generator_enter_result(protocol, machine, value)
+            )
+        )
+    return _project_generator_enter_result(protocol, machine, result)
+
+
+def _project_generator_enter_result(protocol, machine, result):
+    """Project one completed resume result into generator-entry testimony."""
+    from sugar_lift_py_tests.floor import GuardedValue
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorConstructionV1,
+        GeneratorTerminationV1,
+        GeneratorTransitionGapV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, outcome_to_exitset
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if type(result) is GeneratorConstructionV1:
+        if result.frame_coordinate != protocol.generator_frame_cid:
+            raise SugarNotWritten(
+                blame=protocol.exit_face_id,
+                owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome_for",
+                observed=f"foreign guarded frame coordinate {result.frame_coordinate}",
+                requested=(
+                    "exact guarded generator construction frame coordinate "
+                    f"{protocol.generator_frame_cid}"
+                ),
+                fix="retain the authenticated branch machine from generator transition",
+            )
+        resumed = result.resume()
+        if isinstance(resumed, ExitSet):
+            return resumed.and_then(
+                lambda value: outcome_to_exitset(
+                    _project_generator_enter_result(protocol, result, value)
+                )
+            )
+        return _project_generator_enter_result(protocol, result, resumed)
+    if isinstance(result, GuardedValue):
+        guarded = ExitSet(
+            (
+                Completed(result.guard, result.when_true, frozenset(), ()),
+                Completed(not_(result.guard), result.when_false, frozenset(), ()),
+            )
+        )
+        return guarded.and_then(
+            lambda value: outcome_to_exitset(
+                _project_generator_enter_result(protocol, machine, value)
+            )
+        )
     if isinstance(result, YieldEffect):
         enter_value = _floor_enter_value(result.value)
         # Per-protocol enter ordinal distinguishes successive enters that
