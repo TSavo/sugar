@@ -68,7 +68,7 @@ class ImportValueUseSeatingGap(ValueError):
 class _ModuleSourceFrameCallableV1(FloorValue):
     """Exact module FunctionDef callable used during definition execution."""
 
-    definition: FunctionDef
+    callable_name: str
     frame: object
 
     def to_term(self, *, owner):
@@ -97,15 +97,15 @@ class _ModuleSourceFrameCallableV1(FloorValue):
             )
         bound = self.frame.bind_actuals(operation.arguments, (), ctx)
         call = CallSiteValue(
-            self.definition.name,
+            self.callable_name,
             bound.actuals,
             self.frame.parameters,
             ctor(
                 "call:module-source-frame",
                 [
-                    self.to_term(owner=self.definition.name),
+                    self.to_term(owner=self.callable_name),
                     *(
-                        item.to_term(owner=self.definition.name)
+                        item.to_term(owner=self.callable_name)
                         for item in bound.actuals
                     ),
                 ],
@@ -162,7 +162,8 @@ class _ModuleFunctionDefinitionBindingSugar:
             ScopeRebind(
                 self.definition.name,
                 _ModuleSourceFrameCallableV1(
-                    self.definition, self.definition.source_visible_call_frame()
+                    self.definition.name,
+                    self.definition.source_visible_call_frame(),
                 ),
             )
         )
@@ -188,7 +189,10 @@ class _ModuleClassDefinitionBindingSugar:
             DecoratedClassPublicationV1,
             DecoratedClassValue,
             DecoratorApplicationPublicationV1,
+            MetaclassClassValue,
+            _mint_metaclass_class_publication,
         )
+        from sugar_lift_py_tests.floor import DictValue, StringValue, TupleValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
         from sugar_lift_py_tests.outcome import Complete
         from sugar_source_tree.panic import SugarNotWritten
@@ -204,6 +208,108 @@ class _ModuleClassDefinitionBindingSugar:
                     observed=f"ClassDef constructed {type(value).__name__}",
                     requested="one exact ClassDefinitionValue",
                     fix="keep nonlinear or substituted class construction loud",
+                )
+            metaclass_keywords = tuple(
+                keyword
+                for keyword in self.definition.keywords
+                if keyword.arg == "metaclass"
+            )
+            if len(metaclass_keywords) > 1:
+                raise SugarNotWritten(
+                    owner="module definition execution",
+                    blame=self.definition.fragment,
+                    observed="multiple metaclass keyword occurrences",
+                    requested="one exact metaclass application",
+                    fix="preserve the parser-owned class keyword roster",
+                )
+            if metaclass_keywords:
+                if sugar.decorator_sugars:
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=self.definition.fragment,
+                        observed="combined metaclass and decorator publication",
+                        requested="one ordered metaclass-then-decorator publication",
+                        fix="compose both authenticated application products",
+                    )
+                keyword = metaclass_keywords[0]
+                metaclass_outcome = keyword.value.sugar().desugar(ctx)
+                if not isinstance(metaclass_outcome, Complete) or type(
+                    metaclass_outcome.value
+                ) is not ClassDefinitionValue:
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=keyword.value.fragment,
+                        observed="metaclass expression did not construct a source class",
+                        requested="one exact ClassDefinitionValue metaclass",
+                        fix="retain the metaclass binding and source definition",
+                    )
+                metaclass_floor = metaclass_outcome.value
+                constructors = tuple(
+                    method
+                    for method in metaclass_floor.methods
+                    if method.name == "__new__"
+                )
+                if len(constructors) != 1:
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=keyword.value.fragment,
+                        observed=f"metaclass has {len(constructors)} __new__ methods",
+                        requested="one exact source-visible metaclass constructor",
+                        fix="preserve unique method-definition testimony",
+                    )
+                constructor = constructors[0]
+                callable_floor = _ModuleSourceFrameCallableV1(
+                    constructor.name, constructor.source_call_frame
+                )
+                class_name_floor = StringValue(self.definition.name)
+                bases_floor = TupleValue(tuple(value.base_classes))
+                namespace_floor = DictValue(
+                    tuple(
+                        (StringValue(field.name), field.value)
+                        for field in value.class_fields
+                    )
+                )
+                occurrence = _call_coordinate(keyword.value)
+                applied = CallableApplication(
+                    (
+                        metaclass_floor,
+                        class_name_floor,
+                        bases_floor,
+                        namespace_floor,
+                    ),
+                    (),
+                    occurrence,
+                    owner="module metaclass application",
+                    call_occurrence=occurrence,
+                ).apply(callable_floor, ctx)
+                if not isinstance(applied, Complete):
+                    raise SugarNotWritten(
+                        owner="module definition execution",
+                        blame=keyword.value.fragment,
+                        observed="metaclass application reduced nonlinearly",
+                        requested="one completed published class Floor",
+                        fix="sequence metaclass effects before module publication",
+                    )
+                publication = _mint_metaclass_class_publication(
+                    source_cid=self.definition.unit.source_cid,
+                    definition=_call_coordinate(self.definition),
+                    binding_occurrence=sugar.binding_target_occurrence,
+                    metaclass_occurrence=occurrence,
+                    raw_class=value,
+                    metaclass_floor=metaclass_floor,
+                    metaclass_callable=callable_floor,
+                    class_name_floor=class_name_floor,
+                    bases_floor=bases_floor,
+                    namespace_floor=namespace_floor,
+                    final_class=applied.value,
+                    module_construction_receipt_cid=(
+                        self.module_construction_receipt_cid
+                    ),
+                )
+                return Complete(
+                    ScopeRebind(
+                        self.definition.name, MetaclassClassValue(publication)
+                    )
                 )
             if not sugar.decorator_sugars:
                 return Complete(ScopeRebind(self.definition.name, value))

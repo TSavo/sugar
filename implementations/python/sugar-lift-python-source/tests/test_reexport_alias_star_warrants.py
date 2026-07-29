@@ -532,6 +532,58 @@ def test_module_prefix_execution_publishes_exact_decorator_result(
     )
 
 
+def test_module_prefix_execution_publishes_exact_metaclass_result(
+    tmp_path: Path,
+) -> None:
+    """Metaclass application retains its four exact source-owned actuals."""
+    from sugar_lift_py_tests.floor import DictValue, StringValue
+    from sugar_lift_py_tests.floor.decorated_class_value import MetaclassClassValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+
+    source = (
+        "class Meta:\n"
+        "    def __new__(metacls, name, bases, namespace):\n"
+        "        return namespace\n"
+        "class Published(metaclass=Meta):\n"
+        "    TOKEN = 7\n"
+        "def build():\n"
+        "    return Published\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="module-metaclass-prefix-pkg",
+        files={"module_metaclass_prefix_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "module_metaclass_prefix_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    published = completed.value.context.temporal.value_if_bound("Published")
+    assert type(published) is MetaclassClassValue
+    publication = published.publication
+    assert publication.metaclass_floor is (
+        completed.value.context.temporal.value_if_bound("Meta")
+    )
+    assert type(publication.namespace_floor) is DictValue
+    assert publication.final_class is publication.namespace_floor
+    assert tuple(
+        key.value
+        for key, _value in publication.namespace_floor.entries
+        if type(key) is StringValue
+    ) == ("TOKEN",)
+    assert publication.raw_class.binding_target_occurrence == (
+        publication.binding_occurrence
+    )
+
+
 def test_prefix_adapter_propagates_missing_construction_producer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
