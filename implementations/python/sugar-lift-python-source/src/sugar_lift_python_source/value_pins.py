@@ -150,7 +150,20 @@ class _Candidate:
     line: int
     confession: str | None
     col: int = 0
-    binding_site: Json | None = None
+    binding_site: object | None = None
+
+
+def _target_memento(node):
+    from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+    from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+
+    span = node.line_col_span()
+    return SourceMementoDto(
+        file=node.unit.filename,
+        span=SourceSpanDto(span.start_line, span.start_col, span.end_line, span.end_col),
+        source_cid=node.unit.source_cid,
+        role="mutable-global-binding-target",
+    )
 
 
 def scan_module_value_pins(
@@ -263,6 +276,7 @@ def _scan_enum_member_pins(tree: typed.Module, scan: ValuePinScan) -> None:
                 value=class_stmt.value,
                 line=class_stmt.lineno,
                 confession=f"enum.{kind}",
+                binding_site=_target_memento(class_stmt.targets[0]),
             )
             scan.candidates += 1
             if stmt.decorators:
@@ -322,6 +336,7 @@ def _scan_enum_member_pins(tree: typed.Module, scan: ValuePinScan) -> None:
                 value=class_stmt.value,
                 line=class_stmt.lineno,
                 confession=f"enum.{kind}.value",
+                binding_site=_target_memento(class_stmt.targets[0]),
             )
             scan.candidates += 1
             if rebound:
@@ -413,7 +428,7 @@ def mutable_global_pin_opacity_entry(
     return {
         "file": source_path,
         "sourceCid": pin.source_cid,
-        "bindingSite": pin.binding_site,
+        "bindingSite": pin.binding_site.to_rpc(),
         "name": pin.name,
         "kind": pin.kind,
         "term": pin.term,
@@ -487,7 +502,7 @@ def _collect_candidates(tree: typed.Module) -> dict[str, _Candidate]:
             line=stmt.lineno,
             confession=confession,
             col=name_node.col_offset,
-            binding_site=name_node.fragment.seal().wire(),
+            binding_site=_target_memento(name_node),
         )
     # A duplicated candidate name surfaces through the binding-event scan
     # (two assignment events), so the first occurrence remains the candidate
