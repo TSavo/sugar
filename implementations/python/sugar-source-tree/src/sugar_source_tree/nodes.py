@@ -2894,25 +2894,21 @@ class FunctionDef(Statement):
             SourceVisibleFunctionBodySugar,
         )
 
-        substituted_body, _ = self._substitute_body(self.body, formal_scope)
-        generator_steps = self._source_visible_generator_steps_from(substituted_body)
-        lexical_definitions = tuple(
-            row.definition_occurrence
-            for row in self.unit.constructed_module.lexical_call_rows
+        lexical_rows = self.unit.constructed_module.lexical_call_rows
+        filtered_body = tuple(
+            statement
+            for statement in self.body
+            if all(
+                statement is not row.definition_occurrence for row in lexical_rows
+            )
         )
+        substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
+        generator_steps = self._source_visible_generator_steps_from(substituted_body)
         body = SourceVisibleFunctionBodySugar(
             (
                 ()
                 if generator_steps is not None
-                else tuple(
-                    substituted.sugar()
-                    for original, substituted in zip(
-                        self.body, substituted_body, strict=True
-                    )
-                    if not any(
-                        original is definition for definition in lexical_definitions
-                    )
-                )
+                else tuple(statement.sugar() for statement in substituted_body)
             ),
             self.fragment,
         )
