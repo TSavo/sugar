@@ -302,8 +302,12 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         exhaustion_guard = atomic("python.loop.exhausted", [str_const(target_cid)])
         operation_kind = "ForNext"
     else:
-        test_guard = branch_result_guard(
-            branch_result_slot(loop.test), loop.test.fragment
+        test_guard = (
+            and_([])
+            if loop._ground_truth(loop.test) is True
+            else branch_result_guard(
+                branch_result_slot(loop.test), loop.test.fragment
+            )
         )
         exhaustion_guard = not_(test_guard)
         true_guard = test_guard
