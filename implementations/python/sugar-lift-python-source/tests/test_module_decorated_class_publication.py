@@ -11,13 +11,16 @@ from sugar_lift_python_source.dependency_artifact import (
     ResolvedPythonObjectV1,
     resolve_import_binding,
 )
-from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
+from sugar_lift_python_source.manager_construction import (
+    _construct_reachable_decorated_class_bindings,
+    resolve_source_visible_frame,
+)
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_source_tree.nodes import ClassDef
+from sugar_source_tree.nodes import ClassDef, FunctionDef, SourceUnit
 from sugar_source_tree.tree import SourceFile
 
 
@@ -206,6 +209,10 @@ def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
         "class BodyOnly:\n"
         "    token = 17\n"
         "\n"
+        "@retain\n"
+        "class StoreOnly:\n"
+        "    token = 13\n"
+        "\n"
         "def global_worker(value):\n"
         "    int\n"
         "    FrameType\n"
@@ -228,8 +235,14 @@ def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
         "def body_selected(value):\n"
         "    return body_worker(value)\n"
         "\n"
+        "def store_and_load_worker(value):\n"
+        "    StoreOnly = value\n"
+        "    Decorated\n"
+        "    return value\n"
+        "\n"
         "def selected(value):\n"
         "    global_worker(value)\n"
+        "    store_and_load_worker(value)\n"
         "    return shadowed_worker(value)\n",
         encoding="utf-8",
     )
@@ -277,6 +290,36 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
     resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
     assert isinstance(resolved, ResolvedPythonObjectV1)
 
+    contacted: list[tuple[str, str]] = []
+    original_function_symtable = SourceUnit.function_symtable
+
+    class _ObservedSymtable:
+        def __init__(self, owner: str, table) -> None:
+            self._owner = owner
+            self._table = table
+
+        def lookup(self, name: str):
+            contacted.append((self._owner, name))
+            try:
+                return self._table.lookup(name)
+            except KeyError:
+                class _AbsentSymbol:
+                    @staticmethod
+                    def is_global() -> bool:
+                        return False
+
+                return _AbsentSymbol()
+
+        def __getattr__(self, name: str):
+            return getattr(self._table, name)
+
+    def observed_function_symtable(self, name: str, lineno: int):
+        return _ObservedSymtable(
+            name, original_function_symtable(self, name, lineno)
+        )
+
+    monkeypatch.setattr(SourceUnit, "function_symtable", observed_function_symtable)
+
     projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
 
     assert isinstance(projected, tuple)
@@ -309,6 +352,98 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
         binding.name != "BodyOnly"
         for binding in body_frame.decorated_class_bindings
     )
+    assert ("global_worker", "Decorated") in contacted
+    assert ("shadowed_worker", "Decorated") in contacted
+    assert ("store_and_load_worker", "StoreOnly") in contacted
+    assert ("store_and_load_worker", "Decorated") in contacted
+    assert ("retain", "Dependency") in contacted
+    assert ("locally_shadowed_retain", "Dependency") in contacted
+    assert all(name not in {"int", "FrameType"} for _, name in contacted)
+
+
+def test_nested_definition_headers_belong_to_outer_admission_owner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "nested_headers.py"
+    path.write_text(
+        "def retain(raw):\n"
+        "    return raw\n"
+        "\n"
+        "@retain\n"
+        "class HeaderDecorated:\n"
+        "    token = 19\n"
+        "\n"
+        "def nested_header_worker(value):\n"
+        "    @HeaderDecorated\n"
+        "    def nested_function(arg: HeaderDecorated = HeaderDecorated) -> HeaderDecorated:\n"
+        "        return HeaderDecorated\n"
+        "    @HeaderDecorated\n"
+        "    async def nested_async_function(arg: HeaderDecorated = HeaderDecorated) -> HeaderDecorated:\n"
+        "        return HeaderDecorated\n"
+        "    @HeaderDecorated\n"
+        "    class NestedClass(HeaderDecorated, metaclass=HeaderDecorated):\n"
+        "        token = HeaderDecorated\n"
+        "    nested_lambda = lambda arg=HeaderDecorated: HeaderDecorated\n"
+        "    return value\n"
+        "\n"
+        "def selected(value):\n"
+        "    return nested_header_worker(value)\n",
+        encoding="utf-8",
+    )
+    tree = SourceFile.from_path(
+        path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    definitions = {
+        item.name: item
+        for item in tree.root.body
+        if isinstance(item, (FunctionDef, ClassDef))
+    }
+    retain = definitions["retain"]
+    selected = definitions["selected"]
+    worker = definitions["nested_header_worker"]
+    contacted: list[tuple[str, str]] = []
+    original_function_symtable = SourceUnit.function_symtable
+
+    class _ObservedSymtable:
+        def __init__(self, owner: str, table) -> None:
+            self._owner = owner
+            self._table = table
+
+        def lookup(self, name: str):
+            contacted.append((self._owner, name))
+            try:
+                return self._table.lookup(name)
+            except KeyError:
+                class _AbsentSymbol:
+                    @staticmethod
+                    def is_global() -> bool:
+                        return False
+
+                return _AbsentSymbol()
+
+        def __getattr__(self, name: str):
+            return getattr(self._table, name)
+
+    def observed_function_symtable(self, name: str, lineno: int):
+        return _ObservedSymtable(
+            name, original_function_symtable(self, name, lineno)
+        )
+
+    monkeypatch.setattr(SourceUnit, "function_symtable", observed_function_symtable)
+
+    bindings = _construct_reachable_decorated_class_bindings(
+        source_file=tree,
+        target=selected,
+        module_definitions=tuple(tree.root.body),
+        reachable_definitions=(worker,),
+        frames={"retain": retain.source_visible_call_frame()},
+    )
+
+    assert tuple(binding.name for binding in bindings) == ("HeaderDecorated",)
+    # Twelve header occurrences execute in the outer function's scope. The four
+    # same-name nested body occurrences belong to their nested owners.
+    assert contacted.count(("nested_header_worker", "HeaderDecorated")) == 12
 
 
 def test_reachable_decorated_class_publication_is_attached_to_selected_frame(
