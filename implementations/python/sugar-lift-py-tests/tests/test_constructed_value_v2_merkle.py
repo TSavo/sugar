@@ -148,6 +148,27 @@ def test_arbitrary_bound_method_is_not_a_constructed_value_leaf():
         _constructed_preimage((Arbitrary().project,))
 
 
+def test_callsite_definition_authority_is_a_source_node_not_backend_handle(tmp_path):
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.nodes import Call
+    from sugar_source_tree.tree import SourceFile
+
+    path = tmp_path / "calls.py"
+    path.write_text(
+        "def helper(value):\n"
+        "    return value\n\n"
+        "def caller(value):\n"
+        "    return helper(value)\n"
+    )
+    source = SourceFile(path_source(str(path)))
+    helper, caller = source.functions()
+    (call,) = tuple(node for node in caller.walk() if isinstance(node, Call))
+    sugar = call.sugar()
+
+    assert sugar.expected_definition is helper
+    _constructed_preimage(sugar)
+
+
 # ---------------------------------------------------------------------------
 # Domain separation and namespace disjointness
 # ---------------------------------------------------------------------------

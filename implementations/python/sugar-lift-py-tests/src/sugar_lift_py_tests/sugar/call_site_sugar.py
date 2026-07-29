@@ -53,7 +53,7 @@ class CallSiteSugar(ConstructedTermSugar):
     )
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
-    expected_definition_ref: object | None = dataclass_field(default=None, compare=False)
+    expected_definition: object | None = dataclass_field(default=None, compare=False)
     native_operation_formal_coordinates: tuple = dataclass_field(default=(), compare=False)
     call_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
         default=None, compare=False
@@ -175,9 +175,9 @@ class CallSiteSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        if self.source_call_frame is not None and self.expected_definition_ref is not None:
+        if self.source_call_frame is not None and self.expected_definition is not None:
             from sugar_source_tree.panic import SugarNotWritten
-            if self.source_call_frame.owner.ref is not self.expected_definition_ref:
+            if self.source_call_frame.owner.ref is not self.expected_definition.ref:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,
