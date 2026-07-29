@@ -206,6 +206,27 @@ def test_unresolved_source_call_is_parked_at_its_exact_coordinate(tmp_path):
     assert obligation.resolution_kind == "call-target-source-absent"
 
 
+@pytest.mark.parametrize("binding", ("import re", "import re as regex"))
+def test_module_import_attribute_call_reaches_authenticated_stdlib_frame_gap(
+    tmp_path, binding
+):
+    """The exact call receipt admits the graph; its internal gap stays loud."""
+    local = "re" if binding == "import re" else "regex"
+    graph, resolved, _, _ = _resolved(
+        tmp_path,
+        f"{binding}\n"
+        "def make_guard(expected):\n"
+        f"    return {local}.search('', expected)\n",
+    )
+
+    from sugar_lift_python_source.manager_construction import ImportValueUseSeatingGap
+
+    with pytest.raises(
+        ImportValueUseSeatingGap, match="resolution-ambiguous-static-export"
+    ):
+        resolve_source_visible_frame(resolved, graph=graph)
+
+
 def test_source_call_coordinate_rejects_conflicting_testimony():
     source = "missing_helper(1)\n"
     from sugar_lift_py_tests.context_manager_resolution import (

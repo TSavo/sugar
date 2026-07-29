@@ -1176,12 +1176,12 @@ def _resolve_source_visible_frame_uncached(
     reachable_names = _reachable_local_definition_names(target, definitions_by_name)
     definitions = tuple(item for item in definitions if item.name in reachable_names)
 
-    # Imported calls inside the authenticated factory body are ordinary source
-    # calls too.  In particular, a function-local ``import package`` followed
-    # by ``return package.factory(...)`` is invisible to a module-import-only
-    # scan and cannot be recovered from the outer With-head spelling.  Reuse
-    # the lexical import testimony at the exact inner call coordinate, then
-    # project the imported callable through the same artifact/frame doors.
+    # Imported Attribute calls inside an authenticated reachable definition are
+    # ordinary source calls too.  Candidate discovery deliberately knows only
+    # that the callee is an Attribute: the exact call-contract receipt at that
+    # same source span is the sole authority that it is imported and names its
+    # dependency.  This includes both function-local and module-level imports
+    # without reconstructing either binding from the callee spelling.
     from pathlib import Path
 
     from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
@@ -1195,7 +1195,7 @@ def _resolve_source_visible_frame_uncached(
         ): call
         for definition in definitions
         for function in _scanned_definitions(definition)
-        for call in _local_imported_attribute_calls(function)
+        for call in _reachable_attribute_calls(function)
     }
     if reachable_calls:
         module_path = Path(module.source_seat)
@@ -1803,39 +1803,27 @@ def _local_named_calls(function: FunctionDef):
         stack.extend(reversed(children))
 
 
-def _local_imported_attribute_calls(function: FunctionDef):
-    """Direct attribute calls rooted in an import bound by this function.
+def _reachable_attribute_calls(function: FunctionDef):
+    """Attribute-call candidates owned by one reachable definition.
 
-    The lexical receipt remains the authority at each use coordinate.  This
-    syntax walk only bounds the expensive receipt pass to the missing native
-    shape; it does not decide what module or callable the spelling denotes.
+    This walk grants no import or target authority.  The caller admits a
+    candidate only when the lexical pass returns one exact call-contract
+    receipt for the candidate's full source span.
     """
-    imported_slots: set[str] = set()
     stack = list(reversed(function.body))
     calls: list[Call] = []
     while stack:
         node = stack.pop()
         if isinstance(node, (FunctionDef, ClassDef)):
             continue
-        if isinstance(node, (Import, ImportFrom)):
-            imported_slots.update(
-                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
-            )
-        elif (
+        if (
             isinstance(node, Call)
             and isinstance(node.func, Attribute)
-            and isinstance(node.func.value, Name)
         ):
             calls.append(node)
         children = [child for _, _, child in node.children()]
         stack.extend(reversed(children))
-    return tuple(
-        call
-        for call in calls
-        if isinstance(call.func, Attribute)
-        and isinstance(call.func.value, Name)
-        and call.func.value.id in imported_slots
-    )
+    return tuple(calls)
 
 
 def _has_non_higher_order_return(

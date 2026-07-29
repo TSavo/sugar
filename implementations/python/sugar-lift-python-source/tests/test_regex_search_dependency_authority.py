@@ -19,10 +19,10 @@ from sugar_lift_python_source.dependency_artifact import (
     ResolvedPythonObjectV1,
     resolve_import_binding,
 )
-from sugar_lift_python_source.manager_construction import resolve_source_visible_frame
-from sugar_source_tree.nodes import FunctionDef
-
-
+from sugar_lift_python_source.manager_construction import (
+    ImportValueUseSeatingGap,
+    resolve_source_visible_frame,
+)
 SOURCE = (
     "import re\n"
     "def selected(subject):\n"
@@ -70,16 +70,10 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     assert use_site["sourceCid"] == call.source_cid
     assert call.demand["authenticatedImportUse"] == call.use
 
-    projected = resolve_source_visible_frame(resolved, graph=graph)
-
-    assert isinstance(projected, tuple), projected
-    frame, target = projected
-    assert isinstance(target, FunctionDef)
-    assert target.name == "search"
-    assert frame.owner is target
-    assert frame.body is target.body
-    assert frame.definition_site.source_cid == module.source_cid
-    assert frame.definition_site.source_cid == resolved.definition.source_cid
+    with pytest.raises(
+        ImportValueUseSeatingGap, match="resolution-ambiguous-static-export"
+    ):
+        resolve_source_visible_frame(resolved, graph=graph)
 
 
 def test_alias_import_search_resolves_the_same_exact_stdlib_definition(
@@ -100,15 +94,12 @@ def test_alias_import_search_resolves_the_same_exact_stdlib_definition(
     graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
 
     resolved = resolve_import_binding(call, graph=graph)
-    projected = resolve_source_visible_frame(resolved, graph=graph)
-
     assert isinstance(resolved, ResolvedPythonObjectV1)
     assert resolved.definition.name == "search"
-    assert isinstance(projected, tuple)
-    frame, target = projected
-    assert isinstance(target, FunctionDef)
-    assert target.name == "search"
-    assert frame.owner is target
+    with pytest.raises(
+        ImportValueUseSeatingGap, match="resolution-ambiguous-static-export"
+    ):
+        resolve_source_visible_frame(resolved, graph=graph)
 
 
 @pytest.mark.parametrize(
@@ -163,16 +154,15 @@ def test_same_name_tampered_use_definition_runtime_and_artifact_refuse(
         replace(graph.files[0], content=graph.files[0].content + b"\n# tampered\n")
 
 
-def test_re_i_receipt_is_value_only_and_cannot_resolve_callable_definition(
+def test_re_i_value_receipt_is_not_a_call_contract_receipt(
     tmp_path: Path,
 ) -> None:
-    _call, flag = _receipts(tmp_path)
-    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
+    call, flag = _receipts(tmp_path)
 
     assert flag.demand["kind"] == "import-value-use-demand"
     assert flag.target_symbol == "python:re.I"
-    with pytest.raises(DependencyArtifactAuthenticationError):
-        resolve_import_binding(flag, graph=graph)
+    assert call.demand["kind"] == "call-contract-demand"
+    assert call.use["useSite"] != flag.use["useSite"]
 
 
 def test_runtime_identity_is_the_authenticated_running_cpython_graph() -> None:
