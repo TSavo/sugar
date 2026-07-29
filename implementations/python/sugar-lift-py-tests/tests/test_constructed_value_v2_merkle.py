@@ -127,6 +127,27 @@ class HonestCid:
         return cid_of_json(self.preimage)
 
 
+def test_producer_owned_binary_operator_projector_is_a_closed_leaf():
+    from sugar_source_tree.operators import Add, Sub
+
+    add = BS._cv2_leaf(Add.instance().project_inplace)
+    subtract = BS._cv2_leaf(Sub.instance().project_inplace)
+
+    assert add != subtract
+    assert add == {
+        "operatorProjector": {"operatorKind": "Add", "inplaceOperator": "iadd"}
+    }
+
+
+def test_arbitrary_bound_method_is_not_a_constructed_value_leaf():
+    class Arbitrary:
+        def project(self, left, right, site):
+            return left, right, site
+
+    with pytest.raises(ConstructedValueCategoryGap, match="builtins.method"):
+        _constructed_preimage((Arbitrary().project,))
+
+
 # ---------------------------------------------------------------------------
 # Domain separation and namespace disjointness
 # ---------------------------------------------------------------------------

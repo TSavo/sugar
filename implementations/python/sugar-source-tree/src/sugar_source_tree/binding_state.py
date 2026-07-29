@@ -3,6 +3,7 @@ from __future__ import annotations
 import weakref
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
+from types import MethodType
 from typing import TYPE_CHECKING, Any, Callable, NoReturn, TypeAlias
 
 from sugar_lift_python_source.canonical import cid_of_json
@@ -1084,6 +1085,25 @@ def _cv2_leaf(value: object) -> Any:
         return {"sourceFragment": value.seal().to_dict()}
     if isinstance(value, SourceMemento):
         return {"sourceMemento": value.to_dict()}
+    # AugAssign constructors retain the operator-owned double-dispatch method.
+    # This is not an arbitrary Python callable category: the sole admitted
+    # function is BinaryOperator.project_inplace bound to the exact registered
+    # singleton whose closed kind/in-place carrier names already define the
+    # operation.  Every other bound method remains an unclassified loud gap.
+    from sugar_source_tree.operators import BinaryOperator
+
+    if (
+        type(value) is MethodType
+        and value.__func__ is BinaryOperator.project_inplace
+        and isinstance(value.__self__, BinaryOperator)
+        and type(value.__self__).instance() is value.__self__
+    ):
+        return {
+            "operatorProjector": {
+                "operatorKind": value.__self__.kind,
+                "inplaceOperator": value.__self__.inplace_operator,
+            }
+        }
     from sugar_source_tree.nodes import Node
 
     if isinstance(value, Node):
