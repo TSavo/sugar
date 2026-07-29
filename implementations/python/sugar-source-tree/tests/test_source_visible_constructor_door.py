@@ -290,14 +290,12 @@ def test_yield_from_only_function_allocates_a_generator_not_an_eager_call() -> N
     assert not isinstance(outcome.value, CallSiteValue)
 
 
-def test_yield_from_delegation_stays_a_typed_gap_and_is_never_invented() -> None:
-    """LYING FACE: recognizing the boundary must not fabricate delegated iteration.
+def test_yield_from_tuple_delegates_each_value_then_returns_to_the_generator() -> None:
+    """A constructed ``yield from`` delegates in order, then resumes its tail.
 
-    Owning the boundary is exactly what the recognition fix buys; it does NOT
-    buy `yield from`'s delegation protocol. Resuming names
-    `GeneratorConstructionV1.transition` as the owner that still owes it, so
-    the debt is loud and attributed rather than silently discharged as a
-    yielded value or a termination.
+    The direct-``yield`` test above is the discrimination arm: both suspension
+    kinds reach the same generator consumer, while only this one must retain a
+    delegated iterator across resumes.
     """
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
@@ -312,13 +310,15 @@ def test_yield_from_delegation_stays_a_typed_gap_and_is_never_invented() -> None
     context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
 
     machine = call.sugar().desugar().value
-    transition = machine.resume()
-
-    assert isinstance(transition, GeneratorTransitionGapV1)
-    assert transition.owner == "GeneratorConstructionV1.transition"
-    assert transition.requested == "resume"
-    assert not isinstance(transition, YieldEffect)
-    assert not isinstance(transition, GeneratorTerminationV1)
+    first = machine.resume()
+    assert isinstance(first, YieldEffect)
+    assert first.value == TermValue(1)
+    second = first.machine.resume()
+    assert isinstance(second, YieldEffect)
+    assert second.value == TermValue(2)
+    terminated = second.machine.resume()
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(9)
 
 
 def test_census_door_refuses_both_yield_constructors_with_no_call_site() -> None:

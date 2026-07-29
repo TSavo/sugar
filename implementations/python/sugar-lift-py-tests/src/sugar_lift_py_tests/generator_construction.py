@@ -75,6 +75,27 @@ class YieldStepV1:
 
 
 @dataclass(frozen=True)
+class YieldFromStepV1:
+    """Authenticated delegated-iteration suspension.
+
+    The iterable remains constructed testimony until transition.  The source
+    occurrence authenticates both iterator acquisition and exhaustion; neither
+    operation is inferred from the iterable's spelling.
+    """
+
+    iterable: ConstructedTermSugar
+    occurrence: object = field(compare=False, repr=False)
+    occurrence_cid: str
+
+    def __post_init__(self) -> None:
+        _require_constructed_term(self.iterable, owner="YieldFromStepV1.iterable")
+        if self.occurrence.seal().cid != self.occurrence_cid:
+            raise TypeError(
+                "YieldFromStepV1 occurrence must match its authenticated CID"
+            )
+
+
+@dataclass(frozen=True)
 class ReturnStepV1:
     value: ConstructedTermSugar | None = None
 
@@ -277,6 +298,13 @@ class _ForIteratorStepV1:
 
 
 @dataclass(frozen=True)
+class _YieldFromIteratorStepV1:
+    iterator: object = field(compare=False, repr=False)
+    occurrence: object = field(compare=False, repr=False)
+    occurrence_cid: str
+
+
+@dataclass(frozen=True)
 class IfStepV1:
     """A branch inside a generator body, with each side's own step sequence.
 
@@ -336,6 +364,7 @@ class NestedManagerExitStepV1:
 
 GeneratorStepV1 = (
     YieldStepV1
+    | YieldFromStepV1
     | ReturnStepV1
     | OpaqueStepV1
     | InertStepV1
@@ -345,6 +374,7 @@ GeneratorStepV1 = (
     | RaiseStepV1
     | TermStepV1
     | _ForIteratorStepV1
+    | _YieldFromIteratorStepV1
     | IfStepV1
     | NestedManagerStepV1
     | NestedManagerExitStepV1
@@ -440,6 +470,12 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "yield",
             "value": _generator_value_testimony(step.value, owner=owner),
         }
+    if isinstance(step, YieldFromStepV1):
+        return {
+            "kind": "yield-from",
+            "occurrenceCid": step.occurrence_cid,
+            "iterable": _generator_value_testimony(step.iterable, owner=owner),
+        }
     if isinstance(step, ReturnStepV1):
         return {
             "kind": "return",
@@ -506,6 +542,11 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "bodySteps": [
                 _generator_step_testimony(item, owner=owner) for item in step.body_steps
             ],
+        }
+    if isinstance(step, _YieldFromIteratorStepV1):
+        return {
+            "kind": "yield-from-iterator",
+            "occurrenceCid": step.occurrence_cid,
         }
     if isinstance(step, IfStepV1):
         return {
@@ -841,6 +882,10 @@ class GeneratorConstructionV1:
             return self._transition_for(step, requested)
         if isinstance(step, _ForIteratorStepV1):
             return self._transition_for_iterator(step, requested)
+        if isinstance(step, YieldFromStepV1):
+            return self._transition_yield_from(step, requested)
+        if isinstance(step, _YieldFromIteratorStepV1):
+            return self._transition_yield_from_iterator(step, requested)
         if isinstance(step, NestedManagerStepV1):
             return self._transition_nested_manager(step, requested)
         if isinstance(step, NestedManagerExitStepV1):
@@ -925,6 +970,82 @@ class GeneratorConstructionV1:
         )
         machine = replace(self, steps=(*self.steps[: self.cursor], runtime, *self.steps[self.cursor + 1 :]))
         return machine._transition(requested)
+
+    def _transition_yield_from(self, step: YieldFromStepV1, requested: str):
+        from sugar_lift_py_tests.operations import IteratorOperation
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        iterable = step.iterable.desugar(self._guard_evaluation_context())
+        if isinstance(iterable, Incomplete):
+            return ExitSet.halted(iterable.effect, state=self)
+        if not isinstance(iterable, Complete):
+            return self._gap(requested, type(iterable).__name__)
+        iterator = IteratorOperation(
+            owner="GeneratorConstructionV1.YieldFromStepV1.iter",
+            blame=step.occurrence,
+        ).submit(iterable.value, self._guard_evaluation_context())
+        if isinstance(iterator, Incomplete):
+            return ExitSet.halted(iterator.effect, state=self)
+        if not isinstance(iterator, Complete):
+            return self._gap(requested, type(iterator).__name__)
+        runtime = _YieldFromIteratorStepV1(
+            iterator.value, step.occurrence, step.occurrence_cid
+        )
+        machine = replace(
+            self,
+            steps=(
+                *self.steps[: self.cursor],
+                runtime,
+                *self.steps[self.cursor + 1 :],
+            ),
+        )
+        return machine._transition(requested)
+
+    def _transition_yield_from_iterator(
+        self, step: _YieldFromIteratorStepV1, requested: str
+    ):
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
+        from sugar_lift_py_tests.floor.iterator_value import NextResult
+        from sugar_lift_py_tests.operations import NextOperation
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        outcome = NextOperation(
+            owner="GeneratorConstructionV1.YieldFromStepV1.next",
+            blame=step.occurrence,
+        ).submit(step.iterator, self._guard_evaluation_context())
+        if isinstance(outcome, Incomplete):
+            effect = outcome.effect
+            stop_identity = ground_raise_effect(
+                exception_name="StopIteration",
+                site=step.occurrence,
+                owner="GeneratorConstructionV1.YieldFromStepV1.next",
+            ).exception_type_coordinate
+            if (
+                isinstance(effect, RaiseEffect)
+                and effect.exception_type_coordinate == stop_identity
+                and effect.occurrence == str(step.occurrence)
+            ):
+                machine = replace(self, cursor=self.cursor + 1)
+                return machine._transition(requested)
+            return ExitSet.halted(effect, state=self)
+        if not isinstance(outcome, Complete) or not isinstance(
+            outcome.value, NextResult
+        ):
+            return self._gap(requested, f"next_with returned {type(outcome).__name__}")
+
+        runtime = replace(step, iterator=outcome.value.advanced)
+        machine = replace(
+            self,
+            steps=(
+                *self.steps[: self.cursor],
+                runtime,
+                *self.steps[self.cursor + 1 :],
+            ),
+        )
+        resume_coordinate = f"{self.instance_coordinate}:resume:{self.cursor + 1}"
+        machine = replace(machine, suspended_resume_coordinate=resume_coordinate)
+        return YieldEffect(outcome.value.value, resume_coordinate, machine)
 
     def _transition_for_iterator(self, step: _ForIteratorStepV1, requested: str):
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
