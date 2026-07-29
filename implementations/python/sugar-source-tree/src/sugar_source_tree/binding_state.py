@@ -1216,7 +1216,17 @@ def _cv2_leaf(value: object) -> Any:
                     "method": "BinaryOperator.project_inplace",
                 }
             }
-    from sugar_source_tree.nodes import Node
+    from sugar_source_tree.nodes import Node, TargetPatternV1
+
+    if type(value) is TargetPatternV1:
+        receipt = value.receipt
+        if receipt is not None and _validated_native_cid(receipt) == receipt.cid:
+            return {
+                "targetPatternReceipt": {
+                    "cid": receipt.cid,
+                    "preimage": receipt.preimage,
+                }
+            }
 
     if isinstance(value, Node):
         # A Node is a tree VIEW, not content. Its content identity is its
@@ -1236,6 +1246,14 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
     arm is a typed gap, never reflection over ``__dict__`` and never
     ``.wire()``.
     """
+    from sugar_source_tree.nodes import TargetPatternV1
+
+    if (
+        type(value) is TargetPatternV1
+        and value.receipt is not None
+        and _validated_native_cid(value.receipt) == value.receipt.cid
+    ):
+        return (_cv2_type_tag(value), [("receipt", value.receipt)])
     if isinstance(value, tuple):
         # Length and position are authenticated: ``at`` is the index, and
         # ``arity`` is encoded, so reordering, duplicating or omitting a child

@@ -202,6 +202,107 @@ class TargetPatternConstructionGapV1(TypeError):
         self.actual_coordinates = actual_coordinates
 
 
+_TARGET_PATTERN_RECEIPT_AUTHORITY = object()
+
+
+@dataclass(frozen=True, init=False)
+class TargetPatternReceiptV1:
+    """Closed semantic testimony minted with the completed module roster."""
+
+    source_cid: str
+    consumer_occurrence_cid: str
+    consumer_node_shape_cid: str
+    target_occurrence_cid: str
+    target_node_shape_cid: str
+    leaf_occurrence_cids: tuple[str, ...]
+    leaf_node_shape_cids: tuple[str, ...]
+    binding_coordinate_cids: tuple[str, ...]
+    cid: str
+    _authority: object = field(default=None, init=False, compare=False, repr=False)
+
+    @property
+    def preimage(self) -> dict[str, object]:
+        return {
+            "kind": "target-pattern-receipt",
+            "schemaVersion": "1",
+            "sourceCid": self.source_cid,
+            "consumerOccurrenceCid": self.consumer_occurrence_cid,
+            "consumerNodeShapeCid": self.consumer_node_shape_cid,
+            "targetOccurrenceCid": self.target_occurrence_cid,
+            "targetNodeShapeCid": self.target_node_shape_cid,
+            "leafOccurrenceCids": list(self.leaf_occurrence_cids),
+            "leafNodeShapeCids": list(self.leaf_node_shape_cids),
+            "bindingCoordinateCids": list(self.binding_coordinate_cids),
+        }
+
+    def __post_init__(self) -> None:
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        if self._authority is not _TARGET_PATTERN_RECEIPT_AUTHORITY:
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-receipt-not-producer-minted",
+                consumer_occurrence=self.consumer_occurrence_cid,
+                target_occurrence=self.target_occurrence_cid,
+            )
+        if (
+            not self.source_cid
+            or not self.consumer_occurrence_cid
+            or not self.consumer_node_shape_cid
+            or not self.target_occurrence_cid
+            or not self.target_node_shape_cid
+            or not self.leaf_occurrence_cids
+            or len(self.leaf_occurrence_cids) != len(self.leaf_node_shape_cids)
+            or len(self.leaf_occurrence_cids) != len(self.binding_coordinate_cids)
+            or cid_of_json(self.preimage) != self.cid
+        ):
+            raise TargetPatternConstructionGapV1(
+                "target-pattern-receipt-preimage-mismatch",
+                consumer_occurrence=self.consumer_occurrence_cid,
+                target_occurrence=self.target_occurrence_cid,
+            )
+
+
+def _mint_target_pattern_receipt(
+    *, source_unit, consumer_occurrence, target_occurrence, leaves, coordinates
+) -> TargetPatternReceiptV1:
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_source_tree.binding_state import node_construction_shape_cid
+
+    values = {
+        "source_cid": source_unit.source_cid,
+        "consumer_occurrence_cid": consumer_occurrence.fragment.seal().cid,
+        "consumer_node_shape_cid": node_construction_shape_cid(consumer_occurrence),
+        "target_occurrence_cid": target_occurrence.fragment.seal().cid,
+        "target_node_shape_cid": node_construction_shape_cid(target_occurrence),
+        "leaf_occurrence_cids": tuple(leaf.fragment.seal().cid for leaf in leaves),
+        "leaf_node_shape_cids": tuple(
+            node_construction_shape_cid(leaf) for leaf in leaves
+        ),
+        "binding_coordinate_cids": tuple(
+            coordinate.cid for coordinate in coordinates
+        ),
+    }
+    value = object.__new__(TargetPatternReceiptV1)
+    for name, field_value in values.items():
+        object.__setattr__(value, name, field_value)
+    preimage = {
+        "kind": "target-pattern-receipt",
+        "schemaVersion": "1",
+        "sourceCid": values["source_cid"],
+        "consumerOccurrenceCid": values["consumer_occurrence_cid"],
+        "consumerNodeShapeCid": values["consumer_node_shape_cid"],
+        "targetOccurrenceCid": values["target_occurrence_cid"],
+        "targetNodeShapeCid": values["target_node_shape_cid"],
+        "leafOccurrenceCids": list(values["leaf_occurrence_cids"]),
+        "leafNodeShapeCids": list(values["leaf_node_shape_cids"]),
+        "bindingCoordinateCids": list(values["binding_coordinate_cids"]),
+    }
+    object.__setattr__(value, "cid", cid_of_json(preimage))
+    object.__setattr__(value, "_authority", _TARGET_PATTERN_RECEIPT_AUTHORITY)
+    value.__post_init__()
+    return value
+
+
 @dataclass(frozen=True)
 class TargetPatternV1:
     """One eager, occurrence-owned destructuring projection."""
@@ -211,6 +312,10 @@ class TargetPatternV1:
     target_occurrence: "Node"
     leaves: tuple["Name", ...]
     coordinates: tuple[object, ...]
+    receipt: TargetPatternReceiptV1 | None = field(
+        default=None, init=False, compare=False, repr=False
+    )
+
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -288,6 +393,23 @@ class TargetPatternV1:
             return result
 
         return project(self.target_occurrence, element)
+
+
+def _mint_target_pattern(
+    *, source_unit, consumer_occurrence, target_occurrence, leaves, coordinates
+) -> TargetPatternV1:
+    receipt = _mint_target_pattern_receipt(
+        source_unit=source_unit,
+        consumer_occurrence=consumer_occurrence,
+        target_occurrence=target_occurrence,
+        leaves=leaves,
+        coordinates=coordinates,
+    )
+    value = TargetPatternV1(
+        source_unit, consumer_occurrence, target_occurrence, leaves, coordinates
+    )
+    object.__setattr__(value, "receipt", receipt)
+    return value
 
 
 def _ordered_binding_keys(names):
@@ -708,7 +830,13 @@ class SourceUnit:
             )
             for leaf, path in ordered
         )
-        return TargetPatternV1(self, consumer, target, leaves, coordinates)
+        return _mint_target_pattern(
+            source_unit=self,
+            consumer_occurrence=consumer,
+            target_occurrence=target,
+            leaves=leaves,
+            coordinates=coordinates,
+        )
 
     def target_patterns_for(self, consumer: "Node") -> tuple[TargetPatternV1, ...]:
         patterns = self._target_patterns_by_consumer
