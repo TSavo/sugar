@@ -364,8 +364,53 @@ def test_source_visible_new_constructor_refuses_nonexact_field_roster(
 
     assert isinstance(coordinate, CallSiteValue)
     assert coordinate.body is None
+def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
+    """The class producer carries its exact ``__new__`` testimony to the body."""
+    context = TreeConstructionContextV1.for_source_call_construction()
+    source = _source_file(
+        "class First:\n"
+        "    def __new__(cls, value):\n"
+        "        return cls\n\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n\n"
+        "class Second:\n"
+        "    def __new__(cls, value):\n"
+        "        return cls\n\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n",
+        context=context,
+    )
+    classes = {
+        node.name: node for node in source.nodes() if isinstance(node, ClassDef)
+    }
+    first_new = next(
+        item
+        for item in classes["First"].body
+        if isinstance(item, FunctionDef) and item.name == "__new__"
+    )
+    second_new = next(
+        item
+        for item in classes["Second"].body
+        if isinstance(item, FunctionDef) and item.name == "__new__"
+    )
 
+    first_frame = classes["First"].source_visible_constructor_frame()
+    second_frame = classes["Second"].source_visible_constructor_frame()
 
+    testimony = first_frame.constructed_new_method
+    assert testimony.name == "__new__"
+    assert testimony.definition_fragment_cid == first_new.fragment.seal().cid
+    assert testimony.source_call_frame.definition_site == _coordinate(first_new)
+    assert (
+        testimony.source_call_frame.frame_cid
+        == first_new.source_visible_call_frame().frame_cid
+    )
+    assert first_frame.body.constructed_new_method is testimony
+    assert (
+        second_frame.constructed_new_method.source_call_frame.definition_site
+        == _coordinate(second_new)
+    )
+    assert second_frame.constructed_new_method is not testimony
 def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(

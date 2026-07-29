@@ -4256,6 +4256,18 @@ class ClassDef(Statement):
         constructor = initializer if initializer is not None else (
             None if new_shape is None else new_shape[0]
         )
+        constructed_new_method = None
+        if new_shape is not None:
+            from sugar_lift_py_tests.floor import ConstructedClassMethodV1
+
+            new_definition = new_shape[0]
+            constructed_new_method = ConstructedClassMethodV1(
+                new_definition.name,
+                new_definition.fragment.seal().cid,
+                new_definition.sugar(),
+                new_definition.source_visible_call_frame(),
+                self._method_descriptor_kind(new_definition),
+            )
         owner_cid = self.fragment.seal().cid
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
@@ -4290,8 +4302,11 @@ class ClassDef(Statement):
                 default_nodes=(None,),
                 default_fragments=(None,),
                 default_fragment_cids=(None,),
-                body=self._source_visible_body({}),
+                body=self._source_visible_body(
+                    {}, constructed_new_method=constructed_new_method
+                ),
                 owner=self,
+                constructed_new_method=constructed_new_method,
             )
         params = () if constructor is None else constructor.params[1:]
         coordinates = tuple(
@@ -4328,8 +4343,11 @@ class ClassDef(Statement):
                 param.default.fragment.seal().cid if param.default is not None else None
                 for param in params
             ),
-            body=self._source_visible_body(formal_scope),
+            body=self._source_visible_body(
+                formal_scope, constructed_new_method=constructed_new_method
+            ),
             owner=self,
+            constructed_new_method=constructed_new_method,
         )
 
     def _inherits_default_exception_constructor(self) -> bool:
@@ -4387,7 +4405,7 @@ class ClassDef(Statement):
             self.reporter,
         )
 
-    def _source_visible_body(self, scope):
+    def _source_visible_body(self, scope, *, constructed_new_method=None):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
         )
@@ -4451,6 +4469,7 @@ class ClassDef(Statement):
             initializer_body=initializer_body,
             receiver_coordinate_cid=receiver_coordinate_cid,
             site=self.fragment,
+            constructed_new_method=constructed_new_method,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):

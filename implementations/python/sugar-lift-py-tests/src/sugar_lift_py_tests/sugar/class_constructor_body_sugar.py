@@ -12,6 +12,28 @@ class ClassConstructorBodySugar(Sugar):
     initializer_body: Sugar | None
     receiver_coordinate_cid: str | None
     site: object = field(compare=False)
+    constructed_new_method: object | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.constructed_new_method is None:
+            return
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ConstructedClassMethodV1,
+        )
+        from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+
+        method = self.constructed_new_method
+        if (
+            type(method) is not ConstructedClassMethodV1
+            or type(method.source_call_frame) is not SourceVisibleCallFrameV1
+            or method.definition_fragment_cid
+            != method.source_call_frame.definition_fragment_cid
+        ):
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            raise SourceCallBindingGap(
+                "constructor body carries malformed __new__ method testimony"
+            )
 
     @classmethod
     def witnesses(cls):

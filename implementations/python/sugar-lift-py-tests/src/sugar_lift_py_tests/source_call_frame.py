@@ -309,6 +309,7 @@ class SourceVisibleCallFrameV1:
     decorated_class_bindings: tuple[DecoratedClassBindingV1, ...] = field(
         default=(), compare=False
     )
+    constructed_new_method: object | None = field(default=None, compare=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
     frame_cid: str = field(init=False)
 
@@ -326,6 +327,42 @@ class SourceVisibleCallFrameV1:
         ):
             raise SourceCallBindingGap(
                 "decorated class binding source does not match source frame identity"
+            )
+        if self.constructed_new_method is not None:
+            from sugar_lift_py_tests.floor.class_definition_value import (
+                ConstructedClassMethodV1,
+            )
+            from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+                ClassConstructorBodySugar,
+            )
+            from sugar_source_tree.nodes import ClassDef, FunctionDef
+
+            method = self.constructed_new_method
+            if (
+                type(method) is not ConstructedClassMethodV1
+                or not isinstance(self.owner, ClassDef)
+                or type(method.source_call_frame) is not SourceVisibleCallFrameV1
+                or not isinstance(method.source_call_frame.owner, FunctionDef)
+                or method.source_call_frame.owner.name != "__new__"
+                or not any(
+                    item is method.source_call_frame.owner for item in self.owner.body
+                )
+                or method.name != method.source_call_frame.owner.name
+                or method.definition_fragment_cid
+                != method.source_call_frame.owner.fragment.seal().cid
+                or method.source_call_frame.definition_fragment_cid
+                != method.definition_fragment_cid
+                or method.source_call_frame.source_identity_cid
+                != self.source_identity_cid
+                or type(self.body) is not ClassConstructorBodySugar
+                or self.body.constructed_new_method is not method
+            ):
+                raise SourceCallBindingGap(
+                    "constructed __new__ method testimony is foreign or cross-wired"
+                )
+        elif getattr(self.body, "constructed_new_method", None) is not None:
+            raise SourceCallBindingGap(
+                "constructor body carries unseated __new__ method testimony"
             )
         preimage = {
             "kind": "source-visible-call-frame",
@@ -352,6 +389,15 @@ class SourceVisibleCallFrameV1:
         }
         if self.declaration_frame_cid is not None:
             preimage["declarationFrameCid"] = self.declaration_frame_cid
+        if self.constructed_new_method is not None:
+            preimage["constructedNewMethod"] = {
+                "definitionFragmentCid": (
+                    self.constructed_new_method.definition_fragment_cid
+                ),
+                "sourceCallFrameCid": (
+                    self.constructed_new_method.source_call_frame.frame_cid
+                ),
+            }
         object.__setattr__(self, "frame_cid", cid_of_json(preimage))
         if self.declaration_frame_cid is None:
             object.__setattr__(self, "declaration_frame_cid", self.frame_cid)
