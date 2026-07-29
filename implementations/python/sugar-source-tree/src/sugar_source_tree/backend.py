@@ -86,7 +86,7 @@ def materialize(
         cache = ConstructionCache()
         object.__setattr__(unit, "construction_cache", cache)
     # Ensure the field row exists (filled lazily on first accessor).
-    key = cache.key(ref, reporter, ctx)
+    key = cache.key(ref, reporter, ctx, unit.construction_context)
     cache.fields.setdefault(key, {})
 
     cls = ref.resolve_type()
@@ -791,6 +791,7 @@ class Backend:
                 node.value.ref,
                 node.value.reporter,
                 node.value.control_context,
+                node.value.unit.construction_context,
             )
             value_cache.sugar_results[value_key] = value_sugar
             node.value.reporter.present_fact(node.value)

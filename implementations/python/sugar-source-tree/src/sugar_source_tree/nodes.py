@@ -1832,7 +1832,12 @@ class Node(Typed):
         if name.startswith("_"):
             raise AttributeError(name)
         cache = self._construction_cache()
-        key = cache.key(self.ref, self.reporter, self.control_context)
+        key = cache.key(
+            self.ref,
+            self.reporter,
+            self.control_context,
+            self.unit.construction_context,
+        )
         row = cache.fields.setdefault(key, {})
         if name in row:
             return row[name]
@@ -2396,7 +2401,12 @@ class Node(Typed):
         # with the node it replaced. ``cache.key`` pins the ref, which is what
         # keeps a dead shadow's recycled address from serving stale work.
         cache = self._construction_cache()
-        key = cache.key(self.ref, self.reporter, self.control_context)
+        key = cache.key(
+            self.ref,
+            self.reporter,
+            self.control_context,
+            self.unit.construction_context,
+        )
         remembered_panic = cache.sugar_panics.get(key)
         if remembered_panic is not None:
             # A gap stays a gap, every time. Same panic, re-raised loudly.
