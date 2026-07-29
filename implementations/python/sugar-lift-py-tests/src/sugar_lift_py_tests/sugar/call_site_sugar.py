@@ -46,6 +46,7 @@ class CallSiteSugar(ConstructedTermSugar):
     source_call_frame: Any = dataclass_field(default=None, compare=False)
     formal_function_sugar: Any = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
+    native_operation_formal_coordinates: tuple = dataclass_field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         for argument in self.args:
@@ -377,7 +378,19 @@ class CallSiteSugar(ConstructedTermSugar):
             carrier_actuals=(
                 native_operation_actuals.by_formal_coordinate
                 if native_operation_actuals is not None
-                else None
+                else (
+                    {
+                        coordinate.coordinate_cid: actual
+                        for coordinate, actual in zip(
+                            self.native_operation_formal_coordinates,
+                            bound_source_actuals.actuals,
+                            strict=True,
+                        )
+                    }
+                    if self.native_operation_formal_coordinates
+                    and bound_source_actuals is not None
+                    else None
+                )
             ),
         )
         from sugar_lift_py_tests.caller_parameter_contract import (

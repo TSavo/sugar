@@ -9485,6 +9485,7 @@ class Call(Expression):
 
             source_call_frame = None
             formal_function_sugar = None
+            formal_coordinates = ()
             formal_coordinate_cids = ()
             function_definition = self.unit.source_function_definition_for_call(self)
             if function_definition is not None:
@@ -9534,6 +9535,7 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
+                native_operation_formal_coordinates=tuple(formal_coordinates),
             )
         if isinstance(self.func, Attribute):
             # Lexical import binding is the ONLY door to a closed callee
