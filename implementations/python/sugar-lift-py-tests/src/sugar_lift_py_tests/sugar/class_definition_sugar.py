@@ -31,6 +31,7 @@ class ClassDefinitionSugar(Sugar):
     docstring_cid: str | None
     annotation_cids: tuple[str, ...]
     decorator_cids: tuple[str, ...]
+    binding_target_occurrence: object
     base_sugars: tuple[Sugar, ...]
     base_fragment_cids: tuple[str, ...]
     site: object = field(compare=False)

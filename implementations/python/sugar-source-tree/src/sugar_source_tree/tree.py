@@ -94,6 +94,9 @@ class SourceFile:
             self.root: Module = constructed_module.root
             self.closed_roll_call = constructed_module.closed_roll_call
             self.provider_member_rows = constructed_module.provider_member_rows
+            self.construction_event_receipt_cid = (
+                constructed_module.construction_event_receipt_cid
+            )
 
     @classmethod
     def from_path(

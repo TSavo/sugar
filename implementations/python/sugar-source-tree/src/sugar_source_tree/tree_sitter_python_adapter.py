@@ -1504,7 +1504,8 @@ def _function_definition(unit: SourceUnit, node: TSNode) -> Description:
 
 
 def _class_definition(unit: SourceUnit, node: TSNode) -> Description:
-    name = _text(unit, _field(node, "name"))
+    name_node = _field(node, "name")
+    name = _text(unit, name_node)
     supers = _field(node, "superclasses")
     bases: List[BackendNode] = []
     keywords: List[BackendNode] = []
@@ -1548,6 +1549,7 @@ def _class_definition(unit: SourceUnit, node: TSNode) -> Description:
         anchors=(),
         slots=(
             ("name", SlotLeaf(name)),
+            ("binding_target", Child(_h(unit, name_node))),
             ("bases", Children(tuple(bases))),
             ("keywords", Children(tuple(keywords))),
             ("body", Children(body)),

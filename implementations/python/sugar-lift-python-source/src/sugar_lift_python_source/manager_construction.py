@@ -1533,7 +1533,248 @@ def _resolve_source_visible_frame_uncached(
         return ManagerConstructionGapV1(
             "definition-missing", resolved.cid, "ordinary source call frame"
         )
+    decorated_class_bindings = _construct_reachable_decorated_class_bindings(
+        source_file=source_file,
+        target=target,
+        definitions=tuple(source_file.root.body),
+        frames=frames,
+    )
+    if decorated_class_bindings:
+        frame = replace(frame, decorated_class_bindings=decorated_class_bindings)
     return frame, target, source_file
+
+
+def _construct_reachable_decorated_class_bindings(
+    *, source_file, target, definitions, frames
+):
+    """Execute exact decorated classes reached by the selected frame."""
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import FloorValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.decorated_class_value import (
+        DecoratedClassPublicationV1,
+        DecoratedClassValue,
+        DecoratorApplicationPublicationV1,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.source_call_frame import DecoratedClassBindingV1
+    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_source_tree.panic import SugarNotWritten
+
+    @dataclass(frozen=True)
+    class _SourceFrameCallableV1(FloorValue):
+        definition: FunctionDef
+        frame: object
+
+        def to_term(self, *, owner):
+            del owner
+            return ctor(
+                "python:source-frame-callable",
+                [str_const(self.frame.frame_cid)],
+                symbol_kind="coordinate",
+            )
+
+        def callable_application_with(self, operation, ctx):
+            keywords = tuple(zip(operation.keyword_names, (), strict=True))
+            bound = self.frame.bind_actuals(operation.arguments, keywords, ctx)
+            call = CallSiteValue(
+                self.definition.name,
+                bound.actuals,
+                self.frame.parameters,
+                ctor(
+                    "call:source-frame",
+                    [
+                        self.to_term(owner=self.definition.name),
+                        *(
+                            item.to_term(owner=self.definition.name)
+                            for item in bound.actuals
+                        ),
+                    ],
+                ),
+                self.frame.body,
+                site=operation.site,
+                source_call_frame_cid=self.frame.frame_cid,
+                formal_coordinate_cids=tuple(
+                    coordinate.cid for coordinate in self.frame.formal_coordinates
+                ),
+                bound_source_actuals=bound,
+            )
+            produced = call.producer_outcome(ctx)
+            if not isinstance(produced, Complete) or type(produced.value) is not CallSiteValue:
+                raise SugarNotWritten(
+                    owner="manager_construction decorated class application",
+                    blame=operation.site,
+                    observed="decorator source call produced a nonlinear outcome",
+                    requested="one completed retained source-call coordinate",
+                    fix="sequence the decorator's effects before module publication",
+                )
+            projected = produced.value.project_operation_receiver_outcome(
+                ctx, owner="manager_construction decorated class application"
+            )
+            if not isinstance(projected, Complete):
+                raise SugarNotWritten(
+                    owner="manager_construction decorated class application",
+                    blame=operation.site,
+                    observed="decorator source return projected nonlinearly",
+                    requested="one completed decorator result Floor",
+                    fix="sequence the decorator's effects before module publication",
+                )
+            return projected
+
+    if not isinstance(target, FunctionDef):
+        return ()
+    module_classes = {
+        item.name: item for item in definitions if isinstance(item, ClassDef)
+    }
+    module_functions = {
+        item.name: item for item in definitions if isinstance(item, FunctionDef)
+    }
+    table = target.unit.function_symtable(
+        target.name, target.line_col_span().start_line
+    )
+    reached = []
+    for node in target.walk():
+        if not isinstance(node, Name):
+            continue
+        candidate = module_classes.get(node.id)
+        if candidate is None or not candidate.decorators:
+            continue
+        bindings = tuple((target.unit.module_direct_bindings or {}).get(node.id, ()))
+        if table.lookup(node.id).is_global() and bindings == (candidate,):
+            if candidate not in reached:
+                reached.append(candidate)
+    if not reached:
+        return ()
+
+    decorator_functions = set()
+    for definition in reached:
+        for decorator in definition.decorators:
+            if isinstance(decorator, Name):
+                bindings = tuple(
+                    (definition.unit.module_direct_bindings or {}).get(decorator.id, ())
+                )
+                if len(bindings) == 1 and isinstance(bindings[0], FunctionDef):
+                    decorator_functions.add(bindings[0])
+    temporal = TemporalContext.empty()
+    for definition in decorator_functions:
+        frame = frames.get(definition.name)
+        if frame is None:
+            frame = definition.source_visible_call_frame()
+        temporal = temporal.bind_value(
+            definition.name, _SourceFrameCallableV1(definition, frame)
+        )
+
+    ctx = ReduceContext.root(owner="manager decorated class publication")
+    raw_classes = {}
+    class_dependencies = set()
+    for function in decorator_functions:
+        function_table = function.unit.function_symtable(
+            function.name, function.line_col_span().start_line
+        )
+        for node in function.walk():
+            if not isinstance(node, Name):
+                continue
+            candidate = module_classes.get(node.id)
+            bindings = tuple((function.unit.module_direct_bindings or {}).get(node.id, ()))
+            if (
+                candidate is not None
+                and function_table.lookup(node.id).is_global()
+                and bindings == (candidate,)
+            ):
+                class_dependencies.add(candidate)
+    for definition in definitions:
+        if definition not in class_dependencies:
+            continue
+        outcome = definition.sugar().desugar(ctx)
+        if not isinstance(outcome, Complete):
+            raise SugarNotWritten(
+                owner="manager_construction decorated class dependency",
+                blame=definition.fragment,
+                observed="decorator class dependency reduced nonlinearly",
+                requested="one completed source class Floor",
+                fix="sequence module definition effects before decorator execution",
+            )
+        raw_classes[definition.name] = outcome.value
+        temporal = temporal.bind_value(definition.name, outcome.value)
+    ctx = replace(ctx, temporal=temporal, module_temporal=temporal)
+
+    result = []
+    for definition in reached:
+        sugar = definition.sugar()
+        raw_outcome = sugar.desugar(ctx)
+        if not isinstance(raw_outcome, Complete):
+            raise SugarNotWritten(
+                owner="manager_construction decorated raw class",
+                blame=definition.fragment,
+                observed="raw class reduced nonlinearly",
+                requested="one completed raw ClassDefinitionValue",
+                fix="sequence module definition effects before decorator execution",
+            )
+        decorator_floors = []
+        for decorator_sugar in sugar.decorator_sugars:
+            outcome = decorator_sugar.desugar(ctx)
+            if not isinstance(outcome, Complete):
+                raise SugarNotWritten(
+                    owner="manager_construction decorated callable",
+                    blame=definition.fragment,
+                    observed="decorator expression reduced nonlinearly",
+                    requested="one completed decorator callable Floor",
+                    fix="sequence decorator expression effects before application",
+                )
+            decorator_floors.append(outcome.value)
+        current = raw_outcome.value
+        applications = []
+        for callable_floor, occurrence in reversed(
+            tuple(zip(decorator_floors, sugar.decorator_occurrences, strict=True))
+        ):
+            before = current
+            outcome = CallableApplication(
+                (before,),
+                (),
+                occurrence,
+                owner="manager decorated class application",
+                call_occurrence=occurrence,
+            ).apply(callable_floor, ctx)
+            if not isinstance(outcome, Complete):
+                raise SugarNotWritten(
+                    owner="manager_construction decorated class application",
+                    blame=occurrence,
+                    observed="decorator application reduced nonlinearly",
+                    requested="one completed decorator result Floor",
+                    fix="sequence decorator application effects before publication",
+                )
+            current = outcome.value
+            applications.append(
+                DecoratorApplicationPublicationV1.mint(
+                    occurrence=occurrence,
+                    callable_floor=callable_floor,
+                    input_floor=before,
+                    output_floor=current,
+                )
+            )
+        publication = DecoratedClassPublicationV1.mint(
+            source_cid=source_file.unit.source_cid,
+            definition=_call_coordinate(definition),
+            binding_occurrence=sugar.binding_target_occurrence,
+            raw_class=raw_outcome.value,
+            decorator_applications=tuple(applications),
+            final_class=current,
+            module_construction_receipt_cid=(
+                source_file.construction_event_receipt_cid
+            ),
+        )
+        result.append(
+            DecoratedClassBindingV1(
+                definition.name,
+                publication,
+                DecoratedClassValue(publication),
+            )
+        )
+    return tuple(result)
 
 
 def _resolve_external_call_frame(

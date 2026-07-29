@@ -806,6 +806,7 @@ def _r_classdef(ctx: _Ctx, n: cst.ClassDef) -> Description:
         "ClassDef",
         ctx.span(n),
         ("name", Leaf(n.name.value)),
+        ("binding_target", Child(_Handle(ctx, n.name))),
         ("bases", Children(bases)),
         ("keywords", Children(keywords)),
         ("body", Children(_statements(ctx, n.body))),

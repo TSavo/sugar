@@ -446,7 +446,7 @@ class _BackendConstructionEventReceiptV1(_SealedBackendRelation):
     constructed_module_identity: object
     root_identity: object
     backend_fingerprint: str
-    receipt_cid: str
+    construction_event_receipt_cid: str
     _copy_message = "copied sealed construction event"
     _tamper_message = "sealed construction event receipt"
 
@@ -465,6 +465,7 @@ class _ConstructedModuleV1(_SealedBackendRelation):
     provider_member_rows: tuple[object, ...]
     leaf_assertion_rows: tuple[object, ...]
     construction_event_receipt: object
+    construction_event_receipt_cid: str
     reporting_projection: object
     _copy_message = "copied sealed constructed module"
     _tamper_message = "sealed constructed module preimage"
@@ -879,13 +880,16 @@ class Backend:
         receipt = object.__new__(_BackendConstructionEventReceiptV1)
         from sugar_lift_python_source.canonical import cid_of_json
 
-        receipt_cid = cid_of_json(
+        construction_event_receipt_cid = cid_of_json(
             {
                 "kind": "backend-module-construction-receipt",
                 "schemaVersion": "1",
                 "sourceCid": unit.source_cid,
-                "rootFragmentCid": root.fragment.seal().cid,
                 "backendFingerprint": self.fingerprint(),
+                "rootMemento": root.fragment.seal().to_dict(),
+                "constructedNodeMementoCids": [
+                    node.fragment.seal().cid for node in constructed_nodes
+                ],
             }
         )
         _close_private(
@@ -899,7 +903,7 @@ class Backend:
             constructed_module_identity=module_identity,
             root_identity=root_identity,
             backend_fingerprint=self.fingerprint(),
-            receipt_cid=receipt_cid,
+            construction_event_receipt_cid=construction_event_receipt_cid,
         )
         reporter.present_construction(root, receipt)
         product = object.__new__(_ConstructedModuleV1)
@@ -915,6 +919,7 @@ class Backend:
             provider_member_rows=provider_member_rows,
             leaf_assertion_rows=leaf_assertion_rows,
             construction_event_receipt=receipt,
+            construction_event_receipt_cid=construction_event_receipt_cid,
             reporting_projection=reporter,
         )
         object.__setattr__(unit, "_constructed_module", product)

@@ -3859,12 +3859,32 @@ class AsyncFunctionDef(Statement):
 
 class ClassDef(Statement):
     name: str
+    binding_target: Name
     bases: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
     body: Tuple[Statement, ...]
     decorators: Tuple[Expression, ...]
     type_params: Tuple[TypeParam, ...]
-    _child_fields = ("decorators", "type_params", "bases", "keywords", "body")
+    _child_fields = (
+        "binding_target",
+        "decorators",
+        "type_params",
+        "bases",
+        "keywords",
+        "body",
+    )
+
+    def __post_init__(self):
+        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=self.fragment,
+                owner="ClassDef",
+                observed="class binding target does not match its definition name",
+                requested="the exact identifier child bound by this ClassDef",
+                fix="carry the parser-owned ClassDef name occurrence as binding_target",
+            )
 
     def _method_descriptor_kind(self, method: "FunctionDef") -> Optional[str]:
         """Authenticate one language descriptor decorator by lexical binding.
@@ -3918,6 +3938,16 @@ class ClassDef(Statement):
         Instantiation/receiver fields remain a typed coordinate gap in the
         resulting floor value.  No class body is interpreted beside this door.
         """
+        if not isinstance(self.binding_target, Name) or self.binding_target.id != self.name:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=self.fragment,
+                owner="ClassDef._construct_sugar",
+                observed="class binding target does not match its definition name",
+                requested="the exact identifier child bound by this ClassDef",
+                fix="carry the parser-owned ClassDef name occurrence as binding_target",
+            )
         methods = tuple(item for item in self.body if isinstance(item, FunctionDef))
         docstring_cid = None
         if self.body:
@@ -4079,6 +4109,13 @@ class ClassDef(Statement):
                 item.fragment.seal().cid for item in annotated_assignments
             ),
             decorator_cids=tuple(item.fragment.seal().cid for item in self.decorators),
+            binding_target_occurrence=SourceFragmentCoordinateV1(
+                self.binding_target.unit.source_cid,
+                self.binding_target.line_col_span().start_line,
+                self.binding_target.line_col_span().start_col,
+                self.binding_target.line_col_span().end_line,
+                self.binding_target.line_col_span().end_col,
+            ),
             decorator_sugars=tuple(item.sugar() for item in self.decorators),
             decorator_occurrences=tuple(
                 SourceFragmentCoordinateV1(
