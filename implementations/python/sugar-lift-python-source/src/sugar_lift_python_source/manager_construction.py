@@ -209,10 +209,50 @@ class _ModuleNameAssignmentBindingSugar:
     target: Name
 
     def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor import (
+            CallSiteValue,
+            ComprehensionValue,
+            ListValue,
+        )
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.ir import _Ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        def bind_projected_value(value):
+            if (
+                type(value) is ComprehensionValue
+                and type(value.term) is _Ctor
+                and value.term.name == "py.listcomp"
+                and value.finite_elements is not None
+            ):
+                value = ListValue(tuple(value.finite_elements))
+            return Complete(ScopeRebind(self.target.id, value))
+
+        def bind_completed_value(value):
+            if type(value) is CallSiteValue:
+                return value.project_operation_receiver_outcome(
+                    ctx,
+                    owner="module name assignment source return",
+                ).and_then(bind_projected_value)
+            return Complete(ScopeRebind(self.target.id, value))
+
+        return self.statement.value.sugar().desugar(ctx).and_then(
+            bind_completed_value
+        )
+
+
+@dataclass(frozen=True)
+class _ModuleSubscriptDeleteBindingSugar:
+    """Thread one exact module ``del name[index]`` result into its binding."""
+
+    statement: Delete
+    target: Name
+
+    def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
         from sugar_lift_py_tests.outcome import Complete
 
-        return self.statement.value.sugar().desugar(ctx).and_then(
+        return self.statement.sugar().desugar(ctx).and_then(
             lambda value: Complete(ScopeRebind(self.target.id, value))
         )
 
@@ -546,7 +586,13 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
         reduce_block_to_exitset,
     )
     from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef, Name
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        Delete,
+        FunctionDef,
+        Name,
+        Subscript,
+    )
 
     from .canonical import blake3_512_of
 
@@ -627,6 +673,15 @@ def _module_prefix_outcome(module, locus, *, graph=None, session=None):
                 isinstance(statement, Assign)
                 and len(statement.targets) == 1
                 and isinstance(statement.targets[0], Name)
+            )
+            else _ModuleSubscriptDeleteBindingSugar(
+                statement, statement.targets[0].value
+            )
+            if (
+                isinstance(statement, Delete)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], Subscript)
+                and isinstance(statement.targets[0].value, Name)
             )
             else statement.sugar()
         )
