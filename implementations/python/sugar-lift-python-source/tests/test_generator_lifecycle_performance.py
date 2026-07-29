@@ -23,15 +23,24 @@ import pytest
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.floor import BlockValue, ReturnValue, StringValue, TermValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    GuardedValue,
+    ReturnValue,
+    StringValue,
+    TermValue,
+)
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     InertStepV1,
     OpaqueStepV1,
     ReturnStepV1,
+    YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.ir import atomic, not_
+from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, partition
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
@@ -109,6 +118,162 @@ def test_enter_bound_generator_construction_preserves_exact_machine_testimony():
     assert entered.machine.instance_coordinate == machine.instance_coordinate
     assert entered.machine.allocation_coordinate == machine.allocation_coordinate
     assert entered.machine.reduction_context is reduction_context
+
+
+def test_enter_bound_generator_maps_yield_and_preserves_mixed_halt(monkeypatch):
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:mixed-enter",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    completed_guard = atomic("mixed_enter_completed", ())
+    halted_guard = atomic("mixed_enter_halted", ())
+    completed_face, halted_face = partition(("mixed-enter", "lifecycle"))
+    pending = SimpleNamespace(demands=())
+    effect = RaiseEffect(exception_name="ValueError", blame="before-enter")
+    mixed = ExitSet(
+        (
+            Completed(
+                completed_guard,
+                yielded,
+                frozenset({completed_face}),
+                (pending,),
+            ),
+            Halted(
+                halted_guard,
+                effect,
+                machine,
+                frozenset({halted_face}),
+                (pending,),
+            ),
+        )
+    )
+    monkeypatch.setattr(GeneratorConstructionV1, "resume", lambda self: mixed)
+
+    outcome = protocol.enter_resource_outcome_for(machine)
+
+    assert isinstance(outcome, ExitSet)
+    halted = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+    assert halted.guard == halted_guard
+    assert halted.effect is effect
+    assert halted.state is machine
+    assert halted.faces == frozenset({halted_face})
+    assert halted.pending_contracts == (pending,)
+    completed = next(
+        exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)
+    )
+    assert completed.guard == completed_guard
+    assert isinstance(completed.value, EnteredGeneratorManagerStateV1)
+    assert completed.value.machine is yielded.machine
+    assert completed.faces == frozenset({completed_face})
+    assert completed.pending_contracts == (pending,)
+
+
+def test_enter_bound_generator_resumes_guarded_machine_arms(monkeypatch):
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    left_machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-left",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    right_machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-right",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(23, site="yield:23")),),
+    )
+    guard = atomic("guarded_enter", ())
+    guarded = GuardedValue(guard, left_machine, right_machine)
+    original_resume = GeneratorConstructionV1.resume
+    monkeypatch.setattr(
+        GeneratorConstructionV1,
+        "resume",
+        lambda self: guarded if self is machine else original_resume(self),
+    )
+
+    outcome = protocol.enter_resource_outcome_for(machine)
+
+    assert isinstance(outcome, ExitSet)
+    completed = tuple(
+        exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)
+    )
+    assert len(completed) == 2
+    assert {exit_.guard for exit_ in completed} == {
+        guard,
+        not_(guard),
+    }
+    assert {exit_.value.enter_value for exit_ in completed} == {
+        TermValue(17),
+        TermValue(23),
+    }
+
+
+def test_enter_bound_generator_refuses_foreign_guarded_machine_arm(monkeypatch):
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-foreign",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    local = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-local-arm",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    foreign = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-foreign-arm",
+        frame_coordinate=cid_of_json({"frame": "foreign-guarded-arm"}),
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    guarded = GuardedValue(atomic("guarded_enter_foreign", ()), local, foreign)
+    original_resume = GeneratorConstructionV1.resume
+    monkeypatch.setattr(
+        GeneratorConstructionV1,
+        "resume",
+        lambda self: guarded if self is machine else original_resume(self),
+    )
+
+    with pytest.raises(SugarNotWritten) as raised:
+        protocol.enter_resource_outcome_for(machine)
+
+    assert raised.value.owner == "GeneratorBackedManagerProtocolV1.enter_resource_outcome"
+    assert "foreign frame coordinate" in raised.value.observed
+
+
+def test_enter_bound_generator_keeps_bad_guarded_arm_loud(monkeypatch):
+    protocol = _protocol()
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:guarded-enter-bad-arm",
+        frame_coordinate=protocol.generator_frame_cid,
+        binding_state=(),
+        steps=protocol.generator_frame.generator_steps,
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    guarded = GuardedValue(
+        atomic("guarded_enter_bad_arm", ()), yielded, TermValue(99)
+    )
+    monkeypatch.setattr(GeneratorConstructionV1, "resume", lambda self: guarded)
+
+    with pytest.raises(SugarNotWritten) as raised:
+        protocol.enter_resource_outcome_for(machine)
+
+    assert raised.value.owner == "GeneratorBackedManagerProtocolV1.enter_resource_outcome"
+    assert raised.value.observed == "TermValue"
 
 
 def test_enter_bound_generator_construction_refuses_foreign_frame():

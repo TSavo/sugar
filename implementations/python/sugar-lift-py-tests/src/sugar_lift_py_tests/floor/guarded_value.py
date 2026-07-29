@@ -67,6 +67,10 @@ class GuardedValue(FloorValue):
         """Resolve both binding arms when a joined name is read."""
         return self._map("answer", ctx)
 
+    def length(self, site):
+        """Distribute ``len`` through the existing guarded outcome algebra."""
+        return self._map("length", site)
+
     def _map(self, method: str, *args):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete

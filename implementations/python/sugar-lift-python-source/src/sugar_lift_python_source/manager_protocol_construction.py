@@ -550,13 +550,7 @@ def enter_bound_generator_resource_outcome(
 ):
     """Resume the exact authenticated generator construction at manager enter."""
     del ctx
-    from sugar_lift_py_tests.generator_construction import (
-        GeneratorConstructionV1,
-        GeneratorTerminationV1,
-        GeneratorTransitionGapV1,
-        YieldEffect,
-    )
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
     from sugar_source_tree.panic import SugarNotWritten
 
     if type(machine) is not GeneratorConstructionV1:
@@ -579,6 +573,59 @@ def enter_bound_generator_resource_outcome(
             fix="pass the manager call's authenticated generator construction",
         )
     result = machine.resume()
+    return _project_generator_enter_result(protocol, machine, result)
+
+
+def _project_generator_enter_result(protocol, entry_machine, result):
+    """Project every completed generator-enter arm; halted arms bypass intact."""
+    from sugar_lift_py_tests.floor import GuardedValue
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorConstructionV1,
+        GeneratorTerminationV1,
+        GeneratorTransitionGapV1,
+        YieldEffect,
+    )
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if isinstance(result, ExitSet):
+        return result.and_then(
+            lambda value: _project_generator_enter_result(
+                protocol, entry_machine, value
+            )
+        )
+    if isinstance(result, GuardedValue):
+        guarded_arms = ExitSet(
+            (
+                Completed(result.guard, result.when_true),
+                Completed(not_(result.guard), result.when_false),
+            )
+        )
+
+        def _project_guarded_arm(arm):
+            if type(arm) is GeneratorConstructionV1:
+                if arm.frame_coordinate != protocol.generator_frame_cid:
+                    raise SugarNotWritten(
+                        blame=protocol.exit_face_id,
+                        owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+                        observed=(
+                            "foreign frame coordinate "
+                            f"{arm.frame_coordinate} in guarded generator arm"
+                        ),
+                        requested=(
+                            "exact guarded GeneratorConstructionV1 arm for frame "
+                            f"{protocol.generator_frame_cid}"
+                        ),
+                        fix="retain the branch machine produced by this generator frame",
+                    )
+                return _project_generator_enter_result(
+                    protocol, entry_machine, arm.resume()
+                )
+            return _project_generator_enter_result(protocol, entry_machine, arm)
+
+        return guarded_arms.and_then(_project_guarded_arm)
     if isinstance(result, YieldEffect):
         enter_value = _floor_enter_value(result.value)
         # Per-protocol enter ordinal distinguishes successive enters that
@@ -605,8 +652,6 @@ def enter_bound_generator_resource_outcome(
         )
         return Complete(entered)
     # Nested enter can surface Incomplete (inner raise before yield).
-    from sugar_lift_py_tests.outcome import Incomplete
-
     if isinstance(result, Incomplete):
         return result
     if isinstance(result, GeneratorTerminationV1):
@@ -616,7 +661,7 @@ def enter_bound_generator_resource_outcome(
         from sugar_lift_py_tests.outcome import Incomplete
 
         refusal = observed_entry_refusal()
-        blame = str(machine.instance_coordinate)
+        blame = str(entry_machine.instance_coordinate)
         return Incomplete(
             RaiseEffect(
                 exception_name=refusal.exception_name,
