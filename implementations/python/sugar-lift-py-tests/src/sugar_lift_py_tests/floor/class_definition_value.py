@@ -45,6 +45,26 @@ class ClassDefinitionValue(GuardStableValue):
             symbol_kind="coordinate",
         )
 
+    def setitem(self, index, value, site):
+        del index, value
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="ClassDefinitionValue.setitem",
+        )
+
+    def delitem(self, index, site):
+        del index
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError",
+            site=site,
+            owner="ClassDefinitionValue.delitem",
+        )
+
     def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
         from sugar_lift_py_tests.floor import (
             GuardedReceiverFieldStoreValue,
