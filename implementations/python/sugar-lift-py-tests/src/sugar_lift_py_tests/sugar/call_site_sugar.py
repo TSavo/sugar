@@ -249,6 +249,7 @@ class CallSiteSugar(ConstructedTermSugar):
                             positional, kw_values, ctx
                         )
                     )
+                    bound_source_actuals = native_operation_actuals.source_actuals
                     positional = native_operation_actuals.actuals
             except SourceCallBindingGap as exc:
                 raise SugarNotWritten(

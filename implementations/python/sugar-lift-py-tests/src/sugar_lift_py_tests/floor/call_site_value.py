@@ -1311,13 +1311,13 @@ class CallSiteValue(FloorValue):
             return Complete(self)
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
-            actuals = (
-                carrier_actuals
-                if carrier_actuals is not None
-                else self.bound_native_actuals_by_coordinate
-            )
-            if actuals is None and self.bound_source_actuals is not None:
-                actuals = self.bound_source_actuals.by_native_formal_coordinate
+            actuals = carrier_actuals
+            if self.bound_source_actuals is not None:
+                actuals = self.bound_source_actuals.actuals_for_native_carrier(
+                    outcome
+                )
+            elif actuals is None:
+                actuals = self.bound_native_actuals_by_coordinate
             if actuals is None:
                 return outcome
             outcome = outcome.discharge(actuals)
