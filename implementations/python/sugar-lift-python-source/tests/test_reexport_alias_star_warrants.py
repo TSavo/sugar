@@ -552,8 +552,82 @@ def test_module_prefix_does_not_construct_an_uncalled_function_body(
     completed = exits.exits[0]
     assert isinstance(completed, Completed)
     dormant = completed.value.context.temporal.value_if_bound("dormant")
-    assert type(dormant).__name__ == "_ModuleFunctionDefinitionCallableV1"
+    assert type(dormant) is manager_construction._ModuleFunctionDefinitionCallableV1
     assert dormant.definition.name == "dormant"
+
+
+def test_module_prefix_publishes_exact_async_definition_without_running_body(
+    tmp_path: Path,
+) -> None:
+    """An authenticated async definition binds its exact parser-owned occurrence."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.nodes import AsyncFunctionDef
+
+    source = (
+        "async def dormant(manager):\n"
+        "    with manager:\n"
+        "        return 1\n"
+        "def build():\n"
+        "    return dormant\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="async-module-function-pkg",
+        files={"async_module_function_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "async_module_function_pkg"
+    ]
+
+    exits = manager_construction._module_prefix_outcome(
+        module, ast.parse(source).body[-1]
+    )
+
+    assert len(exits.exits) == 1
+    completed = exits.exits[0]
+    assert isinstance(completed, Completed)
+    dormant = completed.value.context.temporal.value_if_bound("dormant")
+    assert type(dormant).__name__ == "_ModuleFunctionDefinitionCallableV1"
+    assert isinstance(dormant.definition, AsyncFunctionDef)
+    assert dormant.definition.fragment.source_cid == module.source_cid
+    assert dormant.definition.fragment.span.start == 0
+    assert dormant.definition.fragment.span.end == 62
+
+
+def test_module_prefix_refuses_decorated_async_definition_before_completion(
+    tmp_path: Path,
+) -> None:
+    """A different async-definition occurrence cannot borrow plain publication."""
+    from sugar_lift_python_source import manager_construction
+    from sugar_source_tree.panic import SugarNotWritten
+
+    source = (
+        "@decorate\n"
+        "async def dormant():\n"
+        "    return 1\n"
+        "def build():\n"
+        "    return dormant\n"
+    )
+    dist = _dist(
+        tmp_path,
+        name="decorated-async-module-function-pkg",
+        files={"decorated_async_module_function_pkg/__init__.py": source},
+    )
+    module = DependencyArtifactGraph.authenticate(dist).modules[
+        "decorated_async_module_function_pkg"
+    ]
+
+    with pytest.raises(SugarNotWritten) as raised:
+        manager_construction._module_prefix_outcome(
+            module, ast.parse(source).body[-1]
+        )
+
+    assert raised.value.owner == "module function definition execution"
+    assert raised.value.blame.source_cid == module.source_cid
+    assert raised.value.blame.span.start == 10
+    assert raised.value.blame.span.end == 43
+    assert raised.value.observed == "decorated AsyncFunctionDef has no completed publication"
 
 
 def test_module_prefix_constructs_one_subscript_delete_statement(
