@@ -350,6 +350,10 @@ class GuardedValue(FloorValue):
     def subscript(self, index, site):
         return self._map("subscript", index, site)
 
+    def length(self, site):
+        """Distribute ``len`` through the branch-owned value arms."""
+        return self._map("length", site)
+
     def attribute(self, name, site):
         """Distribute attribute projection over both branch faces.
 
