@@ -1942,6 +1942,16 @@ def _seat_import_value_use_receipts(
             # import-use coordinate unseated; any consumer that needs it stays
             # typed-loud at its ordinary resolution door.
             continue
+        binding_target = receipt.import_binding.value["target"]
+        if (
+            binding_target["exportedPath"] == []
+            and receipt.use.get("exportedMemberPath") == []
+        ):
+            # A module-alias value is authenticated import testimony, but it
+            # is not a callable definition to seat on this SourceUnit.  Its
+            # attributed member carries its own later receipt and exact use
+            # coordinate; only that member may become a source call frame.
+            continue
         imported = resolve_import_binding(
             receipt, graph=dependency_graph, session=session
         )
