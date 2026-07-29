@@ -1,4 +1,4 @@
-"""Package-local source-ordered symbol graph for the LAW_OF_ONE auditor."""
+"""Source-ordered, scope-correct symbol graph for the LAW_OF_ONE auditor."""
 
 from __future__ import annotations
 

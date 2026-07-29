@@ -1,4 +1,4 @@
-"""Package-local, test-owned evidence contract for LAW_OF_ONE.
+"""Test-owned evidence contract for LAW_OF_ONE.
 
 Production must not import this module.  The independent repository auditor
 constructs these values; producer and consumer tests may only inspect them.

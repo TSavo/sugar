@@ -1,4 +1,4 @@
-"""Package-local pytest injection seam for shared LAW_OF_ONE evidence.
+"""Explicit pytest injection seam for shared LAW_OF_ONE evidence.
 
 Consumer tests import ``law_of_one_evidence`` from this module and name the
 typed parameter in their signature.  There is no request/name lookup.
