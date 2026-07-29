@@ -1536,7 +1536,8 @@ def _resolve_source_visible_frame_uncached(
     decorated_class_bindings = _construct_reachable_decorated_class_bindings(
         source_file=source_file,
         target=target,
-        definitions=tuple(source_file.root.body),
+        module_definitions=tuple(source_file.root.body),
+        reachable_definitions=definitions,
         frames=frames,
     )
     if decorated_class_bindings:
@@ -1545,7 +1546,7 @@ def _resolve_source_visible_frame_uncached(
 
 
 def _construct_reachable_decorated_class_bindings(
-    *, source_file, target, definitions, frames
+    *, source_file, target, module_definitions, reachable_definitions, frames
 ):
     """Execute exact decorated classes reached by the selected frame."""
     from dataclasses import dataclass
@@ -1628,25 +1629,30 @@ def _construct_reachable_decorated_class_bindings(
     if not isinstance(target, FunctionDef):
         return ()
     module_classes = {
-        item.name: item for item in definitions if isinstance(item, ClassDef)
+        item.name: item for item in module_definitions if isinstance(item, ClassDef)
     }
     module_functions = {
-        item.name: item for item in definitions if isinstance(item, FunctionDef)
+        item.name: item for item in module_definitions if isinstance(item, FunctionDef)
     }
-    table = target.unit.function_symtable(
-        target.name, target.line_col_span().start_line
-    )
     reached = []
-    for node in target.walk():
-        if not isinstance(node, Name):
+    for function in reachable_definitions:
+        if not isinstance(function, FunctionDef):
             continue
-        candidate = module_classes.get(node.id)
-        if candidate is None or not candidate.decorators:
-            continue
-        bindings = tuple((target.unit.module_direct_bindings or {}).get(node.id, ()))
-        if table.lookup(node.id).is_global() and bindings == (candidate,):
-            if candidate not in reached:
-                reached.append(candidate)
+        table = function.unit.function_symtable(
+            function.name, function.line_col_span().start_line
+        )
+        for node in function.walk():
+            if not isinstance(node, Name):
+                continue
+            candidate = module_classes.get(node.id)
+            if candidate is None or not candidate.decorators:
+                continue
+            bindings = tuple(
+                (function.unit.module_direct_bindings or {}).get(node.id, ())
+            )
+            if table.lookup(node.id).is_global() and bindings == (candidate,):
+                if candidate not in reached:
+                    reached.append(candidate)
     if not reached:
         return ()
 
@@ -1686,7 +1692,7 @@ def _construct_reachable_decorated_class_bindings(
                 and bindings == (candidate,)
             ):
                 class_dependencies.add(candidate)
-    for definition in definitions:
+    for definition in module_definitions:
         if definition not in class_dependencies:
             continue
         outcome = definition.sugar().desugar(ctx)

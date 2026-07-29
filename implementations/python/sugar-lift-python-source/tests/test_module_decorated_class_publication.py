@@ -105,8 +105,11 @@ def _install(root: Path) -> importlib.metadata.Distribution:
         "class Original:\n"
         "    stale = 1\n"
         "\n"
+        "def worker(value):\n"
+        "    return isinstance(value, Original)\n"
+        "\n"
         "def selected(value):\n"
-        "    return isinstance(value, Original)\n",
+        "    return worker(value)\n",
         encoding="utf-8",
     )
     metadata = root / "decorated_dist-1.0.dist-info"
