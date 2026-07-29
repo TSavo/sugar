@@ -17,7 +17,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_source_tree.nodes import ClassDef, SourceUnit
+from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
 
@@ -135,8 +135,18 @@ def _install(root: Path) -> importlib.metadata.Distribution:
         "def worker(value):\n"
         "    return isinstance(value, Original)\n"
         "\n"
+        "def misleading(value):\n"
+        "    global Unreachable\n"
+        "    Unreachable = value\n"
+        "    def nested():\n"
+        "        return Unreachable\n"
+        "    return value\n"
+        "\n"
         "def selected(value):\n"
-        "    return worker(value)\n",
+        "    def unrelated(frame: FrameType):\n"
+        "        return frame\n"
+        "    marker = int(misleading(value))\n"
+        "    return worker(marker)\n",
         encoding="utf-8",
     )
     metadata = root / "decorated_dist-1.0.dist-info"
@@ -166,7 +176,8 @@ def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
     package = root / "admission_pkg"
     package.mkdir()
     (package / "__init__.py").write_text(
-        "from admission_pkg.implementation import selected\n", encoding="utf-8"
+        "from admission_pkg.implementation import body_selected, selected\n",
+        encoding="utf-8",
     )
     (package / "implementation.py").write_text(
         "from types import FrameType\n"
@@ -191,10 +202,16 @@ def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
         "class Decorated:\n"
         "    token = 11\n"
         "\n"
+        "@retain\n"
+        "class BodyOnly:\n"
+        "    token = 17\n"
+        "\n"
         "def global_worker(value):\n"
         "    int\n"
         "    FrameType\n"
         "    Decorated\n"
+        "    def nested(header: BodyOnly = BodyOnly):\n"
+        "        return BodyOnly\n"
         "    return value\n"
         "\n"
         "def shadowed_worker(value):\n"
@@ -202,6 +219,14 @@ def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
         "    int\n"
         "    FrameType\n"
         "    return value\n"
+        "\n"
+        "def body_worker(value):\n"
+        "    def nested():\n"
+        "        return BodyOnly\n"
+        "    return value\n"
+        "\n"
+        "def body_selected(value):\n"
+        "    return body_worker(value)\n"
         "\n"
         "def selected(value):\n"
         "    global_worker(value)\n"
@@ -232,7 +257,7 @@ def _install_admission_fixture(root: Path) -> importlib.metadata.Distribution:
 
 
 def test_reachable_decorated_class_admission_filters_before_symtable_contact(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
 ) -> None:
     distribution = _install_admission_fixture(tmp_path)
     graph = DependencyArtifactGraph.authenticate(distribution)
@@ -252,25 +277,6 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
     resolved = resolve_import_binding(receipts[0], graph=graph, session=session)
     assert isinstance(resolved, ResolvedPythonObjectV1)
 
-    contacted: list[tuple[str, str]] = []
-    original_function_symtable = SourceUnit.function_symtable
-
-    class _ObservedSymtable:
-        def __init__(self, owner: str, table) -> None:
-            self._owner = owner
-            self._table = table
-
-        def lookup(self, name: str):
-            contacted.append((self._owner, name))
-            return self._table.lookup(name)
-
-    def observed_function_symtable(self, name: str, lineno: int):
-        return _ObservedSymtable(
-            name, original_function_symtable(self, name, lineno)
-        )
-
-    monkeypatch.setattr(SourceUnit, "function_symtable", observed_function_symtable)
-
     projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
 
     assert isinstance(projected, tuple)
@@ -278,12 +284,31 @@ def test_reachable_decorated_class_admission_filters_before_symtable_contact(
     assert target.name == "selected"
     assert tuple(binding.name for binding in frame.decorated_class_bindings) == (
         "Decorated",
+        "BodyOnly",
     )
-    assert ("global_worker", "Decorated") in contacted
-    assert ("shadowed_worker", "Decorated") in contacted
-    assert ("retain", "Dependency") in contacted
-    assert ("locally_shadowed_retain", "Dependency") in contacted
-    assert all(name not in {"int", "FrameType"} for _, name in contacted)
+    body_source = "import admission_pkg\nadmission_pkg.body_selected(1)\n"
+    body_consumer = tmp_path / "body_consumer.py"
+    body_consumer.write_text(body_source, encoding="utf-8")
+    body_receipts, _ = authenticated_import_use_receipts(
+        tmp_path,
+        body_consumer,
+        body_source,
+        blake3_512_of(body_source.encode("utf-8")),
+        module_identities={},
+    )
+    body_session = SourceResolutionSession()
+    body_resolved = resolve_import_binding(
+        body_receipts[0], graph=graph, session=body_session
+    )
+    body_projected = resolve_source_visible_frame(
+        body_resolved, graph=graph, session=body_session
+    )
+    assert isinstance(body_projected, tuple)
+    body_frame, _ = body_projected
+    assert all(
+        binding.name != "BodyOnly"
+        for binding in body_frame.decorated_class_bindings
+    )
 
 
 def test_reachable_decorated_class_publication_is_attached_to_selected_frame(

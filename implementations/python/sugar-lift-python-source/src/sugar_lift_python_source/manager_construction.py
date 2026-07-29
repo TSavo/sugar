@@ -1628,6 +1628,40 @@ def _construct_reachable_decorated_class_bindings(
 
     if not isinstance(target, FunctionDef):
         return ()
+
+    def owned_lexical_load_occurrences(function):
+        from sugar_source_tree.nodes import AsyncFunctionDef, Lambda
+
+        def visit(node):
+            if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                for field_name in ("decorators", "type_params", "params", "returns"):
+                    value = getattr(node, field_name)
+                    if value is None:
+                        continue
+                    items = (value,) if isinstance(value, Node) else tuple(value)
+                    for item in items:
+                        yield from visit(item)
+                return
+            if isinstance(node, ClassDef):
+                for field_name in ("decorators", "type_params", "bases", "keywords"):
+                    for item in tuple(getattr(node, field_name)):
+                        yield from visit(item)
+                return
+            if isinstance(node, Lambda):
+                for parameter in node.params:
+                    yield from visit(parameter)
+                return
+            if isinstance(node, Name):
+                yield node
+                return
+            for field_name, _, child in node.children():
+                if field_name in {"target", "targets", "optional_vars"}:
+                    continue
+                yield from visit(child)
+
+        for statement in function.body:
+            yield from visit(statement)
+
     module_classes = tuple(
         item for item in module_definitions if isinstance(item, ClassDef)
     )
@@ -1638,22 +1672,25 @@ def _construct_reachable_decorated_class_bindings(
         table = function.unit.function_symtable(
             function.name, function.line_col_span().start_line
         )
-        for node in function.walk():
-            if not isinstance(node, Name):
-                continue
+        for node in owned_lexical_load_occurrences(function):
             bindings = tuple(
                 (function.unit.module_direct_bindings or {}).get(node.id, ())
             )
-            if (
-                table.lookup(node.id).is_global()
-                and len(bindings) == 1
-                and isinstance(bindings[0], ClassDef)
-                and any(bindings[0] is item for item in module_classes)
-                and bindings[0].decorators
-            ):
-                candidate = bindings[0]
-                if candidate not in reached:
-                    reached.append(candidate)
+            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+                continue
+            candidate = bindings[0]
+            if not any(candidate is item for item in module_classes):
+                continue
+            if not candidate.decorators:
+                continue
+            try:
+                symbol = table.lookup(node.id)
+            except KeyError:
+                continue
+            if not symbol.is_global() or not symbol.is_referenced():
+                continue
+            if candidate not in reached:
+                reached.append(candidate)
     if not reached:
         return ()
 
@@ -1691,17 +1728,20 @@ def _construct_reachable_decorated_class_bindings(
         function_table = function.unit.function_symtable(
             function.name, function.line_col_span().start_line
         )
-        for node in function.walk():
-            if not isinstance(node, Name):
-                continue
+        for node in owned_lexical_load_occurrences(function):
             bindings = tuple((function.unit.module_direct_bindings or {}).get(node.id, ()))
-            if (
-                function_table.lookup(node.id).is_global()
-                and len(bindings) == 1
-                and isinstance(bindings[0], ClassDef)
-                and any(bindings[0] is item for item in module_classes)
-            ):
-                class_dependencies.add(bindings[0])
+            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+                continue
+            candidate = bindings[0]
+            if not any(candidate is item for item in module_classes):
+                continue
+            try:
+                symbol = function_table.lookup(node.id)
+            except KeyError:
+                continue
+            if not symbol.is_global() or not symbol.is_referenced():
+                continue
+            class_dependencies.add(candidate)
     for definition in module_definitions:
         if definition not in class_dependencies:
             continue
