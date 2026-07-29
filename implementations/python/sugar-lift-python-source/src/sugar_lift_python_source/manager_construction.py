@@ -1803,6 +1803,75 @@ def _construct_reachable_decorated_class_bindings(
 
     result = []
     for definition in reached:
+        # A reached imported Attribute decorator factory is an exact source
+        # call, not an opaque bodyless CallSiteValue.  Enroll only decorator
+        # Call coordinates owned by this reached ClassDef and authenticated by
+        # the lexical call receipt at that exact occurrence.
+        from pathlib import Path
+        from sugar_lift_py_tests.import_binding import authenticated_import_use_receipts
+
+        decorator_receipts, _ = authenticated_import_use_receipts(
+            Path("."),
+            Path(module.source_seat),
+            module.source,
+            module.source_cid,
+            module_identities={},
+        )
+        receipts_by_span = {
+            (
+                receipt.use["useSite"]["startLine"],
+                receipt.use["useSite"]["startCol"],
+                receipt.use["useSite"]["endLine"],
+                receipt.use["useSite"]["endCol"],
+            ): receipt
+            for receipt in decorator_receipts
+        }
+        for decorator in definition.decorators:
+            if not isinstance(decorator, Call) or not isinstance(
+                decorator.func, Attribute
+            ):
+                continue
+            span = decorator.line_col_span()
+            receipt = receipts_by_span.get(
+                (span.start_line, span.start_col, span.end_line, span.end_col)
+            )
+            if receipt is None:
+                continue
+            receipt.revalidate()
+            top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+            graph = dependency_graphs.get(top_level)
+            if graph is None:
+                from .dependency_artifact import authenticate_dependency_top_level
+
+                graph = authenticate_dependency_top_level(top_level)
+                dependency_graphs[top_level] = graph
+            resolved_decorator = resolve_import_binding(
+                receipt, graph=graph, session=session
+            )
+            if not isinstance(resolved_decorator, ResolvedPythonObjectV1):
+                continue
+            projected_decorator = resolve_source_visible_frame(
+                resolved_decorator, graph=graph, session=session
+            )
+            if isinstance(projected_decorator, ManagerConstructionGapV1):
+                continue
+            decorator_frame, decorator_target = projected_decorator
+            if not isinstance(decorator_target, FunctionDef):
+                continue
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            try:
+                decorator_frame = decorator_frame.bind_node_actuals(
+                    decorator.args,
+                    tuple(
+                        (keyword.arg, keyword.value)
+                        for keyword in decorator.keywords
+                        if keyword.arg is not None
+                    ),
+                )
+            except SourceCallBindingGap:
+                continue
+            _install_source_call_frame(context, decorator, decorator_frame)
         sugar = definition.sugar()
         raw_outcome = sugar.desugar(ctx)
         if not isinstance(raw_outcome, Complete):
@@ -1830,6 +1899,18 @@ def _construct_reachable_decorated_class_bindings(
         for callable_floor, occurrence in reversed(
             tuple(zip(decorator_floors, sugar.decorator_occurrences, strict=True))
         ):
+            from sugar_lift_py_tests.floor import CallSiteValue
+            print("FLOOR_TRACE", type(callable_floor), getattr(callable_floor, "body", "NA"), getattr(callable_floor, "source_call_frame_cid", "NA"))
+
+            if (
+                type(callable_floor) is CallSiteValue
+                and callable_floor.body is not None
+                and callable_floor.source_call_frame_cid is not None
+            ):
+                callable_floor = callable_floor.force_floor(
+                    ctx,
+                    owner="manager authenticated decorator factory return",
+                )
             before = current
             outcome = CallableApplication(
                 (before,),
