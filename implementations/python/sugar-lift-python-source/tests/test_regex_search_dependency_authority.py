@@ -14,15 +14,21 @@ from sugar_lift_py_tests.import_binding import (
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import (
+    AuthenticatedModuleSourceV1,
     DependencyArtifactAuthenticationError,
     DependencyArtifactGraph,
     ResolvedPythonObjectV1,
     resolve_import_binding,
 )
 from sugar_lift_python_source.manager_construction import (
-    ImportValueUseSeatingGap,
+    _seat_import_value_use_receipts,
     resolve_source_visible_frame,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_source_tree.nodes import Attribute, Call, FunctionDef
+from sugar_source_tree.panic import BackendDefect
+from sugar_source_tree.tree import SourceFile
 SOURCE = (
     "import re\n"
     "def selected(subject):\n"
@@ -70,10 +76,16 @@ def test_exact_re_search_receipt_resolves_and_seats_cpython_definition_body(
     assert use_site["sourceCid"] == call.source_cid
     assert call.demand["authenticatedImportUse"] == call.use
 
-    with pytest.raises(
-        ImportValueUseSeatingGap, match="resolution-ambiguous-static-export"
-    ):
-        resolve_source_visible_frame(resolved, graph=graph)
+    projected = resolve_source_visible_frame(resolved, graph=graph)
+
+    assert isinstance(projected, tuple), projected
+    frame, target = projected
+    assert isinstance(target, FunctionDef)
+    assert target.name == "search"
+    assert frame.owner is target
+    assert frame.body is target.body
+    assert frame.definition_site.source_cid == module.source_cid
+    assert frame.definition_site.source_cid == resolved.definition.source_cid
 
 
 def test_alias_import_search_resolves_the_same_exact_stdlib_definition(
@@ -96,10 +108,12 @@ def test_alias_import_search_resolves_the_same_exact_stdlib_definition(
     resolved = resolve_import_binding(call, graph=graph)
     assert isinstance(resolved, ResolvedPythonObjectV1)
     assert resolved.definition.name == "search"
-    with pytest.raises(
-        ImportValueUseSeatingGap, match="resolution-ambiguous-static-export"
-    ):
-        resolve_source_visible_frame(resolved, graph=graph)
+    projected = resolve_source_visible_frame(resolved, graph=graph)
+    assert isinstance(projected, tuple)
+    frame, target = projected
+    assert isinstance(target, FunctionDef)
+    assert target.name == "search"
+    assert frame.owner is target
 
 
 @pytest.mark.parametrize(
@@ -154,15 +168,73 @@ def test_same_name_tampered_use_definition_runtime_and_artifact_refuse(
         replace(graph.files[0], content=graph.files[0].content + b"\n# tampered\n")
 
 
-def test_re_i_value_receipt_is_not_a_call_contract_receipt(
-    tmp_path: Path,
+def test_re_i_value_receipt_cannot_substitute_re_search_call_span(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     call, flag = _receipts(tmp_path)
+    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
 
     assert flag.demand["kind"] == "import-value-use-demand"
     assert flag.target_symbol == "python:re.I"
     assert call.demand["kind"] == "call-contract-demand"
+    assert call.target_symbol == "python:re.search"
     assert call.use["useSite"] != flag.use["useSite"]
+
+    context = TreeConstructionContextV1.for_source_call_construction(
+        workspace_root=str(tmp_path)
+    )
+    source_file = SourceFile(
+        (SOURCE, "consumer.py", blake3_512_of(SOURCE.encode())),
+        construction_context=context,
+    )
+    function = next(
+        node for node in source_file.nodes() if isinstance(node, FunctionDef)
+    )
+    module = AuthenticatedModuleSourceV1(
+        "consumer", "consumer.py", source_file.unit.source_cid, SOURCE
+    )
+    _seat_import_value_use_receipts(
+        source_file=source_file,
+        module=module,
+        target=function,
+        session=SourceResolutionSession(),
+        context=context,
+        dependency_graphs={"re": graph},
+    )
+    search_call = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Call)
+        and isinstance(node.func, Attribute)
+        and node.func.attr == "search"
+    )
+    flag_node = next(
+        node
+        for node in source_file.nodes()
+        if isinstance(node, Attribute) and node.attr == "I"
+    )
+    call_span = search_call.line_col_span()
+    flag_span = flag_node.line_col_span()
+    call_key = (
+        call_span.start_line,
+        call_span.start_col,
+        call_span.end_line,
+        call_span.end_col,
+    )
+    flag_key = (
+        flag_span.start_line,
+        flag_span.start_col,
+        flag_span.end_line,
+        flag_span.end_col,
+    )
+
+    assert source_file.unit.import_value_use_resolution(call_key) is None
+    assert source_file.unit.import_value_use_resolution(flag_key) == flag
+    with pytest.raises(BackendDefect, match="receipt testimony"):
+        source_file.unit.seat_import_value_use_resolution(
+            call_key, flag, source_cid=source_file.unit.source_cid
+        )
 
 
 def test_runtime_identity_is_the_authenticated_running_cpython_graph() -> None:
