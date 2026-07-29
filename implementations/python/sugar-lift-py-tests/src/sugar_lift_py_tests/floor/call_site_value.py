@@ -26,6 +26,21 @@ _ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
 _CALLSITE_COORDINATE: dict[int, tuple["weakref.ReferenceType", tuple]] = {}
 
 
+@dataclass(frozen=True)
+class _RetainedSourceCompletionV1:
+    """Private exact completed Floor carried by one projected arm.
+
+    The constant hash is deliberate: completion Floors may be unhashable, while
+    equality must still compare their exact immutable content.  Hash collisions
+    are resolved by equality and never grant identity.
+    """
+
+    value: object
+
+    def __hash__(self) -> int:
+        return 0x52455441
+
+
 def _callsite_coordinate_memo_size() -> int:
     """Live memo entries (test / diagnostics only)."""
     return len(_CALLSITE_COORDINATE)
@@ -133,6 +148,9 @@ class CallSiteValue(FloorValue):
         default=None, compare=False
     )
     bound_source_actuals: object | None = dataclass_field(default=None, compare=False)
+    _retained_source_completion: object | None = dataclass_field(
+        default=None, init=False, compare=False, repr=False
+    )
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
@@ -151,6 +169,25 @@ class CallSiteValue(FloorValue):
         if projected is None or isinstance(projected, BlockValue):
             return self
         return projected
+
+    def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
+        """Project the completion retained by the sole producer reduction."""
+        del ctx
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.body is None:
+            return Complete(self)
+        retained = self._retained_source_completion
+        if not isinstance(retained, _RetainedSourceCompletionV1):
+            raise SugarNotWritten(
+                owner="CallSiteValue.project_operation_receiver_outcome",
+                blame=self.site,
+                observed="body-bearing call lacks retained source completion",
+                requested="producer-retained source completion testimony",
+                fix="project the source body once at CallSiteValue.producer_outcome",
+            )
+        return Complete(_project_authenticated_source_return(retained.value))
 
     def runtime_type_is_decided(self) -> bool:
         """Undecided: no citation fixes an unexecuted call's result type.
@@ -200,6 +237,8 @@ class CallSiteValue(FloorValue):
             self.parameters,
             _term_cycle_key(self.term),
         )
+        if self._retained_source_completion is not None:
+            coordinate = (*coordinate, self._retained_source_completion)
 
         def _on_die(ref: weakref.ReferenceType, *, _cid: int = cid) -> None:
             current = _CALLSITE_COORDINATE.get(_cid)
@@ -1302,13 +1341,26 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
         from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
+        def retaining(value):
+            if not isinstance(value, FloorValue):
+                raise TypeError(
+                    "retained source completion must contain an exact FloorValue"
+                )
+            retained = replace(self)
+            object.__setattr__(
+                retained,
+                "_retained_source_completion",
+                _RetainedSourceCompletionV1(value),
+            )
+            return retained
+
         def call_owned(effect):
             if isinstance(effect, RaiseEffect):
                 return replace(effect, producer_node_owner="Call")
             return effect
 
         if isinstance(outcome, Complete):
-            return Complete(self)
+            return Complete(retaining(outcome.value))
         from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
         if isinstance(outcome, NativeOperationExitCarrierV1):
             if self.bound_source_actuals is not None:
@@ -1334,7 +1386,7 @@ class CallSiteValue(FloorValue):
                 (
                     Completed(
                         exit_.guard,
-                        self,
+                        retaining(exit_.value),
                         exit_.faces,
                         exit_.pending_contracts,
                     )

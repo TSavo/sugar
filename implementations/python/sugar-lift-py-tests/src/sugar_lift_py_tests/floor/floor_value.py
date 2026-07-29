@@ -132,6 +132,12 @@ class FloorValue:
         del ctx, owner
         return self
 
+    def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
+        """Sequence an ordinary scalar receiver through the Outcome algebra."""
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self.project_operation_receiver(ctx, owner=owner))
+
     def _floor_gap(
         self,
         *,
